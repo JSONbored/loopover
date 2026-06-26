@@ -85,6 +85,10 @@ describe("isTestFile", () => {
       expect(isTestFile(path)).toBe(false);
     }
   });
+
+  it("delegates to test-evidence isTestPath so matchers stay in sync", () => {
+    expect(isTestFile("tests/integration/api.test.ts")).toBe(true);
+  });
 });
 
 describe("isCodeFile", () => {

@@ -1,12 +1,14 @@
 // SSRF-safe URL guard (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Ported from reviewbot's
 // core/source-url.ts isSafeHttpUrl + isSafeEndpointUrl (the host/IP guard, including the encoded-IP
-// decoding that a dotted-quad regex misses). PURE — no imports, no I/O.
+// decoding that a dotted-quad regex misses), hardened so a trailing-dot or `*.localhost` host can't
+// dodge the loopback check. PURE — no imports, no I/O.
 //
-// Rejects non-HTTPS (isSafeHttpUrl), localhost/.local/.internal, and private/loopback/link-local
-// IPs in any literal notation (decimal `2130706433`, hex `0x7f000001`, octal, short `127.1`, and the
-// IPv6 forms). isSafeEndpointUrl additionally permits wss:/ws: for base-layer chain endpoints.
+// Rejects non-HTTPS (isSafeHttpUrl), localhost / `*.localhost` / .local / .internal, and private/
+// loopback/link-local IPs in any literal notation (decimal `2130706433`, hex `0x7f000001`, octal,
+// short `127.1`, and the IPv6 forms). isSafeEndpointUrl additionally permits wss:/ws: for base-layer
+// chain endpoints.
 
 function parseIpv4Component(part: string): number | null {
   if (/^0x[0-9a-f]+$/i.test(part)) return parseInt(part, 16);
@@ -29,7 +31,7 @@ function ipv4ToInt(host: string): number | null {
   // isSafe*Url entry points: a host reaches here only after `new URL()`, and the WHATWG parser
   // rejects any all-numeric dotted host whose components overflow (so the >0xff / >lastMax / >2^32
   // cases never arrive), while a host that survives parsing as a domain has a non-numeric label that
-  // makes parseIpv4Component bail (line 24) before these run. Retained for source parity + defense.
+  // makes parseIpv4Component bail (line 26) before these run. Retained for source parity + defense.
   /* v8 ignore start -- @preserve unreachable through new URL() host normalization (see note above) */
   for (let i = 0; i < n - 1; i += 1) if ((vals[i] as number) > 0xff) return null;
   const lastMax = [0xffffffff, 0xffffff, 0xffff, 0xff][n - 1] as number;
@@ -78,8 +80,12 @@ function ipv6IsPrivateOrLocal(host: string): boolean {
 }
 
 function hostIsPrivateOrLocal(host: string): boolean {
-  const h = host.toLowerCase();
-  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  // Normalize once: lower-case, then strip the FQDN root dot(s) the parser keeps on named hosts
+  // (`localhost.`) but not on IP literals — else `localhost.` / `foo.internal.` would read as public.
+  const h = host.toLowerCase().replace(/\.+$/, "");
+  // localhost + its RFC 6761 `*.localhost` namespace, plus the reserved `.local` (mDNS) / `.internal`.
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h.endsWith(".local") || h.endsWith(".internal")) return true;
   if (h === "0.0.0.0" || h === "::1" || h === "[::1]") return true;
   if (h.includes(":")) return ipv6IsPrivateOrLocal(h);
   return ipv4IsPrivateOrLocal(h);
@@ -94,7 +100,7 @@ export function isSafeHttpUrl(raw: string): boolean {
     return false;
   }
   if (url.protocol !== "https:") return false;
-  return !hostIsPrivateOrLocal(url.hostname.toLowerCase());
+  return !hostIsPrivateOrLocal(url.hostname);
 }
 
 /** Like isSafeHttpUrl but also permits secure WebSocket endpoints (`wss:`, `ws:`) — base-layer chain
@@ -107,5 +113,5 @@ export function isSafeEndpointUrl(raw: string): boolean {
     return false;
   }
   if (!["https:", "wss:", "ws:"].includes(url.protocol)) return false;
-  return !hostIsPrivateOrLocal(url.hostname.toLowerCase());
+  return !hostIsPrivateOrLocal(url.hostname);
 }

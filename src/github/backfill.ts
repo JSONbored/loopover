@@ -2439,10 +2439,10 @@ async function githubPaged<T>(
     warnings.push(`GitHub sync failed for ${path}: ${errorMessage(error)}`);
   }
 
-  if (status === "complete" && items.length >= limit && limit > 0) {
-    status = "capped";
-    nextCursor = nextCursor ?? String(startPage + Math.max(pageCount, 1));
-    warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path}.`);
+  // A fully drained fetch has no next page: drop the speculative cursor so an exact-`limit` final page
+  // reads as "complete", not "capped". Genuine overflow is already capped with its cursor in the loop.
+  if (status === "complete") {
+    nextCursor = undefined;
   }
   const fetchedCount = priorFetched + items.length;
   const segment = await completeSegment(env, repo, segmentName, sourceKind, mode, startedAt, {

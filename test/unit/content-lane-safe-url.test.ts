@@ -24,6 +24,25 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("https://printer.local")).toBe(false);
   });
 
+  it("rejects the RFC 6761 *.localhost loopback namespace (not just bare localhost)", () => {
+    // RFC 6761 makes every `*.localhost` name loopback (systemd-resolved, browsers), so the bare
+    // `=== "localhost"` check leaked sub-labelled forms; `.endsWith(".localhost")` closes them.
+    expect(isSafeHttpUrl("https://test.localhost")).toBe(false);
+    expect(isSafeHttpUrl("https://foo.bar.localhost")).toBe(false);
+    expect(isSafeEndpointUrl("wss://api.localhost")).toBe(false);
+  });
+
+  it("rejects trailing-dot FQDN forms of named loopback hosts (SSRF bypass regression)", () => {
+    // The parser keeps the root dot on named hosts: `new URL("https://localhost./").hostname` ===
+    // "localhost.", which still resolves to loopback — so the guard must strip it before its checks.
+    expect(isSafeHttpUrl("https://localhost./")).toBe(false);
+    expect(isSafeHttpUrl("https://foo.local./")).toBe(false);
+    expect(isSafeHttpUrl("https://bar.internal./")).toBe(false);
+    expect(isSafeHttpUrl("https://localhost../")).toBe(false); // strip the whole run, not one dot
+    expect(isSafeHttpUrl("https://db.localhost./")).toBe(false); // subdomain + trailing dot
+    expect(isSafeEndpointUrl("wss://localhost./")).toBe(false); // shared guard → wss hardened too
+  });
+
   it("rejects encoded-IP SSRF bypasses that a dotted-quad regex misses", () => {
     expect(isSafeHttpUrl("https://2130706433")).toBe(false); // decimal 127.0.0.1
     expect(isSafeHttpUrl("https://0x7f000001")).toBe(false); // hex 127.0.0.1

@@ -182,8 +182,8 @@ const FRESHNESS_SIGNAL_TYPES = [
   "queue-health",
 ];
 
-export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<void> {
-  if (!payload.installation?.id) return;
+export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<number | null> {
+  if (!payload.installation?.id) return null;
   const account = payload.installation.account;
   const existing = await getInstallation(env, payload.installation.id);
   const permissions =
@@ -196,6 +196,10 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
   const targetType = payload.installation.target_type ?? account?.type ?? existing?.targetType ?? "unknown";
   const repositorySelection = payload.installation.repository_selection ?? existing?.repositorySelection;
   const suspendedAt = payload.installation.suspended_at !== undefined ? payload.installation.suspended_at : (existing?.suspendedAt ?? undefined);
+  // Capture app_id when the payload carries it (installation events + the App-installation API refresh); keep the
+  // stored value otherwise so a payload without it (e.g. a pull_request event) never clears it. Returned so the
+  // caller can filter a dual-app webhook without a second read (#selfhost-app-id).
+  const appId = payload.installation.app_id ?? existing?.appId ?? null;
   const db = getDb(env.DB);
   await db
     .insert(installations)
@@ -203,6 +207,7 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
       id: payload.installation.id,
       accountLogin,
       accountId,
+      appId,
       targetType,
       repositorySelection,
       permissionsJson: jsonString(permissions),
@@ -215,6 +220,7 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
       set: {
         accountLogin,
         accountId,
+        appId,
         targetType,
         repositorySelection,
         permissionsJson: jsonString(permissions),
@@ -223,6 +229,7 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
         updatedAt: nowIso(),
       },
     });
+  return appId;
 }
 
 export async function markInstallationDeleted(env: Env, installationId: number): Promise<void> {
@@ -3806,6 +3813,7 @@ function toInstallationRecord(row: typeof installations.$inferSelect): Installat
     id: row.id,
     accountLogin: row.accountLogin,
     accountId: row.accountId,
+    appId: row.appId,
     targetType: row.targetType,
     repositorySelection: row.repositorySelection,
     permissions: parseJson<Record<string, string>>(row.permissionsJson, {}),

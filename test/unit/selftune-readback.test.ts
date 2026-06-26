@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { upsertRepositorySettings } from "../../src/db/repositories";
+import { upsertGlobalContributorBlacklist, upsertRepositorySettings } from "../../src/db/repositories";
 import { writeLiveOverride, type StorageEnv } from "../../src/review/auto-apply";
 import { applySelfTuneOverrideToSettings, resolveRepositorySettings } from "../../src/settings/repository-settings";
 import type { RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 
 // The promoted override is ALWAYS a tightening (selftune-wire only ever populates the would-merge error side),
 // so the read-back must only ever RAISE an existing readiness threshold — never create or lower one.
@@ -48,5 +49,19 @@ describe("resolveRepositorySettings — self-tune override overlay (flag-gated)"
     const env = createTestEnv();
     await seed(env);
     expect((await resolveRepositorySettings(env, repo)).qualityGateMinScore).toBe(50);
+  });
+
+  it("merges shared/global blacklist entries with effective repo settings", async () => {
+    const env = createTestEnv();
+    const repoFullName = "acme/blacklist";
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, 'acme', 'blacklist', 1, 1)").bind(repoFullName).run();
+    await Promise.all([
+      upsertRepositorySettings(env, { repoFullName, qualityGateMinScore: 50 }),
+      upsertGlobalContributorBlacklist(env, { contributorBlacklist: [{ login: "GlobalBad", reason: "global" }] }),
+      upsertRepoFocusManifest(env, repoFullName, { settings: { contributorBlacklist: [{ login: "ManifestBad" }] } }, "api_record"),
+    ]);
+
+    const settings = await resolveRepositorySettings(env, repoFullName);
+    expect(settings.contributorBlacklist?.map((entry) => entry.login)).toEqual(["ManifestBad", "GlobalBad"]);
   });
 });

@@ -1,7 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
-import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
+import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
 export type FocusManifestLinkedIssuePolicy = "required" | "preferred" | "optional";
@@ -941,7 +941,11 @@ export function excludeReviewPaths<T extends { path: string }>(files: T[], exclu
  * for its fields. This single resolver makes the whole gittensory configuration — gate on/off, blocker
  * modes, comments, labels, surface, audience — controllable from the repo's `.gittensory.yml`.
  */
-export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifest: FocusManifest): RepositorySettings {
+export function resolveEffectiveSettings(
+  dbSettings: RepositorySettings,
+  manifest: FocusManifest,
+  sharedContributorBlacklist: RepositorySettings["contributorBlacklist"] = [],
+): RepositorySettings {
   const effective: RepositorySettings = { ...dbSettings, ...manifest.settings };
   const gate = manifest.gate;
   if (gate.enabled !== null) effective.gateCheckMode = gate.enabled ? "enabled" : "off";
@@ -970,6 +974,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {
     effective.linkedIssueGateMode = "block";
   }
+  effective.contributorBlacklist = mergeContributorBlacklists(effective.contributorBlacklist ?? [], sharedContributorBlacklist);
   return effective;
 }
 

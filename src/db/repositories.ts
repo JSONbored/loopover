@@ -499,6 +499,34 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
   };
 }
 
+/** Read the singleton shared/global contributor blacklist (#1425). Missing table or malformed JSON are
+ *  treated as an empty list so DB hiccups in this path default to no global blocks rather than halting
+ *  processing. A singleton row (`id = 'singleton'`) makes this a global control plane just like
+ *  `global_agent_controls`. */
+export async function getGlobalContributorBlacklist(env: Env): Promise<RepositorySettings["contributorBlacklist"]> {
+  try {
+    const row = await env.DB.prepare("SELECT contributor_blacklist_json FROM global_contributor_blacklist WHERE id = 'singleton'").first<{
+      contributor_blacklist_json: string;
+    }>();
+    return parseContributorBlacklist(row?.contributor_blacklist_json ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+/** Upsert the singleton shared/global contributor blacklist (#1425). Input is normalized/validated once so
+ *  malformed stored data never reaches execution. Returns the normalized persisted list for convenience/tests.
+ */
+export async function upsertGlobalContributorBlacklist(env: Env, input: { contributorBlacklist: unknown; updatedBy?: string | null }): Promise<RepositorySettings["contributorBlacklist"]> {
+  const normalized = normalizeContributorBlacklist(input.contributorBlacklist).entries;
+  await env.DB.prepare(
+    "INSERT INTO global_contributor_blacklist (id, contributor_blacklist_json, updated_at, updated_by) VALUES ('singleton', ?, CURRENT_TIMESTAMP, ?) ON CONFLICT(id) DO UPDATE SET contributor_blacklist_json = excluded.contributor_blacklist_json, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+  )
+    .bind(jsonString(normalized), input.updatedBy ?? null)
+    .run();
+  return normalized;
+}
+
 export async function upsertRepositorySettings(env: Env, settings: Partial<RepositorySettings> & { repoFullName: string }): Promise<RepositorySettings> {
   const resolved: RepositorySettings = {
     repoFullName: settings.repoFullName,

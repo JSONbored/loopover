@@ -49,6 +49,16 @@ describe("generateIssuePlan (#issue-coding-plan)", () => {
     expect((run.mock.calls[0] as unknown as unknown[])[2]).toEqual({ gateway: { id: "gw-1" } });
   });
 
+  it("does not call Workers AI when the shared daily neuron budget is exhausted", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_DAILY_NEURON_BUDGET: "0" });
+    await expect(generateIssuePlan(env, { title: "Add a flag", body: "Use AI budget." }, { actor: "maint", repoFullName: "acme/widgets", issueNumber: 7 })).resolves.toBeNull();
+    expect(run).not.toHaveBeenCalled();
+    const usage = await env.DB.prepare("select feature, actor, status, estimated_neurons, metadata_json from ai_usage_events where feature = ?").bind("issue_plan").first<{ feature: string; actor: string; status: string; estimated_neurons: number; metadata_json: string }>();
+    expect(usage).toMatchObject({ feature: "issue_plan", actor: "maint", status: "quota_exceeded", estimated_neurons: 0 });
+    expect(JSON.parse(usage?.metadata_json ?? "{}")).toMatchObject({ repoFullName: "acme/widgets", issueNumber: 7 });
+  });
+
   it("returns null when there is no issue text to plan from (no AI call)", async () => {
     const run = vi.fn(async () => ({ response: "x" }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });

@@ -43,6 +43,38 @@ describe("fetchBrokeredInstallationToken", () => {
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer ");
   });
 
+  it("rejects broker URLs that would send the enrollment secret to unsafe origins", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("fetch should not be called for an unsafe broker URL");
+    }) as typeof fetch;
+
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "http://broker.example" }, fetchImpl)).rejects.toThrow(/must use https/);
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "https://user:pass@broker.example" }, fetchImpl)).rejects.toThrow(/userinfo/);
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "https://:pass@broker.example" }, fetchImpl)).rejects.toThrow(/userinfo/);
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "https://broker.example?redirect=evil" }, fetchImpl)).rejects.toThrow(/query string or fragment/);
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "https://broker.example#token" }, fetchImpl)).rejects.toThrow(/query string or fragment/);
+    await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "not a url" }, fetchImpl)).rejects.toThrow(/valid URL/);
+  });
+
+  it("allows explicit localhost HTTP broker URLs for development only", async () => {
+    const calls: { url: string; init?: RequestInit | undefined }[] = [];
+    const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return Response.json({ token: "ghs_local" });
+    }) as typeof fetch;
+
+    await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "http://127.0.0.1:8787" }, fetchImpl);
+    await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "http://[::1]:8787" }, fetchImpl);
+    const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "http://localhost:8787/orb/" }, fetchImpl);
+
+    expect(out.token).toBe("ghs_local");
+    expect(calls.map((call) => call.url)).toEqual([
+      "http://127.0.0.1:8787/v1/orb/token",
+      "http://[::1]:8787/v1/orb/token",
+      "http://localhost:8787/orb/v1/orb/token",
+    ]);
+  });
+
   it("throws on a non-OK broker response (e.g. 403 installation_not_eligible)", async () => {
     const fetchImpl = (async () => new Response("nope", { status: 403 })) as typeof fetch;
     await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s" }, fetchImpl)).rejects.toThrow(/403/);
@@ -72,6 +104,14 @@ describe("registerOrbRelayTarget", () => {
     const { fetchImpl, calls } = captureFetch(new Response("ok"));
     await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" }, fetchImpl);
     expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/relay/register");
+  });
+
+  it("fails closed without registering when the broker URL is unsafe", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("fetch should not be called for an unsafe broker URL");
+    }) as typeof fetch;
+
+    await expect(registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example", ORB_BROKER_URL: "http://broker.example" }, fetchImpl)).resolves.toBe("failed");
   });
 
   it("returns failed on a non-ok response or a thrown fetch (never blocks boot)", async () => {

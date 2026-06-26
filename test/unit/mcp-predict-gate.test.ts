@@ -46,6 +46,26 @@ describe("MCP gittensory_predict_gate", () => {
     expect((minimal.structuredContent as { pack: string }).pack).toBe("oss-anti-slop");
   });
 
+  it("predicts the focus-manifest path policy when changedPaths are supplied (#11-13/#18)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+    // Public config: oss-anti-slop (no account needed), manifest path policy in block mode, dist/** blocked.
+    await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", manifestPolicy: "block" }, blockedPaths: ["dist/**"] });
+    const client = await connect(env);
+
+    const result = await client.callTool({
+      name: "gittensory_predict_gate",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Build output", changedPaths: ["dist/bundle.js"] },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { conclusion: string; blockers: Array<{ code: string }>; note: string };
+    expect(data.conclusion).toBe("failure");
+    expect(data.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(true);
+    // With paths supplied the note drops the "provide changed paths" disclaimer but still disclaims slop.
+    expect(data.note).not.toContain("Provide the PR's changed paths");
+    expect(data.note.toLowerCase()).toContain("slop");
+  });
+
   // Parity (#gate-nonconfirmed): every author is gated identically now — a synthetic PR that trips a blocker
   // predicts `failure` regardless of confirmed status, matching the real maintainer gate. The prediction still
   // resolves + surfaces the caller's confirmed status (transparency / on-chain scoring context) but it no

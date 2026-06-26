@@ -6,9 +6,11 @@
 //   • flag-OFF (default) → isPlannerEnabled is false, the handler short-circuits BEFORE parsing, and the worker
 //     is byte-identical to today (`@gittensory plan` falls through to the existing mention path → help card).
 //   • flag-ON → only a MAINTAINER can trigger it; the model sees only the (already-public) issue title + body;
-//     the output is public-safe-sanitized before posting; any model/error degrades to a no-plan no-op.
+//     shared AI budget accounting runs before Workers AI; the output is public-safe-sanitized before posting;
+//     any model/error degrades to a no-plan no-op.
 
-import { BEST_REVIEW_MODELS, coerceAiText, RELIABLE_FALLBACK_MODELS } from "../services/ai-review";
+import { BEST_REVIEW_MODELS, clampNumber, coerceAiText, estimateNeurons, RELIABLE_FALLBACK_MODELS, utcDayStartIso } from "../services/ai-review";
+import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../github/commands";
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter } from "../github/footer";
@@ -63,6 +65,25 @@ const PLANNER_SYSTEM_PROMPT = [
 const MAX_ISSUE_CHARS = 6_000;
 const MAX_PLAN_CHARS = 8_000;
 const PLANNER_MAX_TOKENS = 1_200;
+const PLANNER_MODEL_COUNT = 4;
+
+function plannerDailyBudget(env: Env): number {
+  const raw = Number(env.AI_DAILY_NEURON_BUDGET);
+  return clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(raw) ? raw : 10_000_000, 0, 10_000_000);
+}
+
+async function recordPlannerUsage(env: Env, args: { actor?: string | null | undefined; repoFullName?: string | null | undefined; issueNumber?: number | null | undefined; status: string; estimatedNeurons: number; detail: string }): Promise<void> {
+  await recordAiUsageEvent(env, {
+    feature: "issue_plan",
+    actor: args.actor ?? null,
+    route: "github_app.issue_plan",
+    model: [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]].join("+"),
+    status: args.status,
+    estimatedNeurons: args.estimatedNeurons,
+    detail: args.detail,
+    metadata: { repoFullName: args.repoFullName ?? null, issueNumber: args.issueNumber ?? null },
+  });
+}
 
 /** One Workers-AI text completion for the planner: primary model, one reliable fallback, a single retry each.
  *  Fail-safe — any error or empty output returns null. Mirrors runWorkersOpinion's routing (AI Gateway when set). */
@@ -88,12 +109,23 @@ async function runPlannerModel(env: Env, system: string, user: string): Promise<
 /** Generate an implementation plan (markdown) from an issue's title + body via Workers AI. Returns null when AI
  *  is unavailable or returns nothing (the caller then posts no plan). The returned text is bounded; the caller
  *  still sanitizes it before posting. */
-export async function generateIssuePlan(env: Env, issue: { title?: string | null | undefined; body?: string | null | undefined }): Promise<string | null> {
+export async function generateIssuePlan(
+  env: Env,
+  issue: { title?: string | null | undefined; body?: string | null | undefined },
+  accounting: { actor?: string | null | undefined; repoFullName?: string | null | undefined; issueNumber?: number | null | undefined } = {},
+): Promise<string | null> {
   const title = (issue.title ?? "").trim();
   const body = (issue.body ?? "").trim().slice(0, MAX_ISSUE_CHARS);
   if (!title && !body) return null; // nothing to plan from
   const user = `Issue title: ${title || "(none)"}\n\nIssue description:\n${body || "(no description provided)"}`;
+  const estimatedNeurons = estimateNeurons(PLANNER_SYSTEM_PROMPT.length + user.length, PLANNER_MAX_TOKENS, PLANNER_MODEL_COUNT);
+  const remainingBudget = Math.max(0, plannerDailyBudget(env) - (await sumAiEstimatedNeuronsSince(env, utcDayStartIso())));
+  if (estimatedNeurons > remainingBudget) {
+    await recordPlannerUsage(env, { ...accounting, status: "quota_exceeded", estimatedNeurons: 0, detail: `estimated ${estimatedNeurons} neurons exceeds remaining ${remainingBudget}` });
+    return null;
+  }
   const plan = await runPlannerModel(env, PLANNER_SYSTEM_PROMPT, user);
+  await recordPlannerUsage(env, { ...accounting, status: plan ? "ok" : "no_output", estimatedNeurons: plan ? estimatedNeurons : 0, detail: plan ? "issue plan generated" : "no usable output" });
   if (!plan) return null;
   return plan.slice(0, MAX_PLAN_CHARS);
 }

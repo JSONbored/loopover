@@ -183,6 +183,43 @@ describe("analyzePRQueue — ranking (reviewability + burden reduction)", () => 
   });
 });
 
+describe("analyzePRQueue — malformed timestamp robustness", () => {
+  it("keeps the ranking deterministic when a PR has an unparseable createdAt", async () => {
+    const now = Date.now();
+    const tenDaysAgo = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = new Date(now - 60 * 60 * 1000).toISOString();
+    // All three are confirmed miners with passing checks + good issue -> tie on reviewability, so the
+    // ranking is decided by privateBurdenReductionScore, which must stay finite.
+    const validOld = makePR({ number: 1, createdAt: tenDaysAgo, lastUpdatedAt: tenDaysAgo });
+    const validRecent = makePR({ number: 2, createdAt: recent, lastUpdatedAt: recent });
+    const badTimestamp = makePR({ number: 3, createdAt: "not-a-date", lastUpdatedAt: "not-a-date" });
+
+    const { rankedPRs } = await analyzePRQueue([badTimestamp, validRecent, validOld], defaultContext);
+
+    // Pre-fix the bad timestamp NaN-poisoned the comparator and the order of #2/#3 was non-deterministic;
+    // now the bad timestamp degrades to a finite 0-day age and the whole set is stable.
+    expect(rankedPRs.map((pr) => pr.number)).toEqual([1, 2, 3]);
+  });
+
+  it("degrades an empty createdAt to a finite age instead of NaN", async () => {
+    const now = Date.now();
+    const tenDaysAgo = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const validOld = makePR({ number: 1, createdAt: tenDaysAgo });
+    const emptyTimestamp = makePR({ number: 2, createdAt: "" });
+
+    const { rankedPRs } = await analyzePRQueue([emptyTimestamp, validOld], defaultContext);
+
+    expect(rankedPRs.map((pr) => pr.number)).toEqual([1, 2]);
+  });
+
+  it("does not flag a PR as pending-too-long when its lastUpdatedAt is unparseable", async () => {
+    const pr = makePR({ number: 1, checksStatus: "pending", lastUpdatedAt: "not-a-date" });
+    const { recommendations } = await analyzePRQueue([pr], defaultContext);
+    // A bad timestamp degrades to 0 days, so it is not treated as stale-pending -> review_now.
+    expect(recommendations.get(1)).toBe("review_now");
+  });
+});
+
 describe("analyzePRQueue — performance", () => {
   it("ranks 120 PRs in under 50ms", async () => {
     const prs: PullRequestInput[] = Array.from({ length: 120 }, (_, i) =>

@@ -71,7 +71,13 @@ export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
 ] as const;
 
 function computeDaysSince(isoDateString: string, now: Date): number {
-  return (now.getTime() - new Date(isoDateString).getTime()) / MILLISECONDS_PER_DAY;
+  // A malformed/empty timestamp -> NaN, which flows into computePrivateBurdenReductionScore and then the
+  // analyzePRQueue sort comparator (`b.score - a.score`). NaN makes Array.sort non-deterministic, and even
+  // Infinity would reintroduce that (`Infinity - Infinity = NaN` when two PRs share a bad timestamp), so the
+  // fallback must be finite. 0 degrades a bad timestamp to "just-created" (lowest burden priority); mirrors the
+  // issueAgeDays guard in signals/reward-risk.ts.
+  const parsed = Date.parse(isoDateString);
+  return Number.isFinite(parsed) ? (now.getTime() - parsed) / MILLISECONDS_PER_DAY : 0;
 }
 
 function isPRVeryLarge(pr: PullRequestInput): boolean {

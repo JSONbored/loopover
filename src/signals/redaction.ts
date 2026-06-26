@@ -12,14 +12,17 @@
 // flags, no `\b` anchors), so a surface that redacts/gates with these terms can compose from one source
 // instead of re-typing the list and drifting. `pr-body-draft.ts` builds its scrubber + final guard from it.
 //
+// Pluralizable nouns share one trailing `\w*`: callers wrap this in `\b(…)\b`, so a bare term's closing
+// boundary would land before a plural "s" and leak it ("wallets", "payouts"); `farming` and the compounds stay bare.
+//
 // NOTE: two other public surfaces — `agent-action-explanation-card.ts` and `miner-dashboard-recommendations.ts`
 // — keep their own context-specific, phrase-tuned vocabularies (they redact whole phrases like "public score
 // estimate" and extra terms like "seed phrase"/"private key" for cleaner output, and deliberately do not
 // redact a bare "score"/"reward"). Those are curated for their surface, not drift of this core, so they are
 // intentionally NOT collapsed onto `PUBLIC_UNSAFE_TERMS`.
-export const PUBLIC_UNSAFE_TERMS = String.raw`reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability`;
+export const PUBLIC_UNSAFE_TERMS = String.raw`(?:reward|score|wallet|hotkey|coldkey|mnemonic|payout|ranking)\w*|farming|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability`;
 
-export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|/Users/|/home/|/tmp/|[A-Z]:[\\/]Users[\\/]`, "i");
+export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|/Users/|/home/|/root/|/tmp/|[A-Z]:[\\/]Users[\\/]`, "i");
 
 /** True iff `text` contains nothing that must stay private — i.e. it is safe to surface on a public GitHub surface. */
 export function isPublicSafeText(text: string): boolean {

@@ -114,7 +114,7 @@ import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePl
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
-import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
@@ -2067,7 +2067,7 @@ export class GittensoryMcp {
       listPullRequests(this.env, repoFullName),
       listBountiesByRepo(this.env, repoFullName),
       loadOrComputeIssueQualityResponse(this.env, repoFullName),
-      loadRepoFocusManifest(this.env, repoFullName),
+      loadPublicRepoFocusManifest(this.env, repoFullName),
     ]);
     // Resolve the caller's own confirmed-Gittensor status the same way the maintainer pipeline does (official
     // Gittensor API → confirmed). It is surfaced in the verdict for transparency but no longer changes the
@@ -2687,7 +2687,7 @@ export class GittensoryMcp {
       listBountiesByRepo(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       loadOrComputeIssueQualityResponse(this.env, input.repoFullName),
-      loadRepoFocusManifest(this.env, input.repoFullName),
+      loadPublicRepoFocusManifest(this.env, input.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot: snapshot });

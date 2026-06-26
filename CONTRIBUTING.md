@@ -65,6 +65,10 @@ Do not open PRs for:
 - Changelog edits in ordinary feature/fix PRs. Changelogs are updated during release prep.
 - Low-effort reward-farming changes, spam, generated bulk edits, or PRs that do not explain the
   product impact.
+- Plagiarized PRs — copying another contributor's PR, diff, or work and submitting it as your own,
+  including lightly reworded or re-tested copies filed under a different account. Copying others to
+  farm Gittensor rewards is a hard violation and results in a **permanent block from contributing
+  across all of our repositories**. See [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## Before Opening A PR
 
@@ -101,14 +105,17 @@ checks were skipped and why:
 ```sh
 git diff --check
 npm run actionlint
+npm run db:migrations:check
 npm run typecheck
 npm run test:coverage
 npm run test:workers
 npm run build:mcp
 npm run test:mcp-pack
 npm run ui:openapi:check
+npm run ui:version-audit
 npm run ui:lint
 npm run ui:typecheck
+npm run ui:test
 npm run ui:build
 npm audit --audit-level=moderate
 ```

@@ -9,6 +9,10 @@ export const installations = sqliteTable("installations", {
   id: integer("id").primaryKey(),
   accountLogin: text("account_login").notNull(),
   accountId: integer("account_id").notNull(),
+  // The GitHub App this installation belongs to (#selfhost-app-id). Nullable: only `installation` events (and
+  // the App-installation API refresh) carry it, so existing rows backfill lazily. Lets a backend tell its OWN
+  // installations from a SECOND gittensory App installed on the same account (cloud + self-host side by side).
+  appId: integer("app_id"),
   targetType: text("target_type").notNull(),
   repositorySelection: text("repository_selection"),
   permissionsJson: text("permissions_json").notNull().default("{}"),

@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
-import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
+import { setLocalManifestReader, upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
@@ -17,12 +17,13 @@ async function connect(env: Env, identity?: AuthIdentity) {
 }
 
 describe("MCP gittensory_predict_gate", () => {
+  afterEach(() => setLocalManifestReader(null));
   it("predicts the gate from public config on an unregistered repo under oss-anti-slop", async () => {
     const env = createTestEnv();
     // A non-Gittensor repo: app-installed (so gittensory has "seen" it) but NOT Gittensor-registered, with
     // public config only (gate.pack oss-anti-slop, linked-issue blocks any author).
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
-    await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", linkedIssue: "block" } });
+    await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", linkedIssue: "block" } }, "repo_file");
     const client = await connect(env);
 
     const result = await client.callTool({
@@ -50,7 +51,8 @@ describe("MCP gittensory_predict_gate", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
     // Public config: oss-anti-slop (no account needed), manifest path policy in block mode, dist/** blocked.
-    await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", manifestPolicy: "block" }, blockedPaths: ["dist/**"] });
+    // Stored as a PUBLIC repo_file manifest — predict_gate reads only public config (#selfhost-app-id / #1405).
+    await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", manifestPolicy: "block" }, blockedPaths: ["dist/**"] }, "repo_file");
     const client = await connect(env);
 
     const result = await client.callTool({
@@ -64,6 +66,40 @@ describe("MCP gittensory_predict_gate", () => {
     // With paths supplied the note drops the "provide changed paths" disclaimer but still disclaims slop.
     expect(data.note).not.toContain("Provide the PR's changed paths");
     expect(data.note.toLowerCase()).toContain("slop");
+  });
+
+  it("ignores container-private manifests and predicts from the public repo file", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+    await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", linkedIssue: "off", readiness: { mode: "off" } } }, "repo_file");
+    setLocalManifestReader(async (repo) =>
+      repo === "acme/widgets"
+        ? `gate:
+  pack: oss-anti-slop
+  linkedIssue: block
+  readiness:
+    mode: block
+    minScore: 99
+blockedPaths:
+  - secret/private/**
+testExpectations:
+  - run private fuzz suite
+`
+        : null,
+    );
+    const client = await connect(env);
+
+    const result = await client.callTool({
+      name: "gittensory_predict_gate",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Public config only", linkedIssues: [] },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { pack: string; conclusion: string; blockers: Array<{ detail?: string }> };
+    expect(data.pack).toBe("oss-anti-slop");
+    expect(data.conclusion).toBe("success");
+    expect(JSON.stringify(data)).not.toContain("secret/private/**");
+    expect(JSON.stringify(data)).not.toContain("private fuzz suite");
   });
 
   // Parity (#gate-nonconfirmed): every author is gated identically now — a synthetic PR that trips a blocker
@@ -88,7 +124,7 @@ describe("MCP gittensory_predict_gate", () => {
       const env = createTestEnv();
       await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
       // gittensor pack, linked-issue blocks; the contributor supplies no linked issue → blocker fires.
-      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } });
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } }, "repo_file");
       stubGittensorMiners([]); // miner1 is NOT a confirmed Gittensor contributor — gated the same regardless
       const client = await connect(env);
 
@@ -108,7 +144,7 @@ describe("MCP gittensory_predict_gate", () => {
     it("predicts FAILURE for a confirmed contributor when the same blocker fires", async () => {
       const env = createTestEnv();
       await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
-      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } });
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } }, "repo_file");
       stubGittensorMiners([{ login: "miner1", id: 4242 }]); // miner1 IS confirmed
       const client = await connect(env);
 
@@ -127,7 +163,7 @@ describe("MCP gittensory_predict_gate", () => {
       const env = createTestEnv();
       await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
       // No explicit pack → defaults to the gittensor pack, which still resolves confirmed status via the API.
-      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { linkedIssue: "block" } });
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { linkedIssue: "block" } }, "repo_file");
       // The confirmation lookup is the only network call on the prediction path (the URL is a fixed constant
       // base; the login is never interpolated into it — it is filtered client-side — so there is no SSRF
       // surface). When that call fails/times out, fetchGittensorContributorSnapshot resolves to null, so the
@@ -154,7 +190,7 @@ describe("MCP gittensory_predict_gate", () => {
   it("is repo-scoped: a session cannot predict against an inaccessible repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "private-roadmap", full_name: "victimco/private-roadmap", private: true, owner: { login: "victimco" } });
-    await upsertRepoFocusManifest(env, "victimco/private-roadmap", { gate: { pack: "oss-anti-slop", linkedIssue: "block" } });
+    await upsertRepoFocusManifest(env, "victimco/private-roadmap", { gate: { pack: "oss-anti-slop", linkedIssue: "block" } }, "repo_file");
     const { session } = await createSessionForGitHubUser(env, { login: "miner1", id: 1 });
     const client = await connect(env, { kind: "session", actor: "miner1", session });
 

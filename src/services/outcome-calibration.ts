@@ -31,6 +31,11 @@ export type SlopOutcomeCalibration = {
 
 export type RecommendationOutcomeCalibration = { total: number; positive: number; negative: number; pending: number; positiveRate: number | null };
 
+export type RecommendationOutcomeCalibrationOptions = {
+  /** Only maintainer-lane outcomes are authoritative enough for live self-tune policy changes. */
+  maintainerOnly?: boolean | undefined;
+};
+
 export type OutcomeCalibration = {
   repoFullName: string;
   generatedAt: string;
@@ -100,8 +105,13 @@ function computeDiscriminates(bands: SlopBandCalibration[]): boolean | null {
  * Positive (accepted/merged/improved) vs negative (rejected/closed) vs pending (stale/ignored) split. Pure.
  * When `repoFullName` is given, only outcomes targeting that repo are counted (by outcome/target repo).
  */
-export function buildRecommendationOutcomeCalibration(outcomes: AgentRecommendationOutcomeRecord[], repoFullName?: string): RecommendationOutcomeCalibration {
-  const scoped = repoFullName ? outcomes.filter((o) => sameRepo(o.outcomeRepoFullName ?? o.targetRepoFullName, repoFullName)) : outcomes;
+export function buildRecommendationOutcomeCalibration(
+  outcomes: AgentRecommendationOutcomeRecord[],
+  repoFullName?: string,
+  options: RecommendationOutcomeCalibrationOptions = {},
+): RecommendationOutcomeCalibration {
+  const repoScoped = repoFullName ? outcomes.filter((o) => sameRepo(o.outcomeRepoFullName ?? o.targetRepoFullName, repoFullName)) : outcomes;
+  const scoped = options.maintainerOnly ? repoScoped.filter((o) => o.maintainerLane) : repoScoped;
   const positive = scoped.filter((o) => o.outcomeState === "accepted" || o.outcomeState === "merged" || o.outcomeState === "improved").length;
   const negative = scoped.filter((o) => o.outcomeState === "rejected" || o.outcomeState === "closed").length;
   const pending = scoped.filter((o) => o.outcomeState === "stale" || o.outcomeState === "ignored").length;
@@ -138,12 +148,17 @@ export function outcomeCalibrationSummary(fullName: string, slop: SlopOutcomeCal
 }
 
 /** Load a repo's PRs + recommendation outcomes and assemble the calibration report. */
-export async function buildRepoOutcomeCalibration(env: Env, repoFullName: string, windowDays?: number): Promise<OutcomeCalibration> {
+export async function buildRepoOutcomeCalibration(
+  env: Env,
+  repoFullName: string,
+  windowDays?: number,
+  options: RecommendationOutcomeCalibrationOptions = {},
+): Promise<OutcomeCalibration> {
   const [pullRequests, outcomes] = await Promise.all([
     listPullRequests(env, repoFullName),
     listAgentRecommendationOutcomes(env, windowDays !== undefined ? { repoFullName, windowDays } : { repoFullName }),
   ]);
   const slop = buildSlopOutcomeCalibration(pullRequests);
-  const recommendations = buildRecommendationOutcomeCalibration(outcomes, repoFullName);
+  const recommendations = buildRecommendationOutcomeCalibration(outcomes, repoFullName, options);
   return { repoFullName, generatedAt: nowIso(), windowDays: windowDays ?? null, slop, recommendations, signals: buildOutcomeCalibrationSignals(slop, recommendations) };
 }

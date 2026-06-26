@@ -65,6 +65,7 @@
     "@hono/node-server": "^2.0.6",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@octokit/core": "^7.0.6",
+    "@sentry/node": "^10.62.0",
     "agents": "^0.16.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.26",

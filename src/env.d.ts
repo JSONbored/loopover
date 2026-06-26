@@ -118,6 +118,11 @@ declare global {
      *  (ONE in-place comment in the converged shape) instead of the legacy `buildPublicPrIntelligenceComment`
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
     GITTENSORY_REVIEW_UNIFIED_COMMENT?: string;
+    /** Inline comments (#inline-comments): when truthy (AND the repo is in GITTENSORY_REVIEW_REPOS AND the repo's
+     *  `.gittensory.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
+     *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —
+     *  unset/false keeps the review path byte-identical (the model is never asked for inline findings). */
+    GITTENSORY_REVIEW_INLINE_COMMENTS?: string;
     /** Convergence (safety): when truthy, the ported safety scan runs in the review path — (1) untrusted PR
      *  title/body/diff is defanged (prompt-injection neutralized) before it reaches the AI reviewer, and (2)
      *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —

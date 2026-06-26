@@ -11,6 +11,8 @@ dist-ssr
 coverage
 .git
 .claude
+# The review-enrichment service (REES) is a separate Railway service with its own Dockerfile — keep it out of the engine image.
+review-enrichment
 .DS_Store
 *.tsbuildinfo
 # Never ship secrets into the build context

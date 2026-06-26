@@ -15,14 +15,9 @@
 // Vectorize/AI binding, an empty/cold index, or ANY error degrades to "" (no context) and the review proceeds on
 // the diff. This module NEVER throws.
 //
-// DEFERRED — the INDEX-POPULATION job + cron (OUT OF SCOPE for this chunk). Retrieval is inert until an index
-// exists: a real Vectorize resource must be provisioned AND a repo's CODE must be ingested (fetch tree → chunk
-// via `chunkFile` → embed via `embedTexts` → `upsertChunks` to Vectorize + the `repo_chunks` table), then kept
-// fresh on push (incremental re-index via `deleteChunksForPaths` + `upsertChunks`) on a cron. That job is a
-// DEPLOY-TIME / ops concern (it needs the live Vectorize binding + the queue + the `repo_chunks` migration) and
-// is tracked here as `INDEX_JOB_FOLLOWUP` / the `populateRepoIndexStub` documented stub below. Until it runs,
-// `retrieveContext` sees a cold namespace and returns "" — the capability activates once an index exists AND the
-// flag is ON (exactly as grounding activates once data is attached).
+// Index POPULATION (ingesting a repo's code so `retrieveContext` has something to return) is implemented in
+// `./rag-index.ts` and scheduled from the cron + merged-PR webhooks; this module wires RETRIEVAL only. With the
+// flag ON but a cold/empty index, `retrieveContext` returns "" — the capability activates once an index exists.
 
 import { createReviewAdapters } from "./adapters";
 import { type RagChunk, retrieveContext, upsertChunks } from "./rag";
@@ -124,31 +119,6 @@ function splitRepo(repoFullName: string): [string, string] {
   return slash === -1 ? ["", repoFullName] : [repoFullName.slice(0, slash), repoFullName.slice(slash + 1)];
 }
 
-// ── DEFERRED: the index-population job + cron (documented stub) ────────────────────────────────────
-//
-// This chunk wires RETRIEVAL only. Populating + maintaining the index is a separate DEPLOY-TIME / ops sub-task
-// because it needs (a) a real Vectorize resource provisioned, (b) the `repo_chunks` storage table + migration,
-// and (c) a queue/cron consumer that fetches a repo's tree, chunks the code, embeds it, and upserts. The pure
-// chunk→embed→upsert primitives ALREADY EXIST and are fail-safe (`chunkFile`, `embedTexts`, `upsertChunks`,
-// `deleteChunksForPaths` in `./rag`); the missing piece is only the ingestion driver + its schedule.
-//
-// FOLLOW-UP ticket marker (searchable):
-export const INDEX_JOB_FOLLOWUP =
-  "convergence-followup: build the RAG index-population job (fetch repo tree → chunkFile → embedTexts → " +
-  "upsertChunks to Vectorize + repo_chunks) + a cron/push trigger for incremental re-index (deleteChunksForPaths " +
-  "+ upsertChunks). Needs the live Vectorize binding + the repo_chunks migration. Retrieval is inert until this runs.";
-
-/**
- * Documented STUB for the deferred index-population job. It deliberately performs NO repo fetch / chunking /
- * scheduling — that driver + its migration + cron are the follow-up tracked by {@link INDEX_JOB_FOLLOWUP}.
- * The single line it does have proves the wiring shape end-to-end: given already-chunked files, it delegates to
- * the fail-safe `upsertChunks` (which no-ops to 0 when Vectorize/AI is absent). The real job will produce those
- * `RagChunk[]` from a repo tree via `chunkFile` and run on a cron/push trigger.
- *
- * @returns the number of chunks upserted (0 when the index/infra is unavailable — fail-safe, never throws).
- */
-export async function populateRepoIndexStub(env: Env, repoFullName: string, chunks: RagChunk[]): Promise<number> {
-  const infra = createReviewAdapters(env);
-  const [project, repo] = splitRepo(repoFullName);
-  return upsertChunks(infra, project, repo, chunks);
-}
+// Index POPULATION (fetch repo tree → `chunkFile` → `embedTexts` → `upsertChunks`, plus incremental re-index on
+// push via `deleteChunksForPaths` + `upsertChunks`) is implemented in `./rag-index.ts` and scheduled from the
+// six-hourly cron fan-out + on merged-PR webhooks. This module wires RETRIEVAL only.

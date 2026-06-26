@@ -1,5 +1,6 @@
 import { createInstallationToken } from "./app";
 import { makeInstallationOctokit } from "./client";
+import type { AgentActionMode } from "../settings/agent-execution";
 import type { AutoMergeMethod } from "../types";
 
 const ISSUE_EVENTS_PAGE_SIZE = 100;
@@ -36,6 +37,34 @@ export async function createPullRequestReview(
     pull_number: pullNumber,
     event,
     body,
+  });
+  return { id: (response.data as { id: number }).id };
+}
+
+/** Post a quiet, NON-BLOCKING review (`event: "COMMENT"`) carrying line-anchored inline comments — the
+ *  CodeRabbit-style inline code notes (#inline-comments). `commitId` anchors them to the reviewed head SHA so
+ *  GitHub places each on the right diff line. Mirrors {@link createPullRequestReview}; the action `mode` is
+ *  threaded so a dry-run instance suppresses the write. Throws on a non-2xx — the caller
+ *  (`postInlineReviewComments`) owns the fail-safe try/catch + audit. */
+export async function createPullRequestReviewComments(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  commitId: string,
+  comments: Array<{ path: string; line: number; side: "RIGHT" | "LEFT"; body: string }>,
+  mode: AgentActionMode,
+): Promise<{ id: number }> {
+  const { owner, repo } = splitRepo(repoFullName);
+  const token = await createInstallationToken(env, installationId);
+  const octokit = makeInstallationOctokit(env, token, mode);
+  const response = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+    owner,
+    repo,
+    pull_number: pullNumber,
+    commit_id: commitId,
+    event: "COMMENT",
+    comments,
   });
   return { id: (response.data as { id: number }).id };
 }

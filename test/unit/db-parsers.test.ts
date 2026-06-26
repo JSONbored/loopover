@@ -127,6 +127,18 @@ describe("database row parser hardening", () => {
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:40.000Z", W)).toBe(false); // back inside the new window → loses
   });
 
+  it("REGRESSION: recordWebhookEvent updates payload_hash when processing an existing queued delivery", async () => {
+    const env = createTestEnv();
+    await recordWebhookEvent(env, { deliveryId: "foreign-app-queued", eventName: "pull_request", payloadHash: "raw-sha", status: "queued" });
+
+    await recordWebhookEvent(env, { deliveryId: "foreign-app-queued", eventName: "pull_request", payloadHash: "foreign_app", status: "processed" });
+
+    const row = await env.DB.prepare("select payload_hash, status from webhook_events where delivery_id = ?")
+      .bind("foreign-app-queued")
+      .first<{ payload_hash: string; status: string }>();
+    expect(row).toEqual({ payload_hash: "foreign_app", status: "processed" });
+  });
+
   it("REGRESSION: webhook_events.received_at is always a real ISO timestamp, never the 'CURRENT_TIMESTAMP' literal (#audit-ts-literal)", async () => {
     const env = createTestEnv();
     // Real path: recordWebhookEvent always passes nowIso().

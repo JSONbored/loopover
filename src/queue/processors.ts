@@ -208,6 +208,7 @@ const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
 const PR_PUBLIC_SURFACE_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
+const ISSUE_PLAN_COOLDOWN_MS = 10 * 60 * 1000;
 
 /**
  * Run (or dry-run) the data-retention prune across the configured log/snapshot tables and audit the
@@ -2918,7 +2919,7 @@ async function maybePublishPrPublicSurface(
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
       // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
       const heldForReview = isGuardrailHit(
-        unifiedFiles.map((file) => file.path),
+        changedPathsForGuardrail(unifiedFiles),
         await loadHardGuardrailGlobs(env, repoFullName),
       );
       // Held-vs-closed parity (#8/#9): the disposition NEVER auto-closes an owner / automation-bot PR, so a gate
@@ -3282,7 +3283,8 @@ async function recordGateOverrideSkip(
  * issue comment so a contributor has a concrete starting point. Flag-OFF (default) returns false immediately
  * (BEFORE any parse), so `@gittensory plan` falls through to the existing mention path → byte-identical. Returns
  * true once it owns the event (so the caller records it processed and stops). Fail-safe: a model/post error is
- * recorded as a skip and never throws into the webhook loop.
+ * recorded as a skip and never throws into the webhook loop. A per-actor/per-repo cooldown prevents repeated
+ * maintainer comments from spending shared AI quota in a burst.
  */
 async function maybeProcessPlanCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
   if (!isPlannerEnabled(env)) return false; // flag-OFF → not handled here; the worker is byte-identical to today
@@ -3301,7 +3303,11 @@ async function maybeProcessPlanCommand(env: Env, deliveryId: string, payload: Gi
     await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "actor_not_maintainer");
     return true;
   }
-  const plan = await generateIssuePlan(env, { title: req.issue.title, body: req.issue.body });
+  if (await isPlanCommandCoolingDown(env, req.repoFullName, req.actor, ISSUE_PLAN_COOLDOWN_MS)) {
+    await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cooldown_active");
+    return true;
+  }
+  const plan = await generateIssuePlan(env, { title: req.issue.title, body: req.issue.body }, { actor: req.actor, repoFullName: req.repoFullName, issueNumber: req.issue.number });
   if (!plan) {
     await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "no_plan_generated");
     return true;
@@ -3317,6 +3323,23 @@ async function maybeProcessPlanCommand(env: Env, deliveryId: string, payload: Gi
   });
   await recordGithubProductUsage(env, "issue_plan_generated", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: {} });
   return true;
+}
+
+async function isPlanCommandCoolingDown(env: Env, repoFullName: string, actor: string, cooldownMs: number): Promise<boolean> {
+  const since = new Date(Date.now() - cooldownMs).toISOString();
+  const row = await env.DB.prepare(
+    `select 1 as active
+       from audit_events
+      where event_type in ('github_app.issue_plan_generated', 'github_app.issue_plan_skipped')
+        and actor = ?
+        and json_extract(metadata_json, '$.repoFullName') = ?
+        and created_at >= ?
+        and (event_type = 'github_app.issue_plan_generated' or coalesce(detail, '') in ('no_plan_generated', 'cooldown_active'))
+      limit 1`,
+  )
+    .bind(actor, repoFullName, since)
+    .first<{ active: number }>();
+  return Boolean(row);
 }
 
 async function recordPlanSkip(env: Env, deliveryId: string, repoFullName: string | null, targetKey: string | null, actor: string | null, reason: string): Promise<void> {

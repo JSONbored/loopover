@@ -1564,6 +1564,47 @@ describe("queue processors", () => {
     expect(postedBody).toContain("Add retry-on-5xx");
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.issue_plan_generated").first<{ n: number }>();
     expect(audit?.n).toBe(1);
+    const usage = await env.DB.prepare("select feature, actor, status, estimated_neurons, metadata_json from ai_usage_events where feature = ?").bind("issue_plan").first<{ feature: string; actor: string; status: string; estimated_neurons: number; metadata_json: string }>();
+    expect(usage?.status).toBe("ok");
+    expect(usage?.actor).toBe("maintainer1");
+    expect(usage?.estimated_neurons).toBeGreaterThan(0);
+    expect(JSON.parse(usage?.metadata_json ?? "{}")).toMatchObject({ repoFullName: "JSONbored/gittensory", issueNumber: 77 });
+  });
+
+  it("planner: enforces the shared AI budget before calling Workers AI", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI_DAILY_NEURON_BUDGET: "0", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled();
+    const usage = await env.DB.prepare("select status from ai_usage_events where feature = ?").bind("issue_plan").first<{ status: string }>();
+    expect(usage?.status).toBe("quota_exceeded");
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("no_plan_generated");
+  });
+
+  it("planner: enforces a per-actor per-repo cooldown before spending AI", async () => {
+    const run = vi.fn(async () => ({ response: "## Summary\nPlan." }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/77/comments")) return Response.json({ id: init?.body ? 5 : 6 }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@gittensory plan again", "maintainer1"));
+    expect(run).toHaveBeenCalledTimes(1);
+    const cooldown = await env.DB.prepare("select detail from audit_events where event_type = ? and detail = ?").bind("github_app.issue_plan_skipped", "cooldown_active").first<{ detail: string }>();
+    expect(cooldown?.detail).toBe("cooldown_active");
   });
 
   it("planner: flag OFF is byte-identical — @gittensory plan posts no plan and the AI is never called", async () => {

@@ -39,6 +39,9 @@ export type RewardRiskActionKind =
   | "maintainer_lane_improve_repo"
   | "maintainer_cut_readiness";
 
+/** Severity tier for a reward/risk action, from most to least urgent. */
+export type RewardRiskActionSeverity = "critical" | "warning" | "tip" | "info";
+
 const ACTION_RANK: Record<RewardRiskActionKind, number> = {
   cleanup_existing_prs: 0,
   land_existing_prs: 1,
@@ -52,6 +55,8 @@ const ACTION_RANK: Record<RewardRiskActionKind, number> = {
 export type RewardRiskAction = {
   actionKind: RewardRiskActionKind;
   repoFullName: string;
+  /** Severity tier: critical = eligibility blocker; warning = active penalty; tip = multiplier opportunity; info = planning context. */
+  severity: RewardRiskActionSeverity;
   priorityScore: number;
   laneValueScore: number;
   scoreabilityScore: number;
@@ -80,6 +85,13 @@ export type RepoRewardRisk = {
     issueMultiplier: number;
     estimatedScoreIfClean: number;
     currentEstimatedScore: number;
+    /** Explicit opportunity factors: competition and freshness of available work. */
+    opportunityFactors: {
+      /** 0–1; higher = more competing open PRs with duplicate/collision risk. */
+      competitionFactor: number;
+      /** 0–1; higher = issues in this repo were created or updated more recently. */
+      freshnessFactor: number;
+    };
   };
   scoreBlockers: string[];
   riskBreakdown: {
@@ -108,6 +120,16 @@ export type RepoRewardRisk = {
   summary: string;
 };
 
+/** A registered repo where a small number of PR cleanups would unlock or improve scoring. */
+export type EligibilityGapEntry = {
+  repoFullName: string;
+  /** Number of open PRs to land or withdraw before the open-PR gate improves. */
+  prsToUnlock: number;
+  /** Estimated merged score after reaching the threshold (from afterCleanupPreview). */
+  estimatedScoreAtThreshold: number;
+  recommendation: string;
+};
+
 export type ContributorRewardRiskStrategy = {
   login: string;
   generatedAt: string;
@@ -118,6 +140,8 @@ export type ContributorRewardRiskStrategy = {
   reasoning: string[];
   actionImpact: string[];
   nextActions: string[];
+  /** Repos where 1–5 PR cleanups would flip the open-PR gate toward scoreable. Sorted by fewest prsToUnlock. */
+  eligibilityGap: EligibilityGapEntry[];
 };
 
 export type MaintainerNoiseReport = {
@@ -181,6 +205,8 @@ export function buildRepoRewardRisk(args: {
   }).recommendation;
 
   const labels = bestFitLabels(args.repo);
+  const competitionFactor = opportunityCompetitionFactor(collisions.summary.highRiskCount, queueHealth.signals.openPullRequests);
+  const freshnessFactor = opportunityFreshnessFactor(args.issues);
   const currentOpenPrCount = nonNegative(args.outcomeHistory.totals.openPullRequests);
   const currentOpenIssueCount = nonNegative(repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues);
   /* v8 ignore next -- Credibility fallback order protects sparse private snapshots; behavior is covered through scoring profile tests. */
@@ -292,6 +318,7 @@ export function buildRepoRewardRisk(args: {
       issueMultiplier: currentPreview.scoreEstimate.issueMultiplier,
       estimatedScoreIfClean: afterCleanupPreview.scoreEstimate.estimatedMergedScore,
       currentEstimatedScore: currentPreview.scoreEstimate.estimatedMergedScore,
+      opportunityFactors: { competitionFactor, freshnessFactor },
     },
     scoreBlockers,
     riskBreakdown: {
@@ -372,6 +399,7 @@ export function buildContributorRewardRiskStrategy(args: {
     .slice(0, 8)
     .map((analysis) => `${analysis.repoFullName}: ${analysis.actionImpact.explanation} Score preview ${analysis.actionImpact.estimatedScoreDelta}; openPrMultiplier ${analysis.actionImpact.openPrMultiplierDelta}.`);
   const nextActions = [...new Set(topActions.flatMap((action) => action.nextActions))].slice(0, 10);
+  const eligibilityGap = buildEligibilityGap(repoAnalyses);
   return {
     login: args.login,
     generatedAt: nowIso(),
@@ -382,6 +410,7 @@ export function buildContributorRewardRiskStrategy(args: {
     reasoning: [...new Set(reasoning)],
     actionImpact,
     nextActions: nextActions.length > 0 ? nextActions : ["Refresh official Gittensor and GitHub backfill data, then rerun strategy."],
+    eligibilityGap,
   };
 }
 
@@ -515,14 +544,15 @@ function buildActions(args: {
 }): RewardRiskAction[] {
   const actions: RewardRiskAction[] = [];
   const openRepoPrs = args.repoOutcome?.openPullRequests ?? 0;
+  const hasBlockers = args.scoreBlockers.length > 0;
   if (args.roleContext.maintainerLane) {
     actions.push(
       action("maintainer_lane_improve_repo", args, 55 + (100 - args.maintainerFrictionPenalty) * 0.25, [
         "Improves the repo's contributor intake, label/config quality, and review flow instead of treating owner work as normal contributor evidence.",
-      ]),
+      ], "info"),
       action("maintainer_cut_readiness", args, 45 + (args.queueHealth.level === "low" ? 20 : 0), [
         "Checks whether maintainer-lane economics are configured clearly enough for repo owners without inflating outside-contributor history.",
-      ]),
+      ], "info"),
     );
   }
   if (!args.roleContext.maintainerLane && openRepoPrs > 0) {
@@ -531,21 +561,21 @@ function buildActions(args: {
         args.cleanupNeeded > 0
           ? `Reduces open PR pressure; current openPrMultiplier ${args.currentPreview.scoreEstimate.openPrMultiplier} can move toward ${args.afterCleanupPreview.scoreEstimate.openPrMultiplier}.`
           : "Keeps repo-specific queue pressure lower before adding more work.",
-      ]),
+      ], args.cleanupNeeded > 0 ? "warning" : "info"),
     );
     if (args.lane.lane !== "issue_discovery") {
       actions.push(
         action("land_existing_prs", args, 25 + args.personalFitScore * 0.28 + args.laneValueScore * 0.18 + args.actionLeverageScore * 0.35 - args.riskPenalty * 0.08, [
           "Landing already-open work preserves successful repo-specific evidence and avoids adding new maintainer load.",
-        ]),
+        ], "tip"),
       );
     }
   }
-  if (!args.roleContext.maintainerLane && openRepoPrs > 0 && (args.scoreBlockers.length > 0 || args.riskPenalty >= 55)) {
+  if (!args.roleContext.maintainerLane && openRepoPrs > 0 && (hasBlockers || args.riskPenalty >= 55)) {
     actions.push(
       action("close_or_withdraw_low_fit_prs", args, 20 + args.actionLeverageScore * 0.35 + args.riskPenalty * 0.08, [
         "Withdrawing stale or low-fit work can reduce collateral pressure faster than opening new submissions.",
-      ]),
+      ], "warning"),
     );
   }
   if (!args.roleContext.maintainerLane && (args.lane.lane === "direct_pr" || args.lane.lane === "split")) {
@@ -554,9 +584,10 @@ function buildActions(args: {
         "open_new_direct_pr",
         args,
         18 + args.laneValueScore * 0.22 + args.scoreabilityScore * 0.3 + args.personalFitScore * 0.25 - args.riskPenalty * 0.18 - args.maintainerFrictionPenalty * 0.08,
-        args.scoreBlockers.length > 0
+        hasBlockers
           ? ["New PR expected value is low until hard scoreability blockers and maintainer-friction signals are cleared."]
           : ["A tightly scoped, linked, tested direct PR has scoreability and maintainer-fit upside in this lane."],
+        hasBlockers ? "critical" : "tip",
       ),
     );
   }
@@ -566,7 +597,7 @@ function buildActions(args: {
         args.lane.lane === "issue_discovery"
           ? "This repo routes value through issue discovery; direct PR-side work has little or no lane value under current config."
           : "Issue discovery can be viable only for high-proof reports that someone else can solve.",
-      ]),
+      ], "tip"),
     );
   }
   return actions
@@ -583,10 +614,11 @@ function action(kind: RewardRiskActionKind, args: {
   riskPenalty: number;
   maintainerFrictionPenalty: number;
   actionLeverageScore: number;
-}, priorityScore: number, whyThisHelps: string[]): RewardRiskAction {
+}, priorityScore: number, whyThisHelps: string[], severity: RewardRiskActionSeverity): RewardRiskAction {
   return {
     actionKind: kind,
     repoFullName: args.repoFullName,
+    severity,
     priorityScore,
     laneValueScore: round(args.laneValueScore),
     scoreabilityScore: round(args.scoreabilityScore),
@@ -775,6 +807,39 @@ function maintainerNextStepsFor(action: PullRequestReviewability["action"], nois
   if (action === "close_or_redirect") return ["Redirect or close non-open/stale context before spending review time."];
   if (action === "needs_author") return ["Ask the author to address the concrete missing context before deep review.", ...noiseSources.slice(0, 3)];
   return ["Watch for tests, checks, linked context, or duplicate-risk changes before prioritizing review."];
+}
+
+function buildEligibilityGap(analyses: RepoRewardRisk[]): EligibilityGapEntry[] {
+  return analyses
+    .filter((a) => !a.roleContext.maintainerLane && a.actionImpact.cleanupNeeded > 0 && a.actionImpact.cleanupNeeded <= 5)
+    .sort((left, right) => left.actionImpact.cleanupNeeded - right.actionImpact.cleanupNeeded)
+    .slice(0, 5)
+    .map((a) => ({
+      repoFullName: a.repoFullName,
+      prsToUnlock: a.actionImpact.cleanupNeeded,
+      estimatedScoreAtThreshold: a.afterCleanupPreview.scoreEstimate.estimatedMergedScore,
+      recommendation: a.actionImpact.explanation,
+    }));
+}
+
+function opportunityCompetitionFactor(highRiskDuplicateClusters: number, openPullRequests: number): number {
+  return round(clamp(highRiskDuplicateClusters / Math.max(1, openPullRequests), 0, 1));
+}
+
+function opportunityFreshnessFactor(issues: IssueRecord[]): number {
+  const openIssues = issues.filter((issue) => issue.state === "open");
+  if (openIssues.length === 0) return 0;
+  const mostRecentAgeDays = Math.min(...openIssues.map((issue) => issueAgeDays(issue.updatedAt ?? issue.createdAt)));
+  // Freshness decays exponentially: ~1.0 at 0 days, ~0.6 at 7 days, ~0.2 at 30 days, ~0.05 at 90 days.
+  return round(clamp(Math.exp(-mostRecentAgeDays / 20), 0.05, 1));
+}
+
+function issueAgeDays(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  /* v8 ignore next -- Invalid provider timestamps normalize to fresh; stale timestamp handling is covered by signal tests. */
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.floor((Date.now() - parsed) / 86_400_000);
 }
 
 function sameRepo(left: string, right: string): boolean {

@@ -52,9 +52,12 @@ interface OrbExportPayload {
   events: FleetEvent[];
 }
 
-/** Stable instance identifier (hash of the Orb/App ID — no PII). */
-function instanceId(): string {
-  return createHash("sha256").update(process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? "unknown").digest("hex").slice(0, 16);
+/** Stable instance identifier (hash of the Orb/App ID — no PII). A brokered instance holds no App id, so its
+ *  dedicated anonymization secret becomes the stable identity so ORB_ENROLLMENT_SECRET is never reused as
+ *  a correlatable telemetry identifier. */
+function instanceId(anonSecret: string): string {
+  const seed = process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? `anon:${anonSecret}`;
+  return createHash("sha256").update(seed).digest("hex").slice(0, 16);
 }
 
 /** HMAC a string with the instance's own secret for anonymized export. */
@@ -150,15 +153,17 @@ function cycleTimeMs(decidedAt: string, outcomeAt: string): number | null {
 
 /**
  * Export newly-resolved PR outcomes (since this instance's watermark) to the central collector. Reads from
- * review_audit (de-noised, reversal-aware), anonymizes, signs, POSTs, then advances the cursor. Always on.
+ * review_audit (de-noised, reversal-aware), anonymizes, signs, POSTs, then advances the cursor.
  * Returns the number of events exported (0 if air-gapped, the App isn't configured, or nothing new).
  */
 export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: typeof fetch = fetch): Promise<number> {
-  // Always on (no opt-out). Air-gapped/offline deployments may suppress the outbound call.
+  // Air-gapped/offline deployments explicitly suppress every outbound telemetry call, including brokered mode.
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
-  // No App configured → no review data to export anyway. Gate export on the App being set up.
-  if (!(process.env.GITHUB_APP_PRIVATE_KEY ?? "")) return 0;
+  // A brokered self-host relies on the central Orb for tokens + webhook relay, so it has review data to export but
+  // no local App key. Otherwise, gate export on the local GitHub App private key being configured.
+  const brokered = Boolean((process.env.ORB_ENROLLMENT_SECRET ?? "").trim());
+  if (!brokered && !(process.env.GITHUB_APP_PRIVATE_KEY ?? "")) return 0;
 
   // gittensory's hosted collector. No shared secret is sent: repo/PR identifiers are HMAC'd with this
   // instance's DEDICATED anonymization secret (a 256-bit random key generated once and persisted in
@@ -167,7 +172,7 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://gittensory-api.aethereal.dev/v1/orb/ingest";
   const secret = await getOrCreateAnonSecret(db);
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
-  const instance = instanceId();
+  const instance = instanceId(secret);
 
   // Read this instance's export watermark (resumes where the last run left off).
   const cursorRow = await db

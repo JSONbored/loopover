@@ -65,7 +65,11 @@ export async function fetchBrokeredInstallationToken(
   if (!payload.token) {
     throw new Error("Orb broker token response did not include a token.");
   }
-  const expiresAtMs = payload.expiresAt ? Date.parse(payload.expiresAt) : Date.now() + 50 * 60_000;
+  // A present-but-unparseable expiresAt must fall back like an absent one: Date.parse → NaN would otherwise
+  // propagate into the installation-token cache, where `cached.expiresAtMs - margin > Date.now()` is always
+  // false for NaN — re-minting a brokered token on every GitHub call instead of caching it for ~an hour.
+  const parsedExpiry = payload.expiresAt ? Date.parse(payload.expiresAt) : Number.NaN;
+  const expiresAtMs = Number.isFinite(parsedExpiry) ? parsedExpiry : Date.now() + 50 * 60_000;
   return { token: payload.token, installationId: payload.installationId ?? 0, expiresAtMs };
 }
 

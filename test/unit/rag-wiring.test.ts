@@ -3,7 +3,7 @@ import { runGittensoryAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import * as ragModule from "../../src/review/rag";
 import { RAG_DIMENSIONS } from "../../src/review/rag";
-import { buildRagQuery, buildReviewRagContext, isRagEnabled, populateRepoIndexStub } from "../../src/review/rag-wire";
+import { buildRagQuery, buildReviewRagContext, isRagEnabled } from "../../src/review/rag-wire";
 import { createTestEnv } from "../helpers/d1";
 import type { Advisory, RepositorySettings } from "../../src/types";
 
@@ -313,14 +313,6 @@ describe("RAG wired into the AI reviewer (flag GITTENSORY_REVIEW_RAG)", () => {
   });
 });
 
-// ── Deferred index-job stub (documented follow-up) ─────────────────────────────────────────────────
-
-describe("populateRepoIndexStub (deferred index-population follow-up)", () => {
-  it("delegates to the fail-safe upsert path: 0 chunks when Vectorize/AI is absent (never throws)", async () => {
-    const env = createTestEnv({ DB: ragDbStub() }); // no VECTORIZE / AI
-    await expect(populateRepoIndexStub(env, "acme/widgets", [])).resolves.toBe(0);
-  });
-});
 
 describe("buildReviewRagContext outer fail-safe", () => {
   it("returns '' (never throws) when query construction throws", async () => {

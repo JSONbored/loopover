@@ -8,8 +8,10 @@
 // attacker-controllable query param, so a stolen OAuth code paired with a VICTIM's installation_id must NEVER
 // enroll the victim's install. We require: a valid OAuth code (single-use, GitHub-issued) → the authenticated
 // user → that user is an admin of the install's account (org admin, or the user account owner) → the install is
-// registered=1. installation_id is then bound server-side in the enrollment (read back at token-exchange, never
-// from a request). No request input is echoed into the markup (no injection surface).
+// active (not suspended/removed) and not operator-disabled. A verified admin AUTO-REGISTERS the install
+// (registered=1) — zero-touch, no operator step — and installation_id is then bound server-side in the enrollment
+// (read back at token-exchange, never from a request). No request input is echoed into the markup (no injection
+// surface).
 import type { Context } from "hono";
 import { isOrbBrokerEnabled, issueOrbEnrollment } from "./broker";
 
@@ -65,16 +67,24 @@ async function handleOrbEnrollment(c: Context<{ Bindings: Env }>, code: string, 
   if (!token) return c.html(landingPage("Couldn't verify your GitHub identity", "The authorization didn't complete — re-run the install from GitHub and try again."), 400);
   const user = await fetchOrbOAuthUser(token);
   if (!user) return c.html(landingPage("Couldn't verify your GitHub identity", "We couldn't read your GitHub account — try the install again."), 400);
-  const install = await c.env.DB.prepare("SELECT account_login, account_type, registered FROM orb_github_installations WHERE installation_id = ?")
+  const install = await c.env.DB.prepare("SELECT account_login, account_type, registered, self_enrollment_disabled, suspended_at, removed_at FROM orb_github_installations WHERE installation_id = ?")
     .bind(installationId)
-    .first<{ account_login: string | null; account_type: string | null; registered: number }>();
+    .first<{ account_login: string | null; account_type: string | null; registered: number; self_enrollment_disabled: number; suspended_at: string | null; removed_at: string | null }>();
   if (!install) return c.html(landingPage("Installation not recognized", "We haven't recorded this installation yet — give it a moment after installing, then retry."), 404);
-  if (install.registered !== 1) return c.html(landingPage("Not enabled yet", "This installation isn't enabled for brokered self-host yet — ask the operator to register it, then retry."), 403);
+  // The admin-of-installation check is the authorization gate — it runs BEFORE we reveal or change any state, so a
+  // non-admin learns nothing about the install and can never enroll someone else's.
   const isAdmin = await verifyInstallationAdmin(token, user.login, install.account_login, install.account_type);
   if (!isAdmin) return c.html(landingPage("Admin access required", "You must be an admin of this installation's account to enroll it for self-host."), 403);
+  if (install.removed_at !== null || install.suspended_at !== null) return c.html(landingPage("Installation not active", "This installation is suspended or uninstalled — re-install the Orb App, then retry."), 403);
+  if (install.self_enrollment_disabled === 1) return c.html(landingPage("Installation disabled", "This installation was disabled by the operator — contact the operator to re-enable self-host enrollment."), 403);
+  // Zero-touch self-service: a verified admin of an ACTIVE, non-disabled install self-registers it (registered=1).
+  // installation_id stays bound server-side in the enrollment, so brokered tokens remain scoped to this install.
+  if (install.registered !== 1) {
+    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = 1, last_event_at = CURRENT_TIMESTAMP WHERE installation_id = ?").bind(installationId).run();
+  }
   const result = await issueOrbEnrollment(c.env, installationId, { login: user.login, githubId: user.id ?? null });
-  /* v8 ignore next -- defensive: the existence + registered=1 checks above already passed, so issueOrbEnrollment
-     (which re-checks the same) cannot return an error here; kept so a future refactor degrades safely. */
+  /* v8 ignore next -- defensive: the existence + admin + active checks above passed and we just set registered=1, so
+     issueOrbEnrollment (which re-checks existence + registered) cannot return an error here; kept to degrade safely. */
   if ("error" in result) return c.html(landingPage("Couldn't issue an enrollment", "Please retry, or contact the operator."), 409);
   return c.html(secretPage(result.secret));
 }

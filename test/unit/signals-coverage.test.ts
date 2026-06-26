@@ -904,7 +904,7 @@ describe("signal coverage edge cases", () => {
       collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
       settings: gateSettings,
-      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
       aiReview: { notes: "The change is focused.\n\n**Suggestions**\n- Add a test for the </details> edge case." },
     });
     expect(customizedComment).toContain("Reviewed by the Acme maintainer bot."); // custom footer lead
@@ -1583,6 +1583,163 @@ describe("signal coverage edge cases", () => {
     expect(fitOf(matched)).toBe((fitOf(offLanguage) ?? 0) + 10);
     expect(fitOf(unknownLanguage)).toBe(fitOf(offLanguage));
   });
+  it("reward/risk action severity: warning under PR pressure, critical with scoreBlockers, tip for opportunities, info for maintenance", () => {
+    const directRepo = repo("owner/pressure-repo");
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: [], source: "github" }, [], []);
+
+    // High pressure: 5 total open PRs, threshold 2 → cleanupNeeded = 3 → cleanup "warning"; open PR count is a blocker → direct PR "critical"
+    const highHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [directRepo],
+      pullRequests: [],
+      issues: [],
+      repoStats: [{ login: "dev", repoFullName: directRepo.fullName, pullRequests: 5, mergedPullRequests: 1, openPullRequests: 5, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] }],
+    });
+    const highPressure = buildRepoRewardRisk({ login: "dev", repo: directRepo, repoFullName: directRepo.fullName, profile, outcomeHistory: highHistory, scoringSnapshot: scoringSnapshot(), issues: [], pullRequests: [] });
+    expect(highPressure.actions.find((a) => a.actionKind === "cleanup_existing_prs")?.severity).toBe("warning");
+    expect(highPressure.actions.find((a) => a.actionKind === "land_existing_prs")?.severity).toBe("tip");
+    expect(highPressure.actions.find((a) => a.actionKind === "open_new_direct_pr")?.severity).toBe("critical");
+    expect(highPressure.actions.find((a) => a.actionKind === "close_or_withdraw_low_fit_prs")?.severity).toBe("warning");
+
+    // Low pressure: 4 total PRs, 2 merged, 2 open → cleanupNeeded = 0 → cleanup "info"
+    // A scoringProfile is required so credibilityAssumption (0.83 from 2 mergedPRs) fills the
+    // credibility input; without it totals.credibility=0 (no gittensor data) and 0??0.8 stays 0.
+    const lowStats = [{ login: "dev", repoFullName: directRepo.fullName, pullRequests: 4, mergedPullRequests: 2, openPullRequests: 2, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] }];
+    const lowHistory = buildContributorOutcomeHistory({ login: "dev", profile, repositories: [directRepo], pullRequests: [], issues: [], repoStats: lowStats });
+    const lowFit = buildContributorFit(profile, [directRepo], [], [], [], lowStats);
+    const lowScoringProfile = buildContributorScoringProfile({ login: "dev", fit: lowFit, scoringSnapshot: scoringSnapshot() });
+    const lowPressure = buildRepoRewardRisk({ login: "dev", repo: directRepo, repoFullName: directRepo.fullName, profile, outcomeHistory: lowHistory, scoringProfile: lowScoringProfile, scoringSnapshot: scoringSnapshot(), issues: [], pullRequests: [] });
+    expect(lowPressure.actions.find((a) => a.actionKind === "cleanup_existing_prs")?.severity).toBe("info");
+    expect(lowPressure.actions.find((a) => a.actionKind === "open_new_direct_pr")?.severity).toBe("tip");
+
+    // Issue-discovery lane → file_issue_discovery is always "tip"
+    const issueRepo = repo("owner/issue-lane", { issueDiscoveryShare: 1 });
+    const issueHistory = buildContributorOutcomeHistory({ login: "dev", profile, repositories: [issueRepo], pullRequests: [], issues: [], repoStats: [] });
+    const issueResult = buildRepoRewardRisk({ login: "dev", repo: issueRepo, repoFullName: issueRepo.fullName, profile, outcomeHistory: issueHistory, scoringSnapshot: scoringSnapshot(), issues: [], pullRequests: [] });
+    expect(issueResult.actions.find((a) => a.actionKind === "file_issue_discovery")?.severity).toBe("tip");
+
+    // Maintainer lane → every action is "info"
+    const maintainerRepo = repo("owner/mine");
+    const ownerPr = pr(maintainerRepo.fullName, 1, "Owner work", { authorLogin: "owner", authorAssociation: "OWNER" });
+    const ownerProfile = buildContributorProfile("owner", { login: "owner", topLanguages: [], source: "github" }, [ownerPr], []);
+    const ownerHistory = buildContributorOutcomeHistory({ login: "owner", profile: ownerProfile, repositories: [maintainerRepo], pullRequests: [ownerPr], issues: [], repoStats: [] });
+    const maintainerResult = buildRepoRewardRisk({ login: "owner", repo: maintainerRepo, repoFullName: maintainerRepo.fullName, profile: ownerProfile, outcomeHistory: ownerHistory, scoringSnapshot: scoringSnapshot(), issues: [], pullRequests: [ownerPr] });
+    expect(maintainerResult.actions.every((a) => a.severity === "info")).toBe(true);
+  });
+
+  it("opportunityFactors: competitionFactor from collision clusters, freshnessFactor from open issue age", () => {
+    const collab = repo("owner/collab-repo");
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: [], source: "github" }, [], []);
+    const history = buildContributorOutcomeHistory({ login: "dev", profile, repositories: [collab], pullRequests: [], issues: [], repoStats: [] });
+    const base = { login: "dev", repo: collab, repoFullName: collab.fullName, profile, outcomeHistory: history, scoringSnapshot: scoringSnapshot() };
+
+    // No open issues, no collision clusters → both factors zero
+    const clean = buildRepoRewardRisk({ ...base, issues: [], pullRequests: [] });
+    expect(clean.rewardUpside.opportunityFactors.competitionFactor).toBe(0);
+    expect(clean.rewardUpside.opportunityFactors.freshnessFactor).toBe(0);
+
+    // Two open PRs sharing an issue and title → high-risk collision cluster → competitionFactor > 0
+    const sharedIssue = issue(collab.fullName, 10, "Add cursor pagination to the labels endpoint");
+    const prA = pr(collab.fullName, 11, "Add cursor pagination to the labels endpoint", { authorLogin: "alice", linkedIssues: [10] });
+    const prB = pr(collab.fullName, 12, "Add cursor pagination to the labels endpoint", { authorLogin: "bob", linkedIssues: [10] });
+    const withCollision = buildRepoRewardRisk({ ...base, issues: [sharedIssue], pullRequests: [prA, prB] });
+    expect(withCollision.rewardUpside.opportunityFactors.competitionFactor).toBeGreaterThan(0);
+
+    // Recently updated open issue (2 days ago) → freshnessFactor > 0.7
+    const freshIssue = issue(collab.fullName, 20, "New feature request", { updatedAt: new Date(Date.now() - 2 * 86_400_000).toISOString() });
+    const withFresh = buildRepoRewardRisk({ ...base, issues: [freshIssue], pullRequests: [] });
+    expect(withFresh.rewardUpside.opportunityFactors.freshnessFactor).toBeGreaterThan(0.7);
+
+    // Years-old open issue → freshnessFactor near minimum (≤ 0.05 clamp)
+    const staleIssue = issue(collab.fullName, 21, "Old feature request", { updatedAt: "2020-01-01T00:00:00.000Z" });
+    const withStale = buildRepoRewardRisk({ ...base, issues: [staleIssue], pullRequests: [] });
+    expect(withStale.rewardUpside.opportunityFactors.freshnessFactor).toBeLessThanOrEqual(0.05);
+
+    // Closed issue does not contribute to freshnessFactor
+    const closedIssue = issue(collab.fullName, 22, "Closed request", { state: "closed", updatedAt: new Date().toISOString() });
+    const withClosed = buildRepoRewardRisk({ ...base, issues: [closedIssue], pullRequests: [] });
+    expect(withClosed.rewardUpside.opportunityFactors.freshnessFactor).toBe(0);
+
+    // Issue with null dates → treated as fresh (conservative fallback)
+    const noDateIssue = issue(collab.fullName, 23, "Undated request", { updatedAt: null, createdAt: null });
+    const withNoDate = buildRepoRewardRisk({ ...base, issues: [noDateIssue], pullRequests: [] });
+    expect(withNoDate.rewardUpside.opportunityFactors.freshnessFactor).toBeGreaterThan(0);
+  });
+
+  it("eligibilityGap: surfaces repos within 1–5 PR cleanups of threshold, excludes zero-cleanup and out-of-range repos", () => {
+    const nearRepo = repo("owner/near-threshold");
+    const farRepo = repo("owner/far-threshold");
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: [], source: "github" }, [], []);
+
+    // 4 open PRs → threshold 2 → cleanupNeeded 2 → in eligibilityGap
+    const nearHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [nearRepo],
+      pullRequests: [],
+      issues: [],
+      repoStats: [{ login: "dev", repoFullName: nearRepo.fullName, pullRequests: 4, mergedPullRequests: 1, openPullRequests: 4, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] }],
+    });
+    const nearFit = buildContributorFit(profile, [nearRepo], [], [], [], [
+      { login: "dev", repoFullName: nearRepo.fullName, pullRequests: 4, mergedPullRequests: 1, openPullRequests: 4, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+    ]);
+    const nearStrategy = buildContributorRewardRiskStrategy({
+      login: "dev",
+      fit: nearFit,
+      scoringProfile: buildContributorScoringProfile({ login: "dev", fit: nearFit, scoringSnapshot: scoringSnapshot() }),
+      scoringSnapshot: scoringSnapshot(),
+      outcomeHistory: nearHistory,
+      repositories: [nearRepo],
+      allIssues: [],
+      allPullRequests: [],
+    });
+    expect(nearStrategy.eligibilityGap.length).toBeGreaterThan(0);
+    const nearEntry = nearStrategy.eligibilityGap[0]!;
+    expect(nearEntry.repoFullName).toBe(nearRepo.fullName);
+    expect(nearEntry.prsToUnlock).toBeGreaterThan(0);
+    expect(nearEntry.prsToUnlock).toBeLessThanOrEqual(5);
+    expect(nearEntry.estimatedScoreAtThreshold).toBeGreaterThan(0);
+
+    // 10 open PRs → cleanupNeeded 8 > 5 → excluded from eligibilityGap
+    const farHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [farRepo],
+      pullRequests: [],
+      issues: [],
+      repoStats: [{ login: "dev", repoFullName: farRepo.fullName, pullRequests: 10, mergedPullRequests: 1, openPullRequests: 10, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] }],
+    });
+    const farFit = buildContributorFit(profile, [farRepo], [], [], [], [
+      { login: "dev", repoFullName: farRepo.fullName, pullRequests: 10, mergedPullRequests: 1, openPullRequests: 10, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+    ]);
+    const farStrategy = buildContributorRewardRiskStrategy({
+      login: "dev",
+      fit: farFit,
+      scoringProfile: buildContributorScoringProfile({ login: "dev", fit: farFit, scoringSnapshot: scoringSnapshot() }),
+      scoringSnapshot: scoringSnapshot(),
+      outcomeHistory: farHistory,
+      repositories: [farRepo],
+      allIssues: [],
+      allPullRequests: [],
+    });
+    expect(farStrategy.eligibilityGap.length).toBe(0);
+
+    // 0 open PRs → cleanupNeeded 0 → excluded from eligibilityGap
+    const cleanFit = buildContributorFit(profile, [nearRepo], [], [], [], []);
+    const cleanStrategy = buildContributorRewardRiskStrategy({
+      login: "dev",
+      fit: cleanFit,
+      scoringProfile: buildContributorScoringProfile({ login: "dev", fit: cleanFit, scoringSnapshot: scoringSnapshot() }),
+      scoringSnapshot: scoringSnapshot(),
+      outcomeHistory: buildContributorOutcomeHistory({ login: "dev", profile, repositories: [nearRepo], pullRequests: [], issues: [], repoStats: [] }),
+      repositories: [nearRepo],
+      allIssues: [],
+      allPullRequests: [],
+    });
+    expect(cleanStrategy.eligibilityGap.length).toBe(0);
+  });
+
   it("buildQueueHealth counts draft PRs and fires inactive_draft_prs finding when stale", () => {
     const directRepo = repo("owner/draft-test");
     const collisions = buildCollisionReport(directRepo.fullName, [], []);

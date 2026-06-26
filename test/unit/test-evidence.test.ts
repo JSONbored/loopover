@@ -8,7 +8,23 @@ describe("test evidence helpers", () => {
     expect(isTestPath("src/test/helpers.ts")).toBe(true);
     expect(isTestPath("tests/integration/api.test.ts")).toBe(true);
     expect(isTestPath("__tests__/widget.spec.tsx")).toBe(true);
+    expect(isTestPath("e2e/login.spec.ts")).toBe(true);
+    expect(isTestPath("integration/api_flow.cy.ts")).toBe(true);
+    expect(isTestPath("playwright/smoke.spec.ts")).toBe(true);
+    expect(isTestPath("cypress/e2e/checkout.cy.js")).toBe(true);
+    expect(isTestPath("components/__snapshots__/Card.tsx.snap")).toBe(true);
+    expect(isTestPath("src/state.snap")).toBe(false);
     expect(isTestPath("src/widget.rs")).toBe(false);
+  });
+
+  it("does not treat framework or integration directory names alone as test evidence", () => {
+    expect(isTestPath("src/integration/auth.ts")).toBe(false);
+    expect(isTestPath("src/playwright/client.ts")).toBe(false);
+    expect(isTestPath("src/cypress/client.ts")).toBe(false);
+    expect(isTestPath("src/e2e/client.ts")).toBe(false);
+    expect(isTestPath("src/integration/auth.test.ts")).toBe(true);
+    expect(isTestPath("src/playwright/client.e2e.ts")).toBe(true);
+    expect(isTestPath("src/cypress/client.cy.ts")).toBe(true);
   });
 
   it("treats explicit test file lists as evidence", () => {
@@ -30,6 +46,7 @@ describe("classifyTestCoverage", () => {
   it("classifies >= 40% test ratio as strong", () => {
     // 2 source + 2 test = 50%
     expect(classifyTestCoverage(["src/a.ts", "src/b.ts", "test/a.test.ts", "test/b.test.ts"])).toBe("strong");
+    expect(classifyTestCoverage(["src/a.ts", "src/b.ts", "e2e/a.spec.ts", "e2e/b.spec.ts"])).toBe("strong");
   });
 
   it("classifies 20%–39% test ratio as adequate", () => {

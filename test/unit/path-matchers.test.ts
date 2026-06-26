@@ -175,6 +175,32 @@ describe("isConfigFile", () => {
     }
   });
 
+  it("matches automation, toolchain, and hosted CI config files", () => {
+    for (const path of [
+      "renovate.json",
+      ".github/dependabot.yml",
+      ".tool-versions",
+      "mise.toml",
+      "lefthook.yml",
+      ".pre-commit-config.yaml",
+      ".gitlab-ci.yml",
+      "azure-pipelines.yml",
+      "buf.yaml",
+      "buf.gen.yaml",
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yaml",
+      ".circleci/config.yml",
+    ]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("does not treat renovate-like source names as config", () => {
+    for (const path of ["src/renovate-helpers.ts", "docs/dependabot-notes.md"]) {
+      expect(isConfigFile(path)).toBe(false);
+    }
+  });
+
   it("matches config files by known filename prefix", () => {
     for (const path of ["tsconfig.build.json", "vitest.config.ts", ".env.local", ".eslintrc.json", ".prettierrc.js"]) {
       expect(isConfigFile(path)).toBe(true);
@@ -212,9 +238,12 @@ describe("classifyChangedFile", () => {
       ["vitest.config.ts", "config"],
       ["wrangler.jsonc", "config"],
       ["turbo.json", "config"],
+      ["renovate.json", "config"],
+      [".github/workflows/ci.yml", "config"],
       ["test/unit/app.test.ts", "test"],
       ["README.md", "docs"],
       ["src/app.ts", "source"],
+      ["src/integration/auth.ts", "source"],
       ["data/values.json", "other"],
     ];
     for (const [path, expected] of cases) {

@@ -48,12 +48,13 @@ per-PR feature activates only when **(its own flag is ON) AND (the repo is allow
 
 | Flag | What it does | Default | How to tune | Sample |
 | --- | --- | --- | --- | --- |
-| `GITTENSORY_REVIEW_REPOS` | **Per-repo cutover allowlist.** Comma-separated `owner/repo` names that may run the per-PR review features (`SAFETY`, `GROUNDING`, `RAG`, `REPUTATION`, `UNIFIED_COMMENT`). A per-PR feature runs on a repo only if its global flag is ON **and** the repo is listed here. Empty/unset = **no repos** → every per-PR feature stays dormant for everyone regardless of the global flags. Cron/endpoint flags (`OPS`, `SELFTUNE`, `PARITY_AUDIT`, `CONTENT_LANE`, `DRAFT`) are **not** scoped by this. | `""` (no repos) | Add repos one at a time as you roll forward; remove to roll back. Case-insensitive, trimmed; stray commas are ignored. | `"JSONbored/gittensory,JSONbored/awesome-claude"` |
+| `GITTENSORY_REVIEW_REPOS` | **Per-repo cutover allowlist.** Comma-separated `owner/repo` names that may run the per-PR review features (`SAFETY`, `GROUNDING`, `RAG`, `REPUTATION`, `UNIFIED_COMMENT`, `INLINE_COMMENTS`). A per-PR feature runs on a repo only if its global flag is ON **and** the repo is listed here. Empty/unset = **no repos** → every per-PR feature stays dormant for everyone regardless of the global flags. Cron/endpoint flags (`OPS`, `SELFTUNE`, `PARITY_AUDIT`, `CONTENT_LANE`, `DRAFT`) are **not** scoped by this. | `""` (no repos) | Add repos one at a time as you roll forward; remove to roll back. Case-insensitive, trimmed; stray commas are ignored. | `"JSONbored/gittensory,JSONbored/awesome-claude"` |
 | `GITTENSORY_REVIEW_SAFETY` | **Safety scan** in the review path: (1) defangs untrusted PR title/body/diff (prompt-injection neutralization) before the AI reviewer sees it, and (2) scans the PR diff for leaked secrets, surfacing a `secret_leak` blocker. Per-PR — also requires the repo to be in `GITTENSORY_REVIEW_REPOS`. | `false` | Flip to `true`, then add the repo to `GITTENSORY_REVIEW_REPOS`. No per-repo tuning beyond that. | `"true"` |
 | `GITTENSORY_REVIEW_GROUNDING` | **Grounds** the AI-reviewer prompt with the PR's *finished* CI status + the *full post-change content* of the changed files, so a non-frontier model verifies its claims against reality instead of predicting CI or flagging symbols defined just outside the hunk. Per-PR — also gated by `GITTENSORY_REVIEW_REPOS`. | `false` | Flip to `true` + allowlist the repo. Both grounding inputs (CI + full files) are gathered together; there is no partial mode. | `"true"` |
 | `GITTENSORY_REVIEW_RAG` | **Retrieval-augmented context.** At review time, queries the codebase vector index for code/docs semantically related to the changed files (callers, related modules, existing conventions) and appends a "Relevant existing code / docs" section to the reviewer prompt — additive only, like grounding. Per-PR — also gated by `GITTENSORY_REVIEW_REPOS`. **Inert until a vector index exists** for the repo (a cold/missing index degrades to no context). | `false` | Flip to `true` + allowlist the repo **and** bind/populate the `VECTORIZE` index. Without an index it is a safe no-op. | `"true"` |
 | `GITTENSORY_REVIEW_REPUTATION` | **Submitter-reputation spend control (internal-only).** Extends the AI-spend gate: a new / burst / low-reputation submitter is downgraded to a deterministic-only review (the paid AI neurons are skipped); good-reputation submitters proceed normally. The per-(project, submitter) outcome is recorded after the gate decides. **Never surfaced publicly** — no comment, label, or check shows reputation. Per-PR — also gated by `GITTENSORY_REVIEW_REPOS`. | `false` | Flip to `true` + allowlist the repo. Thresholds are generic anti-abuse defaults (they reveal no review direction) and are not per-repo tunable. | `"true"` |
 | `GITTENSORY_REVIEW_UNIFIED_COMMENT` | Renders the public PR comment as **one in-place unified comment** (the converged comment shape) instead of the legacy multi-panel comment. Per-PR — also gated by `GITTENSORY_REVIEW_REPOS`. | `false` | Flip to `true` + allowlist the repo. Flag-OFF keeps the legacy comment byte-identical. | `"true"` |
+| `GITTENSORY_REVIEW_INLINE_COMMENTS` | **Quiet inline review comments** (CodeRabbit-style). On top of the decision summary, the AI reviewer leaves **non-blocking** inline comments on specific changed lines (`event: COMMENT`, never a change-request) — so a contributor sees exactly what to fix on a resubmission without the gate ever changing. Each comment's line is validated against the PR diff (out-of-diff findings are dropped, never a 422). Per-PR — also requires the repo in `GITTENSORY_REVIEW_REPOS` **and** `review.inline_comments: true` in its `.gittensory.yml`. | `false` | Flip to `true`, allowlist the repo, and set `review.inline_comments: true`. Flag-OFF the model is never asked for inline findings (byte-identical). | `"true"` |
 | `GITTENSORY_REVIEW_OPS` | **Observability (read-only).** Drives two operator surfaces off your own review-outcome data: (1) on the cron tick, an anomaly scan over the gate-block ledger + recommendation/slop calibration emits a structured `ops_anomaly` log when something drifts (gate false-positive spike, slop score inverting, recommendation negative-rate spike); and (2) a bearer-gated `GET /v1/internal/ops/stats` outcome aggregate. **Read-only** — does not mutate config. Global (not scoped by `GITTENSORY_REVIEW_REPOS`). | `false` | Flip to `true` to enable the anomaly cron + the stats endpoint. Endpoint is bearer-gated (see secrets). | `"true"` |
 | `GITTENSORY_REVIEW_SELFTUNE` | **Self-improvement / auto-tune loop.** On the cron tick, computes tuning recommendations from your own review-outcome data, **shadow-soaks** any strictly-tightening recommendation, and auto-promotes it to live **only** after the soak window passes the gate; every action is audited. It can **only ever tighten** the gate — a loosening recommendation is never applied. Global. *Note:* reading a promoted override back into the live gate is a deferred follow-up; today it records recommendations + shadow-soak + audit. | `false` | Flip to `true` to enable the self-tuning cron. Direction is enforced (tightening-only) — safe to leave on. | `"true"` |
 | `GITTENSORY_REVIEW_PARITY_AUDIT` | **Parity readiness (shadow, record-only).** Shadow-records each finalized native gate decision into the audit-source table and serves a pre-cutover parity readiness report at `GET /v1/internal/parity`. Recording changes **no** review behavior. Global. | `false` | Flip to `true` during a validation window to collect parity data; turn off when done. | `"true"` |
@@ -154,6 +155,20 @@ Everything a maintainer can toggle in the dashboard can be set as code under `se
 | Autonomy dial | `autonomy` | per-action-class level (`observe`…`auto`) | `{}` (= `observe`, deny-by-default) |
 | Auto-maintain policy | `autoMaintain` | `{ mergeMethod, requireApprovals }` | `squash` / `1` |
 | Command authorization | `commandAuthorization` | role policy | built-in default policy |
+| Contributor blacklist | `contributorBlacklist` | list of `{ login, reason?, evidence?, addedAt? }` (login required) | `[]` |
+| Blacklist label | `blacklistLabel` | string | `slop` |
+
+The **contributor blacklist** is layered like every other setting (`.gittensory.yml`
+`settings.contributorBlacklist` > database) and is unioned with the shared/global list. Logins are
+public data, but the optional `reason`, `evidence`, and `addedAt` fields are maintainer metadata
+for configuration/audit context and are not echoed in automated public close comments. `blacklistLabel`
+(default `slop`) is the label the engine applies to a blacklisted author's PR.
+
+A PR from a **blacklisted login** is labeled (`blacklistLabel`) and **closed deterministically** —
+ahead of any merit/CI/AI analysis, with a static public close comment and **no AI call**. The close
+short-circuits and **wins over the normal gate disposition**; it honors the autonomy dial and
+`agentPaused` / `agentDryRun` exactly like any other agent action, and the owner and automation bots
+are never auto-closed.
 
 ### Example `.gittensory.yml`
 
@@ -196,6 +211,20 @@ settings:
   checkRunMode: enabled
   checkRunDetailLevel: standard
   badgeEnabled: true
+  blacklistLabel: slop
+  contributorBlacklist:
+    - login: known-plagiarist
+      reason: plagiarism
+      evidence:
+        - https://github.com/owner/repo/pull/1
+      addedAt: "2026-06-26"
+    - bad-farmer            # bare login shorthand is also accepted
+
+# Review write-up + inline-review overrides (manifest-only; no dashboard equivalent)
+review:
+  profile: balanced          # chill | balanced | assertive — how nitpicky the AI write-up is
+  inline_comments: true      # leave quiet, non-blocking inline comments on changed lines
+                             #   (also needs GITTENSORY_REVIEW_INLINE_COMMENTS=true + the repo allowlisted)
 ```
 
 ---

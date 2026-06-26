@@ -75,6 +75,7 @@ export type FocusManifestSettings = Partial<
     | "agentPaused"
     | "agentDryRun"
     | "contributorBlacklist"
+    | "blacklistLabel"
   >
 >;
 
@@ -103,6 +104,11 @@ export type FocusManifestReviewConfig = {
   fields: Partial<Record<ReviewFieldKey, boolean>>;
   /** `review.profile`: chill / balanced / assertive. null (absent) = balanced = byte-identical reviewer prompt. */
   profile: ReviewProfile | null;
+  /** `review.inline_comments`: when true, the AI reviewer ALSO leaves quiet, non-blocking inline PR comments on
+   *  specific changed lines (in addition to the decision summary). null/false (default, absent) = no inline
+   *  comments = byte-identical behavior. Operator-gated too (GITTENSORY_REVIEW_INLINE_COMMENTS + allowlist).
+   *  (#inline-comments) */
+  inlineComments: boolean | null;
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
    *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
@@ -195,6 +201,7 @@ export type FocusManifestGuidance = {
 
 const MAX_LIST_ITEMS = 200;
 const MAX_ITEM_LENGTH = 300;
+const MAX_GLOBSTAR_SLASH_ALTERNATIVES = 128;
 export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 
 const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
@@ -231,7 +238,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+  review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
   warnings: [],
 };
 
@@ -244,7 +251,7 @@ export function isFocusManifestPublicSafe(text: string): boolean {
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {
-  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] } };
+  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] } };
 }
 
 function normalizeStringList(value: JsonValue | undefined, field: string, warnings: string[]): string[] {
@@ -477,6 +484,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (aiReviewModel !== null) out.aiReviewModel = aiReviewModel;
   const gittensorLabel = normalizeOptionalString(r.gittensorLabel, "settings.gittensorLabel", warnings);
   if (gittensorLabel !== null) out.gittensorLabel = gittensorLabel;
+  const blacklistLabel = normalizeOptionalString(r.blacklistLabel, "settings.blacklistLabel", warnings);
+  if (blacklistLabel !== null) out.blacklistLabel = blacklistLabel;
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
   for (const key of ["aiReviewByok", "autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled", "agentPaused", "agentDryRun"] as const) {
@@ -530,7 +539,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -551,6 +560,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const footerText = footerRecord ? parsePublicSafeText(footerRecord.text, "review.footer.text", warnings) : null;
   const note = parsePublicSafeText(r.note, "review.note", warnings);
   const profile = parseReviewProfile(r.profile, warnings);
+  const inlineComments = normalizeOptionalBoolean(r.inline_comments, "review.inline_comments", warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
   const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
   const preMergeChecks = parseReviewPreMergeChecks(r.pre_merge_checks, warnings);
@@ -559,6 +569,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       footerText !== null ||
       note !== null ||
       profile !== null ||
+      inlineComments !== null ||
       pathInstructions.length > 0 ||
       excludePaths.length > 0 ||
       preMergeChecks.length > 0 ||
@@ -567,6 +578,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     note,
     fields,
     profile,
+    inlineComments,
     pathInstructions,
     excludePaths,
     preMergeChecks,
@@ -711,6 +723,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.footerText !== null) out.footer = { text: review.footerText };
   if (review.note !== null) out.note = review.note;
   if (review.profile !== null) out.profile = review.profile;
+  if (review.inlineComments !== null) out.inline_comments = review.inlineComments;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
   if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];
   if (review.preMergeChecks.length > 0) {
@@ -746,8 +759,10 @@ export function resolveReviewPathInstructions(pathInstructions: ReviewPathInstru
  *  a possibly-null manifest (null = load failure). A null manifest yields the byte-identical defaults. Centralized
  *  so the AI-review caller threads them in one place with the null-manifest branch covered here (unit-tested)
  *  rather than inline in the processor. (#review-profile / #review-path-instructions / #review-exclude-paths) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; pathInstructions: ReviewPathInstruction[]; excludePaths: string[] } {
-  return { profile: manifest?.review.profile ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], excludePaths: manifest?.review.excludePaths ?? [] };
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; inlineComments: boolean; pathInstructions: ReviewPathInstruction[]; excludePaths: string[] } {
+  // inlineComments resolves to a strict boolean — true ONLY when the manifest explicitly set review.inline_comments:
+  // true; null/false/absent ⇒ false. The caller ANDs this per-repo toggle with the operator flag + cutover allowlist.
+  return { profile: manifest?.review.profile ?? null, inlineComments: manifest?.review.inlineComments === true, pathInstructions: manifest?.review.pathInstructions ?? [], excludePaths: manifest?.review.excludePaths ?? [] };
 }
 
 /** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized
@@ -910,14 +925,36 @@ function linearGlobMatcher(pattern: string): (path: string) => boolean {
  * Compiling once lets a caller test many paths against one pattern without recompiling per path — see
  * {@link matchedPatterns}. An empty/blank pattern never matches.
  */
+function expandGlobstarSlash(pattern: string): string[] {
+  const alternatives = [""];
+  for (let idx = 0; idx < pattern.length; ) {
+    if (pattern.startsWith("**/", idx)) {
+      const count = alternatives.length;
+      const canKeepRootAlternatives = count * 2 <= MAX_GLOBSTAR_SLASH_ALTERNATIVES;
+      for (let altIdx = count - 1; altIdx >= 0; altIdx -= 1) {
+        const prefix = alternatives[altIdx]!;
+        alternatives[altIdx] = `${prefix}*/`;
+        if (canKeepRootAlternatives) alternatives.push(prefix);
+      }
+      idx += 3;
+      continue;
+    }
+    for (let altIdx = 0; altIdx < alternatives.length; altIdx += 1) alternatives[altIdx] += pattern[idx]!;
+    idx += 1;
+  }
+  return alternatives;
+}
+
 function compileManifestPathMatcher(pattern: string): (normalizedPath: string) => boolean {
   const normalizedPattern = normalizePathForMatch(pattern);
   if (!normalizedPattern) return () => false;
   if (normalizedPattern.includes("*")) {
-    // A double-star-then-slash run collapses the mandatory separator into the wildcard so the glob matches
-    // zero-depth/root too (e.g. a leading double-star glob matches a root-level file). Then run the linear matcher.
-    const globbed = normalizedPattern.replace(/\*\*\//g, "*");
-    return linearGlobMatcher(globbed);
+    // `**/` means zero or more whole path segments. Keep the slash in the non-root alternative so
+    // basename globs (e.g. `**/safe.ts`) do not degrade into suffix globs that match `unsafe.ts`.
+    const matchers = expandGlobstarSlash(normalizedPattern).map((globbed) =>
+      globbed.includes("*") ? linearGlobMatcher(globbed) : (normalizedPath: string) => normalizedPath === globbed,
+    );
+    return (normalizedPath) => matchers.some((matcher) => matcher(normalizedPath));
   }
   const dirPattern = normalizedPattern.endsWith("/") ? normalizedPattern : `${normalizedPattern}/`;
   return (normalizedPath) => normalizedPath === normalizedPattern || normalizedPath.startsWith(dirPattern);

@@ -1,7 +1,7 @@
 // Contributor blacklist (#1425, anti-abuse). Pure resolution + matching for the banned-login list the converged
 // engine acts on. Config-driven and layered the same as other settings (`.gittensory.yml` > DB) and unioned with
 // the shared/global list at the point of use — NEVER hard-coded for any repo. Logins are public data; entries
-// carry only public-safe metadata (no wallets/hotkeys/trust-scores/private values). Mirrors the shape of
+// may carry private maintainer metadata, so public surfaces must not echo it. Mirrors the shape of
 // command-authorization.ts (normalize → typed policy + warnings).
 import type { ContributorBlacklistEntry } from "../types";
 
@@ -60,15 +60,16 @@ export function normalizeContributorBlacklist(input: unknown): { entries: Contri
   return { entries, warnings };
 }
 
-/** The blacklist entry matching `login` (case-insensitive), or null. */
-export function findBlacklistEntry(login: string | null | undefined, entries: ContributorBlacklistEntry[]): ContributorBlacklistEntry | null {
+/** The blacklist entry matching `login` (case-insensitive), or null. Tolerates an absent list (treated as empty)
+ *  so callers can pass the optional `settings.contributorBlacklist` directly. */
+export function findBlacklistEntry(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined): ContributorBlacklistEntry | null {
   if (!login) return null;
   const key = login.toLowerCase();
-  return entries.find((entry) => entry.login.toLowerCase() === key) ?? null;
+  return (entries ?? []).find((entry) => entry.login.toLowerCase() === key) ?? null;
 }
 
 /** True iff `login` is on the resolved blacklist. */
-export function isAuthorBlacklisted(login: string | null | undefined, entries: ContributorBlacklistEntry[]): boolean {
+export function isAuthorBlacklisted(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined): boolean {
   return findBlacklistEntry(login, entries) !== null;
 }
 

@@ -37,6 +37,15 @@ describe("fetchBrokeredInstallationToken", () => {
     expect(calls[0]?.url).toBe("https://broker.example/v1/orb/token");
   });
 
+  it("falls back to the ~50min default when expiresAt is present but unparseable (no NaN into the token cache)", async () => {
+    const { fetchImpl } = captureFetch(Response.json({ token: "ghs_z", installationId: 7, expiresAt: "not-a-date" }));
+    const before = Date.now();
+    const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s" }, fetchImpl);
+    expect(Number.isFinite(out.expiresAtMs)).toBe(true); // a malformed expiry must not poison the cache with NaN
+    expect(out.expiresAtMs).toBeGreaterThanOrEqual(before + 49 * 60_000);
+    expect(out.token).toBe("ghs_z");
+  });
+
   it("sends an empty Bearer when no secret is set (defensive ?? branch)", async () => {
     const { fetchImpl, calls } = captureFetch(Response.json({ token: "t" }));
     await fetchBrokeredInstallationToken({}, fetchImpl);

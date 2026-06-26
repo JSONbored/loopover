@@ -21,6 +21,12 @@ export type ScorePreviewInput = {
   openPrCount?: number | undefined;
   /** Contributor's current open-issue count for the repo, used for the open-issue spam gate (#808). */
   openIssueCount?: number | undefined;
+  /** Repo-level merged PR count for upstream contributor-history eligibility (#808). */
+  mergedPullRequests?: number | undefined;
+  /** Count of valid solved issues for upstream issue-discovery eligibility (#808). */
+  validSolvedIssues?: number | undefined;
+  /** Issue-discovery credibility for upstream issue-discovery eligibility (#808). */
+  issueCredibility?: number | undefined;
   credibility?: number | undefined;
   changesRequestedCount?: number | undefined;
   fixedBaseScore?: number | undefined;
@@ -107,6 +113,8 @@ export type ScoreGateBlocker = {
     | "base_token_gate"
     | "open_pr_threshold"
     | "open_issue_threshold"
+    | "merged_pr_history_floor"
+    | "issue_discovery_validity_floor"
     | "credibility_floor"
     | "review_penalty"
     | "metadata_only"
@@ -121,7 +129,13 @@ export type ScoreGateBlocker = {
 };
 
 export type ScoreGateDelta = {
-  gate: "open_pr_threshold" | "open_issue_threshold" | "credibility_floor" | "linked_issue_multiplier";
+  gate:
+    | "open_pr_threshold"
+    | "open_issue_threshold"
+    | "merged_pr_history_floor"
+    | "issue_discovery_validity_floor"
+    | "credibility_floor"
+    | "linked_issue_multiplier";
   current: string;
   projected: string;
   explanation: string;
@@ -164,6 +178,10 @@ export type ScorePreviewResult = {
     reviewPenaltyMultiplier: number;
     openPrMultiplier: number;
     openIssueMultiplier: number;
+    /** Upstream merged-PR history floor (#808). 0 when below MIN_VALID_MERGED_PRS; 1 when unknown or eligible. */
+    mergedHistoryMultiplier: number;
+    /** Upstream issue-discovery validity floor (#808). 0 when below MIN_VALID_SOLVED_ISSUES or MIN_ISSUE_CREDIBILITY. */
+    issueDiscoveryHistoryMultiplier: number;
     /** Upstream sigmoid time-decay multiplier (#703). 1 = no decay (fresh PR, or feature off). */
     timeDecayMultiplier: number;
     estimatedMergedScore: number;
@@ -182,6 +200,15 @@ export type ScorePreviewResult = {
     credibilityObserved: number;
     openIssueThreshold: number;
     openIssueCount: number;
+    mergedPrFloor: number;
+    /** Observed merged PR count when supplied or inferred from contributor evidence; absent when unknown. */
+    mergedPullRequests?: number | undefined;
+    validSolvedIssuesFloor: number;
+    /** Observed valid solved-issue count when supplied; absent when unknown. */
+    validSolvedIssues?: number | undefined;
+    issueCredibilityFloor: number;
+    /** Observed issue-discovery credibility when supplied; absent when unknown. */
+    issueCredibility?: number | undefined;
   };
   branchEligibility: BranchEligibilityResult;
   effectiveEstimatedScore: number;
@@ -217,6 +244,10 @@ export function buildScorePreview(args: {
     ...(!current.gates.baseTokenGatePassed ? ["Increase meaningful source change size or scope clarity before relying on this preview."] : []),
     ...(current.scoreEstimate.openPrMultiplier === 0 ? ["Land or close existing open PRs before opening more concurrent work."] : []),
     ...(current.scoreEstimate.openIssueMultiplier === 0 ? ["Close excess open issues to stay within the open-issue spam threshold."] : []),
+    ...(current.scoreEstimate.mergedHistoryMultiplier === 0 ? ["Build merged PR history on this repo before relying on this preview; upstream requires a minimum merged count."] : []),
+    ...(current.scoreEstimate.issueDiscoveryHistoryMultiplier === 0
+      ? ["Build valid solved-issue history and issue credibility before relying on issue-discovery scoring on this repo."]
+      : []),
     ...(current.scoreEstimate.credibilityMultiplier < 1 ? ["Build or wait for contributor credibility evidence before relying on this preview."] : []),
     ...(current.scoreEstimate.reviewPenaltyMultiplier < 1 ? ["Reduce review churn with tighter tests and clearer evidence."] : []),
     ...(current.scoreEstimate.labelMultiplier <= 1 && Object.keys(args.repo?.registryConfig?.labelMultipliers ?? {}).length > 0
@@ -365,13 +396,40 @@ function computeScoreCore(
       Math.floor(nonNegative(input.existingContributorTokenScore) / constant(constants, "OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT")),
   );
   const openIssueMultiplier = openIssueCount <= openIssueThreshold ? 1 : 0;
+  const mergedPrFloor = constant(constants, "MIN_VALID_MERGED_PRS");
+  const mergedPullRequestsObserved = resolveMergedPullRequests(input, contributorEvidence);
+  const mergedHistoryMultiplier =
+    mergedPullRequestsObserved === undefined ? 1 : mergedPullRequestsObserved >= mergedPrFloor ? 1 : 0;
+  const validSolvedIssuesFloor = constant(constants, "MIN_VALID_SOLVED_ISSUES");
+  const issueCredibilityFloor = constant(constants, "MIN_ISSUE_CREDIBILITY");
+  const validSolvedIssuesObserved = input.validSolvedIssues !== undefined ? nonNegative(input.validSolvedIssues) : undefined;
+  const issueCredibilityObserved = input.issueCredibility !== undefined ? clamp(input.issueCredibility, 0, 1) : undefined;
+  // Issue-discovery validity mirrors upstream's separate issue lane — only gate previews that
+  // actually claim linked-issue / issue-discovery scoring, not every repo with a non-zero share.
+  const issueDiscoveryRelevant = (input.linkedIssueMode ?? "none") !== "none";
+  const issueDiscoveryHistoryKnown = validSolvedIssuesObserved !== undefined && issueCredibilityObserved !== undefined;
+  const issueDiscoveryHistoryMultiplier =
+    !issueDiscoveryRelevant || !issueDiscoveryHistoryKnown
+      ? 1
+      : validSolvedIssuesObserved >= validSolvedIssuesFloor && issueCredibilityObserved >= issueCredibilityFloor
+        ? 1
+        : 0;
   // Upstream time-decay (#703): mirrors upstream's `scored.time_decay_multiplier` applied to a PR's score.
   // Opt-in + env-gated (default off). A fresh PR (prAgeHours below the grace period) yields 1.0, so a normal
   // new-PR preview is unchanged even when enabled — only an aged-PR projection decays.
   // Per-repo curve (#703): the repo's registry `scoring.time_decay` overrides overlay the snapshot defaults.
   const timeDecayMultiplier = input.applyTimeDecay ? calculateTimeDecay(nonNegative(input.prAgeHours), constants, config?.timeDecay) : 1;
   const estimatedMergedScore = roundScore(
-    baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier * openIssueMultiplier * timeDecayMultiplier,
+    baseScore *
+      labelMultiplier *
+      issueMultiplier *
+      credibilityMultiplier *
+      reviewPenaltyMultiplier *
+      openPrMultiplier *
+      openIssueMultiplier *
+      mergedHistoryMultiplier *
+      issueDiscoveryHistoryMultiplier *
+      timeDecayMultiplier,
   );
   const pendingSaturationScore = roundScore(saturationBaseScore);
   return {
@@ -393,6 +451,8 @@ function computeScoreCore(
       reviewPenaltyMultiplier: roundScore(reviewPenaltyMultiplier),
       openPrMultiplier,
       openIssueMultiplier,
+      mergedHistoryMultiplier,
+      issueDiscoveryHistoryMultiplier,
       timeDecayMultiplier: roundScore(timeDecayMultiplier),
       estimatedMergedScore,
       pendingSaturationScore,
@@ -408,6 +468,12 @@ function computeScoreCore(
       credibilityObserved,
       openIssueThreshold,
       openIssueCount,
+      mergedPrFloor,
+      ...(mergedPullRequestsObserved !== undefined ? { mergedPullRequests: mergedPullRequestsObserved } : {}),
+      validSolvedIssuesFloor,
+      ...(validSolvedIssuesObserved !== undefined ? { validSolvedIssues: validSolvedIssuesObserved } : {}),
+      issueCredibilityFloor,
+      ...(issueCredibilityObserved !== undefined ? { issueCredibility: issueCredibilityObserved } : {}),
     },
   };
 }
@@ -454,12 +520,25 @@ function buildScenarioPreviews(
   const cleanGatesInput = {
     ...input,
     openPrCount: Math.min(current.gates.openPrCount, current.gates.openPrThreshold),
+    openIssueCount: Math.min(current.gates.openIssueCount, current.gates.openIssueThreshold),
     credibility: Math.max(current.gates.credibilityObserved, current.gates.credibilityFloor),
+    ...(current.gates.mergedPullRequests !== undefined
+      ? { mergedPullRequests: Math.max(current.gates.mergedPullRequests, current.gates.mergedPrFloor) }
+      : {}),
+    ...(current.gates.validSolvedIssues !== undefined
+      ? { validSolvedIssues: Math.max(current.gates.validSolvedIssues, current.gates.validSolvedIssuesFloor) }
+      : {}),
+    ...(current.gates.issueCredibility !== undefined
+      ? { issueCredibility: Math.max(current.gates.issueCredibility, current.gates.issueCredibilityFloor) }
+      : {}),
   };
   const afterPendingInput = {
     ...input,
     openPrCount: expectedOpenPrCountAfterMerge,
     credibility: projectedCredibility,
+    ...(current.gates.mergedPullRequests !== undefined
+      ? { mergedPullRequests: nonNegative(current.gates.mergedPullRequests) + mergeReadyPending }
+      : {}),
   };
   const linkedIssueInput = withValidatedLinkedIssueScenario(input);
   const bestReasonableInput = {
@@ -472,11 +551,25 @@ function buildScenarioPreviews(
     // "best reasonable case" can clear the open-issue gate just like it clears open-PR pressure.
     openIssueCount: Math.min(current.gates.openIssueCount, current.gates.openIssueThreshold),
     credibility: Math.max(projectedCredibility, observedApprovalCredibility, current.gates.credibilityFloor),
+    ...(current.gates.mergedPullRequests !== undefined
+      ? {
+          mergedPullRequests: Math.max(
+            nonNegative(current.gates.mergedPullRequests) + mergeReadyPending,
+            current.gates.mergedPrFloor,
+          ),
+        }
+      : {}),
+    ...(current.gates.validSolvedIssues !== undefined
+      ? { validSolvedIssues: Math.max(current.gates.validSolvedIssues, current.gates.validSolvedIssuesFloor) }
+      : {}),
+    ...(current.gates.issueCredibility !== undefined
+      ? { issueCredibility: Math.max(current.gates.issueCredibility, current.gates.issueCredibilityFloor) }
+      : {}),
   };
   return [
     scenario("current", "current_data", input, current, ["Current cached/account state and supplied local diff metadata."], repo),
     scenario("cleanGates", "gittensory_projection", cleanGatesInput, computeScoreCore(cleanGatesInput, repo, snapshot, contributorEvidence), [
-      "Open PR and credibility gates are projected as cleared; branch metadata is otherwise unchanged.",
+      "Open PR, open-issue, credibility, and contributor-history gates are projected as cleared; branch metadata is otherwise unchanged.",
     ], repo),
     scenario(
       "afterPendingMerges",
@@ -535,7 +628,7 @@ function buildScenarioPreviews(
         : "Linked issue mode was already supplied; this scenario projects solved-by-PR validation where needed.",
     ], repo),
     scenario("bestReasonableCase", "gittensory_projection", bestReasonableInput, computeScoreCore(bestReasonableInput, repo, snapshot, contributorEvidence), [
-      "Combines plausible near-term gate cleanup: open PR pressure at threshold or below, open-issue spam pressure at threshold or below, credibility at floor or above, and linked-issue context where applicable.",
+      "Combines plausible near-term gate cleanup: open PR pressure at threshold or below, open-issue spam pressure at threshold or below, credibility at floor or above, contributor merged-history and issue-discovery validity at floor or above, and linked-issue context where applicable.",
       ...(input.scenarioNotes ?? []),
       ...observedScenarioNotes(input),
     ], repo),
@@ -627,6 +720,24 @@ function blockedByFor(input: ScorePreviewInput, repo: RepositoryRecord | null, c
           },
         ]
       : []),
+    ...(core.scoreEstimate.mergedHistoryMultiplier === 0
+      ? [
+          {
+            code: "merged_pr_history_floor" as const,
+            severity: "blocker" as const,
+            detail: `Merged PR count ${core.gates.mergedPullRequests} is below upstream floor ${core.gates.mergedPrFloor}.`,
+          },
+        ]
+      : []),
+    ...(core.scoreEstimate.issueDiscoveryHistoryMultiplier === 0
+      ? [
+          {
+            code: "issue_discovery_validity_floor" as const,
+            severity: "blocker" as const,
+            detail: `Issue-discovery history (${core.gates.validSolvedIssues} valid solved, credibility ${roundScore(core.gates.issueCredibility!)}) is below upstream floors (${core.gates.validSolvedIssuesFloor} valid solved, ${core.gates.issueCredibilityFloor} credibility).`,
+          },
+        ]
+      : []),
     ...(core.gates.credibilityObserved < core.gates.credibilityFloor
       ? [
           {
@@ -709,6 +820,26 @@ function buildGateDeltas(current: ScoreCore, scenarios: ScoreScenarioPreview[]):
           },
         ]
       : []),
+    ...(current.scoreEstimate.mergedHistoryMultiplier !== best.scoreEstimate.mergedHistoryMultiplier
+      ? [
+          {
+            gate: "merged_pr_history_floor" as const,
+            current: `${current.gates.mergedPullRequests}/${current.gates.mergedPrFloor} merged PRs, multiplier ${current.scoreEstimate.mergedHistoryMultiplier}`,
+            projected: `${best.gates.mergedPullRequests}/${best.gates.mergedPrFloor} merged PRs, multiplier ${best.scoreEstimate.mergedHistoryMultiplier}`,
+            explanation: `Merged PR history changes estimated score ${current.scoreEstimate.estimatedMergedScore} -> ${best.scoreEstimate.estimatedMergedScore}.`,
+          },
+        ]
+      : []),
+    ...(current.scoreEstimate.issueDiscoveryHistoryMultiplier !== best.scoreEstimate.issueDiscoveryHistoryMultiplier
+      ? [
+          {
+            gate: "issue_discovery_validity_floor" as const,
+            current: `${current.gates.validSolvedIssues} valid solved / ${roundScore(current.gates.issueCredibility!)} credibility, multiplier ${current.scoreEstimate.issueDiscoveryHistoryMultiplier}`,
+            projected: `${best.gates.validSolvedIssues} valid solved / ${roundScore(best.gates.issueCredibility!)} credibility, multiplier ${best.scoreEstimate.issueDiscoveryHistoryMultiplier}`,
+            explanation: `Issue-discovery validity changes estimated score ${current.scoreEstimate.estimatedMergedScore} -> ${best.scoreEstimate.estimatedMergedScore}.`,
+          },
+        ]
+      : []),
     ...(current.gates.credibilityObserved !== best.gates.credibilityObserved || current.scoreEstimate.credibilityMultiplier !== best.scoreEstimate.credibilityMultiplier
       ? [
           {
@@ -756,11 +887,75 @@ function deltaExplanationFor(core: ScoreCore, blockedBy: ScoreGateBlocker[]): st
 }
 
 function selectLabelMultiplier(labels: string[], multipliers: Record<string, number>, fallback: number): number {
-  const normalized = new Set(labels.map((label) => label.toLowerCase()));
-  const matched = Object.entries(multipliers).flatMap(([label, multiplier]) =>
-    normalized.has(label.toLowerCase()) ? [multiplier] : [],
-  );
+  const normalized = labels.map((label) => label.toLowerCase());
+  const matched = Object.entries(multipliers).flatMap(([pattern, multiplier]) => {
+    const matcher = labelPatternToRegExp(pattern.toLowerCase());
+    return normalized.some((label) => matcher.test(label)) ? [multiplier] : [];
+  });
   return matched.length > 0 ? Math.max(...matched) : fallback || 1;
+}
+
+// Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
+// literal string: `fnmatch(label.lower(), pattern.lower())` in
+// gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or
+// `priority:?` and have it match `type:bug-fix`, `kind/bug`, `priority:1` (#1244-class scoring parity). The
+// preview previously did exact equality, so it silently scored every wildcard-configured trusted label at the
+// neutral default — under-/over-estimating the score for any repo using glob keys. Translate one fnmatch
+// pattern to an anchored, case-insensitive RegExp. fnmatch semantics differ from the path-glob in
+// change-guardrail.ts (there `*` stops at `/` and `?` is literal): labels are flat strings, so `*` matches any
+// run, `?` any single character, and `[seq]`/`[!seq]` a character class. Literal keys are unaffected — for a
+// pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
+function labelPatternToRegExp(pattern: string): RegExp {
+  let regex = "";
+  let i = 0;
+  while (i < pattern.length) {
+    const char = pattern.charAt(i);
+    i += 1;
+    if (char === "*") {
+      regex += ".*";
+    } else if (char === "?") {
+      regex += ".";
+    } else if (char === "[") {
+      const close = pattern.indexOf("]", i);
+      if (close === -1) {
+        // No closing bracket: fnmatch treats the `[` as a literal character.
+        regex += "\\[";
+      } else {
+        const rawBody = pattern.slice(i, close);
+        if (rawBody === "" || rawBody === "!") {
+          // Empty classes and bare `[!]` stay literal in Python fnmatch instead of compiling as classes.
+          regex += `\\[${escapeRegExpLiteral(rawBody)}\\]`;
+        } else if (hasDescendingCharacterRange(rawBody)) {
+          // Python fnmatch treats invalid ranges like `[z-a]` as a never-match pattern; RegExp throws.
+          regex += "(?!)";
+        } else {
+          let body = rawBody.replace(/\\/g, "\\\\");
+          // `[!seq]` is fnmatch's negated class; RegExp spells negation as `[^seq]`.
+          if (body.startsWith("!")) body = `^${body.slice(1)}`;
+          else if (body.startsWith("^")) body = `\\${body}`;
+          regex += `[${body}]`;
+        }
+        i = close + 1;
+      }
+    } else if (/[.+^${}()|\]\\]/.test(char)) {
+      regex += `\\${char}`;
+    } else {
+      regex += char;
+    }
+  }
+  return new RegExp(`^${regex}$`, "i");
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasDescendingCharacterRange(body: string): boolean {
+  const start = body.startsWith("!") ? 1 : 0;
+  for (let i = start + 1; i < body.length - 1; i += 1) {
+    if (body.charAt(i) === "-" && body.charCodeAt(i - 1) > body.charCodeAt(i + 1)) return true;
+  }
+  return false;
 }
 
 function decideLinkedIssueMultiplier(
@@ -968,6 +1163,15 @@ function normalizeBranchEligibility(input: ScorePreviewInput): BranchEligibility
   };
 }
 
+function resolveMergedPullRequests(
+  input: Pick<ScorePreviewInput, "mergedPullRequests">,
+  contributorEvidence?: ContributorEvidenceRecord | null,
+): number | undefined {
+  if (input.mergedPullRequests !== undefined) return nonNegative(input.mergedPullRequests);
+  const fromEvidence = Number(contributorEvidence?.payload?.mergedPullRequests);
+  return Number.isFinite(fromEvidence) ? nonNegative(fromEvidence) : undefined;
+}
+
 function inferCredibility(evidence?: ContributorEvidenceRecord | null): number {
   const payload = evidence?.payload;
   const merged = Number(payload?.mergedPullRequests ?? 0);
@@ -1017,13 +1221,19 @@ function constant(constants: Record<string, number>, key: string): number {
  * Resolve a repo's time-decay curve: each parameter is the repo's per-repo override (from the registry's
  * `scoring.time_decay`) when present, else the global default constant from the live scoring snapshot.
  * Mirrors upstream's `resolve_time_decay` (RepoTimeDecayConfig overlaid on the module constants).
+ *
+ * Parity note (#1320): upstream coerces ONLY `grace_period_hours` to an integer
+ * (`grace_period_hours=int(pick(...))`) while the three curve params stay floats. A maintainer may legally
+ * configure a fractional grace (upstream validates `0 <= grace_period_hours <= 168`), so the resolved grace
+ * must be truncated toward zero to match the validator — otherwise a PR aged between `trunc(grace)` and
+ * `grace` is treated as fresh in the preview but already decaying upstream.
  */
 export function resolveTimeDecay(
   constants: Record<string, number>,
   overrides?: RepoTimeDecayOverrides | null,
 ): { gracePeriodHours: number; sigmoidMidpointDays: number; sigmoidSteepness: number; minMultiplier: number } {
   return {
-    gracePeriodHours: pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS")),
+    gracePeriodHours: Math.trunc(pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS"))),
     sigmoidMidpointDays: pickOverride(overrides?.sigmoidMidpointDays, constant(constants, "TIME_DECAY_SIGMOID_MIDPOINT")),
     sigmoidSteepness: pickOverride(overrides?.sigmoidSteepness, constant(constants, "TIME_DECAY_SIGMOID_STEEPNESS_SCALAR")),
     minMultiplier: pickOverride(overrides?.minMultiplier, constant(constants, "TIME_DECAY_MIN_MULTIPLIER")),

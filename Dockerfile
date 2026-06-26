@@ -24,8 +24,7 @@ ENV NODE_ENV=production \
     PORT=8787 \
     DATABASE_PATH=/data/gittensory.sqlite \
     MIGRATIONS_DIR=/app/migrations \
-    NPM_CONFIG_PREFIX=/home/node/.npm-global \
-    PATH=/home/node/.npm-global/bin:$PATH
+    NPM_CONFIG_PREFIX=/home/node/.npm-global
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
 # Optional: bake the Claude Code / Codex CLIs so the `claude-code` / `codex` subscription providers (#979)
@@ -49,6 +48,9 @@ COPY --from=build /app/package*.json ./
 RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22.13.1 --ignore-scripts; fi
 # Data dir (the SQLite file) — owned by the unprivileged node user; mount a volume here to persist.
 RUN mkdir -p /data && chown -R node:node /data /app
+# Expose the optional user-installed CLIs only after all root build steps have completed, so a
+# lifecycle script cannot poison PATH for later root RUN commands.
+ENV PATH=/home/node/.npm-global/bin:$PATH
 USER node
 EXPOSE 8787
 # Probe /ready (not /health): /health is a liveness stub that returns 200 even when the DB is down,

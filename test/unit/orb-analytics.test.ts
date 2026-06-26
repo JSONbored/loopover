@@ -131,4 +131,19 @@ describe("computeFleetAnalytics()", () => {
     expect(a.fleet.mergePrecision).toBe(1); // the stranger's 0.0 does not drag the median
     expect(a.instances.map((i) => i.instanceId)).toContain("stranger"); // still visible per-instance for the operator
   });
+
+  it("excludes unregistered and ineligible instances from fleet cycle percentiles", async () => {
+    const env = createTestEnv();
+    await signals(env, "trusted", 5, { verdict: "merge", outcome: "merged", ms: 1000 });
+    await signals(env, "stranger", 20, { verdict: "merge", outcome: "closed", ms: 31_536_000_000 }); // unregistered poison
+    await signals(env, "tiny", 2, { verdict: "merge", outcome: "closed", ms: 31_536_000_000 }); // registered but below MIN_DECIDED
+    await register(env, "trusted", "tiny");
+
+    const a = await computeFleetAnalytics(env);
+
+    expect(a.instanceCount).toBe(1);
+    expect(a.fleet.mergePrecision).toBe(1);
+    expect(a.fleet.cycleP50Ms).toBe(1000);
+    expect(a.fleet.cycleP95Ms).toBe(1000);
+  });
 });

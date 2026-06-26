@@ -71,6 +71,7 @@ import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
 import { computeFleetAnalytics } from "../orb/analytics";
+import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -599,6 +600,17 @@ const repoContextOutputSchema = {
   dataQuality: z.unknown().optional(),
 };
 
+const maintainerNoiseOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  score: z.number().optional(),
+  level: z.string().optional(),
+  noiseSources: z.array(z.string()).optional(),
+  maintainerActions: z.array(z.string()).optional(),
+  queueHealth: z.unknown().optional(),
+  summary: z.string().optional(),
+};
+
 const freshnessResponseOutputSchema = {
   status: z.string().optional(),
   repoFullName: z.string().optional(),
@@ -677,7 +689,7 @@ const predictGateShape = {
   linkedIssues: z.array(z.number().int().positive()).optional(),
   // The PR's changed file PATHS (metadata only — paths, never source content). Supplying them lets the predictor
   // also evaluate the focus-manifest path policy + path-gated pre-merge checks, matching the live gate (#11-13/#18).
-  changedPaths: z.array(z.string().min(1)).max(500).optional(),
+  changedPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(500).optional(),
 };
 
 // Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
@@ -1038,6 +1050,16 @@ export class GittensoryMcp {
         outputSchema: repoContextOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoContext(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_maintainer_noise",
+      {
+        description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
+        inputSchema: ownerRepoShape,
+        outputSchema: maintainerNoiseOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getMaintainerNoise(input)),
     );
 
     server.registerTool(
@@ -1794,6 +1816,16 @@ export class GittensoryMcp {
         configQuality: buildConfigQuality(repo, issues, pullRequests, fullName),
         dataQuality: await this.loadRepoDataQuality(fullName),
       },
+    };
+  }
+
+  private async getMaintainerNoise(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoApprovalQueueAccess(fullName);
+    const report = await loadMaintainerNoiseReport(this.env, fullName);
+    return {
+      summary: maintainerNoiseSummary(report),
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

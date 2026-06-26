@@ -68,6 +68,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   aiReviewModel: text("ai_review_model"),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),
+  // Label applied to a blacklisted contributor's PR/issue (#1425); configurable so the disposition works
+  // regardless of the label a repo uses.
+  blacklistLabel: text("blacklist_label").notNull().default("slop"),
   createMissingLabel: integer("create_missing_label", { mode: "boolean" }).notNull().default(true),
   publicSurface: text("public_surface").notNull().default("comment_and_label"),
   includeMaintainerAuthors: integer("include_maintainer_authors", { mode: "boolean" }).notNull().default(false),

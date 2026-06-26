@@ -3,6 +3,7 @@ import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/ad
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
+import { sanitizePublicComment } from "../github/commands";
 
 // High-slop threshold default when a repo hasn't set slopGateMinScore (mirrors the gate's `high` band).
 const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
@@ -18,6 +19,10 @@ const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
 // them and they never collide with project labels.
 export const AGENT_LABEL_READY = "gittensory:ready-to-merge";
 export const AGENT_LABEL_CHANGES = "gittensory:changes-requested";
+// Default label applied to a blacklisted contributor's PR (#1425). NOT hardcoded into the action — it is
+// configurable per-repo via `.gittensory.yml` (`settings.blacklistLabel`); the planner uses the resolved label
+// and falls back to this default, so the disposition works regardless of the label a repo sets.
+export const DEFAULT_BLACKLIST_LABEL = "slop";
 // A PR that PASSES the gate but touches a hard-guardrail path is NOT ready to auto-merge — it is withheld
 // for a human (the merge/approve/close dispositions are suppressed below). Labeling it `ready-to-merge`
 // would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets
@@ -56,7 +61,7 @@ export type PlannedAgentAction = {
   // duplicate / slop / CI). The breaker downgrades ONLY "heuristic" closes; the deterministic close is EXEMPT
   // (silently holding a close whose comment already promised closure would be incoherent). Absent on non-close
   // actions; treated as a heuristic close only when explicitly tagged "heuristic".
-  closeKind?: "linked-issue-hard-rule" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
 };
 
@@ -109,6 +114,16 @@ export type AgentActionPlanInput = {
   // AI verdicts). It still NEVER fires for the owner or automation bots (the `isContributor` guard). Absent /
   // not-violated ⇒ no effect.
   linkedIssueHardRule?: { violated: boolean; reason: string | null } | undefined;
+  // Contributor blacklist (#1425, anti-abuse): when the PR author is on the resolved blacklist (per-repo ∪
+  // global), the disposition SHORT-CIRCUITS to a deterministic close ahead of ALL merit/CI/AI analysis — the
+  // banned account never gets merit-reviewed or auto-merged. Zero-hallucination (not an AI judgment), so its
+  // close is EXEMPT from the AI-refutation breaker (closeKind "blacklist"). Fires for a CONTRIBUTOR only
+  // (owner/automation bots are never auto-closed). `reason` is private maintainer metadata used only for matching
+  // context; the public close comment intentionally uses static copy. Absent / not-matched ⇒ no effect.
+  blacklistMatch?: { matched: boolean; reason: string | null | undefined } | undefined;
+  // The repo-configured label applied to a blacklisted author's PR (#1425), resolved from `.gittensory.yml`.
+  // Absent ⇒ the default (`DEFAULT_BLACKLIST_LABEL` = "slop"), so the disposition works regardless of the label set.
+  blacklistLabel?: string | undefined;
   // Flag-then-close double-check for the linked-issue hard rule (#linked-issue-verify-before-close). When
   // `verifyBeforeClose` is true (the default), a violation FLAGS the PR (pending-closure label + warning comment)
   // on first detection and only CLOSES on a LATER evaluation when the violation STILL holds AND the PR already
@@ -215,6 +230,12 @@ function closeMessage(reasons: string[]): string {
   return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs are re-reviewed automatically, so an inaccurate close may be reopened, but that does not guarantee it can merge (e.g. if conflicts or failing CI remain).`;
 }
 
+// The close comment for a blacklisted author (#1425). Do not interpolate maintainer-supplied blacklist metadata:
+// reasons/evidence may come from private configuration, and this string is posted to the public PR thread.
+function blacklistCloseMessage(): string {
+  return "Gittensory is closing this pull request on the maintainer's behalf. This account is blocked from contributing to this repository, so the change was not reviewed on its merits. This is an automated maintenance action.";
+}
+
 /**
  * Plan the maintainer auto-maintain actions for one PR. Returns a COHERENT set (never both approve and
  * request-changes; never both merge and close), each entry already filtered to an acting autonomy class.
@@ -231,6 +252,23 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const level = (actionClass: AgentActionClass) => resolveAutonomy(input.autonomy, actionClass);
   const acting = (actionClass: AgentActionClass) => isActingAutonomyLevel(level(actionClass));
   const approval = (actionClass: AgentActionClass) => autonomyRequiresApproval(level(actionClass));
+
+  // Contributor blacklist (#1425): a banned author's PR is a DETERMINISTIC short-circuit — it SHORT-CIRCUITS to a
+  // label + close AHEAD of all merit/CI/gate/AI analysis (this returns before any of it), so a blocked account is
+  // never merit-reviewed or auto-merged. Fires for a CONTRIBUTOR only (owner/automation bots are NEVER auto-closed,
+  // the standing rule). Zero-hallucination, so its close is `closeKind: "blacklist"` — exempt from the AI-refutation
+  // breaker like the linked-issue hard rule. The `acting`/`approval` gates here + the executor's pause/dry-run/
+  // kill-switch gate make it dry-run-able and approval-gated exactly like every other action. The close comment is
+  // static by construction so private maintainer metadata from the blacklist entry cannot leak.
+  const blacklistContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
+  if (input.blacklistMatch?.matched === true && blacklistContributor) {
+    const label = input.blacklistLabel ?? DEFAULT_BLACKLIST_LABEL;
+    if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "blacklisted contributor", label, labelOp: "add" });
+    if (acting("close")) {
+      actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: "blacklisted contributor", closeComment: sanitizePublicComment(blacklistCloseMessage()), closeKind: "blacklist" });
+    }
+    return actions;
+  }
 
   // Only a SKIPPED gate (genuinely not evaluated) drives no action. A NEUTRAL gate (first-time-contributor
   // grace, or eval-not-ready while state is still syncing) is gate-NON-BLOCKING: it flows to the disposition so

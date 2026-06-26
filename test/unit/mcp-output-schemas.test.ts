@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, updatePullRequestSlopAssessment } from "../../src/db/repositories";
+import type { AuthIdentity } from "../../src/auth/security";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -11,6 +12,7 @@ import { createTestEnv } from "../helpers/d1";
 // Tools that ship an MCP-native output schema so modern clients can validate/render responses.
 const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_repo_context",
+  "gittensory_get_maintainer_noise",
   "gittensory_get_burden_forecast",
   "gittensory_get_repo_outcome_patterns",
   "gittensory_get_outcome_calibration",
@@ -29,8 +31,8 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_explain_score_breakdown",
 ];
 
-async function connectTestClient(env: Env = createTestEnv()) {
-  const mcpServer = new GittensoryMcp(env).createServer();
+async function connectTestClient(env: Env = createTestEnv(), identity?: AuthIdentity) {
+  const mcpServer = new GittensoryMcp(env, identity).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "gittensory-output-schema-test", version: "0.1.0" }, { capabilities: {} });
@@ -182,6 +184,53 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
+  });
+
+  it("gittensory_get_maintainer_noise returns a structured noise triage report for a repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertPullRequestFromGitHub(env, "octo/demo", { number: 1, title: "misc cleanup and various refactors", state: "open", user: { login: "alice" }, body: "" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "gittensory_get_maintainer_noise", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(typeof data.score).toBe("number");
+    expect(typeof data.level).toBe("string");
+    expect(Array.isArray(data.noiseSources)).toBe(true);
+    expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_get_maintainer_noise denies cached member-only session access", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim-org/private-repo", private: true, owner: { login: "victim-org" }, default_branch: "main" });
+    await upsertPullRequestFromGitHub(env, "victim-org/private-repo", {
+      number: 7,
+      title: "cached member evidence",
+      state: "open",
+      user: { login: "read-only-member" },
+      author_association: "MEMBER",
+      body: "",
+    });
+    const { client } = await connectTestClient(env, {
+      kind: "session",
+      actor: "read-only-member",
+      session: {
+        id: "session-read-only-member",
+        tokenHash: "hash",
+        login: "read-only-member",
+        scopes: [],
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      },
+    });
+
+    const result = await client.callTool({ name: "gittensory_get_maintainer_noise", arguments: { owner: "victim-org", repo: "private-repo" } });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("maintainer access is required");
+    expect(result.structuredContent).toBeUndefined();
   });
 
   it("gittensory_validate_linked_issue reports multiplier eligibility for an uncached issue", async () => {

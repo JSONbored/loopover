@@ -146,13 +146,20 @@ export async function storeRelayFailure(
 
 /** Re-attempt pending relay failures. Called by the `retry-orb-relay` cron job every sweep cycle (≈2 min).
  *  Each row gets up to RELAY_RETRY_MAX_ATTEMPTS (5) retries within a 1-hour TTL; on success or expiry the row
- *  is removed. Never throws — a bad DB row or a persistently-down container is silently dropped after exhaustion. */
+ *  is removed. Never throws — a bad DB row or a persistently-down container is dropped (with an alertable log,
+ *  below) after exhaustion. */
 export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fetch }): Promise<void> {
   // Prune rows whose TTL has elapsed or whose attempt budget is exhausted.
-  await env.DB
+  const pruned = await env.DB
     .prepare("DELETE FROM orb_relay_failures WHERE expires_at < datetime('now') OR attempts >= ?")
     .bind(RELAY_RETRY_MAX_ATTEMPTS)
     .run();
+  // Make the drop VISIBLE (#5): a pruned row is a relay event we gave up delivering (1-hour TTL elapsed or 5
+  // retries exhausted) — e.g. a container down for over an hour. Emit an alertable structured log so the loss
+  // leaves a trace instead of vanishing silently.
+  if (pruned.meta.changes > 0) {
+    console.warn(JSON.stringify({ level: "warn", event: "orb_relay_events_dropped", count: pruned.meta.changes }));
+  }
   const { results } = await env.DB
     .prepare(
       "SELECT delivery_id, event_name, installation_id, raw_body FROM orb_relay_failures WHERE expires_at >= datetime('now') AND attempts < ? ORDER BY created_at, delivery_id LIMIT ?",

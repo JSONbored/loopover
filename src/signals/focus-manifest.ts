@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
+import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
 export type FocusManifestLinkedIssuePolicy = "required" | "preferred" | "optional";
@@ -73,6 +74,8 @@ export type FocusManifestSettings = Partial<
     | "autoMaintain"
     | "agentPaused"
     | "agentDryRun"
+    | "contributorBlacklist"
+    | "blacklistLabel"
   >
 >;
 
@@ -475,6 +478,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (aiReviewModel !== null) out.aiReviewModel = aiReviewModel;
   const gittensorLabel = normalizeOptionalString(r.gittensorLabel, "settings.gittensorLabel", warnings);
   if (gittensorLabel !== null) out.gittensorLabel = gittensorLabel;
+  const blacklistLabel = normalizeOptionalString(r.blacklistLabel, "settings.blacklistLabel", warnings);
+  if (blacklistLabel !== null) out.blacklistLabel = blacklistLabel;
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
   for (const key of ["aiReviewByok", "autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled", "agentPaused", "agentDryRun"] as const) {
@@ -492,6 +497,14 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   // field) and overlays the DB value via the resolver. Only a mapping is honoured; anything else is ignored.
   if (typeof r.autoMaintain === "object" && r.autoMaintain !== null && !Array.isArray(r.autoMaintain)) {
     out.autoMaintain = normalizeAutoMaintainPolicy(r.autoMaintain);
+  }
+  // Contributor blacklist (#1425): `settings.contributorBlacklist` is a list of banned-login entries. Only set it
+  // when at least one VALID entry survives normalization, so a malformed block never blanks the DB-configured
+  // list via the resolver's `{...dbSettings, ...manifest.settings}` overlay. Normalization warnings are folded in.
+  if (r.contributorBlacklist !== undefined) {
+    const { entries, warnings: blacklistWarnings } = normalizeContributorBlacklist(r.contributorBlacklist);
+    warnings.push(...blacklistWarnings);
+    if (entries.length > 0) out.contributorBlacklist = entries;
   }
   return out;
 }

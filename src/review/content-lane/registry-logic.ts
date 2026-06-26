@@ -679,13 +679,17 @@ export interface RegistryScopeResult {
 
 /**
  * Generic surface-model scope classifier: in scope when the PR edits exactly ONE entry file (or, entry-free,
- * one flat provider file); the spec's provider + artifact files are allowed companions; any other path —
- * including a retired candidate path the registry no longer accepts — makes it mixed-files.
+ * one flat provider file); the spec's provider + artifact files are allowed companions. A registry-looking
+ * submission with too many entry/provider files is malformed and stays in the lane as mixed-files; an unrelated
+ * PR with no direct registry files remains not-direct-submission.
  */
 export function classifyRegistryPrScope(spec: RegistryLaneSpec, changedFiles: string[]): RegistryScopeResult {
   const files = (changedFiles ?? []).map((f) => String(f || "").trim()).filter(Boolean);
   const entryFiles = files.filter((f) => spec.entryFilePattern.test(f));
   const providerFiles = spec.providerFilePattern ? files.filter((f) => spec.providerFilePattern!.test(f)) : [];
+  if (entryFiles.length > 1 || (entryFiles.length === 0 && providerFiles.length > 1)) {
+    return { scope: "mixed-files", directFile: null, isProvider: false };
+  }
   const isEntryPr = entryFiles.length === 1;
   const isProviderPr = entryFiles.length === 0 && providerFiles.length === 1;
   if (!isEntryPr && !isProviderPr) {

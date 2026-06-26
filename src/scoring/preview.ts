@@ -887,11 +887,53 @@ function deltaExplanationFor(core: ScoreCore, blockedBy: ScoreGateBlocker[]): st
 }
 
 function selectLabelMultiplier(labels: string[], multipliers: Record<string, number>, fallback: number): number {
-  const normalized = new Set(labels.map((label) => label.toLowerCase()));
-  const matched = Object.entries(multipliers).flatMap(([label, multiplier]) =>
-    normalized.has(label.toLowerCase()) ? [multiplier] : [],
-  );
+  const normalized = labels.map((label) => label.toLowerCase());
+  const matched = Object.entries(multipliers).flatMap(([pattern, multiplier]) => {
+    const matcher = labelPatternToRegExp(pattern.toLowerCase());
+    return normalized.some((label) => matcher.test(label)) ? [multiplier] : [];
+  });
   return matched.length > 0 ? Math.max(...matched) : fallback || 1;
+}
+
+// Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
+// literal string: `fnmatch(label.lower(), pattern.lower())` in
+// gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or
+// `priority:?` and have it match `type:bug-fix`, `kind/bug`, `priority:1` (#1244-class scoring parity). The
+// preview previously did exact equality, so it silently scored every wildcard-configured trusted label at the
+// neutral default — under-/over-estimating the score for any repo using glob keys. Translate one fnmatch
+// pattern to an anchored, case-insensitive RegExp. fnmatch semantics differ from the path-glob in
+// change-guardrail.ts (there `*` stops at `/` and `?` is literal): labels are flat strings, so `*` matches any
+// run, `?` any single character, and `[seq]`/`[!seq]` a character class. Literal keys are unaffected — for a
+// pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
+function labelPatternToRegExp(pattern: string): RegExp {
+  let regex = "";
+  let i = 0;
+  while (i < pattern.length) {
+    const char = pattern.charAt(i);
+    i += 1;
+    if (char === "*") {
+      regex += ".*";
+    } else if (char === "?") {
+      regex += ".";
+    } else if (char === "[") {
+      const close = pattern.indexOf("]", i);
+      if (close === -1) {
+        // No closing bracket: fnmatch treats the `[` as a literal character.
+        regex += "\\[";
+      } else {
+        let body = pattern.slice(i, close).replace(/\\/g, "\\\\");
+        // `[!seq]` is fnmatch's negated class; RegExp spells negation as `[^seq]`.
+        if (body.startsWith("!")) body = `^${body.slice(1)}`;
+        regex += `[${body}]`;
+        i = close + 1;
+      }
+    } else if (/[.+^${}()|\]\\]/.test(char)) {
+      regex += `\\${char}`;
+    } else {
+      regex += char;
+    }
+  }
+  return new RegExp(`^${regex}$`, "i");
 }
 
 function decideLinkedIssueMultiplier(

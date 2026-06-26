@@ -8485,6 +8485,35 @@
               "advisory",
               "block"
             ]
+          },
+          "contributorBlacklist": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "login": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "addedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "login"
+              ]
+            }
+          },
+          "blacklistLabel": {
+            "type": "string"
           }
         },
         "required": [
@@ -8507,6 +8536,7 @@
           "slopAiAdvisory",
           "autoLabelEnabled",
           "gittensorLabel",
+          "blacklistLabel",
           "createMissingLabel",
           "publicSurface",
           "includeMaintainerAuthors",
@@ -9110,6 +9140,9 @@
                   "advisory",
                   "block"
                 ]
+              },
+              "blacklistLabel": {
+                "type": "string"
               }
             },
             "required": [
@@ -9131,6 +9164,7 @@
               "firstTimeContributorGrace",
               "autoLabelEnabled",
               "gittensorLabel",
+              "blacklistLabel",
               "createMissingLabel",
               "includeMaintainerAuthors",
               "requireLinkedIssue",

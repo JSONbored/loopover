@@ -10,6 +10,7 @@ import {
   getAppInstallation,
   getInstallationId,
   getRepositoryCollaboratorPermission,
+  isForeignAppInstallation,
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -376,6 +377,38 @@ describe("GitHub check runs", () => {
       conclusion: "success",
       output: { title: "Gittensory Gate passed" },
     });
+  });
+
+  it("publishes the precomputed authoritative gate (surface-lane override) instead of re-deriving (#5)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 91 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    // The advisory is CLEAN (re-deriving via evaluateGateCheck would publish "success"), but the surface lane
+    // REJECTED the PR. The published check must reflect the authoritative override, not the generic re-derivation.
+    const surfaceGate = {
+      enabled: true,
+      conclusion: "failure" as const,
+      title: "Metagraphed surface review",
+      summary: "Surface payload rejected.",
+      blockers: [{ code: "surface_lane_reject", title: "Surface rejected", severity: "critical" as const, detail: "Registry payload failed validation." }],
+      warnings: [],
+    };
+    const result = await createOrUpdateGateCheckRun(env, 123, "JSONbored/gittensory", gateAdvisory("surface-sha"), {}, { gate: surfaceGate });
+
+    expect(result).toEqual({ kind: "published", id: 91 });
+    expect(capturedBody.conclusion).toBe("failure"); // the surface override, NOT the clean re-derivation
+    expect(capturedBody.output?.title).toBe("Metagraphed surface review");
   });
 
   it("updates an existing pending Gate check without adding a conclusion", async () => {
@@ -791,3 +824,24 @@ function gateAdvisory(headSha: string): Advisory {
     generatedAt: "2026-05-22T00:00:00.000Z",
   };
 }
+
+describe("isForeignAppInstallation (#selfhost-app-id)", () => {
+  it("returns true only on a positive numeric app_id mismatch", () => {
+    expect(isForeignAppInstallation("12345", 99999)).toBe(true);
+  });
+
+  it("returns false when this backend's own app id and the installation's match", () => {
+    expect(isForeignAppInstallation("12345", 12345)).toBe(false);
+  });
+
+  it("FAILS OPEN (false) when the installation app_id is unknown — null or undefined", () => {
+    expect(isForeignAppInstallation("12345", null)).toBe(false);
+    expect(isForeignAppInstallation("12345", undefined)).toBe(false);
+  });
+
+  it("FAILS OPEN (false) when this backend has no / an unparseable own app id", () => {
+    expect(isForeignAppInstallation(undefined, 99999)).toBe(false);
+    expect(isForeignAppInstallation("", 99999)).toBe(false);
+    expect(isForeignAppInstallation("not-a-number", 99999)).toBe(false);
+  });
+});

@@ -10,6 +10,7 @@
 //   ORB_COLLECTOR_URL=<url>   — endpoint (default: gittensory's hosted collector)
 //   ORB_AIR_GAP=true          — air-gapped/offline deployments only: compute locally, never send
 //   ORB_ANONYMIZE=true        — HMAC-hash repo/PR before export (default: true)
+//   ORB_COLLECTOR_TOKEN=<secret> — bearer credential for the hosted collector
 //
 // No diffs, no code, no comments, no logins, no commit SHAs — only verdict + outcome + reversal + a bucketed
 // reason category + cycle time, with repo/PR identifiers HMAC'd by a key the collector never holds (so it
@@ -51,9 +52,12 @@ interface OrbExportPayload {
   events: FleetEvent[];
 }
 
-/** Stable instance identifier (hash of the Orb/App ID — no PII). */
+/** Stable instance identifier (hash of the Orb/App ID — no PII). A brokered instance holds no App id, so its
+ *  per-install enrollment secret is the stable identity (hashed, so the high-entropy secret never leaks and two
+ *  brokered instances never collide on the "unknown" fallback). */
 function instanceId(): string {
-  return createHash("sha256").update(process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? "unknown").digest("hex").slice(0, 16);
+  const seed = process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? process.env.ORB_ENROLLMENT_SECRET ?? "unknown";
+  return createHash("sha256").update(seed).digest("hex").slice(0, 16);
 }
 
 /** HMAC a string with the instance's own secret for anonymized export. */
@@ -153,11 +157,17 @@ function cycleTimeMs(decidedAt: string, outcomeAt: string): number | null {
  * Returns the number of events exported (0 if air-gapped, the App isn't configured, or nothing new).
  */
 export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: typeof fetch = fetch): Promise<number> {
-  // Always on (no opt-out). Air-gapped/offline deployments may suppress the outbound call.
-  if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
+  // A brokered self-host relies on the central Orb for tokens + webhook relay, so fleet telemetry is part of the
+  // self-hosting contract — air-gap cannot opt it out, and the export is gated on the enrollment (not a local App
+  // key, which a brokered instance never holds).
+  const brokered = Boolean((process.env.ORB_ENROLLMENT_SECRET ?? "").trim());
 
-  // No App configured → no review data to export anyway. Gate export on the App being set up.
-  if (!(process.env.GITHUB_APP_PRIVATE_KEY ?? "")) return 0;
+  // Air-gapped/offline deployments may suppress the outbound call — but ONLY a self-managed (non-brokered) instance.
+  if (!brokered && (process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
+
+  // Gate export on the instance being CONFIGURED: a local App private key, OR brokered mode (the Orb holds the App
+  // key and mints tokens on demand, so the instance has review data to export but no local App key).
+  if (!brokered && !(process.env.GITHUB_APP_PRIVATE_KEY ?? "")) return 0;
 
   // gittensory's hosted collector. No shared secret is sent: repo/PR identifiers are HMAC'd with this
   // instance's DEDICATED anonymization secret (a 256-bit random key generated once and persisted in
@@ -195,11 +205,17 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
 
   const body = JSON.stringify(payload);
   const signature = createHmac("sha256", secret).update(body).digest("hex");
+  const collectorToken = process.env.ORB_COLLECTOR_TOKEN;
 
   try {
     const res = await fetchFn(collectorUrl, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-orb-signature": `sha256=${signature}`, "x-orb-instance": instance },
+      headers: {
+        "content-type": "application/json",
+        "x-orb-signature": `sha256=${signature}`,
+        "x-orb-instance": instance,
+        ...(collectorToken ? { authorization: `Bearer ${collectorToken}` } : {}),
+      },
       body,
     });
     if (!res.ok) {

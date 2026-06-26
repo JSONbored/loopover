@@ -1213,6 +1213,29 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).not.toMatch(/C:\\Users\\alice/i);
   });
 
+  it("hides root-user home paths from public PR packet changed paths", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "/root/work/src/cache.ts", additions: 12, deletions: 2, status: "modified" }],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.markdown).toContain("## Changed Paths");
+    expect(analysis.prPacket.markdown).toContain("[local path hidden]");
+    expect(analysis.prPacket.markdown).not.toContain("/root/work");
+  });
+
   it("removes snake_case private signals from public PR packet markdown", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

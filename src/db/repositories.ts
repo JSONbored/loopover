@@ -159,6 +159,7 @@ import type {
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
@@ -181,8 +182,8 @@ const FRESHNESS_SIGNAL_TYPES = [
   "queue-health",
 ];
 
-export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<void> {
-  if (!payload.installation?.id) return;
+export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<number | null> {
+  if (!payload.installation?.id) return null;
   const account = payload.installation.account;
   const existing = await getInstallation(env, payload.installation.id);
   const permissions =
@@ -195,6 +196,10 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
   const targetType = payload.installation.target_type ?? account?.type ?? existing?.targetType ?? "unknown";
   const repositorySelection = payload.installation.repository_selection ?? existing?.repositorySelection;
   const suspendedAt = payload.installation.suspended_at !== undefined ? payload.installation.suspended_at : (existing?.suspendedAt ?? undefined);
+  // Capture app_id when the payload carries it (installation events + the App-installation API refresh); keep the
+  // stored value otherwise so a payload without it (e.g. a pull_request event) never clears it. Returned so the
+  // caller can filter a dual-app webhook without a second read (#selfhost-app-id).
+  const appId = payload.installation.app_id ?? existing?.appId ?? null;
   const db = getDb(env.DB);
   await db
     .insert(installations)
@@ -202,6 +207,7 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
       id: payload.installation.id,
       accountLogin,
       accountId,
+      appId,
       targetType,
       repositorySelection,
       permissionsJson: jsonString(permissions),
@@ -214,6 +220,7 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
       set: {
         accountLogin,
         accountId,
+        appId,
         targetType,
         repositorySelection,
         permissionsJson: jsonString(permissions),
@@ -222,6 +229,7 @@ export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload
         updatedAt: nowIso(),
       },
     });
+  return appId;
 }
 
 export async function markInstallationDeleted(env: Env, installationId: number): Promise<void> {
@@ -425,6 +433,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       aiReviewModel: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
+      blacklistLabel: "slop",
       createMissingLabel: true,
       publicSurface: "comment_and_label",
       includeMaintainerAuthors: false,
@@ -435,6 +444,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       agentPaused: false,
       agentDryRun: false,
       commandAuthorization: normalizeCommandAuthorizationPolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).policy,
+      contributorBlacklist: [],
       autonomy: {},
       autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
     };
@@ -465,6 +475,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     aiReviewModel: row.aiReviewModel ?? null,
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
+    blacklistLabel: row.blacklistLabel,
     createMissingLabel: row.createMissingLabel,
     publicSurface: parsePublicSurface(row.publicSurface),
     includeMaintainerAuthors: row.includeMaintainerAuthors,
@@ -475,6 +486,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     agentPaused: row.agentPaused,
     agentDryRun: row.agentDryRun,
     commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
+    contributorBlacklist: parseContributorBlacklist(row.contributorBlacklistJson),
     autonomy: parseAutonomyPolicy(row.autonomyJson),
     autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
     createdAt: row.createdAt,
@@ -509,6 +521,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     aiReviewModel: typeof settings.aiReviewModel === "string" && settings.aiReviewModel.trim() ? settings.aiReviewModel.trim() : null,
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
+    blacklistLabel: settings.blacklistLabel ?? "slop",
     createMissingLabel: settings.createMissingLabel ?? true,
     publicSurface: settings.publicSurface ?? "comment_and_label",
     includeMaintainerAuthors: settings.includeMaintainerAuthors ?? false,
@@ -519,6 +532,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     agentPaused: settings.agentPaused ?? false,
     agentDryRun: settings.agentDryRun ?? false,
     commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
+    contributorBlacklist: normalizeContributorBlacklist(settings.contributorBlacklist).entries,
     autonomy: normalizeAutonomyPolicy(settings.autonomy),
     autoMaintain: normalizeAutoMaintainPolicy(settings.autoMaintain),
   };
@@ -551,6 +565,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       aiReviewModel: resolved.aiReviewModel,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
+      blacklistLabel: resolved.blacklistLabel,
       createMissingLabel: resolved.createMissingLabel,
       publicSurface: resolved.publicSurface,
       includeMaintainerAuthors: resolved.includeMaintainerAuthors,
@@ -561,6 +576,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       agentPaused: resolved.agentPaused,
       agentDryRun: resolved.agentDryRun,
       commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+      contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
       autonomyJson: jsonString(resolved.autonomy),
       autoMaintainJson: jsonString(resolved.autoMaintain),
       updatedAt: nowIso(),
@@ -594,6 +610,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         aiReviewModel: resolved.aiReviewModel,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
+        blacklistLabel: resolved.blacklistLabel,
         createMissingLabel: resolved.createMissingLabel,
         publicSurface: resolved.publicSurface,
         includeMaintainerAuthors: resolved.includeMaintainerAuthors,
@@ -604,6 +621,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         agentPaused: resolved.agentPaused,
         agentDryRun: resolved.agentDryRun,
         commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+        contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
         autonomyJson: jsonString(resolved.autonomy),
         autoMaintainJson: jsonString(resolved.autoMaintain),
         updatedAt: nowIso(),
@@ -3805,6 +3823,7 @@ function toInstallationRecord(row: typeof installations.$inferSelect): Installat
     id: row.id,
     accountLogin: row.accountLogin,
     accountId: row.accountId,
+    appId: row.appId,
     targetType: row.targetType,
     repositorySelection: row.repositorySelection,
     permissions: parseJson<Record<string, string>>(row.permissionsJson, {}),
@@ -5373,6 +5392,10 @@ function parsePublicSurface(value: string): RepositorySettings["publicSurface"] 
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
   return normalizeCommandAuthorizationPolicy(parseJson<unknown>(value, null)).policy;
+}
+
+function parseContributorBlacklist(value: string): RepositorySettings["contributorBlacklist"] {
+  return normalizeContributorBlacklist(parseJson<unknown>(value, null)).entries;
 }
 
 function parseAutonomyPolicy(value: string): AutonomyPolicy {

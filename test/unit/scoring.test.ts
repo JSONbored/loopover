@@ -803,6 +803,44 @@ NOVELTY_BONUS_SCALAR = 3
     );
   });
 
+  it("matches configured label keys as fnmatch globs, mirroring the upstream validator", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    const labelMultiplierFor = (labelMultipliers: Record<string, number>, labels: string[], defaultLabelMultiplier = 1): number =>
+      buildScorePreview({
+        repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier, labelMultipliers } },
+        snapshot,
+        input: { ...baseInput, labels },
+      }).scoreEstimate.labelMultiplier;
+
+    // `*` spans any run of characters (including `/` and `:` — labels are flat strings, not paths).
+    expect(labelMultiplierFor({ "kind/*": 1.5 }, ["kind/bug"])).toBe(1.5);
+    expect(labelMultiplierFor({ "type:*": 1.1 }, ["type:bug-fix"])).toBe(1.1);
+    // `?` matches exactly one character: it matches `priority:1` but not the two-digit `priority:10`.
+    expect(labelMultiplierFor({ "priority:?": 2 }, ["priority:1"])).toBe(2);
+    expect(labelMultiplierFor({ "priority:?": 2 }, ["priority:10"])).toBe(1);
+    // `[seq]` / `[!seq]` character classes.
+    expect(labelMultiplierFor({ "[bf]ug": 1.4 }, ["bug"])).toBe(1.4);
+    expect(labelMultiplierFor({ "[!x]ug": 1.3 }, ["bug"])).toBe(1.3);
+    // A `[` with no closing bracket is a literal, not a class.
+    expect(labelMultiplierFor({ "a[b": 0.7 }, ["a[b"])).toBe(0.7);
+    // Regex metacharacters in a literal key stay literal: `.` matches only a dot, not any char.
+    expect(labelMultiplierFor({ "v1.0": 1.1 }, ["v1.0"])).toBe(1.1);
+    expect(labelMultiplierFor({ "v1.0": 1.1 }, ["v1x0"])).toBe(1);
+    // When several patterns match, the highest multiplier wins (mirrors upstream `max(...)`).
+    expect(labelMultiplierFor({ "kind/*": 1.1, "*/bug": 1.6 }, ["kind/bug"])).toBe(1.6);
+    // Literal keys are unchanged — exact match, parity-preserving for every existing config.
+    expect(labelMultiplierFor({ bug: 1.2 }, ["bug"])).toBe(1.2);
+    expect(labelMultiplierFor({ bug: 1.2 }, ["feature"])).toBe(1);
+  });
+
   it("gates linked-issue assumptions with branch eligibility evidence", () => {
     const baseInput = {
       repoFullName: repo.fullName,

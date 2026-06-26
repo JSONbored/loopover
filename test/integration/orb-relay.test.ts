@@ -251,6 +251,36 @@ describe("retryFailedRelays", () => {
     expect(row ?? null).toBeNull(); // skipped = no longer applicable → cleaned up
   });
 
+  it("PAGES retry work and bounds concurrent forwards", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9500);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    for (let i = 0; i < 30; i += 1) {
+      await storeRelayFailure(e, { deliveryId: `retry-bulk-${String(i).padStart(2, "0")}`, eventName: "pull_request", installationId: 9500, rawBody: JSON.stringify({ n: i }) });
+    }
+
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+    const fetchFail = (async () => {
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await Promise.resolve();
+      active -= 1;
+      return new Response("bad", { status: 503 });
+    }) as typeof fetch;
+
+    await retryFailedRelays(e, { fetchImpl: fetchFail });
+
+    expect(calls).toBe(25);
+    expect(maxActive).toBeLessThanOrEqual(5);
+    const attempted = await db(e).prepare("SELECT COUNT(*) AS n FROM orb_relay_failures WHERE attempts=1").first<{ n: number }>();
+    const untouched = await db(e).prepare("SELECT COUNT(*) AS n FROM orb_relay_failures WHERE attempts=0").first<{ n: number }>();
+    expect(attempted?.n).toBe(25);
+    expect(untouched?.n).toBe(5);
+  });
+
   it("PRUNES rows that have exhausted their attempt budget (attempts >= 5)", async () => {
     const e = brokeredEnv();
     // Manually insert a row at the attempt ceiling.

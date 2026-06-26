@@ -21,10 +21,12 @@ import {
   extractCookieValue,
   isAuthorizedGitHubSessionLogin,
   revokeSession,
+  timingSafeEqual,
   type AuthIdentity,
 } from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import {
   countOpenIssues,
@@ -619,6 +621,7 @@ const repositorySettingsSchema = z.object({
   aiReviewModel: z.string().trim().min(1).max(120).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
+  blacklistLabel: z.string().trim().min(1).max(50).default("slop"),
   createMissingLabel: z.boolean().default(true),
   publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]).default("comment_and_label"),
   includeMaintainerAuthors: z.boolean().default(false),
@@ -632,6 +635,12 @@ const repositorySettingsSchema = z.object({
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
     })
     .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
+  // Per-repo contributor blacklist (#1425). Loose by design — the DB layer normalizes/validates each entry
+  // (login pattern, public-safe metadata, de-dup, caps), so invalid entries are dropped on persist.
+  contributorBlacklist: z
+    .array(z.object({ login: z.string(), reason: z.string().optional(), evidence: z.array(z.string()).optional(), addedAt: z.string().optional() }))
+    .max(1000)
+    .default([]),
 });
 
 // #130 maintainer self-serve settings editor. A PATCH-style subset: every field optional so the maintainer
@@ -661,6 +670,7 @@ const maintainerSettingsSchema = z
     slopAiAdvisory: z.boolean(),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string().trim().min(1).max(50),
+    blacklistLabel: z.string().trim().min(1).max(50),
     createMissingLabel: z.boolean(),
     includeMaintainerAuthors: z.boolean(),
     requireLinkedIssue: z.boolean(),
@@ -2653,6 +2663,9 @@ export function createApp() {
       bounties,
       issueQuality: issueQuality?.report,
       confirmedContributor: Boolean(context.gittensorSnapshot),
+      // #11-13/#18: thread the local branch's changed PATHS (already in the request) so the predictor also
+      // evaluates the focus-manifest path policy + path-gated pre-merge checks, matching the live gate.
+      ...(parsed.data.changedFiles ? { changedPaths: parsed.data.changedFiles.map((file) => file.path) } : {}),
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
@@ -2914,12 +2927,13 @@ export function createApp() {
     return c.json(result);
   });
 
-  // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware
-  // outcome batches from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
-  // dedup is enforced via UNIQUE(instance_id, repo_hash, pr_hash) in orb_signals. Rate-limited (strict, #1254).
+  // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
+  // batches from self-hosted instances. Sender-side HMAC anonymization is for privacy, not authentication.
+  // OPTIONAL shared-token gate (#1285): unset ⇒ OPEN ingress (the live fleet keeps working, as before); set
+  // ⇒ the collector REQUIRES it, so an operator can lock the write path down after distributing the matching
+  // ORB_COLLECTOR_TOKEN to exporters. Bounded by a hard body ceiling, and dedup'd via UNIQUE(instance_id, repo_hash, pr_hash).
   app.post("/v1/orb/ingest", async (c) => {
-    // Open ingress (no shared secret — the fleet topology has no per-instance key the collector could
-    // verify), bounded by a hard body ceiling so it can't be used to make us buffer unbounded input.
+    if (!(await isAuthorizedOrbIngest(c.env, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
     if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
@@ -3352,6 +3366,7 @@ export function createApp() {
         aiReviewModel: parsed.data.aiReviewModel,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
+        blacklistLabel: parsed.data.blacklistLabel,
         createMissingLabel: parsed.data.createMissingLabel,
         publicSurface: parsed.data.publicSurface,
         includeMaintainerAuthors: parsed.data.includeMaintainerAuthors,
@@ -3360,6 +3375,7 @@ export function createApp() {
         privateTrustEnabled: parsed.data.privateTrustEnabled,
         badgeEnabled: parsed.data.badgeEnabled,
         commandAuthorization: normalizeCommandAuthorizationPolicy(parsed.data.commandAuthorization).policy,
+        contributorBlacklist: normalizeContributorBlacklist(parsed.data.contributorBlacklist).entries,
       }),
     );
   });
@@ -4943,6 +4959,18 @@ function skippedPrAuditRemediation(reason: string): string {
 function toIsoQueryDate(value: string): string | undefined {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+
+
+// Optional Orb-ingest auth (#1285). FAIL-OPEN by default: with no ORB_INGEST_TOKEN configured the ingress stays
+// OPEN (matching today's live fleet — deploying this is non-breaking). Once the operator sets the token, the
+// collector REQUIRES an exact bearer match, so the write path can be locked down after the matching
+// ORB_COLLECTOR_TOKEN is rolled out to exporters.
+async function isAuthorizedOrbIngest(env: Env, token: string | undefined): Promise<boolean> {
+  if (!env.ORB_INGEST_TOKEN) return true;
+  // Constant-time compare (mirrors every other secret check in auth/security) — a `===` here is timing-attack
+  // vulnerable for a shared secret.
+  return timingSafeEqual(token, env.ORB_INGEST_TOKEN);
 }
 
 function requiresApiToken(path: string): boolean {

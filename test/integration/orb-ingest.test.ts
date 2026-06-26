@@ -20,19 +20,22 @@ describe("handleOrbIngest()", () => {
     expect(await handleOrbIngest("{not json}", makeDb())).toEqual({ error: "invalid_json" });
   });
 
-  it("returns invalid_payload: instance_id not a string / events not an array / empty instance / empty events", async () => {
+  it("returns invalid_payload: instance_id not a string / events not an array / empty/oversized instance / empty events", async () => {
     const db = makeDb();
     expect(await handleOrbIngest(JSON.stringify({ instance_id: 123, events: [] }), db)).toEqual({ error: "invalid_payload" });
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "abc", events: "bad" }), db)).toEqual({ error: "invalid_payload" });
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "", events: [ev()] }), db)).toEqual({ error: "invalid_payload" });
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "abc", events: [] }), db)).toEqual({ error: "invalid_payload" });
+    expect(await handleOrbIngest(JSON.stringify({ instance_id: "i".repeat(65), events: [ev()] }), db)).toEqual({ error: "invalid_payload" });
   });
 
   it("skips events with bad repo_hash / pr_hash / outcome", async () => {
     expect(await ingest(makeDb(), [ev({ repo_hash: 99 })])).toEqual({ accepted: 0 });
     expect(await ingest(makeDb(), [ev({ repo_hash: "" })])).toEqual({ accepted: 0 });
+    expect(await ingest(makeDb(), [ev({ repo_hash: "r".repeat(129) })])).toEqual({ accepted: 0 });
     expect(await ingest(makeDb(), [ev({ pr_hash: null })])).toEqual({ accepted: 0 });
     expect(await ingest(makeDb(), [ev({ pr_hash: "" })])).toEqual({ accepted: 0 });
+    expect(await ingest(makeDb(), [ev({ pr_hash: "p".repeat(129) })])).toEqual({ accepted: 0 });
     expect(await ingest(makeDb(), [ev({ outcome: "opened" })])).toEqual({ accepted: 0 });
   });
 
@@ -57,9 +60,10 @@ describe("handleOrbIngest()", () => {
 
   it("stores gate_reasoncode_bucket string vs null", async () => {
     const db = makeDb();
-    await ingest(db, [ev({ pr_hash: "b1", gate_reasoncode_bucket: "duplicate_risk" }), ev({ pr_hash: "b2" })]);
+    await ingest(db, [ev({ pr_hash: "b1", gate_reasoncode_bucket: "duplicate_risk" }), ev({ pr_hash: "b2" }), ev({ pr_hash: "b3", gate_reasoncode_bucket: "b".repeat(65) })]);
     expect(await col(db, "b1", "gate_reasoncode_bucket")).toBe("duplicate_risk");
     expect(await col(db, "b2", "gate_reasoncode_bucket")).toBeNull();
+    expect(await col(db, "b3", "gate_reasoncode_bucket")).toBeNull();
   });
 
   it("clamps time_to_close_ms: valid kept; absent / <1s / >1y → null", async () => {
@@ -211,6 +215,21 @@ describe("POST /v1/orb/ingest route", () => {
     const res = await app.request("/v1/orb/ingest", { method: "POST", body: huge }, createTestEnv());
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
+  });
+
+  it("optional collector token (#1285): open when unset; enforced once ORB_INGEST_TOKEN is set", async () => {
+    const body = JSON.stringify({ instance_id: "abc0", events: [{ repo_hash: "rhash", pr_hash: "phash", outcome: "merged" }] });
+    const post = (env: Env, authorization?: string) =>
+      app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body }, env);
+
+    // Token UNSET → open ingress (the live fleet keeps working with no auth header).
+    expect((await post(createTestEnv())).status).toBe(200);
+    // Token SET → a missing or wrong bearer is rejected before the body is parsed.
+    const env = createTestEnv({ ORB_INGEST_TOKEN: "fleet-secret" });
+    expect((await post(env)).status).toBe(401);
+    expect((await post(env, "Bearer wrong")).status).toBe(401);
+    // Token SET + the matching bearer → accepted.
+    expect((await post(env, "Bearer fleet-secret")).status).toBe(200);
   });
 });
 

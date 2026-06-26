@@ -221,6 +221,9 @@ export type UnifiedCommentBridgeArgs = {
   /** The disposition holds this PR for owner review because its diff touches a hard-guardrail path — so an
    *  otherwise-ready comment renders "held for review" instead of "safe to merge". (#guarded-hold-comment) */
   heldForReview?: boolean | undefined;
+  /** The author is the repo owner or a protected automation bot — never auto-closed, so a gate "close" verdict
+   *  renders as "held" rather than "Closed" (#8/#9). */
+  neverClosed?: boolean | undefined;
 };
 
 /**
@@ -321,6 +324,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     ...(args.reRunLabel !== undefined ? { reRunLabel: args.reRunLabel } : {}),
     ...(extraCollapsibles !== undefined ? { extraCollapsibles } : {}),
     ...(args.heldForReview ? { heldForReview: true } : {}),
+    ...(args.neverClosed ? { neverClosed: true } : {}),
   });
 
   // Prepend the marker verbatim (matching the legacy body, which leads with the marker then a blank line)

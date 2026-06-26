@@ -1,0 +1,6 @@
+# actionlint configuration. Declares the project's custom self-hosted runner labels so actionlint does not flag
+# `runs-on: [self-hosted, <label>]` as an unknown label (runner-label rule). The `gittensory` label is the
+# self-hosted runner that runs the self-host nightly maintenance workflow (.github/workflows/self-host-nightly.yml).
+self-hosted-runner:
+  labels:
+    - gittensory

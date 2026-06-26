@@ -7,25 +7,51 @@ import {
   parseRevertedPrNumber,
   recordPrOutcome,
   recordReversalSignals,
+  resolveDispositionReason,
   runSelfTuneBreaker,
 } from "../../src/review/outcomes-wire";
 import { applyAutoTune, type GateEvalReport } from "../../src/review/auto-tune";
-import { downgradeMergeToHold, type PlannedAgentAction } from "../../src/settings/agent-actions";
+import {
+  downgradeMergeToHold,
+  type PlannedAgentAction,
+} from "../../src/settings/agent-actions";
 import { recordAuditEvent } from "../../src/db/repositories";
 import type { GitHubPullRequestPayload } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 // ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────
 
-async function reviewAuditRows(env: Env, eventType: string): Promise<Array<{ project: string; target_id: string; decision: string | null; summary: string | null }>> {
-  const res = await env.DB.prepare("SELECT project, target_id, decision, summary FROM review_audit WHERE event_type = ?")
+async function reviewAuditRows(
+  env: Env,
+  eventType: string,
+): Promise<
+  Array<{
+    project: string;
+    target_id: string;
+    decision: string | null;
+    summary: string | null;
+  }>
+> {
+  const res = await env.DB.prepare(
+    "SELECT project, target_id, decision, summary FROM review_audit WHERE event_type = ?",
+  )
     .bind(eventType)
-    .all<{ project: string; target_id: string; decision: string | null; summary: string | null }>();
+    .all<{
+      project: string;
+      target_id: string;
+      decision: string | null;
+      summary: string | null;
+    }>();
   return res.results ?? [];
 }
 
-async function auditEventRows(env: Env, eventType: string): Promise<Array<{ target_key: string | null; detail: string | null }>> {
-  const res = await env.DB.prepare("SELECT target_key, detail FROM audit_events WHERE event_type = ?")
+async function auditEventRows(
+  env: Env,
+  eventType: string,
+): Promise<Array<{ target_key: string | null; detail: string | null }>> {
+  const res = await env.DB.prepare(
+    "SELECT target_key, detail FROM audit_events WHERE event_type = ?",
+  )
     .bind(eventType)
     .all<{ target_key: string | null; detail: string | null }>();
   return res.results ?? [];
@@ -40,11 +66,25 @@ async function seedBotAction(
   outcome: "success" | "completed" | "denied" = "completed",
   mode?: "live" | "dry_run",
 ): Promise<void> {
-  await recordAuditEvent(env, { eventType: `agent.action.${actionClass}`, targetKey, outcome, metadata: mode ? { mode } : undefined });
+  await recordAuditEvent(env, {
+    eventType: `agent.action.${actionClass}`,
+    targetKey,
+    outcome,
+    metadata: mode ? { mode } : undefined,
+  });
 }
 
-function pullRequestPayload(over: Partial<GitHubPullRequestPayload> = {}): GitHubPullRequestPayload {
-  return { number: 7, title: "PR", state: "closed", head: { sha: "s7" }, labels: [], ...over };
+function pullRequestPayload(
+  over: Partial<GitHubPullRequestPayload> = {},
+): GitHubPullRequestPayload {
+  return {
+    number: 7,
+    title: "PR",
+    state: "closed",
+    head: { sha: "s7" },
+    labels: [],
+    ...over,
+  };
 }
 
 // ── 1) pr_outcome — realized ground truth (merged + closed) ───────────────────────────────────────────────────
@@ -54,36 +94,96 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
     const env = createTestEnv();
     await recordPrOutcome(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 42, merged_at: "2026-06-20T00:00:00.000Z" }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 42,
+        merged_at: "2026-06-20T00:00:00.000Z",
+      }),
       sender: { login: "owner", type: "User" },
     });
     const eval_ = await reviewAuditRows(env, "pr_outcome");
     expect(eval_).toHaveLength(1);
-    expect(eval_[0]).toMatchObject({ project: "owner/repo", target_id: "owner/repo#42", decision: "merged" });
+    expect(eval_[0]).toMatchObject({
+      project: "owner/repo",
+      target_id: "owner/repo#42",
+      decision: "merged",
+    });
     const ledger = await auditEventRows(env, "pr_outcome");
     expect(ledger).toHaveLength(1);
-    expect(ledger[0]).toMatchObject({ target_key: "owner/repo#42", detail: "merged" });
+    expect(ledger[0]).toMatchObject({
+      target_key: "owner/repo#42",
+      detail: "merged",
+    });
   });
 
   it("writes a pr_outcome=closed row when a maintainer closes a PR WITHOUT merging", async () => {
     const env = createTestEnv();
     await recordPrOutcome(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 43, merged_at: null, user: { login: "contributor", type: "User" } }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 43,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
       sender: { login: "owner", type: "User" },
     });
-    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({ target_id: "owner/repo#43", decision: "closed" });
-    expect((await auditEventRows(env, "pr_outcome"))[0]).toMatchObject({ detail: "closed" });
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({
+      target_id: "owner/repo#43",
+      decision: "closed",
+    });
+    expect((await auditEventRows(env, "pr_outcome"))[0]).toMatchObject({
+      detail: "closed",
+    });
+  });
+
+  it("writes a pr_outcome=closed row when Gittensory (a bot) closes a PR", async () => {
+    const env = createTestEnv();
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 44,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
+      sender: { login: "gittensory[bot]", type: "Bot" },
+    });
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({
+      target_id: "owner/repo#44",
+      decision: "closed",
+    });
+    expect((await auditEventRows(env, "pr_outcome"))[0]).toMatchObject({
+      detail: "closed",
+    });
   });
 
   it("records NOTHING for an unmerged contributor PR self-close", async () => {
     const env = createTestEnv();
     await recordPrOutcome(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 43, merged_at: null, user: { login: "contributor", type: "User" } }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 43,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
       sender: { login: "contributor", type: "User" },
     });
     expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(0);
@@ -92,8 +192,15 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
 
   it("records NOTHING for a non-closed action or a payload with no PR number", async () => {
     const env = createTestEnv();
-    await recordPrOutcome(env, "pull_request", { action: "opened", repository: { name: "repo", full_name: "owner/repo" }, pull_request: pullRequestPayload({ number: 44, state: "open" }) });
-    await recordPrOutcome(env, "pull_request", { action: "closed", repository: { name: "repo", full_name: "owner/repo" } });
+    await recordPrOutcome(env, "pull_request", {
+      action: "opened",
+      repository: { name: "repo", full_name: "owner/repo" },
+      pull_request: pullRequestPayload({ number: 44, state: "open" }),
+    });
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo" },
+    });
     expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(0);
     expect(await auditEventRows(env, "pr_outcome")).toHaveLength(0);
   });
@@ -107,13 +214,20 @@ describe("recordReversalSignals — reversal_reopened", () => {
     await seedBotAction(env, "owner/repo#7", "close"); // the bot's last action on this PR was a close
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "contributor", type: "User" }, // not the owner, not a bot → a genuine dispute
     });
     const eval_ = await reviewAuditRows(env, "reversal_reopened");
     expect(eval_).toHaveLength(1);
-    expect(eval_[0]).toMatchObject({ project: "owner/repo", target_id: "owner/repo#7" });
+    expect(eval_[0]).toMatchObject({
+      project: "owner/repo",
+      target_id: "owner/repo#7",
+    });
     expect(await auditEventRows(env, "reversal_reopened")).toHaveLength(1);
   });
 
@@ -122,7 +236,11 @@ describe("recordReversalSignals — reversal_reopened", () => {
     await seedBotAction(env, "owner/repo#7", "approve");
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "contributor", type: "User" },
     });
@@ -135,14 +253,22 @@ describe("recordReversalSignals — reversal_reopened", () => {
     // Owner reopen — administrative re-queue, not a dispute.
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "owner", type: "User" },
     });
     // Bot reopen — not a human dispute.
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "some-bot[bot]", type: "Bot" },
     });
@@ -154,7 +280,11 @@ describe("recordReversalSignals — reversal_reopened", () => {
     await seedBotAction(env, "owner/repo#7", "close", "success");
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "contributor", type: "User" },
     });
@@ -166,7 +296,11 @@ describe("recordReversalSignals — reversal_reopened", () => {
     await seedBotAction(env, "owner/repo#7", "close", "completed", "dry_run");
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "contributor", type: "User" },
     });
@@ -179,26 +313,45 @@ describe("recordReversalSignals — reversal_reopened", () => {
     await seedBotAction(env, "owner/repo#7", "close", "completed", "live");
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "contributor", type: "User" },
     });
     expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
   });
 
-  it("records reversal_reverted against PR #N for a merged \"Reverts #N\" PR — when #N's merge was recorded", async () => {
+  it('records reversal_reverted against PR #N for a merged "Reverts #N" PR — when #N\'s merge was recorded', async () => {
     const env = createTestEnv();
     // Corroboration: our ledger must have observed PR #50 merge first.
     await recordPrOutcome(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 50, merged_at: "2026-06-19T00:00:00.000Z" }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 50,
+        merged_at: "2026-06-19T00:00:00.000Z",
+      }),
       sender: { login: "owner", type: "User" },
     });
     await recordReversalSignals(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 99, merged_at: "2026-06-20T00:00:00.000Z", body: "Reverts #50\n\nThis reverts the change." }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 99,
+        merged_at: "2026-06-20T00:00:00.000Z",
+        body: "Reverts #50\n\nThis reverts the change.",
+      }),
       sender: { login: "contributor", type: "User" },
     });
     const eval_ = await reviewAuditRows(env, "reversal_reverted");
@@ -212,8 +365,16 @@ describe("recordReversalSignals — reversal_reopened", () => {
     // No pr_outcome=merged recorded for #50 → a contributor's merged \"Reverts #50\" must not forge a reversal.
     await recordReversalSignals(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 99, merged_at: "2026-06-20T00:00:00.000Z", body: "Reverts #50\n\nThis reverts the change." }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 99,
+        merged_at: "2026-06-20T00:00:00.000Z",
+        body: "Reverts #50\n\nThis reverts the change.",
+      }),
       sender: { login: "contributor", type: "User" },
     });
     expect(await reviewAuditRows(env, "reversal_reverted")).toHaveLength(0);
@@ -226,8 +387,16 @@ describe("recordReversalSignals — reversal_reopened", () => {
     await expect(
       recordReversalSignals(broken, "pull_request", {
         action: "closed",
-        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-        pull_request: pullRequestPayload({ number: 99, merged_at: "2026-06-20T00:00:00.000Z", body: "Reverts #50" }),
+        repository: {
+          name: "repo",
+          full_name: "owner/repo",
+          owner: { login: "owner" },
+        },
+        pull_request: pullRequestPayload({
+          number: 99,
+          merged_at: "2026-06-20T00:00:00.000Z",
+          body: "Reverts #50",
+        }),
         sender: { login: "contributor", type: "User" },
       }),
     ).resolves.toBeUndefined();
@@ -237,8 +406,16 @@ describe("recordReversalSignals — reversal_reopened", () => {
     const env = createTestEnv();
     await recordReversalSignals(env, "pull_request", {
       action: "closed",
-      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
-      pull_request: pullRequestPayload({ number: 99, merged_at: "2026-06-20T00:00:00.000Z", body: "A normal feature PR." }),
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 99,
+        merged_at: "2026-06-20T00:00:00.000Z",
+        body: "A normal feature PR.",
+      }),
       sender: { login: "contributor", type: "User" },
     });
     expect(await reviewAuditRows(env, "reversal_reverted")).toHaveLength(0);
@@ -257,9 +434,23 @@ describe("parseRevertedPrNumber (pure)", () => {
 // ── 3a) downgradeMergeToHold (pure) — the precision-breaker merge→hold transform ───────────────────────────────
 
 describe("downgradeMergeToHold (pure)", () => {
-  const mergeAction: PlannedAgentAction = { actionClass: "merge", requiresApproval: false, reason: "ready" };
-  const readyLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "ready", label: "gittensory:ready-to-merge", labelOp: "add" };
-  const closeAction: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "bad" };
+  const mergeAction: PlannedAgentAction = {
+    actionClass: "merge",
+    requiresApproval: false,
+    reason: "ready",
+  };
+  const readyLabel: PlannedAgentAction = {
+    actionClass: "label",
+    requiresApproval: false,
+    reason: "ready",
+    label: "gittensory:ready-to-merge",
+    labelOp: "add",
+  };
+  const closeAction: PlannedAgentAction = {
+    actionClass: "close",
+    requiresApproval: false,
+    reason: "bad",
+  };
 
   it("holdOnly=false → returns the plan UNCHANGED (byte-identical common path)", () => {
     const plan = [readyLabel, mergeAction];
@@ -269,8 +460,20 @@ describe("downgradeMergeToHold (pure)", () => {
   it("holdOnly=true + a planned merge → drops the merge + ready label, adds needs-human-review", () => {
     const out = downgradeMergeToHold([readyLabel, mergeAction], true);
     expect(out.some((a) => a.actionClass === "merge")).toBe(false);
-    expect(out.some((a) => a.actionClass === "label" && a.label === "gittensory:ready-to-merge")).toBe(false);
-    expect(out.some((a) => a.actionClass === "label" && a.label === "gittensory:needs-human-review" && a.labelOp === "add")).toBe(true);
+    expect(
+      out.some(
+        (a) =>
+          a.actionClass === "label" && a.label === "gittensory:ready-to-merge",
+      ),
+    ).toBe(false);
+    expect(
+      out.some(
+        (a) =>
+          a.actionClass === "label" &&
+          a.label === "gittensory:needs-human-review" &&
+          a.labelOp === "add",
+      ),
+    ).toBe(true);
   });
 
   it("holdOnly=true but NO merge planned (e.g. a close) → no-op (returns the plan unchanged)", () => {
@@ -338,7 +541,9 @@ describe("isCloseHoldOnly + createFlagStore.isCloseHoldOnly (closehold:<scope>, 
   it("isCloseHoldOnly ignores a closehold row whose value is falsy (flagTruthy false arm)", async () => {
     const env = createTestEnv();
     // A row exists for this project but its value is '0' (not truthy) → must NOT count as engaged.
-    await env.DB.prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES ('closehold:owner/repo', '0', CURRENT_TIMESTAMP)").run();
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES ('closehold:owner/repo', '0', CURRENT_TIMESTAMP)",
+    ).run();
     expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
   });
 
@@ -348,7 +553,9 @@ describe("isCloseHoldOnly + createFlagStore.isCloseHoldOnly (closehold:<scope>, 
     env.DB.prepare = ((sql: string) => {
       // Force the system_flags scan to return an object WITHOUT a `results` array so `res.results ?? []` falls back.
       if (/SELECT key, value FROM system_flags/i.test(sql)) {
-        return { all: async () => ({}) } as unknown as ReturnType<typeof realPrepare>;
+        return { all: async () => ({}) } as unknown as ReturnType<
+          typeof realPrepare
+        >;
       }
       return realPrepare(sql);
     }) as typeof env.DB.prepare;
@@ -375,7 +582,9 @@ describe("isCloseHoldOnly + createFlagStore.isCloseHoldOnly (closehold:<scope>, 
     }) as typeof env.DB.prepare;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("flags_read_error"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("flags_read_error"),
+    );
     warn.mockRestore();
   });
 });
@@ -386,7 +595,21 @@ describe("applyAutoTune over the live FlagStore — engages holdonly on low merg
     const flags = createFlagStore(env);
     // 5 confirmed / 12 would-merge = ~42% precision over 12 decided → below the 85% floor with a real sample.
     const report: GateEvalReport = {
-      rows: [{ project: "owner/repo", wouldMerge: 12, mergeConfirmed: 5, mergeFalse: 7, wouldClose: 0, closeConfirmed: 0, closeFalse: 0, hold: 0, decided: 12, mergePrecision: 5 / 12, closePrecision: null }],
+      rows: [
+        {
+          project: "owner/repo",
+          wouldMerge: 12,
+          mergeConfirmed: 5,
+          mergeFalse: 7,
+          wouldClose: 0,
+          closeConfirmed: 0,
+          closeFalse: 0,
+          hold: 0,
+          decided: 12,
+          mergePrecision: 5 / 12,
+          closePrecision: null,
+        },
+      ],
       hasSignal: true,
     };
     const engaged = await applyAutoTune(flags, report);
@@ -397,11 +620,23 @@ describe("applyAutoTune over the live FlagStore — engages holdonly on low merg
 
 describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engages/clears the breaker", () => {
   // Seed a gate_decision prediction + the realized pr_outcome for one PR (the join computeGateEval folds).
-  async function seedDecisionAndOutcome(env: Env, project: string, pr: number, pred: "merge" | "close", truth: "merged" | "closed"): Promise<void> {
+  async function seedDecisionAndOutcome(
+    env: Env,
+    project: string,
+    pr: number,
+    pred: "merge" | "close",
+    truth: "merged" | "closed",
+  ): Promise<void> {
     await env.DB.prepare(
       "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?, ?, ?, 'gate_decision', ?, 'gittensory-native', ?, NULL, CURRENT_TIMESTAMP)",
     )
-      .bind(`gd:${project}#${pr}`, project, `${project}#${pr}`, pred, `sha${pr}`)
+      .bind(
+        `gd:${project}#${pr}`,
+        project,
+        `${project}#${pr}`,
+        pred,
+        `sha${pr}`,
+      )
       .run();
     await env.DB.prepare(
       "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?, ?, ?, 'pr_outcome', ?, 'gittensory-native', NULL, NULL, CURRENT_TIMESTAMP)",
@@ -413,8 +648,10 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
   it("ENGAGES the breaker when recorded outcomes show merge precision below the floor", async () => {
     const env = createTestEnv();
     // 12 would-merge predictions: 4 confirmed merged, 8 the human actually CLOSED → 33% precision over 12 decided.
-    for (let i = 0; i < 4; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "merged");
-    for (let i = 4; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "closed");
+    for (let i = 0; i < 4; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "merged");
+    for (let i = 4; i < 12; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "closed");
 
     await runSelfTuneBreaker(env);
 
@@ -424,8 +661,10 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
   it("ENGAGES the CLOSE breaker when recorded outcomes show close precision below the floor", async () => {
     const env = createTestEnv();
     // 12 would-CLOSE predictions: 4 confirmed (human closed), 8 the human actually MERGED → 33% close precision.
-    for (let i = 0; i < 4; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
-    for (let i = 4; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "merged");
+    for (let i = 0; i < 4; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
+    for (let i = 4; i < 12; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "close", "merged");
 
     await runSelfTuneBreaker(env);
 
@@ -437,7 +676,8 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
   it("does NOT engage the CLOSE breaker when recorded close precision is healthy", async () => {
     const env = createTestEnv();
     // 12 would-CLOSE predictions: 12 confirmed (human closed) → 100% close precision, well above the floor.
-    for (let i = 0; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
+    for (let i = 0; i < 12; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
 
     await runSelfTuneBreaker(env);
 
@@ -457,12 +697,16 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
     // Engage both breakers directly, then backdate their updated_at past the 24h cooldown.
     await flags.setFlag("holdonly:owner/repo", true);
     await flags.setFlag("closehold:owner/repo", true);
-    await env.DB.prepare("UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key IN ('holdonly:owner/repo', 'closehold:owner/repo')").run();
+    await env.DB.prepare(
+      "UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key IN ('holdonly:owner/repo', 'closehold:owner/repo')",
+    ).run();
     expect(await isHoldOnly(env, "owner/repo")).toBe(true);
     expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
     // Seed RECOVERED outcomes for both directions: every merge prediction merged, every close prediction closed.
-    for (let i = 0; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "merged");
-    for (let i = 12; i < 24; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
+    for (let i = 0; i < 12; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "merged");
+    for (let i = 12; i < 24; i += 1)
+      await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
 
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     await runSelfTuneBreaker(env);
@@ -492,7 +736,8 @@ describe("processJob(github-webhook) wires pr_outcome recording on a PR close", 
     const env = createTestEnv();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       return new Response("not found", { status: 404 });
     });
@@ -503,9 +748,26 @@ describe("processJob(github-webhook) wires pr_outcome recording on a PR close", 
         eventName: "pull_request",
         payload: {
           action: "closed",
-          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
-          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
-          pull_request: { number: 5151, title: "Merged PR", state: "closed", merged_at: "2026-06-20T00:00:00.000Z", user: { login: "contributor" }, head: { sha: "abc123" }, labels: [], body: "Adds a feature." },
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+          },
+          repository: {
+            name: "gittensory",
+            full_name: "JSONbored/gittensory",
+            private: true,
+            owner: { login: "JSONbored" },
+          },
+          pull_request: {
+            number: 5151,
+            title: "Merged PR",
+            state: "closed",
+            merged_at: "2026-06-20T00:00:00.000Z",
+            user: { login: "contributor" },
+            head: { sha: "abc123" },
+            labels: [],
+            body: "Adds a feature.",
+          },
           sender: { login: "contributor", type: "User" },
         },
       });
@@ -513,6 +775,73 @@ describe("processJob(github-webhook) wires pr_outcome recording on a PR close", 
       vi.unstubAllGlobals();
     }
     const eval_ = await reviewAuditRows(env, "pr_outcome");
-    expect(eval_.some((r) => r.target_id === "JSONbored/gittensory#5151" && r.decision === "merged")).toBe(true);
+    expect(
+      eval_.some(
+        (r) =>
+          r.target_id === "JSONbored/gittensory#5151" &&
+          r.decision === "merged",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("resolveDispositionReason (enriched Discord reason)", () => {
+  it("returns the latest recorded gate verdict summary for the PR", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+      .bind(
+        "g1",
+        "owner/repo",
+        "owner/repo#7",
+        "gate_decision",
+        "close",
+        "gittensory-native",
+        "sha1",
+        "older verdict",
+        "2026-06-20T00:00:00.000Z",
+      )
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+      .bind(
+        "g2",
+        "owner/repo",
+        "owner/repo#7",
+        "gate_decision",
+        "close",
+        "gittensory-native",
+        "sha2",
+        "An AI reviewer flagged a likely blocking defect",
+        "2026-06-21T00:00:00.000Z",
+      )
+      .run();
+    expect(
+      await resolveDispositionReason(env, "owner/repo#7", "fallback"),
+    ).toBe("An AI reviewer flagged a likely blocking defect");
+  });
+  it("falls back when no gate verdict is recorded for the PR", async () => {
+    const env = createTestEnv();
+    expect(
+      await resolveDispositionReason(
+        env,
+        "owner/repo#999",
+        "Pull request merged into the base branch.",
+      ),
+    ).toBe("Pull request merged into the base branch.");
+  });
+  it("falls back when the read throws", async () => {
+    const broken = {
+      DB: {
+        prepare: () => {
+          throw new Error("db down");
+        },
+      },
+    } as unknown as Env;
+    expect(
+      await resolveDispositionReason(broken, "owner/repo#7", "fallback"),
+    ).toBe("fallback");
   });
 });

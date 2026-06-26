@@ -1,0 +1,51 @@
+# OpenTelemetry Collector for the self-host (--profile observability), following Anthropic's official Claude
+# Code monitoring guide (github.com/anthropics/claude-code-monitoring-guide). Receives OTLP metrics from the
+# review CLI and re-exposes them in Prometheus format on :8889, which Prometheus scrapes.
+#
+# Why a collector (not Prometheus's native OTLP push): the prometheus exporter's `metric_expiration` keeps a
+# finished session's cumulative counters exposed for 3h, so sporadic, short-lived `claude -p` runs don't make
+# the series vanish between reviews — the failure mode of pushing OTLP straight into Prometheus.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    send_timestamps: true
+    metric_expiration: 180m
+    enable_open_metrics: true
+    # Turn OTLP resource attributes (service.name, model, …) into labels for per-model/-user breakdowns.
+    resource_to_telemetry_conversion:
+      enabled: true
+  # Forward Claude review CLI spans to Tempo (the beta tracing pipeline). Inert if Tempo isn't running.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]

@@ -9,6 +9,10 @@ export const installations = sqliteTable("installations", {
   id: integer("id").primaryKey(),
   accountLogin: text("account_login").notNull(),
   accountId: integer("account_id").notNull(),
+  // The GitHub App this installation belongs to (#selfhost-app-id). Nullable: only `installation` events (and
+  // the App-installation API refresh) carry it, so existing rows backfill lazily. Lets a backend tell its OWN
+  // installations from a SECOND gittensory App installed on the same account (cloud + self-host side by side).
+  appId: integer("app_id"),
   targetType: text("target_type").notNull(),
   repositorySelection: text("repository_selection"),
   permissionsJson: text("permissions_json").notNull().default("{}"),
@@ -72,6 +76,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   privateTrustEnabled: integer("private_trust_enabled", { mode: "boolean" }).notNull().default(true),
   badgeEnabled: integer("badge_enabled", { mode: "boolean" }).notNull().default(false),
   commandAuthorizationJson: text("command_authorization_json").notNull().default("{}"),
+  // Per-repo contributor blacklist (#1425): a JSON array of { login, reason?, evidence?, addedAt? } entries.
+  contributorBlacklistJson: text("contributor_blacklist_json").notNull().default("[]"),
   autonomyJson: text("autonomy_json").notNull().default("{}"),
   autoMaintainJson: text("auto_maintain_json").notNull().default("{}"),
   agentPaused: integer("agent_paused", { mode: "boolean" }).notNull().default(false),

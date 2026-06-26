@@ -8152,6 +8152,32 @@
               "advisory",
               "block"
             ]
+          },
+          "contributorBlacklist": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "login": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "addedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "login"
+              ]
+            }
           }
         },
         "required": [

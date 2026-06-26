@@ -74,9 +74,10 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     process.env.ORB_ANONYMIZE = "true";
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
+    delete process.env.ORB_COLLECTOR_TOKEN;
   });
   afterEach(() => {
-    for (const k of ["GITHUB_APP_PRIVATE_KEY", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
+    for (const k of ["GITHUB_APP_PRIVATE_KEY", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "ORB_COLLECTOR_TOKEN", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
   });
 
   it("returns 0 when the App private key is not configured (App not set up → nothing to export)", async () => {
@@ -173,10 +174,12 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
       await audit(db, "o/r", i, "gate_decision", "merge", `2026-03-0${i}T00:00:00Z`);
       await audit(db, "o/r", i, "pr_outcome", "merged", `2026-03-0${i}T01:00:00Z`);
     }
-    let sig: string | undefined;
-    const n = await exportOrbBatch(db, 3, async (_u, init) => { sig = (init!.headers as Record<string, string>)["x-orb-signature"]; return new Response(null, { status: 200 }); });
+    process.env.ORB_COLLECTOR_TOKEN = "collector-secret";
+    let headers: Record<string, string> | undefined;
+    const n = await exportOrbBatch(db, 3, async (_u, init) => { headers = init!.headers as Record<string, string>; return new Response(null, { status: 200 }); });
     expect(n).toBe(3); // batch cap
-    expect(sig).toMatch(/^sha256=[a-f0-9]{64}$/);
+    expect(headers?.["x-orb-signature"]).toMatch(/^sha256=[a-f0-9]{64}$/);
+    expect(headers?.authorization).toBe("Bearer collector-secret");
   });
 
   it("falls back to GITHUB_APP_ID for the instance id and applies the anonymize default when ORB_* are unset", async () => {

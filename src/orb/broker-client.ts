@@ -11,6 +11,31 @@
 const DEFAULT_BROKER_URL = "https://gittensory-api.aethereal.dev";
 const BROKER_TIMEOUT_MS = 10_000;
 
+function isLocalBrokerHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || (hostname === "::1" || hostname === "[::1]");
+}
+
+function orbBrokerBaseUrl(env: { ORB_BROKER_URL?: string | undefined }): string {
+  const raw = env.ORB_BROKER_URL ?? DEFAULT_BROKER_URL;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("ORB_BROKER_URL must be a valid URL.");
+  }
+  if (url.username || url.password) {
+    throw new Error("ORB_BROKER_URL must not include userinfo.");
+  }
+  if (url.search || url.hash) {
+    throw new Error("ORB_BROKER_URL must not include a query string or fragment.");
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalBrokerHost(url.hostname))) {
+    throw new Error("ORB_BROKER_URL must use https unless it targets localhost development.");
+  }
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${path}`;
+}
+
 /** True when GitHub tokens should be sourced from the central Orb broker (a brokered self-host) rather than minted
  *  locally from an App key — i.e. an enrollment secret is configured. Cloud never sets it ⇒ false there. */
 export function isOrbBrokerMode(env: { ORB_ENROLLMENT_SECRET?: string | undefined }): boolean {
@@ -27,7 +52,7 @@ export async function fetchBrokeredInstallationToken(
   env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined },
   fetchImpl: typeof fetch = fetch,
 ): Promise<BrokeredInstallationToken> {
-  const base = (env.ORB_BROKER_URL ?? DEFAULT_BROKER_URL).replace(/\/+$/, "");
+  const base = orbBrokerBaseUrl(env);
   const response = await fetchImpl(`${base}/v1/orb/token`, {
     method: "POST",
     headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET ?? ""}` },
@@ -54,9 +79,9 @@ export async function registerOrbRelayTarget(
   fetchImpl: typeof fetch = fetch,
 ): Promise<"registered" | "skipped" | "failed"> {
   if (!isOrbBrokerMode(env) || !env.PUBLIC_API_ORIGIN) return "skipped";
-  const base = (env.ORB_BROKER_URL ?? DEFAULT_BROKER_URL).replace(/\/+$/, "");
   const relayUrl = `${env.PUBLIC_API_ORIGIN.replace(/\/+$/, "")}/v1/orb/relay`;
   try {
+    const base = orbBrokerBaseUrl(env);
     const res = await fetchImpl(`${base}/v1/orb/relay/register`, {
       method: "POST",
       headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET}`, "content-type": "application/json" }, // present — isOrbBrokerMode required it

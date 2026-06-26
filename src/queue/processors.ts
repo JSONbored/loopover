@@ -188,6 +188,7 @@ import { secretLeakFinding } from "../review/safety";
 import { buildIssuePlanComment, classifyPlanCommandRequest, generateIssuePlan, isPlanCommand, isPlannerEnabled } from "../review/planner";
 import { aiCiRefutationActive, buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
+import { buildReviewEnrichment, EMPTY_ENRICHMENT, isEnrichmentEnabled } from "../review/enrichment-wire";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
@@ -2191,6 +2192,28 @@ export async function runAiReviewForAdvisory(
           files: files.map((file) => ({ path: file.path, patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined })),
         })
       : undefined;
+    // Review-enrichment (convergence, flag-gated by GITTENSORY_REVIEW_ENRICHMENT, #1472). POST the PR's diff +
+    // files + linked issue to the external REES service and splice the returned `promptSection` /
+    // `systemSuffix` into the reviewer prompts. Flag-OFF / REES unconfigured / REES unreachable →
+    // `EMPTY_ENRICHMENT` (both fields ""), so the prompt is byte-identical to today. The brief is additive
+    // prompt context — NOT a gate finding — and is still subject to the existing public-safe filter on the
+    // way out. Fully fail-safe (timeout / non-200 / parse error / network error all degrade to EMPTY).
+    const enrichment = isEnrichmentEnabled(env) && convergedRepoAllowed
+      ? await buildReviewEnrichment(env, {
+          repoFullName: args.repoFullName,
+          prNumber: args.pr.number,
+          headSha: args.advisory.headSha,
+          title: args.pr.title,
+          body: args.pr.body ?? undefined,
+          author: args.author ?? undefined,
+          files: files.map((file) => ({
+            path: file.path,
+            ...(file.status ? { status: file.status } : {}),
+            ...(typeof file.payload?.patch === "string" ? { patch: file.payload.patch } : {}),
+          })),
+          diff: buildAiReviewDiff(files),
+        })
+      : EMPTY_ENRICHMENT;
     const result = await runGittensoryAiReview(env, {
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
@@ -2202,6 +2225,7 @@ export async function runAiReviewForAdvisory(
       providerKey,
       grounding,
       ragContext,
+      enrichment,
       profile: args.reviewProfile ?? null,
       // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
       // the cutover allowlist, AND the per-repo manifest toggle all pass. Otherwise the prompt is byte-identical.

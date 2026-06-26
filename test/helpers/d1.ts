@@ -80,6 +80,9 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
     // gated review features. Override to "" to assert the dormant (no-repo) default.
     GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,acme/widgets",
+    // Review enrichment (#1472) defaults OFF in the test env so the dormant path is the default.
+    // Individual tests override GITTENSORY_REVIEW_ENRICHMENT + REES_URL + REES_SHARED_SECRET when needed.
+    GITTENSORY_REVIEW_ENRICHMENT: "false",
     ...overrides,
   };
 }

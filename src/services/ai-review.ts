@@ -116,6 +116,16 @@ export type GittensoryAiReviewInput = {
    */
   ragContext?: string | null | undefined;
   /**
+   * Convergence (review-enrichment, flag-gated by GITTENSORY_REVIEW_ENRICHMENT). The caller POSTs the PR's diff +
+   * files + linked issue to the external REES service and gets back a pre-rendered "review brief" the
+   * reviewer splices into the prompt alongside grounding + RAG (see `review/enrichment-wire`). The brief is
+   * ADDITIVE prompt context — NOT a gate finding — and is still subject to the existing public-safe filter
+   * on the way out. When ABSENT (the default, flag-OFF / unconfigured / service failure), BOTH the user
+   * prompt and the system prompt are byte-identical to today — no section / suffix is appended. Empty
+   * `promptSection` / `systemSuffix` strings behave the same as absent. (#1472)
+   */
+  enrichment?: { systemSuffix?: string | undefined; promptSection?: string | undefined } | null | undefined;
+  /**
    * `.gittensory.yml` `review.profile` (#review-profile): adjusts how nitpicky the maintainer review write-up is.
    * `chill` → surface only blocking defects; `assertive` → also raise minor improvements & nits; absent/`balanced`
    * → the reviewer prompt is byte-identical to today. PRESENTATION ONLY — it never changes the gate verdict (the
@@ -326,6 +336,12 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
   // supplied one (flag GITTENSORY_REVIEW_RAG on AND an index exists). Absent/empty (the default) → byte-identical.
   const ragSection = input.ragContext;
   if (ragSection) lines.push("", ragSection);
+  // Convergence (review-enrichment, #1472): append the REES-rendered RELEVANT BRIEF block when the caller
+  // supplied one (flag GITTENSORY_REVIEW_ENRICHMENT on AND REES is reachable). Absent/empty (the default) →
+  // byte-identical — no section is appended, no ordering changes. Spliced AFTER grounding + RAG so the brief
+  // sits at the bottom of the user prompt where the reviewer reads it last.
+  const enrichmentSection = input.enrichment?.promptSection;
+  if (enrichmentSection) lines.push("", enrichmentSection);
   return lines.join("\n");
 }
 
@@ -345,16 +361,20 @@ const INLINE_FINDINGS_SUFFIX =
   '\n\nINLINE FINDINGS: ALSO include an additional top-level field "inlineFindings" in the SAME JSON object — an array (possibly empty) of your most important findings, each anchored to a specific changed line, for inline PR comments. Each item: {"path": the changed file path EXACTLY as shown in the diff, "line": the 1-based line number in the NEW file (count forward from the "+" start in the nearest "@@ -old +new @@" hunk header) of an ADDED ("+") line you are commenting on, "severity": "blocker" or "nit", "body": the one-sentence finding}. Include ONLY findings you can place on a specific added line; OMIT any you cannot anchor precisely (a wrong line is worse than none). At most ~10 items.';
 
 /** The effective reviewer SYSTEM prompt. Appends the grounding-discipline suffix when the caller supplied one
- *  (flag GITTENSORY_REVIEW_GROUNDING on), the `review.profile` tone suffix when set, then the inline-findings
- *  instruction when the caller asked for them; all absent (default) → the base prompt, byte-identical to today. */
+ *  (flag GITTENSORY_REVIEW_GROUNDING on), then the enrichment-discipline suffix when the caller supplied one
+ *  (flag GITTENSORY_REVIEW_ENRICHMENT on), then the `review.profile` tone suffix when set, then the
+ *  inline-findings instruction when the caller asked for them; all absent (default) → the base prompt,
+ *  byte-identical to today. The enrichment suffix rides on top of grounding (so the model is told to verify
+ *  both the CI/grounding evidence AND the REES brief before flagging a defect). */
 function buildSystemPrompt(input: GittensoryAiReviewInput): string {
   const groundingSuffix = input.grounding?.systemSuffix ?? "";
+  const enrichmentSuffix = input.enrichment?.systemSuffix ?? "";
   const profileSuffix = input.profile === "chill" || input.profile === "assertive" ? REVIEW_PROFILE_SUFFIX[input.profile] : "";
   // `.gittensory.yml` review.path_instructions (#review-path-instructions): the caller pre-resolved the entries
   // matching this PR's files into a prompt section; empty ⇒ nothing appended (byte-identical).
   const pathSuffix = input.pathGuidance?.trim() ? input.pathGuidance : "";
   const inlineSuffix = input.inlineFindings ? INLINE_FINDINGS_SUFFIX : "";
-  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${profileSuffix}${pathSuffix}${inlineSuffix}`;
+  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${pathSuffix}${inlineSuffix}`;
 }
 
 /** One Workers-AI opinion with a per-slot reliable fallback and a 3× retry on the primary. */

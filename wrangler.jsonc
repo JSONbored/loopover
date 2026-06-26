@@ -90,6 +90,14 @@
     // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
     // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
     "GITTENSORY_REVIEW_RAG": "true",
+    // Convergence (review-enrichment, #1472): POST the PR's diff + files + linked issue to the external REES
+    // service so the no-checkout `claude --print` reviewer can splice in heavy/external/historical analysis
+    // (dependency/CVE #1474, license #1475, secret #1476, static+complexity #1477, history #1478) the reviewer
+    // is blind to. Needs REES_URL + REES_SHARED_SECRET set (REES_SHARED_SECRET on the service side,
+    // review-enrichment/README.md) — without them the seam treats the deploy as OFF. REES_TIMEOUT_MS bounds
+    // the per-call timeout (default 8000ms). Flag-OFF / unconfigured / service failure ⇒ EMPTY brief, the
+    // reviewer prompt is byte-identical to today. See src/review/enrichment-wire.ts.
+    "GITTENSORY_REVIEW_ENRICHMENT": "false",
     // Convergence (content/registry SURFACE LANE): when truthy AND the repo is in GITTENSORY_REVIEW_REPOS, the
     // deterministic, AI-FREE surface review drives the gate for registry-submission PRs (metagraphed). Default
     // OFF (false): the processor takes no new branch + resolves no files, so the gate disposition is byte-

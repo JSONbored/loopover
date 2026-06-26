@@ -42,6 +42,7 @@ import {
   repositories,
   repoGithubTotalsSnapshots,
   repoQueueTrendSnapshots,
+  queueFederationSnapshots,
   registryDriftEvents,
   repoLabels,
   repoSnapshots,
@@ -89,6 +90,7 @@ import type {
   BountyLifecycleEventRecord,
   BountyRecord,
   BurdenForecastRecord,
+  QueueFederationSnapshotRecord,
   CheckSummaryRecord,
   CollisionEdgeRecord,
   CommandUsefulnessSummary,
@@ -2474,6 +2476,32 @@ export async function getBurdenForecast(env: Env, repoFullName: string): Promise
     repoFullName: first.repoFullName,
     payload: parseJson<Record<string, JsonValue>>(first.payloadJson, {}),
     generatedAt: first.generatedAt,
+  };
+}
+
+const QUEUE_FEDERATION_SNAPSHOT_ID = "current";
+
+export async function upsertQueueFederationSnapshot(env: Env, snapshot: QueueFederationSnapshotRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .insert(queueFederationSnapshots)
+    .values({ id: QUEUE_FEDERATION_SNAPSHOT_ID, generatedAt: snapshot.generatedAt, repoCount: snapshot.repoCount, payloadJson: jsonString(snapshot.payload) })
+    .onConflictDoUpdate({
+      target: queueFederationSnapshots.id,
+      set: { generatedAt: snapshot.generatedAt, repoCount: snapshot.repoCount, payloadJson: jsonString(snapshot.payload) },
+    });
+}
+
+export async function getQueueFederationSnapshot(env: Env): Promise<QueueFederationSnapshotRecord | null> {
+  const db = getDb(env.DB);
+  const row = await db.select().from(queueFederationSnapshots).where(eq(queueFederationSnapshots.id, QUEUE_FEDERATION_SNAPSHOT_ID)).limit(1);
+  const first = row[0];
+  if (!first) return null;
+  return {
+    id: first.id,
+    generatedAt: first.generatedAt,
+    repoCount: first.repoCount,
+    payload: parseJson<Record<string, JsonValue>>(first.payloadJson, {}),
   };
 }
 

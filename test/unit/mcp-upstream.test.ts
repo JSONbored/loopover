@@ -60,6 +60,38 @@ describe("MCP contributor access", () => {
     expect(payload.data).toEqual({ status: "forbidden", repoFullName: "victim/private-repo" });
   });
 
+  it("blocks static api identity from queue health federation", async () => {
+    const env = createTestEnv();
+    const identity = await authenticatePrivateToken(env, "test-api-token");
+    if (!identity || identity.kind !== "static") throw new Error("expected static identity");
+    const mcp = new GittensoryMcp(env, identity) as unknown as { getQueueHealthFederation(): Promise<unknown> };
+    await expect(mcp.getQueueHealthFederation()).rejects.toThrow(
+      /Forbidden: gittensory_queue_health_federation requires operator role/,
+    );
+  });
+
+  it("blocks non-operator session from queue health federation", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    const { token } = await createSessionForGitHubUser(env, { login: "non-operator", id: 9 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+    const mcp = new GittensoryMcp(env, identity) as unknown as { getQueueHealthFederation(): Promise<unknown> };
+    await expect(mcp.getQueueHealthFederation()).rejects.toThrow(
+      /Forbidden: gittensory_queue_health_federation requires operator role/,
+    );
+  });
+
+  it("allows operator session to access queue health federation", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "operator-user" });
+    const { token } = await createSessionForGitHubUser(env, { login: "operator-user", id: 10 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+    const mcp = new GittensoryMcp(env, identity) as unknown as { getQueueHealthFederation(): Promise<{ summary: string; data: Record<string, unknown> }> };
+    const result = await mcp.getQueueHealthFederation();
+    expect(typeof result.summary).toBe("string");
+    expect(result.data).toBeDefined();
+  });
+
   it("does not reveal inaccessible bounty ids through advisory errors", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim/private-repo", private: true, owner: { login: "victim" }, default_branch: "main" });

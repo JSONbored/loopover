@@ -5279,6 +5279,16 @@ function isTestFile(file: string): boolean {
   );
 }
 
+export function compositeQueuePressureScore(
+  burdenScore: number,
+  stalePullRequestRate: number | null,
+  pullRequestGrowth7d: number | null,
+): number {
+  const stale = stalePullRequestRate ?? 0;
+  const growth = pullRequestGrowth7d ?? 0;
+  return burdenScore * (1 + stale) + growth;
+}
+
 function riskRank(risk: CollisionCluster["risk"]): number {
   if (risk === "high") return 3;
   /* v8 ignore next -- Low collision rank is the default branch; high/medium sorting behavior is covered by collision tests. */

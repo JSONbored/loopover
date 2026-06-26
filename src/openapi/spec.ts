@@ -11,6 +11,8 @@ import {
   BountyLifecycleEventsSchema,
   BountySchema,
   BurdenForecastSchema,
+  FederatedQueueIndexSchema,
+  FederatedRepoEntrySchema,
   CollisionReportSchema,
   ConfigQualitySchema,
   CommandPreviewResponseSchema,
@@ -147,6 +149,8 @@ export function buildOpenApiSpec() {
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
+  registry.register("FederatedRepoEntry", FederatedRepoEntrySchema);
+  registry.register("FederatedQueueIndex", FederatedQueueIndexSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
   registry.register("ContributorStrategy", ContributorStrategySchema);
   registry.register("RewardRiskAction", RewardRiskActionSchema);
@@ -713,6 +717,17 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       401: { description: "Unauthorized" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/app/queue-health/federation",
+    request: { query: z.object({ limit: z.string().optional() }) },
+    responses: {
+      200: { description: "Ranked cross-repo queue pressure index (operator only)", content: { "application/json": { schema: FederatedQueueIndexSchema } } },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient role — operator access required" },
+      422: { description: "Invalid limit parameter" },
     },
   });
   for (const path of [

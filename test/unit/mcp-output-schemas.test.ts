@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, updatePullRequestSlopAssessment } from "../../src/db/repositories";
+import { authenticatePrivateToken, createSessionForGitHubUser } from "../../src/auth/security";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -12,6 +13,7 @@ import { createTestEnv } from "../helpers/d1";
 const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_repo_context",
   "gittensory_get_burden_forecast",
+  "gittensory_queue_health_federation",
   "gittensory_get_repo_outcome_patterns",
   "gittensory_get_outcome_calibration",
   "gittensory_get_contributor_profile",
@@ -174,6 +176,26 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect((result.structuredContent as Record<string, unknown>).changedRepos).toEqual([
       { repoFullName: "owner/changed", changes: ["emission_share 0.01 -> 0.02"] },
     ]);
+  });
+
+  it("gittensory_queue_health_federation returns a ranked index with no private financial fields", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "operator-user" });
+    const { token } = await createSessionForGitHubUser(env, { login: "operator-user", id: 99 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+    const mcpServer = new GittensoryMcp(env, identity).createServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await mcpServer.connect(serverTransport);
+    const client = new Client({ name: "gittensory-output-schema-test", version: "0.1.0" }, { capabilities: {} });
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "gittensory_queue_health_federation", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(typeof data.repoCount).toBe("number");
+    expect(Array.isArray(data.entries)).toBe(true);
+    expect(data.source === "snapshot" || data.source === "computed").toBe(true);
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toMatch(/wallet|hotkey|coldkey|trustScore|payout|reward estimate|farming/i);
   });
 
   it("gittensory_get_repo_context returns validated structured content", async () => {

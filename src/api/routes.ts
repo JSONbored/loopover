@@ -172,6 +172,7 @@ import {
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
 import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
+import { buildFederatedQueueIndex, FEDERATED_QUEUE_INDEX_MAX_LIMIT } from "../services/queue-federation";
 import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
 import { buildSubnetInterfaceDescriptor } from "../services/subnet-interface";
 import { buildPublicRepoQuality, type PublicRepoQuality } from "../services/public-repo-quality";
@@ -1327,6 +1328,20 @@ export function createApp() {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
     return c.json(await buildOperatorDashboardPayload(c.env));
+  });
+
+  app.get("/v1/app/queue-health/federation", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    const rawLimit = c.req.query("limit");
+    if (rawLimit !== undefined) {
+      const parsed = Number(rawLimit);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > FEDERATED_QUEUE_INDEX_MAX_LIMIT) {
+        return c.json({ error: "invalid_limit", message: `limit must be an integer between 1 and ${FEDERATED_QUEUE_INDEX_MAX_LIMIT}` }, 422);
+      }
+    }
+    const limit = rawLimit !== undefined ? Number(rawLimit) : undefined;
+    return c.json(await buildFederatedQueueIndex(c.env, limit));
   });
 
   app.get("/v1/app/notification-model", async (c) => {

@@ -768,6 +768,14 @@ export const repoQueueTrendSnapshots = sqliteTable("repo_queue_trend_snapshots",
   generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
+export const queueFederationSnapshots = sqliteTable("queue_federation_snapshots", {
+  id: text("id").primaryKey(),
+  generatedAt: text("generated_at").notNull(),
+  repoCount: integer("repo_count").notNull().default(0),
+  payloadJson: text("payload_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+
 export const registryDriftEvents = sqliteTable("registry_drift_events", {
   id: text("id").primaryKey(),
   repoFullName: text("repo_full_name").notNull(),

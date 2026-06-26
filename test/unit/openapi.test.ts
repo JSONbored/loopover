@@ -42,6 +42,7 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/app/miner-dashboard"]).toBeDefined();
     expect(spec.paths["/v1/app/maintainer-dashboard"]).toBeDefined();
     expect(spec.paths["/v1/app/operator-dashboard"]).toBeDefined();
+    expect(spec.paths["/v1/app/queue-health/federation"]).toBeDefined();
     expect(spec.paths["/v1/app/commands"]).toBeDefined();
     expect(spec.paths["/v1/app/commands/preview"]).toBeDefined();
     expect(spec.paths["/v1/app/commands/usefulness"]).toBeDefined();

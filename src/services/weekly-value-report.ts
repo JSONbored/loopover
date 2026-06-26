@@ -44,6 +44,7 @@ type WeeklyValueReportInputs = {
   usageRollupStatus: ProductUsageRollupStatus;
   activeSessions?: number | null | undefined;
   digestSubscriptions?: number | null | undefined;
+  topCriticalRepos?: number | null | undefined;
 };
 
 type WeeklyAggregate = {
@@ -143,6 +144,7 @@ export function buildWeeklyValueReport(args: WeeklyValueReportInputs): WeeklyVal
     unhealthyInstallations,
     activeSessions: args.activeSessions ?? 0,
     digestSubscriptions: args.digestSubscriptions ?? 0,
+    topCriticalRepos: args.topCriticalRepos ?? 0,
   });
   const summary = (
     variant === "public"
@@ -243,6 +245,7 @@ function buildWeeklyMetrics(args: {
   unhealthyInstallations: number;
   activeSessions: number;
   digestSubscriptions: number;
+  topCriticalRepos: number;
 }): WeeklyValueReportMetric[] {
   return [
     metric("active_users", "Active users", args.activeActors, "distinct hashed actors in the report window", "public"),
@@ -261,6 +264,7 @@ function buildWeeklyMetrics(args: {
     metric("installed_repos", "Installed repos", args.installedRepos, "repos with installation coverage in cache", "operator"),
     metric("installations", "Installations", args.installations, "GitHub App installations in cache", "operator"),
     metric("install_issues", "Install issues", args.unhealthyInstallations, "installation health records needing attention", "operator"),
+    metric("top_critical_repos", "Critical queue repos", args.topCriticalRepos, "repos at critical or high queue burden level", "operator"),
   ];
 }
 

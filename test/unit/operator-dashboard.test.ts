@@ -20,6 +20,7 @@ describe("operator dashboard payload", () => {
       ]),
     );
     expect(payload.weeklyValueReport.variant).toBe("operator");
+    expect(payload.queueFederation).toMatchObject({ repoCount: expect.any(Number), entries: expect.any(Array) });
     expect(payload.usageSummary).toMatchObject({ totalEvents: expect.any(Number), activeActors: expect.any(Number) });
     expect(payload.commandUsefulness.totals).toMatchObject({ feedbackCount: expect.any(Number) });
     expect(serialized).not.toMatch(FORBIDDEN_EXPORT_TERMS);

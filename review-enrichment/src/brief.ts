@@ -9,6 +9,7 @@ import type {
 } from "./types.js";
 import { scanDependencies } from "./analyzers/dependency-scan.js";
 import { scanSecrets } from "./analyzers/secret-scan.js";
+import { scanLicenses } from "./analyzers/license-check.js";
 import { renderBrief } from "./render.js";
 
 type AnalyzerFn = (req: EnrichRequest) => Promise<unknown>;
@@ -17,6 +18,7 @@ type AnalyzerFn = (req: EnrichRequest) => Promise<unknown>;
 const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   dependency: (req) => scanDependencies(req),
   secret: (req) => scanSecrets(req),
+  license: (req) => scanLicenses(req),
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

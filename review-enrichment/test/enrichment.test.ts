@@ -8,6 +8,19 @@ import {
 import { renderBrief } from "../dist/render.js";
 import { buildBrief } from "../dist/brief.js";
 import { scanPatch, scanSecrets } from "../dist/analyzers/secret-scan.js";
+import { scanLicenses } from "../dist/analyzers/license-check.js";
+
+const licFetch =
+  (licenses, ok = true) =>
+  async () => ({
+    ok,
+    json: async () => ({ licenses }),
+  });
+const pkgPatch = (name) => ({
+  repoFullName: "o/r",
+  prNumber: 1,
+  files: [{ path: "package.json", patch: `+    "${name}": "1.0.0",` }],
+});
 
 const okFetch = (vulns) => async () => ({
   ok: true,
@@ -250,6 +263,56 @@ test("buildBrief: dependency + secret analyzers both run", async () => {
     assert.equal(brief.analyzerStatus.secret, "ok");
     assert.equal(brief.findings.secret.length, 1);
     assert.match(brief.promptSection, /github_token/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("scanLicenses: flags copyleft + unknown, skips permissive + fetch-fail", async () => {
+  const gpl = await scanLicenses(
+    pkgPatch("gpl-pkg"),
+    licFetch(["GPL-3.0-or-later"]),
+  );
+  assert.equal(gpl.length, 1);
+  assert.equal(gpl[0].classification, "copyleft");
+  const mit = await scanLicenses(pkgPatch("mit-pkg"), licFetch(["MIT"]));
+  assert.equal(mit.length, 0);
+  const unknown = await scanLicenses(pkgPatch("nolic"), licFetch([]));
+  assert.equal(unknown[0].classification, "unknown");
+  const na = await scanLicenses(pkgPatch("na"), licFetch(["NOASSERTION"]));
+  assert.equal(na[0].classification, "unknown");
+  const failed = await scanLicenses(pkgPatch("x"), licFetch([], false));
+  assert.equal(failed.length, 0);
+});
+
+test("renderBrief: renders the license block", () => {
+  const r = renderBrief({
+    license: [
+      {
+        ecosystem: "npm",
+        package: "g",
+        version: "1",
+        licenses: ["GPL-3.0"],
+        classification: "copyleft",
+      },
+    ],
+  });
+  assert.match(r.promptSection, /Dependency licenses/);
+  assert.match(r.promptSection, /`g@1` \(npm\): GPL-3\.0 — \*\*copyleft\*\*/);
+});
+
+test("buildBrief: license analyzer runs alongside the others", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) =>
+    String(url).includes("deps.dev")
+      ? { ok: true, json: async () => ({ licenses: ["AGPL-3.0"] }) }
+      : { ok: true, json: async () => ({ vulns: [] }) };
+  try {
+    const brief = await buildBrief(pkgPatch("agpl-pkg"));
+    assert.equal(brief.analyzerStatus.license, "ok");
+    assert.equal(brief.findings.license.length, 1);
+    assert.equal(brief.findings.license[0].classification, "copyleft");
+    assert.match(brief.promptSection, /AGPL-3.0/);
   } finally {
     globalThis.fetch = realFetch;
   }

@@ -47,6 +47,16 @@ export function renderBrief(
     }
   }
 
+  const licenses = findings.license ?? [];
+  if (licenses.length) {
+    lines.push("### Dependency licenses (verify compatibility)");
+    for (const lic of licenses) {
+      lines.push(
+        `- \`${lic.package}@${lic.version}\` (${lic.ecosystem}): ${lic.licenses.join("/") || "none"} — **${lic.classification}**`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

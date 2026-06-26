@@ -50,10 +50,20 @@ export interface SecretFinding {
   confidence: "high" | "medium";
 }
 
-/** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1475/#1477/#1478). */
+/** A newly-added/upgraded dependency whose license warrants a compatibility check. */
+export interface LicenseFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  licenses: string[];
+  classification: "copyleft" | "unknown";
+}
+
+/** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
   secret?: SecretFinding[];
+  license?: LicenseFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

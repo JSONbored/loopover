@@ -114,7 +114,7 @@ import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePl
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
-import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
@@ -675,6 +675,9 @@ const predictGateShape = {
   body: z.string().optional(),
   labels: z.array(z.string()).optional(),
   linkedIssues: z.array(z.number().int().positive()).optional(),
+  // The PR's changed file PATHS (metadata only — paths, never source content). Supplying them lets the predictor
+  // also evaluate the focus-manifest path policy + path-gated pre-merge checks, matching the live gate (#11-13/#18).
+  changedPaths: z.array(z.string().min(1)).max(500).optional(),
 };
 
 // Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
@@ -2064,7 +2067,7 @@ export class GittensoryMcp {
       listPullRequests(this.env, repoFullName),
       listBountiesByRepo(this.env, repoFullName),
       loadOrComputeIssueQualityResponse(this.env, repoFullName),
-      loadRepoFocusManifest(this.env, repoFullName),
+      loadPublicRepoFocusManifest(this.env, repoFullName),
     ]);
     // Resolve the caller's own confirmed-Gittensor status the same way the maintainer pipeline does (official
     // Gittensor API → confirmed). It is surfaced in the verdict for transparency but no longer changes the
@@ -2089,6 +2092,7 @@ export class GittensoryMcp {
       bounties,
       issueQuality: issueQuality?.report,
       confirmedContributor,
+      ...(input.changedPaths === undefined ? {} : { changedPaths: input.changedPaths }),
     });
     return {
       summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
@@ -2683,7 +2687,7 @@ export class GittensoryMcp {
       listBountiesByRepo(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       loadOrComputeIssueQualityResponse(this.env, input.repoFullName),
-      loadRepoFocusManifest(this.env, input.repoFullName),
+      loadPublicRepoFocusManifest(this.env, input.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot: snapshot });

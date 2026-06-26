@@ -184,6 +184,29 @@ describe("contributor open PR monitor", () => {
     expect(monitor.guidance.length).toBeGreaterThan(0);
   });
 
+  it("groups case-variant repoFullName for one repo into a single open-PR set", async () => {
+    const env = createTestEnv();
+    vi.spyOn(repositories, "listRepositories").mockResolvedValue([
+      { fullName: "entrius/allways-ui", owner: "entrius", name: "allways-ui", isInstalled: true, isRegistered: true, isPrivate: false },
+    ] as Awaited<ReturnType<typeof repositories.listRepositories>>);
+    // The same repo arrives under two casings — these must be one group, not two.
+    vi.spyOn(repositories, "listContributorPullRequests").mockResolvedValue([
+      pr({ number: 30, repoFullName: "entrius/allways-ui" }),
+      pr({ number: 31, repoFullName: "Entrius/Allways-UI" }),
+    ]);
+    const listPrSpy = vi.spyOn(repositories, "listPullRequests").mockResolvedValue([pr({ number: 30 }), pr({ number: 31 })]);
+    vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+    vi.spyOn(repositories, "listPullRequestFiles").mockResolvedValue([]);
+
+    const monitor = await buildContributorOpenPrMonitor(env, "miner-a");
+    expect(monitor.openPrCount).toBe(2);
+    // One merged group → the case-sensitive per-repo query runs only against a real repo casing, never the
+    // case-variant. Before the fix the two casings split into two groups and queried both.
+    expect(listPrSpy).toHaveBeenCalledWith(env, "entrius/allways-ui");
+    expect(listPrSpy).not.toHaveBeenCalledWith(env, "Entrius/Allways-UI");
+  });
+
   it("keeps public monitor output free of forbidden private language", async () => {
     const env = createTestEnv();
     vi.spyOn(repositories, "listRepositories").mockResolvedValue([

@@ -822,6 +822,17 @@ describe("api routes", () => {
     expect(reviewability.status).toBe(200);
     await expect(reviewability.json()).resolves.toMatchObject({ repoFullName: "entrius/allways-ui", pullNumber: 12, action: expect.any(String), privateSummary: expect.any(String) });
 
+    // A pull number must be a positive integer: 0, negatives, and fractions are rejected, not passed through
+    // to the DB queries as a semantically-invalid pull number (Number.isFinite alone let them through).
+    for (const badNumber of ["0", "-3", "1.5"]) {
+      const badPacket = await app.request(`/v1/repos/entrius/allways-ui/pulls/${badNumber}/maintainer-packet`, { headers: apiHeaders(env) }, env);
+      expect(badPacket.status).toBe(400);
+      await expect(badPacket.json()).resolves.toMatchObject({ error: "invalid_pull_number" });
+      const badReviewability = await app.request(`/v1/repos/entrius/allways-ui/pulls/${badNumber}/reviewability`, { headers: apiHeaders(env) }, env);
+      expect(badReviewability.status).toBe(400);
+      await expect(badReviewability.json()).resolves.toMatchObject({ error: "invalid_pull_number" });
+    }
+
     const preflight = await app.request(
       "/v1/preflight/pr",
       {

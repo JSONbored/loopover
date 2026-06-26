@@ -603,6 +603,7 @@ export const RepositorySettingsSchema = z
     slopAiAdvisory: z.boolean(),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string(),
+    blacklistLabel: z.string(),
     createMissingLabel: z.boolean(),
     publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
     includeMaintainerAuthors: z.boolean(),
@@ -613,6 +614,16 @@ export const RepositorySettingsSchema = z
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
       commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
     }),
+    contributorBlacklist: z
+      .array(
+        z.object({
+          login: z.string(),
+          reason: z.string().optional(),
+          evidence: z.array(z.string()).optional(),
+          addedAt: z.string().optional(),
+        }),
+      )
+      .optional(),
     autonomy: z
       .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
       .optional(),
@@ -649,6 +660,7 @@ export const RepoSettingsPreviewSchema = z
       slopGateMinScore: z.number().nullable().optional(),
       autoLabelEnabled: z.boolean(),
       gittensorLabel: z.string(),
+      blacklistLabel: z.string(),
       createMissingLabel: z.boolean(),
       includeMaintainerAuthors: z.boolean(),
       requireLinkedIssue: z.boolean(),
@@ -1254,6 +1266,9 @@ const ScoreEstimateSchema = z.object({
   credibilityMultiplier: z.number(),
   reviewPenaltyMultiplier: z.number(),
   openPrMultiplier: z.number(),
+  openIssueMultiplier: z.number(),
+  mergedHistoryMultiplier: z.number(),
+  issueDiscoveryHistoryMultiplier: z.number(),
   timeDecayMultiplier: z.number(),
   estimatedMergedScore: z.number(),
   pendingSaturationScore: z.number(),
@@ -1267,6 +1282,14 @@ const ScoreGatesSchema = z.object({
   reviewCollateralMultiplier: z.number(),
   credibilityFloor: z.number(),
   credibilityObserved: z.number(),
+  openIssueThreshold: z.number(),
+  openIssueCount: z.number(),
+  mergedPrFloor: z.number(),
+  mergedPullRequests: z.number().optional(),
+  validSolvedIssuesFloor: z.number(),
+  validSolvedIssues: z.number().optional(),
+  issueCredibilityFloor: z.number(),
+  issueCredibility: z.number().optional(),
 });
 
 const BranchEligibilitySchema = z.object({
@@ -1286,6 +1309,9 @@ const ScoreGateBlockerSchema = z.object({
     "inactive_allocation",
     "base_token_gate",
     "open_pr_threshold",
+    "open_issue_threshold",
+    "merged_pr_history_floor",
+    "issue_discovery_validity_floor",
     "credibility_floor",
     "review_penalty",
     "metadata_only",
@@ -1293,13 +1319,22 @@ const ScoreGateBlockerSchema = z.object({
     "linked_issue_unvalidated",
     "branch_ineligible",
     "branch_eligibility_missing",
+    "duplicate_risk",
+    "stale_work",
   ]),
   severity: z.enum(["blocker", "reducer", "context"]),
   detail: z.string(),
 });
 
 const ScoreGateDeltaSchema = z.object({
-  gate: z.enum(["open_pr_threshold", "credibility_floor", "linked_issue_multiplier"]),
+  gate: z.enum([
+    "open_pr_threshold",
+    "open_issue_threshold",
+    "merged_pr_history_floor",
+    "issue_discovery_validity_floor",
+    "credibility_floor",
+    "linked_issue_multiplier",
+  ]),
   current: z.string(),
   projected: z.string(),
   explanation: z.string(),

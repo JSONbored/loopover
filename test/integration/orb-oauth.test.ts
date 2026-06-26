@@ -98,23 +98,38 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     expect(row).toMatchObject({ maintainer_login: "alice", maintainer_github_id: 7 });
   });
 
-  it("a NON-admin is refused (403) and NO enrollment is created — the escalation gate", async () => {
+  it("a NON-admin is refused (403), NO enrollment created, and the install is NOT auto-registered — the escalation gate", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 501, account_login: "acme", account_type: "Organization", registered: 1 });
+    await seedInstall(e, { installation_id: 501, account_login: "acme", account_type: "Organization", registered: 0 });
     stubGitHub({ membership: { role: "member", state: "active" } });
     const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=501", {}, e);
     expect(res.status).toBe(403);
     expect(await res.text()).toContain("Admin access required");
     expect(await db(e).prepare("SELECT 1 AS x FROM orb_enrollments WHERE installation_id=501").first()).toBeUndefined();
+    const row = await db(e).prepare("SELECT registered FROM orb_github_installations WHERE installation_id=501").first<{ registered: number }>();
+    expect(row?.registered).toBe(0); // a non-admin never auto-registers
   });
 
-  it("an UNREGISTERED install is refused (403)", async () => {
+  it("a verified admin AUTO-REGISTERS an unregistered install (zero-touch) and gets a secret", async () => {
     const e = brokeredEnv();
     await seedInstall(e, { installation_id: 502, account_login: "acme", account_type: "Organization", registered: 0 });
     stubGitHub();
     const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=502", {}, e);
-    expect(res.status).toBe(403);
-    expect(await res.text()).toContain("Not enabled yet");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Your enrollment secret");
+    const row = await db(e).prepare("SELECT registered FROM orb_github_installations WHERE installation_id=502").first<{ registered: number }>();
+    expect(row?.registered).toBe(1); // self-registered, no operator step
+  });
+
+  it("a SUSPENDED or UNINSTALLED install is refused (403 not active), even for an admin", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 507, account_login: "acme", account_type: "Organization", registered: 1, suspended_at: "2026-01-01T00:00:00Z" });
+    await seedInstall(e, { installation_id: 508, account_login: "acme", account_type: "Organization", registered: 0, removed_at: "2026-01-01T00:00:00Z" });
+    stubGitHub();
+    expect((await app.request("/v1/orb/oauth/callback?code=abc&installation_id=507", {}, e)).status).toBe(403); // suspended (removed_at null → right arm)
+    const removed = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=508", {}, e);
+    expect(removed.status).toBe(403); // removed (left arm)
+    expect(await removed.text()).toContain("not active");
   });
 
   it("an UNKNOWN install is 404", async () => {

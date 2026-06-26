@@ -26,6 +26,7 @@ import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
 import { simulateOpenPrPressure } from "../services/open-pr-pressure-scenarios";
+import { isTestPath } from "./test-evidence";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -474,6 +475,9 @@ function buildLocalScoreInput(args: {
     nonCodeLines: nonCodeLineCount,
     openPrCount: args.outcomeHistory.totals.openPullRequests,
     openIssueCount: args.repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues,
+    mergedPullRequests: args.repoOutcome?.mergedPullRequests ?? args.outcomeHistory.totals.mergedPullRequests,
+    validSolvedIssues: args.repoOutcome?.validSolvedIssues ?? args.outcomeHistory.totals.validSolvedIssues,
+    issueCredibility: args.repoOutcome?.issueCredibility ?? args.outcomeHistory.totals.issueCredibility,
     credibility: args.repoOutcome?.credibility ?? args.outcomeHistory.totals.credibility,
     metadataOnly: scorer?.mode !== "gittensor_root" && scorer?.mode !== "external_command",
     pendingMergedPrCount: args.input.pendingMergedPrCount,
@@ -1003,7 +1007,7 @@ function branchQualityBlockersFor(preflight: LocalDiffPreflightResult, localFind
 
 function accountStateBlockersFor(scorePreview: ScorePreviewResult): string[] {
   return scorePreview.blockedBy
-    .filter((blocker) => ["repo_not_registered", "inactive_allocation", "open_pr_threshold", "credibility_floor"].includes(blocker.code))
+    .filter((blocker) => ["repo_not_registered", "inactive_allocation", "open_pr_threshold", "open_issue_threshold", "merged_pr_history_floor", "issue_discovery_validity_floor", "credibility_floor"].includes(blocker.code))
     .map((blocker) => blocker.detail)
     .filter(unique);
 }
@@ -1232,13 +1236,8 @@ function safeRepoPath(path: string): string {
 }
 
 export function isTestFile(file: string): boolean {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
-    /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
-    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
-  );
+  // Keep local scoring aligned with slop/test-evidence matchers (#561 / #1046).
+  return isTestPath(file);
 }
 
 export function isCodeFile(file: string): boolean {

@@ -4,7 +4,14 @@ import type { JsonValue, RegistryRepoConfig, RegistrySnapshot, RepoTimeDecayOver
 type RawRepoConfig = Record<string, JsonValue>;
 
 export function normalizeRegistryPayload(payload: unknown, source: RegistrySnapshot["source"], fetchedAt: string): RegistrySnapshot {
-  const repos = extractRepoEntries(payload).map(([repo, config]) => normalizeRepo(repo, config));
+  const normalizedRepos = extractRepoEntries(payload).map(([repo, config]) => normalizeRepo(repo, config));
+  // Persist collapses case-variant repo names ("Owner/Repo" vs "owner/repo") onto a single canonical row
+  // (registry/sync.ts), so the snapshot's headline repoCount/totalEmissionShare must dedupe the same way —
+  // otherwise two case-variants inflate the totals to two repos / summed emission share while only one row is
+  // actually stored. Last-wins mirrors persist's upsert order so the surviving config matches what lands in D1.
+  const dedupedByLowerName = new Map<string, RegistryRepoConfig>();
+  for (const repo of normalizedRepos) dedupedByLowerName.set(repo.repo.toLowerCase(), repo);
+  const repos = [...dedupedByLowerName.values()];
   const totalEmissionShare = repos.reduce((sum, repo) => sum + repo.emissionShare, 0);
   return {
     id: crypto.randomUUID(),

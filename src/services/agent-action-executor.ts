@@ -1,6 +1,6 @@
 import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, isGlobalAgentFrozen, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
-import { notifyActionToDiscord, type NotifyOutcome } from "./notify-discord";
+import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
@@ -117,7 +117,9 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       const notifyOutcome: NotifyOutcome | null =
         action.actionClass === "merge" ? "merged" : action.actionClass === "close" ? "closed" : action.actionClass === "request_changes" ? "manual" : null;
       if (notifyOutcome) {
-        await notifyActionToDiscord(env, { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary: action.reason, submitter: ctx.authorLogin }).catch(() => undefined);
+        const notifyParams = { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary: action.reason, submitter: ctx.authorLogin };
+        await notifyActionToDiscord(env, notifyParams).catch(() => undefined);
+        await notifyActionToSlack(env, notifyParams).catch(() => undefined);
       }
     } catch (error) {
       await audit("error", errorMessage(error));

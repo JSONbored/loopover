@@ -98,6 +98,9 @@ declare global {
     /** Self-host default Discord webhook URL — per-action notifications (merged/closed/manual) for any repo
      *  not in the built-in per-repo map. Lets a self-host operator wire one channel without a source edit. */
     DISCORD_WEBHOOK_URL?: string;
+    /** Self-host Slack incoming-webhook URL (`https://hooks.slack.com/services/…`) — per-action notifications
+     *  (merged/closed/manual) for ANY repo. Sibling of DISCORD_WEBHOOK_URL; set either, both, or neither. */
+    SLACK_WEBHOOK_URL?: string;
     GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN?: string;
     PRODUCT_USAGE_HASH_SALT?: string;
     GITTENSORY_API_TOKEN: string;

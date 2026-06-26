@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { notifyActionToDiscord } from "../../src/services/notify-discord";
+import { notifyActionToDiscord, notifyActionToSlack } from "../../src/services/notify-discord";
 import { createTestEnv } from "../helpers/d1";
 
 const HOOK = "https://discord.com/api/webhooks/123/abc";
@@ -45,5 +45,50 @@ describe("notify-discord resolveWebhook (modular self-host fallback)", () => {
     // JSONbored/metagraphed is in the map, but METAGRAPHED_DISCORD_WEBHOOK is unset → fall through.
     await notify(withEnv({ DISCORD_WEBHOOK_URL: FALLBACK }), "JSONbored/metagraphed");
     expect(calls).toEqual([FALLBACK]);
+  });
+});
+
+describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => {
+  const SLACK = "https://hooks.slack.com/services/T0/B0/xyz";
+  const slackStub = () => {
+    const calls: { url: string; body: { text: string; blocks: Array<{ text: { text: string } }> } }[] = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(null, { status: 200 });
+    });
+    return calls;
+  };
+
+  it("posts a Block Kit message to SLACK_WEBHOOK_URL for any repo, including the submitter", async () => {
+    const calls = slackStub();
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), { repoFullName: "acme/widgets", pullNumber: 7, outcome: "merged", summary: "looks good", submitter: "octocat" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(SLACK);
+    expect(calls[0]?.body.text).toContain("acme/widgets#7");
+    expect(calls[0]?.body.blocks[0]?.text.text).toContain("looks good");
+    expect(calls[0]?.body.blocks[0]?.text.text).toContain("Submitter: @octocat");
+  });
+
+  it("omits the submitter line when absent (and falls back to the outcome word for an empty summary)", async () => {
+    const calls = slackStub();
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), { repoFullName: "acme/widgets", pullNumber: 7, outcome: "closed", summary: "" });
+    expect(calls[0]?.body.blocks[0]?.text.text).not.toContain("Submitter");
+    expect(calls[0]?.body.blocks[0]?.text.text).toContain("closed");
+  });
+
+  it("does NOT notify when SLACK_WEBHOOK_URL is unset or not a valid hooks.slack.com/services URL", async () => {
+    const calls = slackStub();
+    const p = { repoFullName: "acme/widgets", pullNumber: 7, outcome: "merged" as const, summary: "x" };
+    await notifyActionToSlack(createTestEnv(), p); // unset
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: "https://evil.example/services/x" }), p); // wrong host
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: "http://hooks.slack.com/services/x" }), p); // not https
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: "https://hooks.slack.com/foo" }), p); // wrong path
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: "not-a-url" }), p); // unparseable
+    expect(calls).toEqual([]);
+  });
+
+  it("swallows a fetch failure (best-effort, never throws)", async () => {
+    vi.stubGlobal("fetch", async () => { throw new Error("network down"); });
+    await expect(notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), { repoFullName: "acme/widgets", pullNumber: 7, outcome: "manual", summary: "x" })).resolves.toBeUndefined();
   });
 });

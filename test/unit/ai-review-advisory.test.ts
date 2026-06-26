@@ -160,6 +160,58 @@ describe("runAiReviewForAdvisory", () => {
     expect(prompts.join("\n")).toContain("const fixed = true;");
   });
 
+  it("does not apply review.exclude_paths to block-mode gate-relevant AI consensus", async () => {
+    const prompts: string[] = [];
+    const env = aiEnv(async (...args: unknown[]) => {
+      const prompt = JSON.stringify(args);
+      prompts.push(prompt);
+      return { response: prompt.includes("VALIDATION_VULN_MARKER") ? defectJson() : notesOnlyJson() };
+    });
+    const adv = advisory();
+
+    await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      files: [fileRecord({ path: "src/generated/vulnerable.generated.ts", status: "modified", payload: { patch: "@@\n+const marker = 'VALIDATION_VULN_MARKER';" } })],
+      reviewExcludePaths: ["src/generated/**"],
+    });
+
+    expect(prompts.join("\n")).toContain("VALIDATION_VULN_MARKER");
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
+  });
+
+  it("still applies review.exclude_paths to advisory-mode prose", async () => {
+    const prompts: string[] = [];
+    const env = aiEnv(async (...args: unknown[]) => {
+      prompts.push(JSON.stringify(args));
+      return { response: notesOnlyJson() };
+    });
+
+    await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      files: [
+        fileRecord({ path: "src/generated/skipped.generated.ts", status: "modified", payload: { patch: "@@\n+const skipped = true;" } }),
+        fileRecord({ path: "src/reviewed.ts", status: "modified", payload: { patch: "@@\n+const reviewed = true;" } }),
+      ],
+      reviewExcludePaths: ["src/generated/**"],
+    });
+
+    const prompt = prompts.join("\n");
+    expect(prompt).toContain("src/reviewed.ts");
+    expect(prompt).toContain("const reviewed = true");
+    expect(prompt).not.toContain("src/generated/skipped.generated.ts");
+    expect(prompt).not.toContain("const skipped = true");
+  });
+
   it("returns advisory notes without a finding in advisory mode", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesOnlyJson() })), {

@@ -2650,6 +2650,9 @@ export function createApp() {
       bounties,
       issueQuality: issueQuality?.report,
       confirmedContributor: Boolean(context.gittensorSnapshot),
+      // #11-13/#18: thread the local branch's changed PATHS (already in the request) so the predictor also
+      // evaluates the focus-manifest path policy + path-gated pre-merge checks, matching the live gate.
+      ...(parsed.data.changedFiles ? { changedPaths: parsed.data.changedFiles.map((file) => file.path) } : {}),
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);

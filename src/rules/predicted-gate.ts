@@ -6,7 +6,7 @@ import {
   unionScopedOverlapClusters,
   type IssueQualityReport,
 } from "../signals/engine";
-import type { FocusManifest } from "../signals/focus-manifest";
+import { buildFocusManifestGuidance, type FocusManifest } from "../signals/focus-manifest";
 import { sanitizePublicComment } from "../github/commands";
 import { GITTENSOR_HOME_URL } from "../github/footer";
 import type { BountyRecord, GatePolicyPack, IssueRecord, PullRequestRecord, RepositoryRecord } from "../types";
@@ -17,7 +17,8 @@ const OSS_ANTI_SLOP_FUNNEL = {
   message: "This repo runs the Gittensor anti-slop gate. Gittensor lets GitHub contributors earn for open-source work like this — register to start earning.",
   registerUrl: GITTENSOR_HOME_URL,
 } as const;
-import { buildPullRequestAdvisory, evaluateGateCheck, type GateCheckConclusion } from "./advisory";
+import { buildPullRequestAdvisory, evaluateGateCheck, isTestPath, type GateCheckConclusion } from "./advisory";
+import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
 
 /**
  * Pre-submission "will my PR pass the gate?" prediction for a MINER, computed BEFORE a PR exists.
@@ -52,11 +53,25 @@ export type PredictedGateVerdict = {
   note: string;
 };
 
-const PREDICTED_GATE_NOTE =
+const PREDICTED_GATE_NOTE_BASE =
   "Predicted from the repo's public .gittensory.yml gate config + safe defaults. The maintainer may have " +
   "private dashboard overrides not reflected here, and the dual-model AI-consensus blocker is only " +
-  "evaluated on a real PR. Every author is gated the same: a configured hard blocker fails the gate " +
-  "regardless of confirmed-contributor status (which affects only on-chain scoring).";
+  "evaluated on a real PR. ";
+// The slop score is ALWAYS disclaimed: it needs the diff CONTENT, which the metadata-only oracle never receives.
+const PREDICTED_GATE_NOTE_SLOP = "The slop score is NOT evaluated pre-submission (it needs the diff content) and may still fail the real gate. ";
+// Disclaimed only when the caller did NOT supply changed paths — then path-dependent gates can't be predicted.
+const PREDICTED_GATE_NOTE_NO_PATHS =
+  "Provide the PR's changed paths to also predict the focus-manifest path policy and any pre-merge check scoped " +
+  "to changed paths; without them only path-independent title/description/label pre-merge checks are predicted. ";
+const PREDICTED_GATE_NOTE_GATE_EQUALITY =
+  "Every author is gated the same: a configured hard blocker fails the gate regardless of confirmed-contributor " +
+  "status (which affects only on-chain scoring).";
+
+/** Compose the predicted-gate note. Slop is always disclaimed; the path-policy/path-gated disclaimer drops once
+ *  the caller supplies changed paths (#11-13/#18). */
+function predictedGateNote(hasChangedPaths: boolean): string {
+  return PREDICTED_GATE_NOTE_BASE + PREDICTED_GATE_NOTE_SLOP + (hasChangedPaths ? "" : PREDICTED_GATE_NOTE_NO_PATHS) + PREDICTED_GATE_NOTE_GATE_EQUALITY;
+}
 
 export type PredictedGateInput = {
   repoFullName: string;
@@ -89,9 +104,16 @@ export function buildPredictedGateVerdict(args: {
    *  it no longer changes the predicted verdict (the real gate fails any author on a configured blocker;
    *  confirmed-status affects only on-chain scoring). `undefined` → not resolved. */
   confirmedContributor?: boolean | undefined;
+  /** The PR's changed file PATHS (metadata only — file paths, never source content, so the predictor stays
+   *  metadata-only). When supplied, the path-dependent gates the live gate enforces are also predicted: the
+   *  focus-manifest path policy and the path-gated pre-merge checks. Absent ⇒ only path-independent pre-merge
+   *  checks are predicted and the note discloses the gap (#11-13/#18). */
+  changedPaths?: string[] | undefined;
 }): PredictedGateVerdict {
   const { input, manifest, repo, issues, pullRequests } = args;
   const gate = manifest.gate;
+  const changedPaths = (args.changedPaths ?? []).filter((path) => typeof path === "string" && path.length > 0);
+  const hasChangedPaths = changedPaths.length > 0;
 
   const preflight = buildPreflightResult(
     {
@@ -149,6 +171,43 @@ export function buildPredictedGateVerdict(args: {
   const linkedIssueAuthorLogins = syntheticPr.linkedIssues.map((issueNumber) => issueAuthorByNumber.get(issueNumber) ?? null);
   const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue, linkedIssueAuthorLogins });
 
+  // Deterministic pre-merge checks parity (#11/#18): the LIVE gate enforces the repo's `review.pre_merge_checks`
+  // (from the SAME public .gittensory.yml the predictor already reads). With the PR's changed paths supplied,
+  // evaluate ALL of them exactly as live (path-gated checks now have their `whenPaths` to match against); without
+  // paths, evaluate only the PATH-INDEPENDENT checks (empty `whenPaths` — title/description/label assertions),
+  // whose inputs are exactly the real PR's, and disclaim the path-gated ones in the note.
+  const predictablePreMergeChecks = hasChangedPaths ? manifest.review.preMergeChecks : manifest.review.preMergeChecks.filter((check) => check.whenPaths.length === 0);
+  advisory.findings.push(
+    ...evaluatePreMergeChecks(predictablePreMergeChecks, { title: syntheticPr.title, body: syntheticPr.body, labels: syntheticPr.labels, changedPaths, filesResolved: hasChangedPaths }),
+  );
+
+  // Focus-manifest path policy parity (#12): the LIVE gate (manifestPolicyGateMode) pushes the three enforceable
+  // policy findings over the PR's changed paths. Mirror it when the caller supplied paths and the PUBLIC config
+  // opts in — recompute the guidance and append ONLY the policy codes, then thread manifestPolicyGateMode into
+  // evaluateGateCheck below so block-mode blocks (advisory stays a warning). Without paths, this is skipped.
+  if (hasChangedPaths && gate.manifestPolicy !== null && gate.manifestPolicy !== "off") {
+    const guidance = buildFocusManifestGuidance({
+      manifest,
+      changedPaths,
+      labels: syntheticPr.labels,
+      linkedIssueCount: syntheticPr.linkedIssues.length,
+      testFileCount: changedPaths.filter((path) => isTestPath(path)).length,
+      passedValidationCount: 0,
+    });
+    const policyCodes = new Set(["manifest_blocked_path", "manifest_linked_issue_required", "manifest_missing_tests"]);
+    for (const finding of guidance.findings) {
+      if (!policyCodes.has(finding.code)) continue;
+      advisory.findings.push({
+        code: finding.code,
+        severity: finding.severity,
+        title: finding.title,
+        detail: finding.detail,
+        /* v8 ignore next -- the three policy findings always carry an action; the no-action arm is unreachable here. */
+        ...(finding.action !== undefined ? { action: finding.action } : {}),
+      });
+    }
+  }
+
   // Pack-aware (#693): under `oss-anti-slop` the gate blocks ANY author, so drop the confirmed-contributor
   // gate entirely (mirrors gateCheckPolicy). `gittensor` keeps it. Pack comes from the PUBLIC .gittensory.yml.
   const pack: GatePolicyPack = gate.pack ?? "gittensor";
@@ -166,6 +225,9 @@ export function buildPredictedGateVerdict(args: {
     qualityGateMinScore: gate.readinessMinScore ?? null,
     aiReviewGateMode: gate.aiReviewMode ?? undefined,
     mergeReadinessGateMode: gate.mergeReadiness ?? undefined,
+    // #12: only meaningful when changed paths were supplied (the policy findings are pushed above only then);
+    // absent paths ⇒ no manifest finding exists, so this mode has nothing to act on (byte-identical).
+    manifestPolicyGateMode: gate.manifestPolicy ?? undefined,
     selfAuthoredLinkedIssueGateMode: gate.selfAuthoredLinkedIssue ?? undefined,
     readinessScore: readiness.total,
     confirmedContributor: effectiveConfirmedContributor,
@@ -186,6 +248,6 @@ export function buildPredictedGateVerdict(args: {
     blockers: evaluation.blockers.map(publicSafeFinding),
     warnings: evaluation.warnings.map(publicSafeFinding),
     funnel: pack === "oss-anti-slop" ? { ...OSS_ANTI_SLOP_FUNNEL } : null,
-    note: PREDICTED_GATE_NOTE,
+    note: predictedGateNote(hasChangedPaths),
   };
 }

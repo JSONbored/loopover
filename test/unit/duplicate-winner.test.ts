@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isDuplicateClusterWinner } from "../../src/signals/duplicate-winner";
-import { dupWinnerLinkedDuplicateCount } from "../../src/queue/processors";
+import { dupWinnerLinkedDuplicateCount, linkedIssueDuplicatePullRequestsForGate } from "../../src/queue/processors";
+import type { PullRequestRecord } from "../../src/types";
 import { listOtherOpenPullRequests, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
@@ -50,6 +51,38 @@ describe("dupWinnerLinkedDuplicateCount (#dup-winner close-reason seam)", () => 
   it("no siblings ⇒ 0 regardless of the flag", () => {
     expect(dupWinnerLinkedDuplicateCount([], 12, true)).toBe(0);
     expect(dupWinnerLinkedDuplicateCount([], 12, false)).toBe(0);
+  });
+});
+
+describe("linkedIssueDuplicatePullRequestsForGate (#dup-winner open-sibling source)", () => {
+  const pr = (number: number, state: string, linkedIssues: number[]): PullRequestRecord => ({
+    repoFullName: "owner/repo",
+    number,
+    title: `PR ${number}`,
+    state,
+    labels: [],
+    linkedIssues,
+  });
+
+  it("the PR links no issue ⇒ no cluster siblings", () => {
+    expect(linkedIssueDuplicatePullRequestsForGate(pr(9, "open", []), [pr(5, "open", [1])])).toEqual([]);
+  });
+
+  it("includes an OPEN sibling that overlaps the linked-issue set, sorted + de-duplicated", () => {
+    const subject = pr(9, "open", [1, 2]);
+    const others = [pr(7, "open", [2]), pr(5, "open", [1]), pr(5, "open", [1])];
+    expect(linkedIssueDuplicatePullRequestsForGate(subject, others)).toEqual([5, 7]);
+  });
+
+  it("excludes a sibling that does NOT overlap the linked-issue set (the false ternary arm)", () => {
+    const subject = pr(9, "open", [1]);
+    expect(linkedIssueDuplicatePullRequestsForGate(subject, [pr(5, "open", [2])])).toEqual([]);
+  });
+
+  it("excludes self and any non-open sibling", () => {
+    const subject = pr(9, "open", [1]);
+    const others = [pr(9, "open", [1]), pr(5, "closed", [1])];
+    expect(linkedIssueDuplicatePullRequestsForGate(subject, others)).toEqual([]);
   });
 });
 

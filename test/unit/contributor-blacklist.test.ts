@@ -26,6 +26,12 @@ describe("contributor blacklist DB round-trip (#1425)", () => {
     expect(globalList?.[0]).toEqual({ login: "global-bad-actor", reason: "global" });
   });
 
+  it("returns [] when singleton global row is missing", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("DELETE FROM global_contributor_blacklist WHERE id = 'singleton'").run();
+    expect(await getGlobalContributorBlacklist(env)).toEqual([]);
+  });
+
   it("fails open to an empty list when the shared/global table is unavailable", async () => {
     const env = createTestEnv();
     await env.DB.prepare("DROP TABLE global_contributor_blacklist").run();

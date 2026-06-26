@@ -1283,7 +1283,10 @@ export async function upsertDigestSubscription(
   const now = nowIso();
   const record: DigestSubscriptionRecord = {
     id: crypto.randomUUID(),
-    login: input.login,
+    // GitHub logins are case-insensitive, so normalize like every sibling subscription path
+    // (notification subscriptions, issue-watch) — otherwise a subscriber stored as "Foo" is missed on a
+    // "foo" lookup and the [login, email] conflict target accumulates case-variant duplicate rows.
+    login: input.login.toLowerCase(),
     email: input.email.toLowerCase(),
     status: input.status ?? "active",
     source: input.source ?? "app",
@@ -1319,7 +1322,7 @@ export async function upsertDigestSubscription(
 
 export async function listDigestSubscriptionsForLogin(env: Env, login: string): Promise<DigestSubscriptionRecord[]> {
   const db = getDb(env.DB);
-  const rows = await db.select().from(digestSubscriptions).where(eq(digestSubscriptions.login, login)).orderBy(desc(digestSubscriptions.updatedAt)).limit(20);
+  const rows = await db.select().from(digestSubscriptions).where(eq(digestSubscriptions.login, login.toLowerCase())).orderBy(desc(digestSubscriptions.updatedAt)).limit(20);
   return rows.map(toDigestSubscriptionRecord);
 }
 

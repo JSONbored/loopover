@@ -326,6 +326,21 @@ describe("product usage events", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("matches digest subscriptions case-insensitively by login and dedupes case-variant logins", async () => {
+    const env = createTestEnv();
+    // Subscribe under a mixed-case login, then look up under a different casing — GitHub logins are
+    // case-insensitive, so it must still resolve (mirrors the notification/issue-watch subscription paths).
+    await upsertDigestSubscription(env, { login: "OktoFeesh1", email: "digest@example.com" });
+    await expect(listDigestSubscriptionsForLogin(env, "oktofeesh1")).resolves.toEqual([
+      expect.objectContaining({ login: "oktofeesh1", email: "digest@example.com", status: "active" }),
+    ]);
+    // Re-subscribing under another casing with the same email updates the one row instead of duplicating it.
+    await upsertDigestSubscription(env, { login: "OKTOFEESH1", email: "digest@example.com", status: "paused" });
+    await expect(listDigestSubscriptionsForLogin(env, "Oktofeesh1")).resolves.toEqual([
+      expect.objectContaining({ login: "oktofeesh1", email: "digest@example.com", status: "paused" }),
+    ]);
+  });
+
   it("summarizes recent events without counting stale records", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
     await recordProductUsageEvent(env, {

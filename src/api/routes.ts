@@ -26,6 +26,7 @@ import {
 } from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import {
   countOpenIssues,
@@ -630,6 +631,12 @@ const repositorySettingsSchema = z.object({
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
     })
     .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
+  // Per-repo contributor blacklist (#1425). Loose by design — the DB layer normalizes/validates each entry
+  // (login pattern, public-safe metadata, de-dup, caps), so invalid entries are dropped on persist.
+  contributorBlacklist: z
+    .array(z.object({ login: z.string(), reason: z.string().optional(), evidence: z.array(z.string()).optional(), addedAt: z.string().optional() }))
+    .max(1000)
+    .default([]),
 });
 
 // #130 maintainer self-serve settings editor. A PATCH-style subset: every field optional so the maintainer
@@ -3362,6 +3369,7 @@ export function createApp() {
         privateTrustEnabled: parsed.data.privateTrustEnabled,
         badgeEnabled: parsed.data.badgeEnabled,
         commandAuthorization: normalizeCommandAuthorizationPolicy(parsed.data.commandAuthorization).policy,
+        contributorBlacklist: normalizeContributorBlacklist(parsed.data.contributorBlacklist).entries,
       }),
     );
   });

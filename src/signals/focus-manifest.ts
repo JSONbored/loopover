@@ -75,6 +75,7 @@ export type FocusManifestSettings = Partial<
     | "agentPaused"
     | "agentDryRun"
     | "contributorBlacklist"
+    | "blacklistLabel"
   >
 >;
 
@@ -477,6 +478,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (aiReviewModel !== null) out.aiReviewModel = aiReviewModel;
   const gittensorLabel = normalizeOptionalString(r.gittensorLabel, "settings.gittensorLabel", warnings);
   if (gittensorLabel !== null) out.gittensorLabel = gittensorLabel;
+  const blacklistLabel = normalizeOptionalString(r.blacklistLabel, "settings.blacklistLabel", warnings);
+  if (blacklistLabel !== null) out.blacklistLabel = blacklistLabel;
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
   for (const key of ["aiReviewByok", "autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled", "agentPaused", "agentDryRun"] as const) {

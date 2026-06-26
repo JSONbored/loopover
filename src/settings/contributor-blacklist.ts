@@ -60,15 +60,16 @@ export function normalizeContributorBlacklist(input: unknown): { entries: Contri
   return { entries, warnings };
 }
 
-/** The blacklist entry matching `login` (case-insensitive), or null. */
-export function findBlacklistEntry(login: string | null | undefined, entries: ContributorBlacklistEntry[]): ContributorBlacklistEntry | null {
+/** The blacklist entry matching `login` (case-insensitive), or null. Tolerates an absent list (treated as empty)
+ *  so callers can pass the optional `settings.contributorBlacklist` directly. */
+export function findBlacklistEntry(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined): ContributorBlacklistEntry | null {
   if (!login) return null;
   const key = login.toLowerCase();
-  return entries.find((entry) => entry.login.toLowerCase() === key) ?? null;
+  return (entries ?? []).find((entry) => entry.login.toLowerCase() === key) ?? null;
 }
 
 /** True iff `login` is on the resolved blacklist. */
-export function isAuthorBlacklisted(login: string | null | undefined, entries: ContributorBlacklistEntry[]): boolean {
+export function isAuthorBlacklisted(login: string | null | undefined, entries: ContributorBlacklistEntry[] | undefined): boolean {
   return findBlacklistEntry(login, entries) !== null;
 }
 

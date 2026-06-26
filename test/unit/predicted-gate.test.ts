@@ -21,10 +21,10 @@ const BASE_INPUT: PredictedGateInput = {
   linkedIssues: [7],
 };
 
-function verdict(args: { gate: Record<string, unknown>; input?: Partial<PredictedGateInput>; issues?: IssueRecord[]; pullRequests?: PullRequestRecord[] }) {
+function verdict(args: { gate: Record<string, unknown>; review?: Record<string, unknown>; input?: Partial<PredictedGateInput>; issues?: IssueRecord[]; pullRequests?: PullRequestRecord[] }) {
   return buildPredictedGateVerdict({
     input: { ...BASE_INPUT, ...args.input },
-    manifest: parseFocusManifest({ gate: args.gate }),
+    manifest: parseFocusManifest({ gate: args.gate, ...(args.review ? { review: args.review } : {}) }),
     repo: REPO,
     issues: args.issues ?? [openIssue(7, "Uploads should retry on 5xx")],
     pullRequests: args.pullRequests ?? [],
@@ -173,6 +173,48 @@ describe("buildPredictedGateVerdict", () => {
     });
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+  });
+
+  it("predicts a BLOCK for an enforced path-INDEPENDENT pre-merge check the title fails (#11/#18)", () => {
+    // The repo's public .gittensory.yml enforces a conventional-style title; the PR title lacks "[FEAT]".
+    const result = verdict({
+      gate: {},
+      review: { pre_merge_checks: [{ name: "Conventional title", title_contains: "[FEAT]", enforce: true }] },
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(true);
+  });
+
+  it("predicts a PASS once the path-independent pre-merge check is satisfied", () => {
+    const result = verdict({
+      gate: {},
+      input: { title: "[FEAT] Add retry to the upload client" },
+      review: { pre_merge_checks: [{ name: "Conventional title", title_contains: "[FEAT]", enforce: true }] },
+    });
+    expect(result.conclusion).not.toBe("failure");
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(false);
+  });
+
+  it("surfaces a non-enforced path-independent pre-merge check as a WARNING, not a blocker", () => {
+    const result = verdict({
+      gate: {},
+      review: { pre_merge_checks: [{ name: "Mention testing", description_contains: "tested", enforce: false }] },
+    });
+    expect(result.conclusion).not.toBe("failure");
+    expect(result.warnings.some((w) => w.code === "pre_merge_check_failed")).toBe(true);
+  });
+
+  it("does NOT predict a path-GATED pre-merge check pre-submission (no diff) and discloses the gap in the note (#11/#18)", () => {
+    // A path-gated check whose title assertion the PR fails — but it is scoped to changed paths, which are
+    // unknown pre-submission, so it must be skipped (not falsely block) and called out in the note.
+    const result = verdict({
+      gate: {},
+      review: { pre_merge_checks: [{ name: "Tests for src", title_contains: "ZZZ-never", when_paths: ["src/**"], enforce: true }] },
+    });
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(false);
+    expect(result.warnings.some((w) => w.code === "pre_merge_check_unresolved")).toBe(false);
+    expect(result.note).toContain("scoped to changed paths");
+    expect(result.note.toLowerCase()).toContain("slop");
   });
 });
 

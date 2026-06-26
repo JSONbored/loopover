@@ -18,6 +18,7 @@ const OSS_ANTI_SLOP_FUNNEL = {
   registerUrl: GITTENSOR_HOME_URL,
 } as const;
 import { buildPullRequestAdvisory, evaluateGateCheck, type GateCheckConclusion } from "./advisory";
+import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
 
 /**
  * Pre-submission "will my PR pass the gate?" prediction for a MINER, computed BEFORE a PR exists.
@@ -55,8 +56,11 @@ export type PredictedGateVerdict = {
 const PREDICTED_GATE_NOTE =
   "Predicted from the repo's public .gittensory.yml gate config + safe defaults. The maintainer may have " +
   "private dashboard overrides not reflected here, and the dual-model AI-consensus blocker is only " +
-  "evaluated on a real PR. Every author is gated the same: a configured hard blocker fails the gate " +
-  "regardless of confirmed-contributor status (which affects only on-chain scoring).";
+  "evaluated on a real PR. Diff-dependent checks are NOT evaluated pre-submission and may still fail the real " +
+  "gate: the slop score, the focus-manifest path policy, and any pre-merge check scoped to changed paths " +
+  "(path-independent title/description/label pre-merge checks ARE predicted). Every author is gated the same: " +
+  "a configured hard blocker fails the gate regardless of confirmed-contributor status (which affects only " +
+  "on-chain scoring).";
 
 export type PredictedGateInput = {
   repoFullName: string;
@@ -148,6 +152,16 @@ export function buildPredictedGateVerdict(args: {
   const issueAuthorByNumber = new Map(issues.filter((issue) => issue.repoFullName === input.repoFullName).map((issue) => [issue.number, issue.authorLogin ?? null]));
   const linkedIssueAuthorLogins = syntheticPr.linkedIssues.map((issueNumber) => issueAuthorByNumber.get(issueNumber) ?? null);
   const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue, linkedIssueAuthorLogins });
+
+  // Deterministic pre-merge checks parity (#11/#18), partial: the LIVE gate enforces the repo's
+  // `review.pre_merge_checks` (from the SAME public .gittensory.yml the predictor already reads), but the
+  // predictor ignored them — so a PR the gate would auto-close on an enforced title/description rule predicted
+  // "success". Evaluate the PATH-INDEPENDENT checks (empty `whenPaths` — title/description/label assertions) here:
+  // their inputs (title/body/labels) are exactly the real PR's, so the result is identical to live. Path-gated
+  // checks, manifest-policy, and slop need the PR's changed files/diff (not available pre-submission) and are
+  // disclaimed in the note below; they reach parity once the predictor accepts changed paths.
+  const alwaysApplyPreMergeChecks = manifest.review.preMergeChecks.filter((check) => check.whenPaths.length === 0);
+  advisory.findings.push(...evaluatePreMergeChecks(alwaysApplyPreMergeChecks, { title: syntheticPr.title, body: syntheticPr.body, labels: syntheticPr.labels, changedPaths: [] }));
 
   // Pack-aware (#693): under `oss-anti-slop` the gate blocks ANY author, so drop the confirmed-contributor
   // gate entirely (mirrors gateCheckPolicy). `gittensor` keeps it. Pack comes from the PUBLIC .gittensory.yml.

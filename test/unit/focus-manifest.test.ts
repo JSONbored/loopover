@@ -194,6 +194,15 @@ describe("matchesManifestPath", () => {
     expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
   });
 
+  it("keeps **/ on path-segment boundaries instead of broad suffix matching (#review-audit)", () => {
+    expect(matchesManifestPath("safe.ts", "**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("dir/safe.ts", "**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("unsafe.ts", "**/safe.ts")).toBe(false);
+    expect(matchesManifestPath("src/safe.ts", "src/**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("src/dir/safe.ts", "src/**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("src/unsafe.ts", "src/**/safe.ts")).toBe(false);
+  });
+
   it("multi-wildcard matching is correct (ordered substrings, suffix cannot overlap)", () => {
     expect(matchesManifestPath("xayybzzc", "*a*b*c")).toBe(true);
     expect(matchesManifestPath("aXbXc", "a*b*c")).toBe(true);
@@ -211,6 +220,15 @@ describe("matchesManifestPath", () => {
     const elapsed = performance.now() - start;
     expect(result).toBe(false);
     expect(elapsed).toBeLessThan(100); // the old per-star regex did not return within 30s on this input
+  });
+
+  it("bounds repeated **/ expansion while retaining linear matching (#review-audit)", () => {
+    const globstarRun = "**/".repeat(20) + "safe.ts";
+    const start = performance.now();
+    const result = matchesManifestPath("a/b/c/safe.ts", globstarRun);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsed).toBeLessThan(100);
   });
 });
 
@@ -1192,10 +1210,15 @@ describe("review.exclude_paths (#review-exclude-paths)", () => {
 
   it("excludeReviewPaths filters matching files; empty globs return the same array (byte-identical)", () => {
     const files = [{ path: "src/a.ts" }, { path: "pnpm-lock.yaml" }, { path: "dist/bundle.js" }];
-    // `*` collapses to `.*` (crosses slashes), so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
+    // `*` crosses slashes, so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
     expect(excludeReviewPaths(files, ["*.yaml", "dist/**"])).toEqual([{ path: "src/a.ts" }]);
     expect(excludeReviewPaths(files, ["docs/**"])).toEqual(files); // no match → unchanged
     expect(excludeReviewPaths(files, [])).toBe(files); // empty → same reference (no-op)
+  });
+
+  it("does not exclude attacker-named suffix collisions for **/ basename globs (#review-audit)", () => {
+    const files = [{ path: "unsafe.ts" }, { path: "dir/safe.ts" }, { path: "feature.ts" }];
+    expect(excludeReviewPaths(files, ["**/safe.ts"])).toEqual([{ path: "unsafe.ts" }, { path: "feature.ts" }]);
   });
 });
 

@@ -193,6 +193,7 @@ export type FocusManifestGuidance = {
 
 const MAX_LIST_ITEMS = 200;
 const MAX_ITEM_LENGTH = 300;
+const MAX_GLOBSTAR_SLASH_ALTERNATIVES = 128;
 export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 
 const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
@@ -900,14 +901,36 @@ function linearGlobMatcher(pattern: string): (path: string) => boolean {
  * Compiling once lets a caller test many paths against one pattern without recompiling per path — see
  * {@link matchedPatterns}. An empty/blank pattern never matches.
  */
+function expandGlobstarSlash(pattern: string): string[] {
+  const alternatives = [""];
+  for (let idx = 0; idx < pattern.length; ) {
+    if (pattern.startsWith("**/", idx)) {
+      const count = alternatives.length;
+      const canKeepRootAlternatives = count * 2 <= MAX_GLOBSTAR_SLASH_ALTERNATIVES;
+      for (let altIdx = count - 1; altIdx >= 0; altIdx -= 1) {
+        const prefix = alternatives[altIdx]!;
+        alternatives[altIdx] = `${prefix}*/`;
+        if (canKeepRootAlternatives) alternatives.push(prefix);
+      }
+      idx += 3;
+      continue;
+    }
+    for (let altIdx = 0; altIdx < alternatives.length; altIdx += 1) alternatives[altIdx] += pattern[idx]!;
+    idx += 1;
+  }
+  return alternatives;
+}
+
 function compileManifestPathMatcher(pattern: string): (normalizedPath: string) => boolean {
   const normalizedPattern = normalizePathForMatch(pattern);
   if (!normalizedPattern) return () => false;
   if (normalizedPattern.includes("*")) {
-    // A double-star-then-slash run collapses the mandatory separator into the wildcard so the glob matches
-    // zero-depth/root too (e.g. a leading double-star glob matches a root-level file). Then run the linear matcher.
-    const globbed = normalizedPattern.replace(/\*\*\//g, "*");
-    return linearGlobMatcher(globbed);
+    // `**/` means zero or more whole path segments. Keep the slash in the non-root alternative so
+    // basename globs (e.g. `**/safe.ts`) do not degrade into suffix globs that match `unsafe.ts`.
+    const matchers = expandGlobstarSlash(normalizedPattern).map((globbed) =>
+      globbed.includes("*") ? linearGlobMatcher(globbed) : (normalizedPath: string) => normalizedPath === globbed,
+    );
+    return (normalizedPath) => matchers.some((matcher) => matcher(normalizedPath));
   }
   const dirPattern = normalizedPattern.endsWith("/") ? normalizedPattern : `${normalizedPattern}/`;
   return (normalizedPath) => normalizedPath === normalizedPattern || normalizedPath.startsWith(dirPattern);

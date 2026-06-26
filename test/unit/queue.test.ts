@@ -19,6 +19,7 @@ import {
   listProductUsageDailyRollups,
   listProductUsageEvents,
   listPullRequests,
+  listPullRequestFiles,
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
@@ -1512,6 +1513,84 @@ describe("queue processors", () => {
     expect(rcAudit).toBeFalsy();
   });
 
+  it("refreshes pull request files for path-gated pre-merge checks on synchronize (#review-pre-merge-checks)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "off",
+      autonomy: { merge: "observe", request_changes: "observe" },
+      slopGateMode: "off",
+      mergeReadinessGateMode: "off",
+      manifestPolicyGateMode: "off",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      review: { pre_merge_checks: [{ name: "Migration approval", require_label: "approved", when_paths: ["migrations/**"], enforce: true }] },
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 49,
+      title: "feat: add migration",
+      state: "open",
+      user: { login: "contributor" },
+      head: { sha: "gate125" },
+      labels: [],
+      body: "Closes #1",
+    });
+    await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 49, path: "src/feature.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} });
+
+    let pullFilesFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/files")) {
+        pullFilesFetches += 1;
+        return Response.json([{ filename: "migrations/0099_security.sql", status: "added", additions: 3, deletions: 0, changes: 3 }]);
+      }
+      if (url.includes("/pulls/49/reviews")) return Response.json([]);
+      if (url.includes("/commits/gate125/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/gate125/status")) return Response.json({ statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pre-merge-refresh-sync",
+      eventName: "pull_request",
+      payload: {
+        action: "synchronize",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 49,
+          title: "feat: add migration",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "gate125" },
+          labels: [],
+          body: "Closes #1",
+          mergeable_state: "clean",
+        },
+      },
+    });
+
+    expect(pullFilesFetches).toBeGreaterThan(0);
+    expect((await listPullRequestFiles(env, "JSONbored/gittensory", 49)).map((file) => file.path)).toEqual(["migrations/0099_security.sql"]);
+  });
+
   it("pre-merge checks (#review-pre-merge-checks): an enforced check that fails blocks the auto-merge", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
@@ -2060,6 +2139,33 @@ describe("queue processors", () => {
     await expect(
       processJob(env, { type: "recapture-preview", deliveryId: "rp-9", installationId: 9101, repoFullName: "owner/preview-repo", prNumber: 9, attempt: 2 }),
     ).resolves.toBeUndefined();
+  });
+
+  it("recapture-preview (#review-pre-merge-checks): a slop-gated re-review refreshes the PR's files before publishing", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9102, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "slop-repo", full_name: "owner/slop-repo", private: false, owner: { login: "owner" } }, 9102);
+    // slopGateMode != "off" ⇒ shouldCollectSlopEvidence(settings) is true ⇒ reReviewStoredPullRequest enters the
+    // refresh branch (the file-refresh body), so the stored files reflect the PR's current head before publishing.
+    await upsertRepositorySettings(env, { repoFullName: "owner/slop-repo", checkRunMode: "off", commentMode: "off", publicSurface: "off", slopGateMode: "advisory" });
+    await upsertPullRequestFromGitHub(env, "owner/slop-repo", { number: 11, title: "Slop PR", state: "open", user: { login: "contributor" }, head: { sha: "s11" }, labels: [], body: "x" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/11/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (/\/pulls\/11(?:\?|$)/.test(url)) return Response.json({ number: 11, title: "Slop PR", state: "open", user: { login: "contributor" }, head: { sha: "s11" }, labels: [], body: "x" });
+      if (url.includes("/commits/s11/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/s11/status")) return Response.json({ state: "success", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      processJob(env, { type: "recapture-preview", deliveryId: "rp-11", installationId: 9102, repoFullName: "owner/slop-repo", prNumber: 11, attempt: 1 }),
+    ).resolves.toBeUndefined();
+
+    // refreshPullRequestDetails ran ⇒ a detail-sync-state row was written for this PR (the if-body executed).
+    const sync = await env.DB.prepare("select status from pull_request_detail_sync_state where repo_full_name = ? and pull_number = ?").bind("owner/slop-repo", 11).first<{ status: string }>();
+    expect(sync?.status).toMatch(/^(complete|partial)$/);
   });
 
   it("auto-maintain (#778): a repo with no acting autonomy takes no agent action", async () => {

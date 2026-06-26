@@ -1462,7 +1462,8 @@ async function reReviewStoredPullRequest(
   await persistAdvisory(env, advisory);
   if (
     shouldCollectSlopEvidence(settings) ||
-    settings.manifestPolicyGateMode !== "off"
+    settings.manifestPolicyGateMode !== "off" ||
+    (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
   ) {
     await refreshPullRequestDetails(env, repoFullName, prNumber).catch(
       () => undefined,
@@ -2904,7 +2905,8 @@ async function processGitHubWebhook(
         if (
           shouldCollectSlopEvidence(settings) ||
           settings.manifestPolicyGateMode !== "off" ||
-          isAgentConfigured(settings.autonomy)
+          isAgentConfigured(settings.autonomy) ||
+          (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
         ) {
           await refreshPullRequestDetails(env, repoFullName, pr.number);
         }
@@ -3198,6 +3200,16 @@ export function shouldCollectSlopEvidence(
   settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">,
 ): boolean {
   return settings.slopGateMode !== "off" || mergeReadinessGateEnabled(settings);
+}
+
+export async function shouldRefreshFilesForPreMergeChecks(
+  env: Env,
+  repoFullName: string,
+): Promise<boolean> {
+  const checks = resolveReviewPreMergeChecks(
+    await loadRepoFocusManifest(env, repoFullName).catch(() => null),
+  );
+  return checks.some((check) => check.whenPaths.length > 0);
 }
 
 export function shouldRunSlopAiAdvisory(
@@ -5649,7 +5661,8 @@ async function maybeProcessPrPanelRetrigger(
   // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set.
   if (
     shouldCollectSlopEvidence(settings) ||
-    settings.manifestPolicyGateMode !== "off"
+    settings.manifestPolicyGateMode !== "off" ||
+    (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
   ) {
     await refreshPullRequestDetails(env, repoFullName, pr.number);
   }

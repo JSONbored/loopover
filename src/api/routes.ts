@@ -21,6 +21,7 @@ import {
   extractCookieValue,
   isAuthorizedGitHubSessionLogin,
   revokeSession,
+  timingSafeEqual,
   type AuthIdentity,
 } from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
@@ -2650,6 +2651,9 @@ export function createApp() {
       bounties,
       issueQuality: issueQuality?.report,
       confirmedContributor: Boolean(context.gittensorSnapshot),
+      // #11-13/#18: thread the local branch's changed PATHS (already in the request) so the predictor also
+      // evaluates the focus-manifest path policy + path-gated pre-merge checks, matching the live gate.
+      ...(parsed.data.changedFiles ? { changedPaths: parsed.data.changedFiles.map((file) => file.path) } : {}),
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
@@ -2911,12 +2915,13 @@ export function createApp() {
     return c.json(result);
   });
 
-  // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware
-  // outcome batches from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
-  // dedup is enforced via UNIQUE(instance_id, repo_hash, pr_hash) in orb_signals. Rate-limited (strict, #1254).
+  // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
+  // batches from self-hosted instances. Sender-side HMAC anonymization is for privacy, not authentication.
+  // OPTIONAL shared-token gate (#1285): unset ⇒ OPEN ingress (the live fleet keeps working, as before); set
+  // ⇒ the collector REQUIRES it, so an operator can lock the write path down after distributing the matching
+  // ORB_COLLECTOR_TOKEN to exporters. Bounded by a hard body ceiling, and dedup'd via UNIQUE(instance_id, repo_hash, pr_hash).
   app.post("/v1/orb/ingest", async (c) => {
-    // Open ingress (no shared secret — the fleet topology has no per-instance key the collector could
-    // verify), bounded by a hard body ceiling so it can't be used to make us buffer unbounded input.
+    if (!(await isAuthorizedOrbIngest(c.env, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
     const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
     if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
@@ -4940,6 +4945,18 @@ function skippedPrAuditRemediation(reason: string): string {
 function toIsoQueryDate(value: string): string | undefined {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+
+
+// Optional Orb-ingest auth (#1285). FAIL-OPEN by default: with no ORB_INGEST_TOKEN configured the ingress stays
+// OPEN (matching today's live fleet — deploying this is non-breaking). Once the operator sets the token, the
+// collector REQUIRES an exact bearer match, so the write path can be locked down after the matching
+// ORB_COLLECTOR_TOKEN is rolled out to exporters.
+async function isAuthorizedOrbIngest(env: Env, token: string | undefined): Promise<boolean> {
+  if (!env.ORB_INGEST_TOKEN) return true;
+  // Constant-time compare (mirrors every other secret check in auth/security) — a `===` here is timing-attack
+  // vulnerable for a shared secret.
+  return timingSafeEqual(token, env.ORB_INGEST_TOKEN);
 }
 
 function requiresApiToken(path: string): boolean {

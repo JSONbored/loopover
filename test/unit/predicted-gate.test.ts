@@ -21,13 +21,22 @@ const BASE_INPUT: PredictedGateInput = {
   linkedIssues: [7],
 };
 
-function verdict(args: { gate: Record<string, unknown>; input?: Partial<PredictedGateInput>; issues?: IssueRecord[]; pullRequests?: PullRequestRecord[] }) {
+function verdict(args: {
+  gate: Record<string, unknown>;
+  review?: Record<string, unknown>;
+  manifestExtra?: Record<string, unknown>;
+  changedPaths?: string[];
+  input?: Partial<PredictedGateInput>;
+  issues?: IssueRecord[];
+  pullRequests?: PullRequestRecord[];
+}) {
   return buildPredictedGateVerdict({
     input: { ...BASE_INPUT, ...args.input },
-    manifest: parseFocusManifest({ gate: args.gate }),
+    manifest: parseFocusManifest({ gate: args.gate, ...(args.review ? { review: args.review } : {}), ...(args.manifestExtra ?? {}) }),
     repo: REPO,
     issues: args.issues ?? [openIssue(7, "Uploads should retry on 5xx")],
     pullRequests: args.pullRequests ?? [],
+    ...(args.changedPaths ? { changedPaths: args.changedPaths } : {}),
   });
 }
 
@@ -173,6 +182,114 @@ describe("buildPredictedGateVerdict", () => {
     });
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+  });
+
+  it("predicts a BLOCK for an enforced path-INDEPENDENT pre-merge check the title fails (#11/#18)", () => {
+    // The repo's public .gittensory.yml enforces a conventional-style title; the PR title lacks "[FEAT]".
+    const result = verdict({
+      gate: {},
+      review: { pre_merge_checks: [{ name: "Conventional title", title_contains: "[FEAT]", enforce: true }] },
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(true);
+  });
+
+  it("predicts a PASS once the path-independent pre-merge check is satisfied", () => {
+    const result = verdict({
+      gate: {},
+      input: { title: "[FEAT] Add retry to the upload client" },
+      review: { pre_merge_checks: [{ name: "Conventional title", title_contains: "[FEAT]", enforce: true }] },
+    });
+    expect(result.conclusion).not.toBe("failure");
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(false);
+  });
+
+  it("surfaces a non-enforced path-independent pre-merge check as a WARNING, not a blocker", () => {
+    const result = verdict({
+      gate: {},
+      review: { pre_merge_checks: [{ name: "Mention testing", description_contains: "tested", enforce: false }] },
+    });
+    expect(result.conclusion).not.toBe("failure");
+    expect(result.warnings.some((w) => w.code === "pre_merge_check_failed")).toBe(true);
+  });
+
+  it("does NOT predict a path-GATED pre-merge check pre-submission (no diff) and discloses the gap in the note (#11/#18)", () => {
+    // A path-gated check whose title assertion the PR fails — but it is scoped to changed paths, which are
+    // unknown pre-submission, so it must be skipped (not falsely block) and called out in the note.
+    const result = verdict({
+      gate: {},
+      review: { pre_merge_checks: [{ name: "Tests for src", title_contains: "ZZZ-never", when_paths: ["src/**"], enforce: true }] },
+    });
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(false);
+    expect(result.warnings.some((w) => w.code === "pre_merge_check_unresolved")).toBe(false);
+    expect(result.note).toContain("scoped to changed paths");
+    expect(result.note.toLowerCase()).toContain("slop");
+  });
+
+  it("with changedPaths supplied, predicts a path-GATED pre-merge check that now matches (#11/#18)", () => {
+    const result = verdict({
+      gate: {},
+      changedPaths: ["src/upload/client.ts"],
+      review: { pre_merge_checks: [{ name: "Tests for src", title_contains: "ZZZ-never", when_paths: ["src/**"], enforce: true }] },
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(true);
+  });
+
+  it("with changedPaths that do NOT match, the path-gated check is N/A (no finding)", () => {
+    const result = verdict({
+      gate: {},
+      changedPaths: ["docs/readme.md"],
+      review: { pre_merge_checks: [{ name: "Tests for src", title_contains: "ZZZ-never", when_paths: ["src/**"], enforce: true }] },
+    });
+    expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(false);
+  });
+
+  it("predicts a manifest path-policy BLOCK when a changed path hits a blocked glob and manifestPolicy:block (#12)", () => {
+    const result = verdict({
+      gate: { manifestPolicy: "block" },
+      manifestExtra: { blockedPaths: ["dist/**"] },
+      changedPaths: ["dist/bundle.js"],
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(true);
+    // The note no longer disclaims path-policy once paths are supplied, but slop stays disclaimed.
+    expect(result.note).not.toContain("Provide the PR's changed paths");
+    expect(result.note.toLowerCase()).toContain("slop");
+  });
+
+  it("manifestPolicy:advisory does NOT block on a blocked path (parity with the live advisory gate) (#12)", () => {
+    // The blocked-path finding is critical, so under advisory mode it neither blocks nor surfaces as a warning —
+    // exactly how the live gate treats it. The meaningful parity is that advisory never fails the prediction.
+    const result = verdict({
+      gate: { manifestPolicy: "advisory" },
+      manifestExtra: { blockedPaths: ["dist/**"] },
+      changedPaths: ["dist/bundle.js"],
+    });
+    expect(result.conclusion).not.toBe("failure");
+    expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
+  });
+
+  it("manifestPolicy:off (default) emits NO manifest finding even when a blocked path is touched", () => {
+    const result = verdict({
+      gate: { manifestPolicy: "off" },
+      manifestExtra: { blockedPaths: ["dist/**"] },
+      changedPaths: ["dist/bundle.js"],
+    });
+    expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
+    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
+  });
+
+  it("ignores non-policy guidance findings (e.g. off-focus) — only the three enforceable policy codes are threaded (#12)", () => {
+    // The path isn't blocked but it's outside the wanted areas → guidance emits the NON-policy `manifest_off_focus`.
+    // The predictor must skip it (only manifest_blocked_path / _linked_issue_required / _missing_tests are gateable).
+    const result = verdict({
+      gate: { manifestPolicy: "block" },
+      manifestExtra: { wantedPaths: ["src/**"] },
+      changedPaths: ["docs/readme.md"],
+    });
+    expect(result.conclusion).not.toBe("failure");
+    expect([...result.blockers, ...result.warnings].some((f) => f.code === "manifest_off_focus")).toBe(false);
   });
 });
 

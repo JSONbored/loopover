@@ -10,6 +10,7 @@
 //   ORB_COLLECTOR_URL=<url>   — endpoint (default: gittensory's hosted collector)
 //   ORB_AIR_GAP=true          — air-gapped/offline deployments only: compute locally, never send
 //   ORB_ANONYMIZE=true        — HMAC-hash repo/PR before export (default: true)
+//   ORB_COLLECTOR_TOKEN=<secret> — bearer credential for the hosted collector
 //
 // No diffs, no code, no comments, no logins, no commit SHAs — only verdict + outcome + reversal + a bucketed
 // reason category + cycle time, with repo/PR identifiers HMAC'd by a key the collector never holds (so it
@@ -195,11 +196,17 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
 
   const body = JSON.stringify(payload);
   const signature = createHmac("sha256", secret).update(body).digest("hex");
+  const collectorToken = process.env.ORB_COLLECTOR_TOKEN;
 
   try {
     const res = await fetchFn(collectorUrl, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-orb-signature": `sha256=${signature}`, "x-orb-instance": instance },
+      headers: {
+        "content-type": "application/json",
+        "x-orb-signature": `sha256=${signature}`,
+        "x-orb-instance": instance,
+        ...(collectorToken ? { authorization: `Bearer ${collectorToken}` } : {}),
+      },
       body,
     });
     if (!res.ok) {

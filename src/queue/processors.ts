@@ -827,7 +827,7 @@ async function maybeRunAgentMaintenance(
 
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
   // list unions in once its table lands). A match short-circuits the planner to a deterministic label + close
-  // ahead of merit/CI/AI; the configured label (default "slop") and the entry's public-safe reason drive it.
+  // ahead of merit/CI/AI; only the configured label (default "slop") reaches public actions.
   const blacklistEntry = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist);
 
   const planned = planAgentMaintenanceActions({

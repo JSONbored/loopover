@@ -159,12 +159,12 @@ Everything a maintainer can toggle in the dashboard can be set as code under `se
 
 The **contributor blacklist** is layered like every other setting (`.gittensory.yml`
 `settings.contributorBlacklist` > database) and is unioned with the shared/global list. Logins are
-public data, so entries carry only public-safe metadata (a `reason`, `evidence` URLs, an `addedAt`
-date) — never wallets, hotkeys, trust scores, or private values. `blacklistLabel` (default `slop`) is
-the label the engine applies to a blacklisted author's PR.
+public data, but the optional `reason`, `evidence`, and `addedAt` fields are maintainer metadata
+for configuration/audit context and are not echoed in automated public close comments. `blacklistLabel`
+(default `slop`) is the label the engine applies to a blacklisted author's PR.
 
 A PR from a **blacklisted login** is labeled (`blacklistLabel`) and **closed deterministically** —
-ahead of any merit/CI/AI analysis, with a sanitized close comment and **no AI call**. The close
+ahead of any merit/CI/AI analysis, with a static public close comment and **no AI call**. The close
 short-circuits and **wins over the normal gate disposition**; it honors the autonomy dial and
 `agentPaused` / `agentDryRun` exactly like any other agent action, and the owner and automation bots
 are never auto-closed.

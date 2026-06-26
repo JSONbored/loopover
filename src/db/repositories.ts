@@ -159,6 +159,7 @@ import type {
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
@@ -432,6 +433,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       aiReviewModel: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
+      blacklistLabel: "slop",
       createMissingLabel: true,
       publicSurface: "comment_and_label",
       includeMaintainerAuthors: false,
@@ -442,6 +444,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       agentPaused: false,
       agentDryRun: false,
       commandAuthorization: normalizeCommandAuthorizationPolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).policy,
+      contributorBlacklist: [],
       autonomy: {},
       autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
     };
@@ -472,6 +475,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     aiReviewModel: row.aiReviewModel ?? null,
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
+    blacklistLabel: row.blacklistLabel,
     createMissingLabel: row.createMissingLabel,
     publicSurface: parsePublicSurface(row.publicSurface),
     includeMaintainerAuthors: row.includeMaintainerAuthors,
@@ -482,6 +486,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     agentPaused: row.agentPaused,
     agentDryRun: row.agentDryRun,
     commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
+    contributorBlacklist: parseContributorBlacklist(row.contributorBlacklistJson),
     autonomy: parseAutonomyPolicy(row.autonomyJson),
     autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
     createdAt: row.createdAt,
@@ -516,6 +521,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     aiReviewModel: typeof settings.aiReviewModel === "string" && settings.aiReviewModel.trim() ? settings.aiReviewModel.trim() : null,
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
+    blacklistLabel: settings.blacklistLabel ?? "slop",
     createMissingLabel: settings.createMissingLabel ?? true,
     publicSurface: settings.publicSurface ?? "comment_and_label",
     includeMaintainerAuthors: settings.includeMaintainerAuthors ?? false,
@@ -526,6 +532,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     agentPaused: settings.agentPaused ?? false,
     agentDryRun: settings.agentDryRun ?? false,
     commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
+    contributorBlacklist: normalizeContributorBlacklist(settings.contributorBlacklist).entries,
     autonomy: normalizeAutonomyPolicy(settings.autonomy),
     autoMaintain: normalizeAutoMaintainPolicy(settings.autoMaintain),
   };
@@ -558,6 +565,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       aiReviewModel: resolved.aiReviewModel,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
+      blacklistLabel: resolved.blacklistLabel,
       createMissingLabel: resolved.createMissingLabel,
       publicSurface: resolved.publicSurface,
       includeMaintainerAuthors: resolved.includeMaintainerAuthors,
@@ -568,6 +576,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       agentPaused: resolved.agentPaused,
       agentDryRun: resolved.agentDryRun,
       commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+      contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
       autonomyJson: jsonString(resolved.autonomy),
       autoMaintainJson: jsonString(resolved.autoMaintain),
       updatedAt: nowIso(),
@@ -601,6 +610,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         aiReviewModel: resolved.aiReviewModel,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
+        blacklistLabel: resolved.blacklistLabel,
         createMissingLabel: resolved.createMissingLabel,
         publicSurface: resolved.publicSurface,
         includeMaintainerAuthors: resolved.includeMaintainerAuthors,
@@ -611,6 +621,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         agentPaused: resolved.agentPaused,
         agentDryRun: resolved.agentDryRun,
         commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+        contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
         autonomyJson: jsonString(resolved.autonomy),
         autoMaintainJson: jsonString(resolved.autoMaintain),
         updatedAt: nowIso(),
@@ -5381,6 +5392,10 @@ function parsePublicSurface(value: string): RepositorySettings["publicSurface"] 
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
   return normalizeCommandAuthorizationPolicy(parseJson<unknown>(value, null)).policy;
+}
+
+function parseContributorBlacklist(value: string): RepositorySettings["contributorBlacklist"] {
+  return normalizeContributorBlacklist(parseJson<unknown>(value, null)).entries;
 }
 
 function parseAutonomyPolicy(value: string): AutonomyPolicy {

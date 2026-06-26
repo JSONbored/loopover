@@ -26,6 +26,11 @@ describe("private-beta auth and rate limiting", () => {
     const expired = await createSessionForGitHubUser(env, { login: "expired-user" });
     await env.DB.prepare("update auth_sessions set expires_at = ? where login = ?").bind("2020-01-01T00:00:00.000Z", "expired-user").run();
     await expect(authenticatePrivateToken(env, expired.token)).resolves.toBeNull();
+
+    // Fail closed when the stored expiry is unparseable (NaN), not authenticate it as a never-expiring session.
+    const malformed = await createSessionForGitHubUser(env, { login: "malformed-expiry-user" });
+    await env.DB.prepare("update auth_sessions set expires_at = ? where login = ?").bind("not-a-date", "malformed-expiry-user").run();
+    await expect(authenticatePrivateToken(env, malformed.token)).resolves.toBeNull();
   });
 
   it("handles auth helper fallbacks for cookies, login lists, and token comparison", async () => {

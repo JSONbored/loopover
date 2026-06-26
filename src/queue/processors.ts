@@ -83,7 +83,7 @@ import {
   refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission, isForeignAppInstallation } from "../github/app";
 import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl, maintainerControlPanelUrl } from "../github/footer";
 import {
@@ -1531,7 +1531,24 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       return;
     }
 
-    await upsertInstallation(env, payload);
+    const installationAppId = await upsertInstallation(env, payload);
+    // Dual-app safety (#selfhost-app-id): if this delivery's installation belongs to a DIFFERENT gittensory App
+    // (cloud + self-host installed on the same account), ack it without processing so neither backend acts on the
+    // other's installation. FAIL-OPEN — an unknown/own-matching app_id always processes, so the LIVE single-app
+    // path is byte-identical. Signature verification (per-App secret) is the primary isolation; this is the
+    // belt-and-suspenders for a shared-endpoint/secret misconfig.
+    if (isForeignAppInstallation(env.GITHUB_APP_ID, installationAppId)) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "foreign_app",
+        status: "processed",
+      });
+      return;
+    }
     const installationActor =
       payload.installation?.account?.login ??
       (payload.installation?.id ? (await getInstallation(env, payload.installation.id))?.accountLogin : undefined);

@@ -10,6 +10,7 @@ import {
   getAppInstallation,
   getInstallationId,
   getRepositoryCollaboratorPermission,
+  isForeignAppInstallation,
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -823,3 +824,24 @@ function gateAdvisory(headSha: string): Advisory {
     generatedAt: "2026-05-22T00:00:00.000Z",
   };
 }
+
+describe("isForeignAppInstallation (#selfhost-app-id)", () => {
+  it("returns true only on a positive numeric app_id mismatch", () => {
+    expect(isForeignAppInstallation("12345", 99999)).toBe(true);
+  });
+
+  it("returns false when this backend's own app id and the installation's match", () => {
+    expect(isForeignAppInstallation("12345", 12345)).toBe(false);
+  });
+
+  it("FAILS OPEN (false) when the installation app_id is unknown — null or undefined", () => {
+    expect(isForeignAppInstallation("12345", null)).toBe(false);
+    expect(isForeignAppInstallation("12345", undefined)).toBe(false);
+  });
+
+  it("FAILS OPEN (false) when this backend has no / an unparseable own app id", () => {
+    expect(isForeignAppInstallation(undefined, 99999)).toBe(false);
+    expect(isForeignAppInstallation("", 99999)).toBe(false);
+    expect(isForeignAppInstallation("not-a-number", 99999)).toBe(false);
+  });
+});

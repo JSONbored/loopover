@@ -22,3 +22,10 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
     scrape_timeout: 10s
+
+  # Claude Code usage telemetry, re-exposed by the OTEL collector's Prometheus exporter (--profile
+  # observability + CLAUDE_CODE_ENABLE_TELEMETRY=1). An absent collector just shows the target as down.
+  - job_name: claude-code-otel
+    static_configs:
+      - targets: ["otel-collector:8889"]
+    scrape_interval: 15s

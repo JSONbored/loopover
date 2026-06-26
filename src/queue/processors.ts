@@ -321,6 +321,7 @@ import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
 } from "../review/enrichment-wire";
+import { captureReviewFailure } from "../selfhost/sentry";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import {
@@ -1283,7 +1284,10 @@ async function maybeRunAgentMaintenance(
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
   // list unions in once its table lands). A match short-circuits the planner to a deterministic label + close
   // ahead of merit/CI/AI; only the configured label (default "slop") reaches public actions.
-  const blacklistEntry = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist);
+  const blacklistEntry = findBlacklistEntry(
+    pr.authorLogin,
+    settings.contributorBlacklist,
+  );
 
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
@@ -3608,6 +3612,12 @@ export async function runAiReviewForAdvisory(
         error: errorMessage(error),
       }),
     );
+    captureReviewFailure(error, {
+      kind: "review",
+      repo: args.repoFullName,
+      pr: args.pr.number,
+      head_sha: args.advisory.headSha,
+    });
     return undefined;
   }
 }

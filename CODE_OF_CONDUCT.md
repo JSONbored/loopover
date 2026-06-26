@@ -18,6 +18,9 @@ impact.
 
 - Harassment, threats, personal attacks, slurs, or sexualized language.
 - Spam, reward-farming noise, generated bulk submissions, or intentionally low-effort PRs.
+- Plagiarism — copying another contributor's PR, diff, commits, or work and submitting it as your
+  own, including lightly reworded or re-tested copies filed under a different account to claim
+  credit or farm Gittensor rewards.
 - Posting secrets, private contributor evidence, private maintainer evidence, wallet details,
   hotkeys, coldkeys, raw trust scores, or private rankings publicly.
 - Misrepresenting Gittensory output as guaranteed compensation, guaranteed ranking, or financial
@@ -30,6 +33,11 @@ impact.
 
 Maintainers may edit or delete comments, close issues or PRs, block users, or report abuse when
 behavior violates this Code of Conduct, the contribution guidelines, or GitHub's terms.
+
+Plagiarism and other deliberate attempts to cheat, copy from other contributors, or farm Gittensor
+rewards through stolen or duplicated PRs are treated as a hard violation: offenders are
+**permanently blocked from contributing**, and the block applies across all of our repositories
+(`JSONbored/gittensory`, `JSONbored/metagraphed`, `JSONbored/awesome-claude`).
 
 For security issues, use GitHub private vulnerability reporting:
 

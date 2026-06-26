@@ -65,6 +65,20 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(false);
   });
 
+  it("does NOT raise duplicate_pr_risk for closed/merged siblings sharing the linked issue (open-only parity with the live gate)", () => {
+    // A merged PR and an abandoned closed PR both share the new PR's linked issue, but neither is still
+    // competing, so the predictor must not flag a duplicate.
+    const result = verdict({
+      gate: { duplicates: "block" },
+      pullRequests: [
+        { ...openPr(100, "Earlier upload retry", [7], "someone-else"), state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+        { ...openPr(101, "Abandoned upload retry", [7], "someone-else"), state: "closed" },
+      ],
+    });
+    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(false);
+    expect(result.conclusion).toBe("success");
+  });
+
   it("predicts a BLOCK for a missing linked issue only when linkedIssue:block", () => {
     const blocked = verdict({ gate: { linkedIssue: "block" }, input: { body: "no issue here", linkedIssues: [] }, issues: [] });
     expect(blocked.conclusion).toBe("failure");

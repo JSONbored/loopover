@@ -169,7 +169,10 @@ export function buildPredictedGateVerdict(args: {
   // from the snapshot, never a live fetch. (#self-authored-parity)
   const issueAuthorByNumber = new Map(issues.filter((issue) => issue.repoFullName === input.repoFullName).map((issue) => [issue.number, issue.authorLogin ?? null]));
   const linkedIssueAuthorLogins = syntheticPr.linkedIssues.map((issueNumber) => issueAuthorByNumber.get(issueNumber) ?? null);
-  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue, linkedIssueAuthorLogins });
+  // Open siblings only, mirroring the live gate (listOtherOpenPullRequests): a closed/merged PR sharing a
+  // linked issue must not fire duplicate_pr_risk. authorHistory below still needs every state for its counts.
+  const openPullRequests = pullRequests.filter((otherPr) => otherPr.state === "open");
+  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: openPullRequests, requireLinkedIssue, linkedIssueAuthorLogins });
 
   // Deterministic pre-merge checks parity (#11/#18): the LIVE gate enforces the repo's `review.pre_merge_checks`
   // (from the SAME public .gittensory.yml the predictor already reads). With the PR's changed paths supplied,

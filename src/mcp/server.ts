@@ -675,6 +675,9 @@ const predictGateShape = {
   body: z.string().optional(),
   labels: z.array(z.string()).optional(),
   linkedIssues: z.array(z.number().int().positive()).optional(),
+  // The PR's changed file PATHS (metadata only — paths, never source content). Supplying them lets the predictor
+  // also evaluate the focus-manifest path policy + path-gated pre-merge checks, matching the live gate (#11-13/#18).
+  changedPaths: z.array(z.string().min(1)).max(500).optional(),
 };
 
 // Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
@@ -2089,6 +2092,7 @@ export class GittensoryMcp {
       bounties,
       issueQuality: issueQuality?.report,
       confirmedContributor,
+      ...(input.changedPaths === undefined ? {} : { changedPaths: input.changedPaths }),
     });
     return {
       summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,

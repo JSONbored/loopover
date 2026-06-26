@@ -206,6 +206,9 @@ export interface UnifiedCommentContext {
   /** The host's disposition holds this PR for owner review (its diff touches a hard-guardrail path), so an
    *  otherwise-ready status renders as "held for review" instead of "safe to merge". (#guarded-hold-comment) */
   heldForReview?: boolean;
+  /** The PR's author is the repo owner or a protected automation bot — the disposition NEVER auto-closes them,
+   *  so a gate "close" verdict renders as "held", not "Closed" (#8/#9). */
+  neverClosed?: boolean;
 }
 
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
@@ -269,6 +272,15 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // PR that won't actually merge). Applied LAST so it only ever downgrades an otherwise-ready status — a real
   // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
   if (status === "ready" && ctx.heldForReview) return "held";
+  // Held-vs-closed disposition parity (#8/#9): a gate "close" verdict does NOT always close the PR. An
+  // owner/automation-bot author is NEVER auto-closed, and a guarded-path PR is held for owner review UNLESS a
+  // RED required check forces the close (ciState "failed" mirrors the disposition's redVerifiedRequiredCi). Render
+  // those as "held" so the headline matches the action (#4220 class); a genuine contributor close — red required
+  // CI, or a non-guarded block — still headlines "Closed".
+  if (input.decision === "close") {
+    if (ctx.neverClosed) return "held";
+    if (ctx.heldForReview && input.readiness?.ciState !== "failed") return "held";
+  }
   return status;
 }
 
@@ -497,4 +509,34 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.merged !== undefined ? { merged: opts.merged } : {}),
     ...(opts.verdictReason !== undefined ? { verdictReason: opts.verdictReason } : {}),
   };
+}
+
+// ── Reviewing-in-progress placeholder ────────────────────────────────────────────────────────────
+//
+// Posted BEFORE the AI review runs so contributors see the bot is actively working rather than
+// silent. Uses GitHub's IMPORTANT alert type (purple sidebar) — the one un-used final-state color.
+// This is NOT a UnifiedCommentStatus: it is a transient pre-verdict placeholder, not a terminal
+// review outcome. The createOrUpdatePrIntelligenceComment upsert replaces it in-place once the
+// final verdict is ready. (#reviewing-placeholder)
+
+const REVIEWING_SQUARE = "🟪";
+
+/** Render the transient "🟪 reviewing…" placeholder body. Caller must prepend PR_PANEL_COMMENT_MARKER
+ *  before posting so the upsert updates the existing bot comment instead of creating a duplicate.
+ *  Pure and public-safe-by-construction (brand is angle-escaped; no raw caller text embedded). */
+export function renderReviewingPlaceholder(ctx: { brand?: string } = {}): string {
+  const brand = escapePublicHtmlAngles(ctx.brand ?? "Gittensory");
+  const inner = [
+    REVIEWING_SQUARE.repeat(12),
+    `### 🔍 ${brand} is reviewing…`,
+    "AI analysis is in progress. This comment will update when the review is complete.",
+    `<sub>${STATUS_META.ready.square} Safe / merged · ${STATUS_META.advisory.square} Advisory · ${STATUS_META.held.square} Held for review · ${STATUS_META.blocked.square} Blocked / closed · ${REVIEWING_SQUARE} Reviewing</sub>`,
+  ].join("\n\n");
+  return asAlert("IMPORTANT", inner);
+}
+
+/** Returns true when the reviewing placeholder should be posted before the AI review runs.
+ *  Pure helper so both branches are testable without async setup. */
+export function shouldPostReviewingPlaceholder(args: { aiReviewWillRun: boolean; mode: string; willComment: boolean }): boolean {
+  return args.aiReviewWillRun && args.mode === "live" && args.willComment;
 }

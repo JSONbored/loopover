@@ -127,6 +127,8 @@ export async function registerOrbRelay(env: Env, secret: string, relayUrl: strin
 }
 
 const RELAY_RETRY_MAX_ATTEMPTS = 5;
+const RELAY_RETRY_BATCH_SIZE = 25;
+const RELAY_RETRY_CONCURRENCY = 5;
 
 /** Record a failed relay forward in the retry queue. Idempotent on delivery_id — a duplicate insert (e.g. from a
  *  GitHub redelivery reaching the same event before the retry fires) is silently ignored. */
@@ -153,28 +155,31 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
     .run();
   const { results } = await env.DB
     .prepare(
-      "SELECT delivery_id, event_name, installation_id, raw_body FROM orb_relay_failures WHERE expires_at >= datetime('now') AND attempts < ?",
+      "SELECT delivery_id, event_name, installation_id, raw_body FROM orb_relay_failures WHERE expires_at >= datetime('now') AND attempts < ? ORDER BY created_at, delivery_id LIMIT ?",
     )
-    .bind(RELAY_RETRY_MAX_ATTEMPTS)
+    .bind(RELAY_RETRY_MAX_ATTEMPTS, RELAY_RETRY_BATCH_SIZE)
     .all<{ delivery_id: string; event_name: string; installation_id: number; raw_body: string }>();
   if (!results.length) return;
-  await Promise.all(
-    results.map(async (row) => {
-      const result = await forwardOrbEvent(
-        env,
-        { eventName: row.event_name, installationId: row.installation_id, deliveryId: row.delivery_id, rawBody: row.raw_body },
-        opts?.fetchImpl,
-      );
-      if (result === "forwarded" || result === "skipped") {
-        await env.DB.prepare("DELETE FROM orb_relay_failures WHERE delivery_id = ?").bind(row.delivery_id).run();
-      } else {
-        await env.DB
-          .prepare("UPDATE orb_relay_failures SET attempts = attempts + 1, last_attempt_at = datetime('now') WHERE delivery_id = ?")
-          .bind(row.delivery_id)
-          .run();
-      }
-    }),
-  );
+
+  const retryRow = async (row: { delivery_id: string; event_name: string; installation_id: number; raw_body: string }) => {
+    const result = await forwardOrbEvent(
+      env,
+      { eventName: row.event_name, installationId: row.installation_id, deliveryId: row.delivery_id, rawBody: row.raw_body },
+      opts?.fetchImpl,
+    );
+    if (result === "forwarded" || result === "skipped") {
+      await env.DB.prepare("DELETE FROM orb_relay_failures WHERE delivery_id = ?").bind(row.delivery_id).run();
+    } else {
+      await env.DB
+        .prepare("UPDATE orb_relay_failures SET attempts = attempts + 1, last_attempt_at = datetime('now') WHERE delivery_id = ?")
+        .bind(row.delivery_id)
+        .run();
+    }
+  };
+
+  for (let i = 0; i < results.length; i += RELAY_RETRY_CONCURRENCY) {
+    await Promise.all(results.slice(i, i + RELAY_RETRY_CONCURRENCY).map(retryRow));
+  }
 }
 
 /** Forward a webhook event to the brokered self-host registered for this installation. BEST-EFFORT + fail-safe:

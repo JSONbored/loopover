@@ -243,6 +243,7 @@ describe("classifyChangedFile", () => {
       ["test/unit/app.test.ts", "test"],
       ["README.md", "docs"],
       ["src/app.ts", "source"],
+      ["src/integration/auth.ts", "source"],
       ["data/values.json", "other"],
     ];
     for (const [path, expected] of cases) {

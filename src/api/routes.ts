@@ -3001,8 +3001,9 @@ export function createApp() {
   });
 
   // Opt an installation into (or out of) the registry. Body: { installationId, registered? } (registered defaults
-  // true). 404 when the installation isn't recorded yet — an install MUST arrive via the webhook first (unlike the
-  // fleet instances there's no account context to upsert a never-seen installation from).
+  // true). Opting out also blocks OAuth self-enrollment until an operator opts back in. 404 when the installation
+  // isn't recorded yet — an install MUST arrive via the webhook first (unlike the fleet instances there's no account
+  // context to upsert a never-seen installation from).
   app.post("/v1/internal/orb/installations/register", async (c) => {
     const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; registered?: unknown } | null;
     const installationId = Number(payload?.installationId);
@@ -3010,7 +3011,7 @@ export function createApp() {
     const existing = await c.env.DB.prepare("SELECT installation_id FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first();
     if (!existing) return c.json({ error: "installation_not_found" }, 404);
     const registered = payload?.registered === false ? 0 : 1;
-    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ? WHERE installation_id = ?").bind(registered, installationId).run();
+    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ?, self_enrollment_disabled = ? WHERE installation_id = ?").bind(registered, registered === 1 ? 0 : 1, installationId).run();
     return c.json({ installationId, registered: registered === 1 });
   });
 

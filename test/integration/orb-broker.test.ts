@@ -105,6 +105,12 @@ describe("broker endpoints", () => {
   it("/v1/internal/orb/enrollments: 400 missing id, 409 unregistered, 404 unknown", async () => {
     const e = await brokerEnv();
     await seedInstall(e, 402, { registered: 0 });
+    expect((await db(e).prepare("SELECT self_enrollment_disabled FROM orb_github_installations WHERE installation_id=402").first<{ self_enrollment_disabled: number }>())?.self_enrollment_disabled).toBe(0);
+    expect((await app.request("/v1/internal/orb/installations/register", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 402, registered: false }) }, e)).status).toBe(200);
+    expect((await db(e).prepare("SELECT registered, self_enrollment_disabled FROM orb_github_installations WHERE installation_id=402").first<{ registered: number; self_enrollment_disabled: number }>())).toMatchObject({ registered: 0, self_enrollment_disabled: 1 });
+    expect((await app.request("/v1/internal/orb/installations/register", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 402 }) }, e)).status).toBe(200);
+    expect((await db(e).prepare("SELECT registered, self_enrollment_disabled FROM orb_github_installations WHERE installation_id=402").first<{ registered: number; self_enrollment_disabled: number }>())).toMatchObject({ registered: 1, self_enrollment_disabled: 0 });
+    await db(e).prepare("UPDATE orb_github_installations SET registered=0 WHERE installation_id=402").run();
     expect((await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: "{}" }, e)).status).toBe(400);
     expect((await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: "{bad" }, e)).status).toBe(400); // unparseable JSON → catch → null
     expect((await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 402 }) }, e)).status).toBe(409);

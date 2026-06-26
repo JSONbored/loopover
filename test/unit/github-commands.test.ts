@@ -168,6 +168,10 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("Linked issue/no-issue context changes estimated score 18 -> 27.")).not.toMatch(/estimated score|18|27/i);
     expect(sanitizePublicComment("score estimate 5 → 9")).not.toMatch(/score estimate|\b5\b|\b9\b/i);
     expect(sanitizePublicComment("Open PR count 7 exceeds threshold 3.")).not.toMatch(/open PR count|7|threshold|3/i);
+    expect(sanitizePublicComment("Merged PR count 1 is below upstream floor 3.")).not.toMatch(/merged PR count|upstream floor|\b1\b|\b3\b/i);
+    expect(sanitizePublicComment("Issue-discovery history (2 valid solved, credibility 0.42) is below upstream floors (3 valid solved, 0.8 credibility).")).not.toMatch(
+      /issue-discovery history|valid solved|upstream floors|0\.42|0\.8|\b2\b|\b3\b/i,
+    );
     expect(sanitizePublicComment("Credibility 0.12 is below floor 0.4.")).not.toMatch(/credibility|0\.12|floor|0\.4/i);
     expect(sanitizePublicComment("open_pr_pressure closed_pr_credibility low_credibility credibility updates")).not.toMatch(/open_pr_pressure|closed_pr_credibility|low_credibility|credibility/i);
     expect(sanitizePublicComment("Command: @gittensory reviewability")).toContain("@gittensory reviewability");
@@ -391,6 +395,45 @@ describe("GitHub mention commands", () => {
     });
     expect(publicCardFindings(askWithTargets)).toContain("Source: repo focus manifest; freshness: fresh");
     expect(askWithTargets).toContain("owner/repo: Prepare a concise packet and verify linked context.");
+  });
+
+  it("redacts private score floor blockers from public preflight comments", () => {
+    const body = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory preflight")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 25, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: {
+        run: completedRun("run-private-score-floors"),
+        actions: [
+          {
+            id: "private-score-floors",
+            runId: "run-private-score-floors",
+            actionType: "preflight_branch",
+            status: "blocked",
+            recommendation: "Resolve blockers",
+            why: [],
+            blockedBy: [
+              "Merged PR count 1 is below upstream floor 3.",
+              "Issue-discovery history (2 valid solved, credibility 0.42) is below upstream floors (3 valid solved, 0.8 credibility).",
+              "merged_pr_history_floor",
+              "issue_discovery_validity_floor",
+            ],
+            publicSafeSummary: "Run the public-safe PR packet before posting.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "preflight",
+      },
+    });
+
+    expect(body).toContain("Run the public-safe PR packet before posting.");
+    expect(body).toContain("Private readiness context available in authenticated Gittensory views");
+    expect(body).not.toMatch(/merged PR count|issue-discovery history|valid solved|upstream floors?|0\.42|0\.8/i);
   });
 
   it("does not publish private blocker why details", () => {

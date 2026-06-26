@@ -588,14 +588,14 @@ export type RepositoryCommandAuthorizationPolicy = {
   commands: Record<string, CommandAuthorizationRole[]>;
 };
 
-/** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional PUBLIC metadata. The converged
+/** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged
  *  engine short-circuits a blacklisted author's PR/issue to a deterministic close ahead of any merit/CI/AI
- *  analysis. `login` is public data — entries NEVER carry wallets/hotkeys/trust-scores/private values. */
+ *  analysis. Metadata can come from private configuration and must not be echoed to public surfaces. */
 export type ContributorBlacklistEntry = {
   login: string;
-  /** Why the account is blocked, e.g. `plagiarism` / `farming`. Free-text, public-safe. */
+  /** Why the account is blocked. Free-text maintainer metadata; not published in automated close comments. */
   reason?: string | undefined;
-  /** Public PR/issue URLs (or other public refs) evidencing the block. */
+  /** PR/issue URLs (or other maintainer refs) evidencing the block. */
   evidence?: string[] | undefined;
   /** ISO-8601 date the entry was added. */
   addedAt?: string | undefined;

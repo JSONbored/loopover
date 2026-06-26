@@ -10,14 +10,18 @@ export const EXCLUDED_TABLES = new Set(["sqlite_sequence", "sqlite_stat1", "d1_m
 
 // Columns dropped per table on export — cloud-specific secrets/hashes that are dead or unsafe on self-host. A
 // committed credential never crosses the boundary (#selfhost-migration DO-NOT-MIGRATE list):
-//   • auth_sessions.token_hash    — hashed browser session tokens, scoped to the cloud deploy; never migrate.
-//   • webhook_events.payload_hash — per-delivery dedup hash, scoped to the cloud deploy.
-//   • repository_ai_keys.ciphertext — maintainer BYOK provider keys, AES-256-GCM-encrypted with the CLOUD's
-//     TOKEN_ENCRYPTION_SECRET → undecryptable (dead) on self-host, and a secret we must not copy regardless.
+//   • auth_sessions.token_hash                 — hashed browser session tokens, scoped to the cloud deploy.
+//   • webhook_events.payload_hash              — per-delivery dedup hash, scoped to the cloud deploy.
+//   • repository_ai_keys.ciphertext            — maintainer BYOK provider keys, encrypted with the cloud key.
+//   • submission_user_tokens.encrypted_token   — short-lived GitHub OAuth token envelopes, cloud-scoped.
+//   • orb_enrollments.secret_hash              — one-time enrollment secret hashes.
+//   • orb_enrollments.relay_secret_*           — encrypted relay webhook signing secret material.
 export const REDACTED_COLUMNS = {
   auth_sessions: ["token_hash"],
   webhook_events: ["payload_hash"],
   repository_ai_keys: ["ciphertext"],
+  submission_user_tokens: ["encrypted_token"],
+  orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt"],
 };
 
 // A table name is only ever interpolated into SQL (`SELECT * FROM "<name>"`) after passing this allowlist, so a

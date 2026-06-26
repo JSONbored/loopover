@@ -6214,6 +6214,139 @@ describe("queue processors", () => {
     expect(overrideAdvisory ?? null).toBeNull();
   });
 
+  it("overrides the LIVE head, not the stale cached SHA, when a commit landed after the command (#16)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    // The stored row still carries the OLD head; a new commit ("live-sha") landed between the comment and now.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 90,
+      title: "Override me",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "stale-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const seen = { staleCheckGets: 0, liveCheckGets: 0 };
+    const patchBodies: Array<{ conclusion?: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      // The LIVE head re-fetch — the row says stale-sha but GitHub's head is now live-sha.
+      if (url.includes("/pulls/90") && method === "GET") return Response.json({ number: 90, state: "open", head: { sha: "live-sha" } });
+      if (url.includes("/commits/stale-sha/check-runs") && method === "GET") {
+        seen.staleCheckGets += 1;
+        return Response.json({ total_count: 0, check_runs: [] });
+      }
+      if (url.includes("/commits/live-sha/check-runs") && method === "GET") {
+        seen.liveCheckGets += 1;
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Gate" }] });
+      }
+      if (url.includes("/check-runs/556") && method === "PATCH") {
+        patchBodies.push(JSON.parse(String(init?.body ?? "{}")) as { conclusion?: string });
+        return Response.json({ id: 556 });
+      }
+      if (url.includes("/issues/90/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/90/comments") && method === "POST") return Response.json({ id: 9101 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-live-head",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Override me", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 803, body: "@gittensory gate-override flaky", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // The neutral PATCH targeted the LIVE head's Gate run (id 556), and the stale SHA was never touched.
+    expect(seen.liveCheckGets).toBe(1);
+    expect(seen.staleCheckGets).toBe(0);
+    expect(patchBodies[0]?.conclusion).toBe("neutral");
+    const audit = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
+      .bind("github_app.gate_overridden")
+      .first<{ metadata_json: string }>();
+    const metadata = JSON.parse(audit?.metadata_json ?? "{}") as { headSha?: string; cachedHeadSha?: string };
+    expect(metadata.headSha).toBe("live-sha");
+    expect(metadata.cachedHeadSha).toBe("stale-sha");
+  });
+
+  it("records null head SHAs in the override audit when the PR head is unresolved (#16 fail-safe)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    // A cached row with no head SHA (never detail-synced); the live fetch also yields no head.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 90,
+      title: "Override me",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: {},
+      labels: [],
+      body: "Validation: npm test",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/pulls/90") && method === "GET") return Response.json({ number: 90, state: "open", head: {} });
+      if (url.includes("/issues/90/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/90/comments") && method === "POST") return Response.json({ id: 9102 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-null-head",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Override me", state: "open", user: { login: "contributor" }, pull_request: {} },
+        // No reason after the command — exercises the "No reason provided." fallback too.
+        comment: { id: 804, body: "@gittensory gate-override", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.gate_overridden")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toBe("No reason provided.");
+    const metadata = JSON.parse(audit?.metadata_json ?? "{}") as { headSha?: string | null; cachedHeadSha?: string | null };
+    expect(metadata.headSha).toBeNull();
+    expect(metadata.cachedHeadSha).toBeNull();
+  });
+
   it("ignores gate-override commands on edited comments", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

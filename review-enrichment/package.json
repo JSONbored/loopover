@@ -1,0 +1,24 @@
+{
+  "name": "gittensory-review-enrichment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gittensory review-enrichment service (REES) — heavy/external/historical PR analysis returned as a structured brief the review engine splices into the prompt. Deploys standalone on Railway; see #1473.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "node --experimental-strip-types --watch src/server.ts",
+    "test": "npm run build && node --test --experimental-strip-types \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}

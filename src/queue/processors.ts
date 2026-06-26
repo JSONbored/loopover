@@ -38,6 +38,8 @@ import {
   markInstallationDeleted,
   markRepositoriesRemovedFromInstallation,
   persistAdvisory,
+  getCachedAiReview,
+  putCachedAiReview,
   markPullRequestsRegated,
   getLatestRegatedAt,
   claimRegateFanoutSlot,
@@ -179,7 +181,8 @@ import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstru
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
-import { runGittensoryAiReview } from "../services/ai-review";
+import { runGittensoryAiReview, type InlineFinding } from "../services/ai-review";
+import { maybePostInlineComments, shouldRequestInlineFindings } from "../review/inline-comments";
 import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
 import { secretLeakFinding } from "../review/safety";
 import { buildIssuePlanComment, classifyPlanCommandRequest, generateIssuePlan, isPlanCommand, isPlannerEnabled } from "../review/planner";
@@ -2127,8 +2130,12 @@ export async function runAiReviewForAdvisory(
     // manifest. Globs whose files are dropped from the AI review (diff + grounding + RAG) — generated/lockfiles
     // the maintainer doesn't want reviewed. Empty ⇒ every file is reviewed (byte-identical). The gate is unaffected.
     reviewExcludePaths?: string[] | undefined;
+    // `.gittensory.yml` review.inline_comments (#inline-comments), resolved by the caller from the cached manifest
+    // (the per-repo toggle). ANDed here with the operator flag + cutover allowlist to decide whether to ASK the
+    // model for line-anchored inline findings. Absent/false ⇒ the reviewer prompt is byte-identical (no findings).
+    reviewInlineComments?: boolean | undefined;
   },
-): Promise<{ notes: string; reviewerCount: number } | undefined> {
+): Promise<{ notes: string; reviewerCount: number; inlineFindings: InlineFinding[] } | undefined> {
   const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
   if (args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha) return undefined;
   // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the converged review features (reputation AI-skip,
@@ -2196,6 +2203,9 @@ export async function runAiReviewForAdvisory(
       grounding,
       ragContext,
       profile: args.reviewProfile ?? null,
+      // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
+      // the cutover allowlist, AND the per-repo manifest toggle all pass. Otherwise the prompt is byte-identical.
+      inlineFindings: shouldRequestInlineFindings(env, args.repoFullName, args.reviewInlineComments),
       pathGuidance: resolveReviewPathInstructions(
         args.reviewPathInstructions ?? [],
         files.map((file) => file.path),
@@ -2233,7 +2243,7 @@ export async function runAiReviewForAdvisory(
         action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates on the next update.",
       });
     }
-    return result.advisoryNotes ? { notes: result.advisoryNotes, reviewerCount: result.reviewerCount } : undefined;
+    return result.advisoryNotes ? { notes: result.advisoryNotes, reviewerCount: result.reviewerCount, inlineFindings: result.inlineFindings } : undefined;
   } catch (error) {
     console.error(JSON.stringify({ level: "warn", event: "ai_review_failed", repository: args.repoFullName, pullNumber: args.pr.number, error: errorMessage(error) }));
     return undefined;
@@ -2534,7 +2544,9 @@ async function maybePublishPrPublicSurface(
   let queueHealth!: ReturnType<typeof buildQueueHealth>;
   let preflight!: ReturnType<typeof buildPreflightResult>;
   let gateEvaluation: ReturnType<typeof evaluateGateCheck> | undefined;
-  let aiReview: { notes: string; reviewerCount: number } | undefined;
+  // inlineFindings is present ONLY on a FRESH review (cache miss) with inline comments enabled; the AI cache
+  // round-trips just notes + reviewerCount, so a cache hit carries no findings and never re-posts (#inline-comments).
+  let aiReview: { notes: string; reviewerCount: number; inlineFindings?: InlineFinding[] } | undefined;
   let gateFinalized = false;
   // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
   // scan, the check-run, and the unified comment. Resolve them AT MOST ONCE per review and share across the
@@ -2695,24 +2707,35 @@ async function maybePublishPrPublicSurface(
       await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, placeholderBody, { mode }).catch(() => undefined);
     }
     if (aiReviewWillRun) {
-      // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
-      // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
-      // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
-      // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
-      // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
-      const { profile: reviewProfile, pathInstructions: reviewPathInstructions, excludePaths: reviewExcludePaths } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
-      aiReview = await runAiReviewForAdvisory(env, {
-        settings,
-        advisory,
-        repoFullName,
-        pr,
-        author,
-        confirmedContributor,
-        files: await getReviewFiles(),
-        reviewProfile,
-        reviewPathInstructions,
-        reviewExcludePaths,
-      });
+      // #1 self-host AI-review cache: the LLM output for a PR changes only when the code (head SHA) or the review
+      // mode changes, so reuse a prior review for this exact (repo, pr, head SHA, mode) — a re-delivered webhook or
+      // the block-mode ~2-min re-gate sweep (which re-runs the AI for every open PR) need not re-spend the call. On
+      // self-host there is no AI gateway, so this is the only AI cache. The deterministic gate below still runs.
+      const cachedReview = await getCachedAiReview(env, repoFullName, pr.number, advisory.headSha, settings.aiReviewMode).catch(() => null);
+      if (cachedReview) {
+        aiReview = cachedReview;
+      } else {
+        // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
+        // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
+        // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
+        // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
+        // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
+        const { profile: reviewProfile, inlineComments: reviewInlineComments, pathInstructions: reviewPathInstructions, excludePaths: reviewExcludePaths } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
+        aiReview = await runAiReviewForAdvisory(env, {
+          settings,
+          advisory,
+          repoFullName,
+          pr,
+          author,
+          confirmedContributor,
+          files: await getReviewFiles(),
+          reviewProfile,
+          reviewPathInstructions,
+          reviewExcludePaths,
+          reviewInlineComments,
+        });
+        if (aiReview) await putCachedAiReview(env, repoFullName, pr.number, advisory.headSha, settings.aiReviewMode, aiReview).catch(() => undefined);
+      }
     }
 
     // Secrets-scan (#audit-3.4): always scans the REAL resolved diff and, on a CONCRETE credential hit, appends a
@@ -3054,6 +3077,19 @@ async function maybePublishPrPublicSurface(
       failedOutputs.push({ output: "comment", error: message });
       await recordPublicSurfaceOutputFailure(env, "comment", author, repoFullName, pr.number, webhook.deliveryId, message);
     }
+    // Quiet inline review comments (#inline-comments): layer the AI's line-anchored findings on top of the
+    // summary just posted, as a NON-BLOCKING COMMENT review. A no-op (no extra work) unless this is a fresh
+    // review that actually produced findings — a cache hit carries none, so the ~2-min re-gate sweep never
+    // reposts. Fully fail-safe: drops out-of-diff lines (no 422), threads `mode`, and never affects the gate.
+    await maybePostInlineComments(env, {
+      aiReview,
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      commitId: advisory.headSha,
+      getFiles: getReviewFiles,
+      mode,
+    });
   }
   if (decision.willLabel) {
     try {

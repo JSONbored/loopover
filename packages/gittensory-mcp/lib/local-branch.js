@@ -341,55 +341,81 @@ export function probeLocalScorer(scorerCommand = resolveScorePreviewCommand()) {
   );
 }
 
-export function gitLines(cwd, args) {
+function gitOutput(cwd, args) {
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 })
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
   } catch {
-    return [];
+    return "";
   }
 }
 
+export function gitLines(cwd, args) {
+  return gitOutput(cwd, args)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function collectChangedFiles(cwd, baseRef) {
-  const statusRows = gitLines(cwd, ["diff", "--name-status", "-M", baseRef, "--"]);
+  // Read both halves with `-z`: the human format quotes non-ASCII/control-char paths, so a quoted
+  // name-status key would never match the verbatim numstat key and the file's stats would be lost.
   const numstat = new Map(parseNumstat(cwd, baseRef).map((entry) => [entry.path, entry]));
-  return statusRows.map((row) => {
-    const fields = row.split(/\t/);
-    const code = fields[0] ?? "";
-    const isRename = code.startsWith("R");
-    const path = isRename ? fields[2] ?? fields[1] ?? "" : fields[1] ?? "";
-    const previousPath = isRename ? fields[1] : undefined;
-    const stats = numstat.get(path) ?? { additions: 0, deletions: 0, binary: false };
+  return parseNameStatus(cwd, baseRef).map((entry) => {
+    const stats = numstat.get(entry.path) ?? { additions: 0, deletions: 0, binary: false };
     return stripUndefined({
-      path,
-      previousPath,
+      path: entry.path,
+      previousPath: entry.previousPath,
       additions: stats.additions,
       deletions: stats.deletions,
-      status: statusFromCode(code),
+      status: statusFromCode(entry.code),
       binary: stats.binary,
     });
   });
 }
 
-function parseNumstat(cwd, baseRef) {
-  return gitLines(cwd, ["diff", "--numstat", "-M", baseRef, "--"]).map((row) => {
-    const fields = row.split(/\t/);
-    const additions = fields[0] === "-" ? 0 : Number(fields[0] ?? 0);
-    const deletions = fields[1] === "-" ? 0 : Number(fields[1] ?? 0);
-    return {
-      path: normalizeNumstatPath(fields.slice(2).join("\t")),
-      additions: Number.isFinite(additions) ? additions : 0,
-      deletions: Number.isFinite(deletions) ? deletions : 0,
-      binary: fields[0] === "-" || fields[1] === "-",
-    };
-  });
+function parseNameStatus(cwd, baseRef) {
+  // `-z`: the status code is its own field and paths are verbatim; a rename is followed by the old
+  // then the new path, any other status by a single path.
+  const records = gitOutput(cwd, ["diff", "--name-status", "-M", "-z", baseRef, "--"]).split("\0");
+  const entries = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const code = records[index];
+    if (!code) continue;
+    const isRename = code.startsWith("R");
+    const previousPath = isRename ? records[index + 1] : undefined;
+    const path = records[index + (isRename ? 2 : 1)];
+    index += isRename ? 2 : 1;
+    entries.push({ code, path, previousPath });
+  }
+  return entries;
 }
 
-function normalizeNumstatPath(path) {
-  const renamed = path.match(/\{.* => (.*)\}/);
-  return renamed?.[1] ? path.replace(/\{.* => (.*)\}/, renamed[1]) : path;
+function parseNumstat(cwd, baseRef) {
+  // `-z`: paths are verbatim and a rename emits old/new as separate fields, not the lossy
+  // "{a => b}" / "a => b" human form that left cross-directory renames keyed by an unmatchable string.
+  const records = gitOutput(cwd, ["diff", "--numstat", "-M", "-z", baseRef, "--"]).split("\0");
+  const entries = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const stat = records[index];
+    if (!stat) continue;
+    const [added, deleted, inlinePath] = splitNumstatStat(stat);
+    // An empty inline path marks a rename: the new path is the second of the two following fields.
+    let path = inlinePath;
+    if (inlinePath === "") {
+      path = records[index + 2];
+      index += 2;
+    }
+    const binary = added === "-";
+    entries.push({ path, additions: binary ? 0 : Number(added), deletions: binary ? 0 : Number(deleted), binary });
+  }
+  return entries;
+}
+
+function splitNumstatStat(stat) {
+  // "<added>\t<deleted>\t<path?>" -- keep the path slice intact even if it contains tabs.
+  const firstTab = stat.indexOf("\t");
+  const secondTab = stat.indexOf("\t", firstTab + 1);
+  return [stat.slice(0, firstTab), stat.slice(firstTab + 1, secondTab), stat.slice(secondTab + 1)];
 }
 
 function collectCommitMessages(cwd, baseRef) {

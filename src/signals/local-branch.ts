@@ -1046,6 +1046,7 @@ function withSituationalAction(
   const waitAction: RewardRiskAction = {
     actionKind: "land_existing_prs",
     repoFullName: scorePreview.repoFullName,
+    severity: "tip",
     /* v8 ignore next -- The wait action is only prepended when ranked actions exist; fallback protects sparse score previews. */
     priorityScore: Math.max(95, actions[0]?.priorityScore ?? 0),
     laneValueScore: 0,

@@ -117,7 +117,8 @@ the **Orb-brokered** path:
 (You set **no** `GITHUB_APP_*` secrets — the Orb holds the App key and mints tokens for you on demand.)
 
 Runtime knobs: `PORT` (default 8787), `DATABASE_PATH` (default `/data/gittensory.sqlite`), `CRON_INTERVAL_MS`
-(default 120000 ≈ the hosted every-2-minutes cron).
+(default 120000 ≈ the hosted every-2-minutes cron), `QUEUE_CONCURRENCY` (default 4 — how many I/O-bound review
+jobs process at once; raise it to drain bigger PR bursts faster, set `1` for strict serial processing).
 
 **Secrets via files.** Any `FOO_FILE=/run/secrets/foo` is read into `FOO` at startup (Docker/Compose
 secrets, multi-line keys) — an explicit `FOO` always wins.
@@ -205,8 +206,14 @@ Self-host runs the identical engine, so the behavior is configured exactly as on
   acts on its decisions, gated by the same guardrails (protected-path manual-review globs, owner-PR
   no-auto-close, mergeability + green-CI before approve).
 
-Per-PR capabilities (safety scan, CI/full-file grounding, RAG, unified comment, content lane, self-tune,
-parity audit) are the `GITTENSORY_REVIEW_*` flags — every flag defaults **off** and is fully inert until
+- **Quiet inline comments (CodeRabbit-style).** Set `GITTENSORY_REVIEW_INLINE_COMMENTS=true` + the repo in
+  `GITTENSORY_REVIEW_REPOS` + `review.inline_comments: true` in the repo's config, and on top of the decision
+  summary the reviewer leaves **non-blocking** inline comments on changed lines (`event: COMMENT`) — useful even
+  in advisory mode, telling a contributor exactly what to fix for their next submission. Out-of-diff findings are
+  dropped (never a 422), and a failure never affects the gate.
+
+Per-PR capabilities (safety scan, CI/full-file grounding, RAG, unified comment, inline comments, content lane,
+self-tune, parity audit) are the `GITTENSORY_REVIEW_*` flags — every flag defaults **off** and is fully inert until
 turned on. Per-repo settings (autonomy, required approvals, protected paths) live in `.gittensory.yml` /
 repository settings. The authoritative reference for all of these is
 [`docs/review-configuration.md`](./review-configuration.md).
@@ -237,11 +244,13 @@ accepted. Unset ⇒ the public file is fetched exactly as before.
   in-flight job, checkpoints the WAL, and closes the DB before exiting.
 - **Logs** are structured JSON (`selfhost_listening`, `selfhost_migrations_applied`, `selfhost_ai_provider`,
   `selfhost_queue_recovered`, `selfhost_job_dead`, `selfhost_cron_error`, `selfhost_shutdown`, …).
-- **Data + backup.** Everything is the single SQLite file on the `gittensory-data` volume (WAL mode). Back up
-  by snapshotting the volume or copying the `.sqlite` file. Migrations are idempotent and re-checked at boot.
-  For **continuous, point-in-time backup**, enable the optional [Litestream](https://litestream.io) sidecar in
+- **Data + backup (do NOT skip).** Everything is the single SQLite file on the `gittensory-data` volume (WAL
+  mode), so **without a backup, losing the volume loses all review state** — and `/ready` still answers `200`,
+  so the gap is silent. The container logs a loud `selfhost_backup_advisory` warning at boot until you set up a
+  backup. For **continuous, point-in-time backup**, enable the [Litestream](https://litestream.io) sidecar in
   `docker-compose.yml` (copy `litestream.yml.example` → `litestream.yml`, set your bucket + credentials); it
-  streams every change to S3/B2/MinIO/R2.
+  streams every change to S3/B2/MinIO/R2. Then set **`BACKUP_ACKNOWLEDGED=true`** to silence the warning. (For
+  multi-instance, use `DATABASE_URL=postgres://…` and back up Postgres instead.)
 - **App-level metrics.** Enable `GITTENSORY_REVIEW_OPS=true` for the read-only gate-block anomaly scan and the
   bearer-gated `GET /v1/internal/ops/stats` aggregate.
 
@@ -266,9 +275,10 @@ is **not** available on the Postgres backend yet — it degrades to no-context.
 
 These are Cloudflare-platform features; they degrade cleanly and the core reviewer is unaffected:
 
-- **Visual PR capture** (Browser Rendering binding) — off; reviews run text-only.
-- **The `/mcp` server** (Durable-Object-backed Agents SDK) — returns `501`. The deterministic API + review
-  path is unaffected; a native MCP-on-Node port is a follow-up.
+- **Visual PR capture** — off by default (reviews run text-only). To enable on self-host: point
+  `BROWSER_WS_ENDPOINT` at a browserless/chrome sidecar **and** set `REVIEW_AUDIT_DIR` so captured screenshots
+  persist (an fs-backed store standing in for the cloud's R2 bucket); without `REVIEW_AUDIT_DIR` captures degrade
+  to on-demand re-render.
 - **Distributed rate limiting** (RateLimiter Durable Object) — off by default; set `REDIS_URL` for a
   Redis-backed fixed-window limiter (see §7). Otherwise put a reverse proxy / WAF in front.
 - **Vectorize-backed RAG** and **R2 audit storage** — inert unless you wire equivalent backends.

@@ -249,6 +249,11 @@ const NON_SCORING_UPSTREAM_CONSTANT_NAMES = new Set([
   "RECYCLE_UID",
   "ISSUES_TREASURY_UID",
   "MAX_ISSUE_ID",
+  // Floating-point epsilon for the registry emission_share-sum validation
+  // (load_weights.py: `total_share > 1.0 + EMISSION_SHARE_TOLERANCE`), not a scoring dimension — without
+  // this entry the parser (which reads exponent literals like `1e-9`, #992) flagged it as a permanent
+  // false-positive unmodeled-scoring-drift warning (#809).
+  "EMISSION_SHARE_TOLERANCE",
 ]);
 
 /**

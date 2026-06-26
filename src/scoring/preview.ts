@@ -1199,13 +1199,19 @@ function constant(constants: Record<string, number>, key: string): number {
  * Resolve a repo's time-decay curve: each parameter is the repo's per-repo override (from the registry's
  * `scoring.time_decay`) when present, else the global default constant from the live scoring snapshot.
  * Mirrors upstream's `resolve_time_decay` (RepoTimeDecayConfig overlaid on the module constants).
+ *
+ * Parity note (#1320): upstream coerces ONLY `grace_period_hours` to an integer
+ * (`grace_period_hours=int(pick(...))`) while the three curve params stay floats. A maintainer may legally
+ * configure a fractional grace (upstream validates `0 <= grace_period_hours <= 168`), so the resolved grace
+ * must be truncated toward zero to match the validator — otherwise a PR aged between `trunc(grace)` and
+ * `grace` is treated as fresh in the preview but already decaying upstream.
  */
 export function resolveTimeDecay(
   constants: Record<string, number>,
   overrides?: RepoTimeDecayOverrides | null,
 ): { gracePeriodHours: number; sigmoidMidpointDays: number; sigmoidSteepness: number; minMultiplier: number } {
   return {
-    gracePeriodHours: pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS")),
+    gracePeriodHours: Math.trunc(pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS"))),
     sigmoidMidpointDays: pickOverride(overrides?.sigmoidMidpointDays, constant(constants, "TIME_DECAY_SIGMOID_MIDPOINT")),
     sigmoidSteepness: pickOverride(overrides?.sigmoidSteepness, constant(constants, "TIME_DECAY_SIGMOID_STEEPNESS_SCALAR")),
     minMultiplier: pickOverride(overrides?.minMultiplier, constant(constants, "TIME_DECAY_MIN_MULTIPLIER")),

@@ -154,6 +154,20 @@ describe("worker entrypoint", () => {
     expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
   });
 
+  it("THROTTLES the sweep when the GitHub REST budget is at/below the maintenance headroom (#6 backpressure)", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    // Seed a low REST observation (remaining 50 <= MAINTENANCE_RESERVED_HEADROOM=150) with a future reset.
+    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 50, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+    // The sweep is NOT enqueued this tick — the shared budget is reserved for webhooks; the next tick retries.
+    expect(sent.find((m) => m.type === "agent-regate-sweep")).toBeUndefined();
+  });
+
   it("enqueues hourly refreshes without full detail work outside the six-hour window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

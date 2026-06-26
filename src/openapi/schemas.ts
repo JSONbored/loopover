@@ -2032,6 +2032,7 @@ export const RewardRiskActionSchema = z
       "maintainer_cut_readiness",
     ]),
     repoFullName: z.string(),
+    severity: z.enum(["critical", "warning", "tip", "info"]),
     priorityScore: z.number(),
     laneValueScore: z.number(),
     scoreabilityScore: z.number(),
@@ -2062,6 +2063,10 @@ export const RepoRewardRiskSchema = z
       issueMultiplier: z.number(),
       estimatedScoreIfClean: z.number(),
       currentEstimatedScore: z.number(),
+      opportunityFactors: z.object({
+        competitionFactor: z.number(),
+        freshnessFactor: z.number(),
+      }),
     }),
     scoreBlockers: z.array(z.string()),
     riskBreakdown: z.object({
@@ -2267,6 +2272,14 @@ export const ContributorRewardRiskStrategySchema = z
     reasoning: z.array(z.string()),
     actionImpact: z.array(z.string()),
     nextActions: z.array(z.string()),
+    eligibilityGap: z.array(
+      z.object({
+        repoFullName: z.string(),
+        prsToUnlock: z.number(),
+        estimatedScoreAtThreshold: z.number(),
+        recommendation: z.string(),
+      }),
+    ),
   })
   .openapi("ContributorRewardRiskStrategy");
 

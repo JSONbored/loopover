@@ -7099,6 +7099,21 @@
               },
               "currentEstimatedScore": {
                 "type": "number"
+              },
+              "opportunityFactors": {
+                "type": "object",
+                "properties": {
+                  "competitionFactor": {
+                    "type": "number"
+                  },
+                  "freshnessFactor": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "competitionFactor",
+                  "freshnessFactor"
+                ]
               }
             },
             "required": [
@@ -7110,7 +7125,8 @@
               "labelMultiplier",
               "issueMultiplier",
               "estimatedScoreIfClean",
-              "currentEstimatedScore"
+              "currentEstimatedScore",
+              "opportunityFactors"
             ]
           },
           "scoreBlockers": {
@@ -7278,11 +7294,21 @@
             "items": {
               "type": "string"
             }
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "tip",
+              "info"
+            ]
           }
         },
         "required": [
           "actionKind",
           "repoFullName",
+          "severity",
           "priorityScore",
           "laneValueScore",
           "scoreabilityScore",
@@ -12431,6 +12457,32 @@
             "items": {
               "type": "string"
             }
+          },
+          "eligibilityGap": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "prsToUnlock": {
+                  "type": "number"
+                },
+                "estimatedScoreAtThreshold": {
+                  "type": "number"
+                },
+                "recommendation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "repoFullName",
+                "prsToUnlock",
+                "estimatedScoreAtThreshold",
+                "recommendation"
+              ]
+            }
           }
         },
         "required": [
@@ -12442,7 +12494,8 @@
           "repoAnalyses",
           "reasoning",
           "actionImpact",
-          "nextActions"
+          "nextActions",
+          "eligibilityGap"
         ]
       },
       "MaintainerNoiseReport": {

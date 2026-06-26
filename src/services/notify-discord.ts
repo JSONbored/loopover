@@ -78,3 +78,37 @@ export async function notifyActionToDiscord(
     console.warn(JSON.stringify({ ev: "discord_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
   }
 }
+
+/** Slack incoming-webhook URL validation — only `https://hooks.slack.com/services/…`. */
+function isValidSlackWebhook(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname.toLowerCase() === "hooks.slack.com" && parsed.pathname.startsWith("/services/");
+  } catch {
+    return false;
+  }
+}
+
+/** Post a per-action Slack message (merged/closed/manual) to `SLACK_WEBHOOK_URL` as a Block Kit section. Best-effort:
+ *  never throws. The modular self-host default — ANY repo notifies the operator's single Slack channel when
+ *  `SLACK_WEBHOOK_URL` is set; unset → no-op, byte-identical to today. Sibling of {@link notifyActionToDiscord}. */
+export async function notifyActionToSlack(
+  env: Env,
+  params: { repoFullName: string; pullNumber: number; outcome: NotifyOutcome; summary: string; submitter?: string | null | undefined },
+): Promise<void> {
+  const webhookUrl = (env as unknown as Record<string, unknown>).SLACK_WEBHOOK_URL;
+  if (typeof webhookUrl !== "string" || !isValidSlackWebhook(webhookUrl)) return;
+  const meta = OUTCOME_META[params.outcome];
+  const prUrl = `https://github.com/${params.repoFullName}/pull/${params.pullNumber}`;
+  const lines = [`*<${prUrl}|${params.repoFullName}#${params.pullNumber}>* · ${meta.word}`, (params.summary || meta.word).slice(0, 1800)];
+  if (params.submitter) lines.push(`Submitter: @${params.submitter}`);
+  const body = {
+    text: `${params.repoFullName}#${params.pullNumber} ${meta.word}`,
+    blocks: [{ type: "section", text: { type: "mrkdwn", text: lines.join("\n") } }],
+  };
+  try {
+    await fetch(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+  } catch (error) {
+    console.warn(JSON.stringify({ ev: "slack_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
+  }
+}

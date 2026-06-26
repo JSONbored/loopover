@@ -22,17 +22,15 @@
 // The mapping is deliberately conservative: it only ever populates the would-MERGE side of the matrix, so the
 // advisor can only ever recommend a TIGHTENING (raise the floor) or a no-op — never a loosening.
 //
-// CONFIG-APPLICATION — DEFERRED (NOT wired here), by design and per the convergence task:
-//   The ported override model is `confidenceFloor` (an auto-merge confidence floor in [0,1]) + `scopeCap`.
-//   Gittensory's gate has NEITHER concept — its live tunables are `qualityGateMinScore` / `slopGateMinScore`
-//   (integer score thresholds) and gate MODES (off/advisory/block), resolved via resolveRepositorySettings →
-//   GateCheckPolicy. There is no field a promoted `confidenceFloor`/`scopeCap` override maps onto, and
-//   gittensory's native accuracy signal measures gate FALSE POSITIVES (blocked-then-merged → a LOOSENING
-//   direction). Wiring a promoted override into the live gate is therefore engine-coupled AND points the wrong
-//   way, so it is intentionally NOT read by the gate yet: this module does the MIGRATION + shadow-soak + audit
-//   + recommendation recording, and a promoted override sits inert in `tunables_overrides`. Reading it into the
-//   live gate-config resolution is a noted follow-up that must not risk loosening the gate. (See loadOverride /
-//   resolveRepositorySettings — the seam exists; closing it needs a gittensory-native tightening tunable.)
+// CONFIG-APPLICATION — WIRED (live read-back, tightening-only):
+//   The ported override model is `confidenceFloor` (a proceed-confidence floor in [0,1]) + `scopeCap`. The live
+//   read-back lives in resolveRepositorySettings → `applySelfTuneOverrideToSettings`, gated by the SAME default-OFF
+//   GITTENSORY_REVIEW_SELFTUNE flag: it translates a promoted `confidenceFloor` into gittensory's NATIVE readiness
+//   tunable by RAISING an EXISTING `qualityGateMinScore` to `round(confidenceFloor * 100)` via a `max()`. By
+//   construction this can ONLY tighten — it never CREATES a readiness gate the operator didn't set, and never
+//   LOWERS one — so the always-tightening recommendation (this module only ever populates the would-merge error
+//   side, so the advisor can only raise the floor) reaches the live gate with no risk of loosening it. Flag-OFF
+//   (default) the override is never read and settings are byte-identical. (See applySelfTuneOverrideToSettings.)
 
 import { listRepositories } from "../db/repositories";
 import { isAgentConfigured } from "../settings/autonomy";
@@ -48,11 +46,11 @@ export function isSelfTuneEnabled(env: { GITTENSORY_REVIEW_SELFTUNE?: string | u
   return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SELFTUNE ?? "");
 }
 
-/** The project's base confidence floor the tightening direction is judged against. Gittensory has no live
- *  confidenceFloor tunable (config-application is deferred), so a no-override project starts from an UNSET
- *  base — the apply path treats "no live floor" as the loosest state, so any positive floor recommendation is
- *  strictly tightening (it can only HOLD more, never add a bad auto-merge). Exposed as a constant so the
- *  config-application follow-up has a single place to source the real per-project base from. */
+/** The project's base confidence floor the tightening direction is judged against IN THE SOAK. Gittensory has no
+ *  live `confidenceFloor` tunable (the live read-back instead RAISES `qualityGateMinScore` — see
+ *  applySelfTuneOverrideToSettings), so a no-override project starts the soak from an UNSET base — the apply path
+ *  treats "no live floor" as the loosest state, so any positive floor recommendation is strictly tightening (it
+ *  can only HOLD more, never add a bad auto-merge). */
 export const SELFTUNE_BASE_CONFIDENCE_FLOOR = 0;
 
 /**

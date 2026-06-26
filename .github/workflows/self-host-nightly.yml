@@ -1,0 +1,44 @@
+# Nightly maintenance on the self-hosted runner (gittensory channel). Deliberately NOT wired into PR CI: this
+# repo's gate auto-closes PRs with red required checks, so a self-hosted runner being offline must never be able
+# to fail-close a PR. This runs on a schedule + on demand only, and keeps the local RAG index fresh.
+#
+# Setup: this repo needs a self-hosted runner labelled `gittensory` (the self-host stack provides one), and
+# optionally an INTERNAL_JOB_TOKEN repo secret (Settings → Secrets → Actions) to trigger the RAG re-index.
+name: self-host nightly
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # 04:00 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-host-nightly
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: [self-hosted, gittensory]
+    timeout-minutes: 30
+    env:
+      # The runner shares the stack's Docker network, so it reaches the engine by service name. Override with a
+      # repo variable SELF_HOST_URL if your runner is elsewhere (e.g. a published port / Tailscale address).
+      SELF_HOST_URL: ${{ vars.SELF_HOST_URL || 'http://gittensory:8787' }}
+      INTERNAL_JOB_TOKEN: ${{ secrets.INTERNAL_JOB_TOKEN }}
+    steps:
+      - name: Self-host health
+        run: |
+          curl -fsS "$SELF_HOST_URL/ready" >/dev/null && echo "✓ self-host ready" || { echo "✗ self-host not ready"; exit 1; }
+
+      - name: Refresh the RAG index (fan out over configured repos)
+        run: |
+          if [ -z "$INTERNAL_JOB_TOKEN" ]; then
+            echo "INTERNAL_JOB_TOKEN not set — skipping RAG refresh (set it as a repo secret to enable)."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SELF_HOST_URL/v1/internal/jobs/rag-index" \
+            -H "authorization: Bearer $INTERNAL_JOB_TOKEN" -H "content-type: application/json" -d '{}')
+          echo "RAG re-index request → HTTP $code"
+          [ "$code" = "202" ] || [ "$code" = "200" ]

@@ -1,0 +1,11 @@
+# Tempo trace store for the Claude review CLI's OpenTelemetry spans (--profile observability). Explore traces in
+# Grafana → Explore → Tempo. Inert until the otel-collector forwards traces and Claude Code trace export is on.
+apiVersion: 1
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: false
+    editable: false

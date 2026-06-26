@@ -35,6 +35,18 @@ export function renderBrief(
     }
   }
 
+  const secrets = findings.secret ?? [];
+  if (secrets.length) {
+    lines.push(
+      "### Potential leaked secrets (value-redacted — verify + rotate)",
+    );
+    for (const secret of secrets) {
+      lines.push(
+        `- \`${secret.file}:${secret.line}\` — ${secret.kind} (${secret.confidence} confidence)`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

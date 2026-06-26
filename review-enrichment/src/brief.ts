@@ -8,6 +8,7 @@ import type {
   AnalyzerStatus,
 } from "./types.js";
 import { scanDependencies } from "./analyzers/dependency-scan.js";
+import { scanSecrets } from "./analyzers/secret-scan.js";
 import { renderBrief } from "./render.js";
 
 type AnalyzerFn = (req: EnrichRequest) => Promise<unknown>;
@@ -15,6 +16,7 @@ type AnalyzerFn = (req: EnrichRequest) => Promise<unknown>;
 // The analyzer registry. More land behind this same shape: license (#1475), secret (#1476), static (#1477), history (#1478).
 const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   dependency: (req) => scanDependencies(req),
+  secret: (req) => scanSecrets(req),
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

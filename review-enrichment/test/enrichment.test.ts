@@ -7,6 +7,7 @@ import {
 } from "../dist/analyzers/dependency-scan.js";
 import { renderBrief } from "../dist/render.js";
 import { buildBrief } from "../dist/brief.js";
+import { scanPatch, scanSecrets } from "../dist/analyzers/secret-scan.js";
 
 const okFetch = (vulns) => async () => ({
   ok: true,
@@ -166,6 +167,89 @@ test("buildBrief: analyzer throw → degraded + partial, still returns a brief",
     assert.equal(brief.partial, true);
     assert.equal(brief.analyzerStatus.dependency, "degraded");
     assert.equal(brief.promptSection, "");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("scanPatch: detects credentials, cites new-file line via hunk header, never returns the value", () => {
+  const patch = [
+    "@@ -1,1 +1,4 @@",
+    " const config = {",
+    '+  awsKey: "AKIAIOSFODNN7EXAMPLE",',
+    '+  token: "ghp_0123456789012345678901234567890123456",',
+    "+  safe: true,",
+  ].join("\n");
+  const findings = scanPatch("src/config.ts", patch);
+  const kinds = findings.map((f) => f.kind);
+  assert.ok(kinds.includes("aws_access_key_id"));
+  assert.ok(kinds.includes("github_token"));
+  const aws = findings.find((f) => f.kind === "aws_access_key_id");
+  assert.equal(aws.file, "src/config.ts");
+  assert.equal(aws.line, 2); // line 1 = context, line 2 = the AWS key
+  assert.ok(
+    !JSON.stringify(findings).includes("AKIAIOSFODNN7EXAMPLE"),
+    "value never captured",
+  );
+});
+
+test("scanPatch: private key (high) + generic assignment line; removed lines don't advance new counter", () => {
+  const pk = scanPatch(
+    "k.pem",
+    "@@ -0,0 +1,1 @@\n+-----BEGIN RSA PRIVATE KEY-----",
+  );
+  assert.equal(pk[0].kind, "private_key");
+  assert.equal(pk[0].confidence, "high");
+  const gen = scanPatch(
+    "a.ts",
+    '@@ -5,0 +5,1 @@\n-old\n+const password = "s3cr3t_value_long_enough_x"',
+  );
+  assert.equal(gen[0].kind, "generic_secret_assignment");
+  assert.equal(gen[0].line, 5);
+});
+
+test("scanSecrets: scans across files, ignores files without patches", async () => {
+  const findings = await scanSecrets({
+    repoFullName: "o/r",
+    prNumber: 1,
+    files: [
+      { path: "a.ts", patch: '@@ -1,0 +1,1 @@\n+key = "AKIAIOSFODNN7EXAMPLE"' },
+      { path: "b.ts" },
+    ],
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, "a.ts");
+});
+
+test("renderBrief: renders the value-redacted secret block", () => {
+  const r = renderBrief({
+    secret: [
+      { file: "x.ts", line: 3, kind: "github_token", confidence: "high" },
+    ],
+  });
+  assert.match(r.promptSection, /leaked secrets/);
+  assert.match(r.promptSection, /`x\.ts:3` — github_token \(high/);
+});
+
+test("buildBrief: dependency + secret analyzers both run", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = okFetch([]);
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 9,
+      files: [
+        {
+          path: "app.ts",
+          patch:
+            '@@ -1,0 +1,1 @@\n+const t = "ghp_0123456789012345678901234567890123456"',
+        },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.dependency, "ok");
+    assert.equal(brief.analyzerStatus.secret, "ok");
+    assert.equal(brief.findings.secret.length, 1);
+    assert.match(brief.promptSection, /github_token/);
   } finally {
     globalThis.fetch = realFetch;
   }

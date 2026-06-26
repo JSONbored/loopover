@@ -42,9 +42,18 @@ export interface DependencyFinding {
   cves: Cve[];
 }
 
-/** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1475–#1478). */
+/** A potential leaked credential. Value-redacted by construction — only the location + kind are ever reported. */
+export interface SecretFinding {
+  file: string;
+  line: number;
+  kind: string;
+  confidence: "high" | "medium";
+}
+
+/** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1475/#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
+  secret?: SecretFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

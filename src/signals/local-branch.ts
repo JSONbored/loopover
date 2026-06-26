@@ -1229,7 +1229,7 @@ function firstCommitTitle(messages: string[] | undefined): string | undefined {
 
 function safeRepoPath(path: string): string {
   /* v8 ignore next -- Empty path fallback protects malformed local-git adapters; path redaction is covered by local branch tests. */
-  return /^(\/Users\/|\/home\/|\/tmp\/|[A-Z]:\/Users\/)/i.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
+  return /^(\/Users\/|\/home\/|\/root\/|\/tmp\/|[A-Z]:\/Users\/)/i.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
 }
 
 export function isTestFile(file: string): boolean {

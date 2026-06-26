@@ -4,6 +4,7 @@ import { makeInstallationOctokit } from "./client";
 import { maintainerControlPanelUrl } from "./footer";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { signRs256Jwt } from "../utils/crypto";
+import { errorMessage } from "../utils/json";
 import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type CheckRunAnnotationContext, type CheckRunOutput, type GateCheckConclusion, type GateCheckEvaluation, type GateCheckPolicy } from "../rules/advisory";
 
 type CheckRunResponse = {
@@ -57,9 +58,23 @@ export async function createInstallationToken(env: Env, installationId: number):
   // secret, so this branch is inert there → byte-identical. The token caches the same way (the install id is the
   // self-host's single bound install). See src/orb/broker-client.
   if (isOrbBrokerMode(env)) {
-    const brokered = await fetchBrokeredInstallationToken(env);
-    installationTokenCache.set(installationId, { token: brokered.token, expiresAtMs: brokered.expiresAtMs });
-    return brokered.token;
+    try {
+      const brokered = await fetchBrokeredInstallationToken(env);
+      installationTokenCache.set(installationId, { token: brokered.token, expiresAtMs: brokered.expiresAtMs });
+      return brokered.token;
+    } catch (error) {
+      // Stale-token grace (#2): a brokered self-host holds no App key, so without this a single Orb mint failure
+      // fails the review (→ retry/DLQ) and an Orb blip during the re-mint window stalls the fleet. If the cached
+      // token is STILL within its real expiry, serve it — a valid token beats a stalled review (NO dangerous reuse:
+      // an actually-expired token is never served). Otherwise emit an alertable structured log and rethrow so the
+      // queue's retry/DLQ handles a genuine outage.
+      if (cached && cached.expiresAtMs > Date.now()) {
+        console.warn(JSON.stringify({ level: "warn", event: "orb_broker_degraded_serving_cached_token", installationId, expiresInMs: cached.expiresAtMs - Date.now(), error: errorMessage(error) }));
+        return cached.token;
+      }
+      console.error(JSON.stringify({ level: "error", event: "orb_broker_unavailable", installationId, error: errorMessage(error) }));
+      throw error;
+    }
   }
   const jwt = await createAppJwt(env);
   const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {

@@ -147,6 +147,49 @@ describe("GitHub check runs", () => {
     expect(brokerCalls).toBe(1);
   });
 
+  it("#2: serves a still-valid cached token when the Orb mint fails (stale-token grace, no fleet stall)", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/v1/orb/token")) {
+        calls += 1;
+        // First mint returns a token expiring within the 2-min safety margin → the next call re-mints; that re-mint fails.
+        if (calls === 1) return Response.json({ token: "tok-1", installationId: 1001, expiresAt: new Date(Date.now() + 90_000).toISOString() });
+        return new Response("orb down", { status: 503 });
+      }
+      return new Response("nf", { status: 404 });
+    });
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    expect(await createInstallationToken(env, 1001)).toBe("tok-1"); // caches a near-expiry token
+    expect(await createInstallationToken(env, 1001)).toBe("tok-1"); // re-mint fails → grace serves the still-valid cached token
+    expect(calls).toBe(2); // the second call DID attempt a re-mint, then fell back to the cache
+  });
+
+  it("#2: rethrows when the broker is down and there is no still-valid cached token", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/v1/orb/token")) return new Response("orb down", { status: 503 });
+      return new Response("nf", { status: 404 });
+    });
+    await expect(createInstallationToken(createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" }), 1002)).rejects.toThrow();
+  });
+
+  it("#2: rethrows when the only cached token has actually expired (no dangerous reuse)", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/v1/orb/token")) {
+        calls += 1;
+        if (calls === 1) return Response.json({ token: "tok-old", installationId: 1003, expiresAt: new Date(Date.now() - 1_000).toISOString() });
+        return new Response("orb down", { status: 503 });
+      }
+      return new Response("nf", { status: 404 });
+    });
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    expect(await createInstallationToken(env, 1003)).toBe("tok-old"); // caches an already-expired token
+    await expect(createInstallationToken(env, 1003)).rejects.toThrow(); // re-mint fails + cached expired → rethrow
+  });
+
   it("fetches repository collaborator permissions with installation credentials", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];

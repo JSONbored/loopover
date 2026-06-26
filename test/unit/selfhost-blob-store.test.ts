@@ -28,6 +28,12 @@ describe("createFsBlobStore (#10 — self-host visual screenshot persistence)", 
     expect(await new Response((await store.get("gittensory/shots/s.png"))!.body).text()).toBe("hello");
   });
 
+  it("accepts a null value (stores an empty object), satisfying the R2 put body type", async () => {
+    const store = createFsBlobStore(dir);
+    await store.put("gittensory/shots/empty.png", null);
+    expect((await new Response((await store.get("gittensory/shots/empty.png"))!.body).arrayBuffer()).byteLength).toBe(0);
+  });
+
   it("rejects a key that escapes the base dir — put throws, get is a safe miss (no traversal)", async () => {
     const store = createFsBlobStore(dir);
     await expect(store.put("../escape.png", new Uint8Array([1]))).rejects.toThrow(/escapes base dir/);

@@ -1640,8 +1640,29 @@ describe("queue processors", () => {
     await processJob(env, plannerWebhook("@gittensory plan", "outsider"));
     expect(run).not.toHaveBeenCalled();
     const denied = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
-    expect(denied?.detail).toBe("actor_not_maintainer");
+    // Authorization now flows through the per-repo commandAuthorization policy (#21), so the skip reason is the
+    // policy's verdict (not the old bespoke "actor_not_maintainer").
+    expect(denied?.detail).toBe("not_maintainer_or_pr_author");
   });
+
+  it("planner (#21): honors a per-repo commandAuthorization override that restricts `plan` to maintainers", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    // Override: `plan` is maintainer-ONLY (drop the default collaborator role).
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandAuthorization: { default: ["maintainer", "collaborator", "confirmed_miner"], commands: { plan: ["maintainer"] } } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "write" }); // collaborator, not maintainer
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "collab1"));
+    expect(run).not.toHaveBeenCalled();
+    const denied = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(denied?.detail).toBe("not_maintainer_or_pr_author");
+  });
+
 
   it("planner: a flag-ON non-plan comment is not intercepted (the handler declines)", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
@@ -1652,15 +1673,40 @@ describe("queue processors", () => {
     expect(run).not.toHaveBeenCalled(); // not a plan command → maybeProcessPlanCommand returns false, no AI spend
   });
 
-  it("planner: @gittensory plan on a PR (not an issue) is skipped via the classifier", async () => {
+  it("planner (#22): @gittensory plan on a PR is NOT consumed — it falls through (no plan, no skip audit)", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
-    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    vi.stubGlobal("fetch", async () => Response.json({}));
     await processJob(env, plannerWebhook("@gittensory plan", "maintainer1", { number: 77, title: "PR not issue", state: "open", user: { login: "x" }, body: "b", pull_request: { url: "https://api.github.com/x" } }));
     expect(run).not.toHaveBeenCalled();
+    // Planning is issue-only; a PR-thread `plan` falls through to the mention/help path (flag-ON now matches
+    // flag-OFF) instead of being swallowed as a plan skip.
+    const planAudits = await env.DB.prepare("select count(*) as n from audit_events where event_type in (?, ?)").bind("github_app.issue_plan_skipped", "github_app.issue_plan_generated").first<{ n: number }>();
+    expect(planAudits?.n).toBe(0);
+  });
+
+  it("planner: a bot-authored @gittensory plan on an issue is recorded as a classifier skip", async () => {
+    const run = vi.fn(async () => ({ response: "nope" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async () => Response.json({}));
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "plan-bot",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Issue", state: "open", user: { login: "reporter" }, body: "b" },
+        comment: { body: "@gittensory plan", user: { login: "some-bot[bot]", type: "Bot" } },
+        sender: { login: "some-bot[bot]", type: "Bot" },
+      },
+    } as unknown as Parameters<typeof processJob>[1]);
+    expect(run).not.toHaveBeenCalled();
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
-    expect(skip?.detail).toBe("missing_repo_issue_installation_or_actor");
+    expect(skip?.detail).toBe("unsupported_comment_action_or_bot");
   });
 
   it("planner: a maintainer request that yields no plan is recorded as a skip (fail-safe)", async () => {
@@ -7460,3 +7506,70 @@ function reopenedPayload(sender: string): any {
     },
   };
 }
+
+describe("installation app_id capture + dual-app webhook filter (#selfhost-app-id)", () => {
+  it("captures app_id from an installation payload, returns it, and preserves it when a later payload omits it", async () => {
+    const env = createTestEnv();
+    const stored = await upsertInstallation(env, {
+      action: "created",
+      installation: { id: 4242, app_id: 555, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] },
+    });
+    expect(stored).toBe(555);
+    expect((await getInstallation(env, 4242))?.appId).toBe(555);
+    // A subsequent payload WITHOUT app_id (e.g. a pull_request event) must not clear the stored value.
+    const preserved = await upsertInstallation(env, { action: "synchronize", installation: { id: 4242, account: { login: "owner", id: 1, type: "Organization" } } });
+    expect(preserved).toBe(555);
+    expect((await getInstallation(env, 4242))?.appId).toBe(555);
+  });
+
+  it("acks a webhook whose installation belongs to a DIFFERENT app without processing it", async () => {
+    const env = createTestEnv(); // own GITHUB_APP_ID defaults to "3824093"
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 7777);
+    // The installation is recorded as belonging to a FOREIGN app (99999 ≠ 3824093).
+    await upsertInstallation(env, { action: "created", installation: { id: 7777, app_id: 99999, account: { login: "JSONbored", id: 1, type: "User" }, repository_selection: "selected", permissions: {}, events: [] } });
+    vi.stubGlobal("fetch", async () => Response.json({}));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "foreign-app-pr",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 7777 }, // a PR event carries no app_id; the stored 99999 is used
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 88, title: "Foreign", state: "open", user: { login: "contributor" }, head: { sha: "f88" }, labels: [], body: "x" },
+      },
+    });
+
+    // The delivery was acked as foreign, and the PR was never upserted (the handler returned before the PR block).
+    const evt = await env.DB.prepare("select payload_hash from webhook_events where delivery_id = ?").bind("foreign-app-pr").first<{ payload_hash: string }>();
+    expect(evt?.payload_hash).toBe("foreign_app");
+    const pr = await env.DB.prepare("select count(*) as n from pull_requests where repo_full_name = ? and number = ?").bind("JSONbored/gittensory", 88).first<{ n: number }>();
+    expect(pr?.n).toBe(0);
+  });
+
+  it("processes a webhook whose installation app_id matches this backend (no false filtering)", async () => {
+    const env = createTestEnv(); // own GITHUB_APP_ID "3824093"
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 3824093001);
+    await upsertInstallation(env, { action: "created", installation: { id: 3824093001, app_id: 3824093, account: { login: "JSONbored", id: 1, type: "User" }, repository_selection: "selected", permissions: {}, events: [] } });
+    vi.stubGlobal("fetch", async () => Response.json({}));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "own-app-pr",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 3824093001 },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 89, title: "Own", state: "open", user: { login: "contributor" }, head: { sha: "o89" }, labels: [], body: "x" },
+      },
+    });
+
+    // The matching-app webhook was processed normally — the PR row exists and it was NOT acked as foreign.
+    const pr = await env.DB.prepare("select count(*) as n from pull_requests where repo_full_name = ? and number = ?").bind("JSONbored/gittensory", 89).first<{ n: number }>();
+    expect(pr?.n).toBe(1);
+    const evt = await env.DB.prepare("select payload_hash from webhook_events where delivery_id = ?").bind("own-app-pr").first<{ payload_hash: string }>();
+    expect(evt?.payload_hash).not.toBe("foreign_app");
+  });
+});

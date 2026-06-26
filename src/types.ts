@@ -205,6 +205,7 @@ export type GitHubWebhookPayload = {
   action?: string;
   installation?: {
     id: number;
+    app_id?: number;
     account?: {
       login?: string;
       id?: number;
@@ -1069,6 +1070,9 @@ export type InstallationRecord = {
   id: number;
   accountLogin: string;
   accountId: number;
+  /** The GitHub App this installation belongs to (#selfhost-app-id); null until an `installation` event or the
+   *  App-installation API refresh populates it. */
+  appId?: number | null | undefined;
   targetType: string;
   repositorySelection?: string | null | undefined;
   permissions: Record<string, string>;

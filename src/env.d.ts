@@ -103,6 +103,8 @@ declare global {
     GITTENSORY_API_TOKEN: string;
     GITTENSORY_MCP_TOKEN: string;
     INTERNAL_JOB_TOKEN: string;
+    /** Shared bearer secret required by the hosted Orb ingest collector. */
+    ORB_INGEST_TOKEN?: string;
     /** AES-256-GCM master secret for maintainer BYOK provider keys (encrypt/decrypt at rest). A Worker
      *  secret (`wrangler secret put`), never a public var. When absent, BYOK is unavailable and the AI
      *  review silently falls back to free Workers AI. */

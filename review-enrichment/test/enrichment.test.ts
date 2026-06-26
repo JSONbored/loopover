@@ -433,6 +433,24 @@ test("scanWorkflowPins: flags unpinned third-party actions, skips official + SHA
   assert.equal(findings[0].line, 3);
 });
 
+test("scanWorkflowPins: flags unpinned third-party actions with YAML-equivalent uses keys", () => {
+  const patch = [
+    "@@ -1,0 +1,3 @@",
+    "+      - uses : tj-actions/changed-files@v44",
+    "+      - \"uses\": third-party/action@main",
+    "+      - 'uses' : quoted/action@v1",
+  ].join("\n");
+  const findings = scanWorkflowPins(".github/workflows/ci.yml", patch);
+  assert.deepEqual(
+    findings.map(({ action, ref, line }) => ({ action, ref, line })),
+    [
+      { action: "tj-actions/changed-files", ref: "v44", line: 1 },
+      { action: "third-party/action", ref: "main", line: 2 },
+      { action: "quoted/action", ref: "v1", line: 3 },
+    ],
+  );
+});
+
 test("scanActionPins: only scans .github/workflows/* files", async () => {
   const findings = await scanActionPins({
     repoFullName: "o/r",

@@ -83,7 +83,7 @@ import {
   refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission, isForeignAppInstallation } from "../github/app";
 import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl, maintainerControlPanelUrl } from "../github/footer";
 import {
@@ -91,7 +91,6 @@ import {
   buildPublicAgentCommandComment,
   type GittensoryMentionCommandName,
   isAuthorizedCommandActor,
-  isMaintainerAssociation,
   isMaintainerQueueDigestCommand,
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
@@ -114,7 +113,7 @@ import {
 } from "../services/contributor-evidence-graph";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { isAuthorizedGitHubSessionLogin, parseGitHubLoginList } from "../auth/security";
-import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection } from "../settings/command-authorization";
+import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection, evaluateCommandAuthorization } from "../settings/command-authorization";
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
 import { SWEEP_FANOUT_DEDUP_MS, isRegateSweepDraining, selectRegateCandidates } from "../settings/agent-sweep";
@@ -1532,7 +1531,24 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       return;
     }
 
-    await upsertInstallation(env, payload);
+    const installationAppId = await upsertInstallation(env, payload);
+    // Dual-app safety (#selfhost-app-id): if this delivery's installation belongs to a DIFFERENT gittensory App
+    // (cloud + self-host installed on the same account), ack it without processing so neither backend acts on the
+    // other's installation. FAIL-OPEN — an unknown/own-matching app_id always processes, so the LIVE single-app
+    // path is byte-identical. Signature verification (per-App secret) is the primary isolation; this is the
+    // belt-and-suspenders for a shared-endpoint/secret misconfig.
+    if (isForeignAppInstallation(env.GITHUB_APP_ID, installationAppId)) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "foreign_app",
+        status: "processed",
+      });
+      return;
+    }
     const installationActor =
       payload.installation?.account?.login ??
       (payload.installation?.id ? (await getInstallation(env, payload.installation.id))?.accountLogin : undefined);
@@ -3289,6 +3305,10 @@ async function recordGateOverrideSkip(
 async function maybeProcessPlanCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
   if (!isPlannerEnabled(env)) return false; // flag-OFF → not handled here; the worker is byte-identical to today
   if (!isPlanCommand(payload.comment?.body)) return false;
+  // #22: planning is ISSUE-only. A `@gittensory plan` on a PR is not a plan request, so DON'T consume it — fall
+  // through to the generic mention handler so it posts the help card, exactly as the flag-OFF path does. Without
+  // this the flag-ON worker swallowed a PR-thread `plan` mention and the contributor saw nothing.
+  if (payload.issue?.pull_request) return false;
   // All eligibility guards live in the PURE classifier (exhaustively unit-tested); here we carry one ok branch.
   const req = classifyPlanCommandRequest(payload, getInstallationId(payload));
   if (!req.ok) {
@@ -3296,11 +3316,21 @@ async function maybeProcessPlanCommand(env: Env, deliveryId: string, payload: Gi
     return true;
   }
   const targetKey = `${req.repoFullName}#${req.issue.number}`;
-  // Issue-level authorization: planning spends Workers AI + posts publicly, so restrict it to maintainers
-  // (the REAL repo permission, not the comment's spoofable author_association).
+  // Issue-level authorization: planning spends Workers AI + posts publicly. Honor the repo's per-repo
+  // commandAuthorization policy for `plan` (#21) — the SAME policy every other command respects — over the REAL
+  // repo permission (resolveRealRepoPermissionAssociation), never the comment's spoofable author_association.
+  // `plan` defaults to maintainer/collaborator (DEFAULT_COMMAND_AUTHORIZATION_POLICY), so the default behavior is
+  // unchanged; a maintainer can now widen/narrow it like any other command.
+  const settings = await resolveRepositorySettings(env, req.repoFullName);
   const association = await resolveRealRepoPermissionAssociation(env, req.installationId, req.repoFullName, req.actor);
-  if (!isMaintainerAssociation(association)) {
-    await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "actor_not_maintainer");
+  const authorization = evaluateCommandAuthorization({
+    policy: settings.commandAuthorization,
+    commandName: "plan",
+    commenterLogin: req.actor,
+    commenterAssociation: association,
+  });
+  if (!authorization.authorized) {
+    await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, authorization.reason);
     return true;
   }
   if (await isPlanCommandCoolingDown(env, req.repoFullName, req.actor, ISSUE_PLAN_COOLDOWN_MS)) {

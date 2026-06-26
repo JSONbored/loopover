@@ -69,6 +69,22 @@ describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => 
     expect(calls[0]?.body.blocks[0]?.text.text).toContain("Submitter: @octocat");
   });
 
+  it("escapes untrusted Slack mrkdwn in the summary and submitter", async () => {
+    const calls = slackStub();
+    await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), {
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      outcome: "closed",
+      summary: "failed <!channel> & <https://evil.example|trusted check>",
+      submitter: "octo<cat>&co",
+    });
+    const text = calls[0]?.body.blocks[0]?.text.text ?? "";
+    expect(text).toContain("failed &lt;!channel&gt; &amp; &lt;https://evil.example|trusted check&gt;");
+    expect(text).toContain("Submitter: @octo&lt;cat&gt;&amp;co");
+    expect(text).not.toContain("<!channel>");
+    expect(text).not.toContain("<https://evil.example|trusted check>");
+  });
+
   it("omits the submitter line when absent (and falls back to the outcome word for an empty summary)", async () => {
     const calls = slackStub();
     await notifyActionToSlack(withEnv({ SLACK_WEBHOOK_URL: SLACK }), { repoFullName: "acme/widgets", pullNumber: 7, outcome: "closed", summary: "" });

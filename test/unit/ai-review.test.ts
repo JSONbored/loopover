@@ -7,7 +7,11 @@ import {
 } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
 
-const { parseModelReview, coerceAiText, composeAdvisoryNotes, consensusDefectOf, combineReviews, toPublicSafe, runWorkersOpinion } = __aiReviewInternals;
+const { parseModelReview, coerceAiText, composeAdvisoryNotes, composeInlineFindings, consensusDefectOf, combineReviews, toPublicSafe, runWorkersOpinion } = __aiReviewInternals;
+
+type InlineFinding = { path: string; line: number; severity: "blocker" | "nit"; body: string };
+type ModelReviewShape = { assessment: string; blockers: string[]; nits: string[]; suggestions: string[]; inlineFindings: InlineFinding[] };
+const reviewWithFindings = (inlineFindings: InlineFinding[]): ModelReviewShape => ({ assessment: "", blockers: [], nits: [], suggestions: [], inlineFindings });
 
 function reviewJson(over: Partial<{ assessment: string; suggestions: string[]; nits: string[]; blockers: string[]; present: boolean; confidence: number; title: string; detail: string }> = {}): string {
   return JSON.stringify({
@@ -164,6 +168,20 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
     // Absent or whitespace-only → no append.
     expect(await runGuidance(undefined)).not.toContain("Path-specific review instructions");
     expect(await runGuidance("   ")).not.toContain("Path-specific review instructions");
+  });
+
+  it("the inline-findings instruction is appended to the system prompt ONLY when requested (#inline-comments)", async () => {
+    const systemPromptOf = (run: ReturnType<typeof vi.fn>): string => ((run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })?.messages?.[0]?.content ?? "");
+    const runInline = async (inlineFindings: boolean | undefined) => {
+      const run = vi.fn(async () => ({ response: reviewJson() }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
+      await runGittensoryAiReview(env, { ...baseInput, inlineFindings });
+      return systemPromptOf(run);
+    };
+    expect(await runInline(true)).toContain("INLINE FINDINGS");
+    // Absent / false ⇒ byte-identical prompt (no inline instruction).
+    expect(await runInline(false)).not.toContain("INLINE FINDINGS");
+    expect(await runInline(undefined)).not.toContain("INLINE FINDINGS");
   });
 });
 
@@ -406,7 +424,7 @@ describe("pure helpers", () => {
   });
 
   describe("combineReviews (#dual-ai-combiner)", () => {
-    const r = (blockers: string[]) => ({ assessment: "", suggestions: [], nits: [], blockers });
+    const r = (blockers: string[]) => ({ assessment: "", suggestions: [], nits: [], blockers, inlineFindings: [] });
     const clean = r([]);
     const blocked = r(["Null deref in src/a.ts"]);
 
@@ -446,7 +464,7 @@ describe("pure helpers", () => {
   });
 
   it("consensusDefectOf requires a concrete blocker in BOTH reviews and drops unsafe titles", () => {
-    const r = (blockers: string[]) => ({ assessment: "", suggestions: [], nits: [], blockers });
+    const r = (blockers: string[]) => ({ assessment: "", suggestions: [], nits: [], blockers, inlineFindings: [] });
     expect(consensusDefectOf(r(["Null deref in src/a.ts"]), r(["Null deref in src/a.ts"]))).not.toBeNull();
     expect(consensusDefectOf(r([]), r(["Null deref"]))).toBeNull(); // one has no blocker → split, not consensus
     expect(consensusDefectOf(r(["Null deref"]), r([]))).toBeNull();
@@ -454,13 +472,13 @@ describe("pure helpers", () => {
   });
 
   it("consensusDefectOf falls back to b's blocker when a's is blank", () => {
-    const a = { assessment: "", suggestions: [], nits: [], blockers: [""] };
-    const b = { assessment: "", suggestions: [], nits: [], blockers: ["Race condition in src/x.ts"] };
+    const a = { assessment: "", suggestions: [], nits: [], blockers: [""], inlineFindings: [] };
+    const b = { assessment: "", suggestions: [], nits: [], blockers: ["Race condition in src/x.ts"], inlineFindings: [] };
     expect(consensusDefectOf(a, b)?.title).toBe("Race condition in src/x.ts");
   });
 
   it("consensusDefectOf uses the default title + detail when BOTH reviewers' blockers are blank", () => {
-    const blank = { assessment: "", suggestions: [], nits: [], blockers: [""] };
+    const blank = { assessment: "", suggestions: [], nits: [], blockers: [""], inlineFindings: [] };
     const out = consensusDefectOf(blank, { ...blank, blockers: [""] });
     expect(out?.title).toContain("AI reviewers agree"); // both blockers[0] falsy → default title
     expect(out?.detail).toContain("independently flagged"); // joined detail empty → default detail
@@ -484,11 +502,76 @@ describe("pure helpers", () => {
   });
 
   it("composeAdvisoryNotes returns null when nothing is public-safe", () => {
-    expect(composeAdvisoryNotes([{ assessment: "reward payout farming", suggestions: ["payout"], nits: ["reward"], blockers: [] }])).toBeNull();
+    expect(composeAdvisoryNotes([{ assessment: "reward payout farming", suggestions: ["payout"], nits: ["reward"], blockers: [], inlineFindings: [] }])).toBeNull();
+  });
+
+  it("parseModelReview parses well-formed inline findings; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
+    const json = JSON.stringify({
+      assessment: "ok", blockers: [], nits: [], suggestions: [],
+      inlineFindings: [
+        { path: "src/a.ts", line: 12, severity: "blocker", body: "Null deref." },
+        { path: "src/b.ts", line: 3, severity: "whatever", body: "Rename x." },
+      ],
+    });
+    expect(parseModelReview(json)?.inlineFindings).toEqual([
+      { path: "src/a.ts", line: 12, severity: "blocker", body: "Null deref." },
+      { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x." },
+    ]);
+  });
+
+  it("parseModelReview drops malformed inline findings (non-object / missing path|line|body / non-positive line), never partial", () => {
+    const json = JSON.stringify({
+      assessment: "ok", blockers: [], nits: [], suggestions: [],
+      inlineFindings: [
+        null,
+        "nope",
+        { line: 5, body: "no path" },
+        { path: "src/a.ts", body: "no line" },
+        { path: "src/c.ts", line: 7 },
+        { path: "src/a.ts", line: 0, body: "zero line" },
+        { path: "src/a.ts", line: 2.9, severity: "nit", body: "kept (truncated)" },
+      ],
+    });
+    expect(parseModelReview(json)?.inlineFindings).toEqual([{ path: "src/a.ts", line: 2, severity: "nit", body: "kept (truncated)" }]);
+  });
+
+  it("parseModelReview defaults inline findings to [] when absent or not an array", () => {
+    expect(parseModelReview(JSON.stringify({ assessment: "ok", blockers: [], nits: [], suggestions: [] }))?.inlineFindings).toEqual([]);
+    expect(parseModelReview(JSON.stringify({ assessment: "ok", blockers: [], nits: [], suggestions: [], inlineFindings: "nope" }))?.inlineFindings).toEqual([]);
+  });
+
+  it("composeInlineFindings dedupes by path+line (first wins) and drops public-unsafe bodies (#inline-comments)", () => {
+    const out = composeInlineFindings([
+      reviewWithFindings([
+        { path: "src/a.ts", line: 1, severity: "nit", body: "First." },
+        { path: "src/a.ts", line: 1, severity: "blocker", body: "Duplicate line — dropped." },
+        { path: "src/a.ts", line: 2, severity: "nit", body: "reward payout farming" },
+        { path: "src/b.ts", line: 9, severity: "blocker", body: "Keep me." },
+      ]),
+    ]);
+    expect(out).toEqual([
+      { path: "src/a.ts", line: 1, severity: "nit", body: "First." },
+      { path: "src/b.ts", line: 9, severity: "blocker", body: "Keep me." },
+    ]);
+  });
+
+  it("composeInlineFindings caps the total at 10 across reviewers, and returns [] for no reviews", () => {
+    const many = Array.from({ length: 14 }, (_, i): InlineFinding => ({ path: `src/f${i}.ts`, line: i + 1, severity: "nit", body: `Body ${i}` }));
+    expect(composeInlineFindings([reviewWithFindings(many)])).toHaveLength(10);
+    expect(composeInlineFindings([])).toEqual([]);
+  });
+
+  it("runGittensoryAiReview emits composed inline findings only when the caller asks for them (#inline-comments)", async () => {
+    const json = JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [], inlineFindings: [{ path: "src/a.ts", line: 3, severity: "nit", body: "Guard the empty case." }] });
+    const run = vi.fn(async () => ({ response: json }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
+    const result = await runGittensoryAiReview(env, { ...baseInput, inlineFindings: true });
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") expect(result.inlineFindings).toEqual([{ path: "src/a.ts", line: 3, severity: "nit", body: "Guard the empty case." }]);
   });
 
   it("composeAdvisoryNotes renders only the sections that have public-safe content", () => {
-    const review = (over: Partial<{ assessment: string; suggestions: string[]; nits: string[]; blockers: string[] }>) => ({ assessment: over.assessment ?? "", suggestions: over.suggestions ?? [], nits: over.nits ?? [], blockers: over.blockers ?? [] });
+    const review = (over: Partial<{ assessment: string; suggestions: string[]; nits: string[]; blockers: string[] }>) => ({ assessment: over.assessment ?? "", suggestions: over.suggestions ?? [], nits: over.nits ?? [], blockers: over.blockers ?? [], inlineFindings: [] });
     const assessmentOnly = composeAdvisoryNotes([review({ assessment: "Looks good." })]);
     expect(assessmentOnly).toBe("Looks good.");
     const nitsOnly = composeAdvisoryNotes([review({ nits: ["Add a test."] })]);
@@ -501,8 +584,8 @@ describe("pure helpers", () => {
   });
 
   it("composeAdvisoryNotes merges + dedupes blockers/nits across two reviewers and renders both sections", () => {
-    const a = { assessment: "Solid change.", suggestions: ["Add a test."], nits: ["Rename x."], blockers: ["Null deref in src/a.ts."] };
-    const b = { assessment: "Second look.", suggestions: ["Add a test."], nits: ["Rename x.", "Tighten the type."], blockers: ["Null deref in src/a.ts.", "Off-by-one in the loop bound."] };
+    const a = { assessment: "Solid change.", suggestions: ["Add a test."], nits: ["Rename x."], blockers: ["Null deref in src/a.ts."], inlineFindings: [] };
+    const b = { assessment: "Second look.", suggestions: ["Add a test."], nits: ["Rename x.", "Tighten the type."], blockers: ["Null deref in src/a.ts.", "Off-by-one in the loop bound."], inlineFindings: [] };
     const out = composeAdvisoryNotes([a, b]) ?? "";
     expect(out).toContain("Solid change."); // first reviewer's assessment wins
     expect(out).toContain("**Blockers**");

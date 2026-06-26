@@ -129,6 +129,13 @@ export type GittensoryAiReviewInput = {
    * instructions passed the manifest's public-safe filter at parse time).
    */
   pathGuidance?: string | null | undefined;
+  /**
+   * `.gittensory.yml` `review.inline_comments` (#inline-comments) — when true (the caller has already ANDed the
+   * operator flag + cutover allowlist + the per-repo manifest toggle), the reviewer is asked to ALSO emit an
+   * `inlineFindings` array of line-anchored findings for quiet, non-blocking inline PR comments. Absent/false
+   * (the default) ⇒ no instruction is appended, so the prompt is byte-identical and the model emits none.
+   */
+  inlineFindings?: boolean | undefined;
 };
 
 /** A consensus critical defect, already public-safe, ready to become a gate blocker finding. */
@@ -138,7 +145,12 @@ export type GittensoryAiReviewResult =
   | { status: "disabled"; reason: string }
   | { status: "unavailable"; reason: string }
   | { status: "quota_exceeded"; estimatedNeurons: number; remainingBudget: number }
-  | { status: "ok"; advisoryNotes: string | null; consensusDefect: AiConsensusDefect | null; split: boolean; inconclusive: boolean; estimatedNeurons: number; reviewerCount: number };
+  | { status: "ok"; advisoryNotes: string | null; consensusDefect: AiConsensusDefect | null; split: boolean; inconclusive: boolean; estimatedNeurons: number; reviewerCount: number; inlineFindings: InlineFinding[] };
+
+/** A line-anchored review finding the model can emit for quiet inline PR comments (#inline-comments). `line` is
+ *  the 1-based line number in the NEW (post-change) file; `severity` separates a must-fix from a nit. The body
+ *  is made public-safe before it ever leaves the engine (see {@link composeInlineFindings}). */
+export type InlineFinding = { path: string; line: number; severity: "blocker" | "nit"; body: string };
 
 export type ModelReview = {
   assessment: string;
@@ -147,6 +159,9 @@ export type ModelReview = {
   blockers: string[];
   nits: string[];
   suggestions: string[];
+  // Line-anchored findings for inline PR review comments (#inline-comments). ALWAYS present (parseModelReview
+  // sets []); populated only when the caller asked for them (input.inlineFindings) AND the model emitted any.
+  inlineFindings: InlineFinding[];
 };
 
 type AiGatewayOptions = { gateway?: { id: string } };
@@ -262,12 +277,31 @@ export function parseModelReview(text: string): ModelReview | null {
     const obj = JSON.parse(jsonText) as Record<string, unknown>;
     const toList = (value: unknown): string[] =>
       Array.isArray(value) ? value.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean).slice(0, 6) : [];
+    // Fail-safe: a malformed/absent inlineFindings field degrades to []; each item missing a usable path / a
+    // positive line / a body is skipped, never partial. Severity defaults to "nit" unless it's exactly "blocker".
+    const toInlineFindings = (value: unknown): InlineFinding[] =>
+      Array.isArray(value)
+        ? value
+            .flatMap((item): InlineFinding[] => {
+              if (!item || typeof item !== "object") return [];
+              const o = item as Record<string, unknown>;
+              const path = typeof o.path === "string" ? o.path.trim() : "";
+              // JSON numbers are always finite (NaN/Infinity can't appear), so a numeric `line` is real; trunc a
+              // float, and the `line > 0` guard below drops 0/negative anchors.
+              const line = typeof o.line === "number" ? Math.trunc(o.line) : 0;
+              const body = typeof o.body === "string" ? o.body.trim() : "";
+              const severity: "blocker" | "nit" = o.severity === "blocker" ? "blocker" : "nit";
+              return path && line > 0 && body ? [{ path, line, severity, body }] : [];
+            })
+            .slice(0, 20)
+        : [];
     const assessment = typeof obj.assessment === "string" ? obj.assessment.trim() : "";
     const blockers = toList(obj.blockers);
     const nits = toList(obj.nits);
     const suggestions = toList(obj.suggestions);
+    const inlineFindings = toInlineFindings(obj.inlineFindings);
     if (!assessment && blockers.length === 0 && nits.length === 0 && suggestions.length === 0) return null;
-    return { assessment, blockers, nits, suggestions };
+    return { assessment, blockers, nits, suggestions, inlineFindings };
   } catch {
     return null;
   }
@@ -304,16 +338,23 @@ const REVIEW_PROFILE_SUFFIX: Record<"chill" | "assertive", string> = {
     "\n\nReview profile: ASSERTIVE. Beyond blocking defects, also surface minor improvements, style/consistency suggestions, and nitpicks — be thorough and exacting, clearly marking each non-blocking item as a nit.",
 };
 
+// `.gittensory.yml` review.inline_comments → an appended instruction to ALSO emit line-anchored findings for
+// quiet inline PR comments (#inline-comments). Absent/off appends nothing (byte-identical). The model keeps the
+// existing 4-field shape and simply ADDS an `inlineFindings` array.
+const INLINE_FINDINGS_SUFFIX =
+  '\n\nINLINE FINDINGS: ALSO include an additional top-level field "inlineFindings" in the SAME JSON object — an array (possibly empty) of your most important findings, each anchored to a specific changed line, for inline PR comments. Each item: {"path": the changed file path EXACTLY as shown in the diff, "line": the 1-based line number in the NEW file (count forward from the "+" start in the nearest "@@ -old +new @@" hunk header) of an ADDED ("+") line you are commenting on, "severity": "blocker" or "nit", "body": the one-sentence finding}. Include ONLY findings you can place on a specific added line; OMIT any you cannot anchor precisely (a wrong line is worse than none). At most ~10 items.';
+
 /** The effective reviewer SYSTEM prompt. Appends the grounding-discipline suffix when the caller supplied one
- *  (flag GITTENSORY_REVIEW_GROUNDING on), then the `review.profile` tone suffix when set; both absent (default)
- *  → the base prompt, byte-identical to today. */
+ *  (flag GITTENSORY_REVIEW_GROUNDING on), the `review.profile` tone suffix when set, then the inline-findings
+ *  instruction when the caller asked for them; all absent (default) → the base prompt, byte-identical to today. */
 function buildSystemPrompt(input: GittensoryAiReviewInput): string {
   const groundingSuffix = input.grounding?.systemSuffix ?? "";
   const profileSuffix = input.profile === "chill" || input.profile === "assertive" ? REVIEW_PROFILE_SUFFIX[input.profile] : "";
   // `.gittensory.yml` review.path_instructions (#review-path-instructions): the caller pre-resolved the entries
   // matching this PR's files into a prompt section; empty ⇒ nothing appended (byte-identical).
   const pathSuffix = input.pathGuidance?.trim() ? input.pathGuidance : "";
-  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${profileSuffix}${pathSuffix}`;
+  const inlineSuffix = input.inlineFindings ? INLINE_FINDINGS_SUFFIX : "";
+  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${profileSuffix}${pathSuffix}${inlineSuffix}`;
 }
 
 /** One Workers-AI opinion with a per-slot reliable fallback and a 3× retry on the primary. */
@@ -446,6 +487,28 @@ export function composeAdvisoryNotes(reviews: ModelReview[]): string | null {
   }
   // Reaching here means at least one section was pushed (the all-empty case returned null above).
   return lines.join("\n").trim();
+}
+
+/** Hard cap on inline findings surfaced per review — a focused review leaves a handful of precise inline notes,
+ *  not a wall of them (the prompt also asks the model to be selective). (#inline-comments) */
+const INLINE_FINDINGS_LIMIT = 10;
+
+/** Compose the public-safe, deduped, capped inline findings from one or two model reviews — the line-anchored
+ *  counterpart of {@link composeAdvisoryNotes}. Dedupes by path+line (first wins), drops any body that fails the
+ *  public-safe filter, and caps the total. Empty array when there is nothing safe to anchor. (#inline-comments) */
+export function composeInlineFindings(reviews: ModelReview[]): InlineFinding[] {
+  const seen = new Set<string>();
+  const out: InlineFinding[] = [];
+  for (const finding of reviews.flatMap((r) => r.inlineFindings)) {
+    if (out.length >= INLINE_FINDINGS_LIMIT) break;
+    const key = `${finding.path}:${finding.line}`;
+    if (seen.has(key)) continue;
+    const safeBody = toPublicSafe(finding.body);
+    if (!safeBody) continue;
+    seen.add(key);
+    out.push({ ...finding, body: safeBody });
+  }
+  return out;
 }
 
 /** A CONSENSUS defect = BOTH reviews independently name at least one concrete blocker (the severity-disciplined
@@ -635,6 +698,9 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
 
   const reviewsForNotes = [advisoryReview, secondReview].filter((r): r is ModelReview => Boolean(r));
   const advisoryNotes = reviewsForNotes.length > 0 ? composeAdvisoryNotes(reviewsForNotes) : null;
+  // Line-anchored inline findings (#inline-comments): empty unless the caller asked for them (the prompt suffix
+  // is conditional) AND the model emitted any. Inert until the posting path (PR B) consumes them.
+  const inlineFindings = composeInlineFindings(reviewsForNotes);
 
   await record(env, input, "ok", estimatedNeurons, consensusDefect ? "consensus defect" : aiReviewSplit ? "split" : inconclusive ? "inconclusive — held" : advisoryNotes ? "advisory notes" : "no usable output", {
     mode: input.mode,
@@ -644,7 +710,7 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
     inconclusive,
     ...(byokFailure ? { byokFailure } : {}),
   });
-  return { status: "ok", advisoryNotes, consensusDefect, split: aiReviewSplit, inconclusive, estimatedNeurons, reviewerCount: reviewsForNotes.length };
+  return { status: "ok", advisoryNotes, consensusDefect, split: aiReviewSplit, inconclusive, estimatedNeurons, reviewerCount: reviewsForNotes.length, inlineFindings };
 }
 
 async function record(
@@ -672,6 +738,7 @@ export const __aiReviewInternals = {
   parseModelReview,
   coerceAiText,
   composeAdvisoryNotes,
+  composeInlineFindings,
   consensusDefectOf,
   combineReviews,
   synthesizeDefect,

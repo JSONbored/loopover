@@ -32,7 +32,7 @@ describe("maintainer AI-review config route", () => {
   it("sets mode/byok/provider/model and preserves unrelated settings", async () => {
     const app = createApp();
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
-    await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "enabled", gittensorLabel: "custom-label" });
+    await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "enabled", gittensorLabel: "custom-label", blacklistLabel: "abuse" });
     const res = await app.request(
       `/v1/repos/${REPO}/ai-review`,
       { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "block", byok: true, provider: "anthropic", model: "claude-3-5-sonnet-latest" }) },
@@ -44,6 +44,7 @@ describe("maintainer AI-review config route", () => {
     expect(settings.aiReviewMode).toBe("block");
     expect(settings.gateCheckMode).toBe("enabled"); // preserved
     expect(settings.gittensorLabel).toBe("custom-label"); // preserved
+    expect(settings.blacklistLabel).toBe("abuse"); // #1425 round-trips through the DB
   });
 
   it("accepts a config without provider/model (stored as null)", async () => {

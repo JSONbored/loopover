@@ -114,6 +114,7 @@ import {
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { isAuthorizedGitHubSessionLogin, parseGitHubLoginList } from "../auth/security";
 import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection, evaluateCommandAuthorization } from "../settings/command-authorization";
+import { findBlacklistEntry, isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
 import { SWEEP_FANOUT_DEDUP_MS, isRegateSweepDraining, selectRegateCandidates } from "../settings/agent-sweep";
@@ -824,6 +825,11 @@ async function maybeRunAgentMaintenance(
     ciToken,
   });
 
+  // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
+  // list unions in once its table lands). A match short-circuits the planner to a deterministic label + close
+  // ahead of merit/CI/AI; the configured label (default "slop") and the entry's public-safe reason drive it.
+  const blacklistEntry = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist);
+
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -846,6 +852,9 @@ async function maybeRunAgentMaintenance(
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
+    ...(blacklistEntry !== null ? { blacklistMatch: { matched: true, reason: blacklistEntry.reason } } : {}),
+    // Always threaded (the DB layer populates it, default "slop"); the planner applies its own fallback.
+    blacklistLabel: settings.blacklistLabel,
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
     // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
     // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).
@@ -2673,7 +2682,11 @@ async function maybePublishPrPublicSurface(
     // files so the review (+ grounding + RAG) sees the REAL diff even on a pre-detail-sync first review (FIX B);
     // resolve only when the review will actually run (aiReviewMode !== off + a head SHA + not explicitly skipped)
     // to keep gate-only and advisory-sweep repos free of an extra file resolve.
-    const aiReviewWillRun = !webhook.skipAiReview && settings.aiReviewMode !== "off" && Boolean(advisory.headSha);
+    // Contributor blacklist (#1425): a blocked author's PR is closed by the deterministic disposition, so it must
+    // NEVER spend an AI call — skip the AI review entirely when the author is blacklisted (the gate + disposition
+    // still run; the close fires there). Per-repo list now; the shared/global list unions in once its table lands.
+    const authorBlacklisted = isAuthorBlacklisted(author, settings.contributorBlacklist);
+    const aiReviewWillRun = !webhook.skipAiReview && settings.aiReviewMode !== "off" && Boolean(advisory.headSha) && !authorBlacklisted;
     // Post a transient "🟪 reviewing…" placeholder BEFORE the AI runs so contributors see the bot
     // is actively working rather than silent. In-place upsert: once the final verdict is ready it
     // overwrites this comment. Best-effort — a failed post never aborts the review. (#reviewing-placeholder)

@@ -3412,7 +3412,12 @@ export async function runAiReviewForAdvisory(
     reviewInlineComments?: boolean | undefined;
   },
 ): Promise<
-  | { notes: string; reviewerCount: number; inlineFindings: InlineFinding[] }
+  | {
+      notes: string;
+      reviewerCount: number;
+      inlineFindings: InlineFinding[];
+      findings: AdvisoryFinding[];
+    }
   | undefined
 > {
   const packAllowsAnyAuthorBlockingReview =
@@ -3555,21 +3560,21 @@ export async function runAiReviewForAdvisory(
       ),
     });
     if (result.status !== "ok") return undefined;
+    const findings: AdvisoryFinding[] = [];
     if (result.consensusDefect) {
-      const defect: AdvisoryFinding = {
+      findings.push({
         code: "ai_consensus_defect",
         severity: "critical",
         title: `AI reviewers agree on a likely critical defect: ${result.consensusDefect.title}`,
         detail: result.consensusDefect.detail,
         action:
           "Resolve the flagged defect, or override if the AI reviewers are mistaken, then re-run the gate.",
-      };
-      args.advisory.findings.push(defect);
+      });
     } else if (result.split) {
       // The reviewers DISAGREED — exactly one flagged a blocking defect. reviewbot's quorum: ANY reviewer
       // rejection closes the PR, so a split is a HARD BLOCKER (advisory.ts gates `ai_review_split` like a
       // consensus defect → gate failure → close); the contributor resubmits a fresh PR. (#ai-review-split)
-      args.advisory.findings.push({
+      findings.push({
         code: "ai_review_split",
         severity: "critical",
         title: "An AI reviewer flagged a likely blocking defect",
@@ -3581,7 +3586,7 @@ export async function runAiReviewForAdvisory(
     } else if (result.inconclusive) {
       // Fail-CLOSED (#ai-fail-closed): block-mode AI could not return a usable verdict. Hold the PR for a human
       // (an evaluation-blocker code → neutral gate) rather than letting it pass to auto-merge uncertified.
-      args.advisory.findings.push({
+      findings.push({
         code: "ai_review_inconclusive",
         severity: "warning",
         title: "AI review could not be completed",
@@ -3591,11 +3596,13 @@ export async function runAiReviewForAdvisory(
           "The gate is held for a human reviewer rather than passed automatically; it re-evaluates on the next update.",
       });
     }
+    args.advisory.findings.push(...findings);
     return result.advisoryNotes
       ? {
           notes: result.advisoryNotes,
           reviewerCount: result.reviewerCount,
           inlineFindings: result.inlineFindings,
+          findings,
         }
       : undefined;
   } catch (error) {
@@ -4052,9 +4059,15 @@ async function maybePublishPrPublicSurface(
   let preflight!: ReturnType<typeof buildPreflightResult>;
   let gateEvaluation: ReturnType<typeof evaluateGateCheck> | undefined;
   // inlineFindings is present ONLY on a FRESH review (cache miss) with inline comments enabled; the AI cache
-  // round-trips just notes + reviewerCount, so a cache hit carries no findings and never re-posts (#inline-comments).
+  // round-trips notes + reviewerCount + the gate findings (so a cache hit replays consensus/split/inconclusive
+  // blockers — see below), but NOT inlineFindings, so a cache hit never re-posts inline comments (#inline-comments).
   let aiReview:
-    | { notes: string; reviewerCount: number; inlineFindings?: InlineFinding[] }
+    | {
+        notes: string;
+        reviewerCount: number;
+        inlineFindings?: InlineFinding[];
+        findings?: AdvisoryFinding[];
+      }
     | undefined;
   let gateFinalized = false;
   // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
@@ -4308,6 +4321,7 @@ async function maybePublishPrPublicSurface(
         settings.aiReviewMode,
       ).catch(() => null);
       if (cachedReview) {
+        advisory.findings.push(...cachedReview.findings);
         aiReview = cachedReview;
       } else {
         // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /

@@ -136,6 +136,25 @@ describe("runAiReviewForAdvisory", () => {
     expect(result?.notes).toBeDefined(); // the single parseable opinion still produces advisory notes
   });
 
+  it("appends an ai_review_split finding (lone-blocker HOLD) when the two block-mode reviewers disagree", async () => {
+    const adv = advisory();
+    // Both opinions parse, but only the FIRST reviewer names a blocker → consensus needs BOTH → no defect → split
+    // (reviewbot's quorum: a lone rejection holds the PR). The split finding must be both applied to the advisory
+    // AND round-tripped on the returned cache payload so a cache hit can replay this blocker (#ai-review-split).
+    const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? defectJson() : notesOnlyJson() })) as unknown as () => Promise<unknown>;
+    const result = await runAiReviewForAdvisory(aiEnv(run), {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_split"]); // applied to the advisory (gate blocker)
+    expect(result?.findings.map((f) => f.code)).toEqual(["ai_review_split"]); // returned for the AI cache to persist
+    expect(result?.notes).toBeDefined();
+  });
+
   it("uses the caller's pre-resolved files (FIX B) instead of the stored read, so the model sees the real diff", async () => {
     // FIX B: the processor passes `files` (its resolvePullRequestFilesForReview output). With no rows ever
     // written to the test DB, a stored read would yield an EMPTY diff; passing files proves the model gets the

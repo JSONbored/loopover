@@ -79,7 +79,7 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
 
   it("ignores blank changed-file entries while enforcing the direct-file-only invariant", async () => {
     const r = await review(["", SUBNET], { [`head:${SUBNET}`]: doc([existing, newEntry]), [`base:${SUBNET}`]: doc([existing]) });
-    expect(r.verdict).toBe("merge");
+    expect(r?.verdict).toBe("merge");
   });
 
   it("closes a clean single append whose entry has a clear violation", async () => {

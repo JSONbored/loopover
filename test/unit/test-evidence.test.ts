@@ -17,6 +17,16 @@ describe("test evidence helpers", () => {
     expect(isTestPath("src/widget.rs")).toBe(false);
   });
 
+  it("does not treat framework or integration directory names alone as test evidence", () => {
+    expect(isTestPath("src/integration/auth.ts")).toBe(false);
+    expect(isTestPath("src/playwright/client.ts")).toBe(false);
+    expect(isTestPath("src/cypress/client.ts")).toBe(false);
+    expect(isTestPath("src/e2e/client.ts")).toBe(false);
+    expect(isTestPath("src/integration/auth.test.ts")).toBe(true);
+    expect(isTestPath("src/playwright/client.e2e.ts")).toBe(true);
+    expect(isTestPath("src/cypress/client.cy.ts")).toBe(true);
+  });
+
   it("treats explicit test file lists as evidence", () => {
     expect(hasLocalTestEvidence({ testFiles: ["internal/cache_test.go"] })).toBe(true);
     expect(hasLocalTestEvidence({ tests: [] })).toBe(false);

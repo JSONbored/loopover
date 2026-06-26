@@ -194,6 +194,15 @@ describe("matchesManifestPath", () => {
     expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
   });
 
+  it("keeps **/ on path-segment boundaries instead of broad suffix matching (#review-audit)", () => {
+    expect(matchesManifestPath("safe.ts", "**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("dir/safe.ts", "**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("unsafe.ts", "**/safe.ts")).toBe(false);
+    expect(matchesManifestPath("src/safe.ts", "src/**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("src/dir/safe.ts", "src/**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("src/unsafe.ts", "src/**/safe.ts")).toBe(false);
+  });
+
   it("multi-wildcard matching is correct (ordered substrings, suffix cannot overlap)", () => {
     expect(matchesManifestPath("xayybzzc", "*a*b*c")).toBe(true);
     expect(matchesManifestPath("aXbXc", "a*b*c")).toBe(true);
@@ -211,6 +220,15 @@ describe("matchesManifestPath", () => {
     const elapsed = performance.now() - start;
     expect(result).toBe(false);
     expect(elapsed).toBeLessThan(100); // the old per-star regex did not return within 30s on this input
+  });
+
+  it("bounds repeated **/ expansion while retaining linear matching (#review-audit)", () => {
+    const globstarRun = "**/".repeat(20) + "safe.ts";
+    const start = performance.now();
+    const result = matchesManifestPath("a/b/c/safe.ts", globstarRun);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsed).toBeLessThan(100);
   });
 });
 
@@ -459,7 +477,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1169,10 +1187,30 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
-    const manifest = parseFocusManifest({ review: { profile: "chill", path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
-    // A null manifest (load failure) yields the byte-identical defaults.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, pathInstructions: [], excludePaths: [] });
+    const manifest = parseFocusManifest({ review: { profile: "chill", inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
+    // A null manifest (load failure) yields the byte-identical defaults; inline comments default OFF.
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, inlineComments: false, pathInstructions: [], excludePaths: [] });
+    // An explicit false / absent toggle both resolve to the strict-boolean false.
+    expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { inline_comments: false } })).inlineComments).toBe(false);
+    expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).inlineComments).toBe(false);
+  });
+
+  it("parses review.inline_comments (default OFF), marks present, round-trips, and warns on a non-boolean (#inline-comments)", () => {
+    expect(parseFocusManifest({ review: { inline_comments: true } }).review.inlineComments).toBe(true);
+    const on = parseFocusManifest({ review: { inline_comments: true } });
+    expect(on.review.present).toBe(true); // an inline-comments-only manifest IS present
+    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review); // survives round-trip
+    // Explicit false is retained (and marks present, since the maintainer set it).
+    const off = parseFocusManifest({ review: { inline_comments: false } });
+    expect(off.review.inlineComments).toBe(false);
+    expect(off.review.present).toBe(true);
+    // Absent ⇒ null (the byte-identical default), config not present.
+    expect(parseFocusManifest({ review: {} }).review.inlineComments).toBeNull();
+    // A non-boolean is ignored with a warning.
+    const bad = parseFocusManifest({ review: { inline_comments: "yes" } });
+    expect(bad.review.inlineComments).toBeNull();
+    expect(bad.warnings.some((w) => /review\.inline_comments.*must be a boolean/.test(w))).toBe(true);
   });
 });
 
@@ -1204,10 +1242,15 @@ describe("review.exclude_paths (#review-exclude-paths)", () => {
 
   it("excludeReviewPaths filters matching files; empty globs return the same array (byte-identical)", () => {
     const files = [{ path: "src/a.ts" }, { path: "pnpm-lock.yaml" }, { path: "dist/bundle.js" }];
-    // `*` collapses to `.*` (crosses slashes), so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
+    // `*` crosses slashes, so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
     expect(excludeReviewPaths(files, ["*.yaml", "dist/**"])).toEqual([{ path: "src/a.ts" }]);
     expect(excludeReviewPaths(files, ["docs/**"])).toEqual(files); // no match → unchanged
     expect(excludeReviewPaths(files, [])).toBe(files); // empty → same reference (no-op)
+  });
+
+  it("does not exclude attacker-named suffix collisions for **/ basename globs (#review-audit)", () => {
+    const files = [{ path: "unsafe.ts" }, { path: "dir/safe.ts" }, { path: "feature.ts" }];
+    expect(excludeReviewPaths(files, ["**/safe.ts"])).toEqual([{ path: "unsafe.ts" }, { path: "feature.ts" }]);
   });
 });
 

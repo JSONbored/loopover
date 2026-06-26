@@ -1,0 +1,14 @@
+# Maintainer-facing datasource: the app's SQLite DB (pull_requests / review_targets / review_audit), so the
+# dashboards can show real PR/review rows — titles, links, authors, verdicts, per-repo counts — not just
+# infra metrics. Read-only in practice (the plugin runs SELECTs); the DB volume is mounted at /appdb in compose.
+# Only loaded when the frser-sqlite-datasource plugin is installed (GF_INSTALL_PLUGINS in the grafana service).
+apiVersion: 1
+datasources:
+  - name: GittensoryDB
+    type: frser-sqlite-datasource
+    uid: gittensory-db
+    access: proxy
+    isDefault: false
+    editable: false
+    jsonData:
+      path: /appdb/gittensory.sqlite

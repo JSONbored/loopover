@@ -2720,6 +2720,10 @@ async function maybePublishPrPublicSurface(
           gatePolicy,
           {
             checkRunId: pendingGateCheckRunId,
+            // #5 (audit): publish the AUTHORITATIVE surface-lane-merged verdict so the check-run conclusion matches
+            // the disposition; without this the check re-derives the generic verdict and shows green on a surface-
+            // lane reject/manual PR that is actually auto-closed/held. Undefined (gate off) ⇒ re-derive (identical).
+            gate: gateEvaluation,
           },
           mode,
         );

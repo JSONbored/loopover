@@ -603,6 +603,7 @@ export const RepositorySettingsSchema = z
     slopAiAdvisory: z.boolean(),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string(),
+    blacklistLabel: z.string(),
     createMissingLabel: z.boolean(),
     publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
     includeMaintainerAuthors: z.boolean(),
@@ -659,6 +660,7 @@ export const RepoSettingsPreviewSchema = z
       slopGateMinScore: z.number().nullable().optional(),
       autoLabelEnabled: z.boolean(),
       gittensorLabel: z.string(),
+      blacklistLabel: z.string(),
       createMissingLabel: z.boolean(),
       includeMaintainerAuthors: z.boolean(),
       requireLinkedIssue: z.boolean(),
@@ -1264,6 +1266,9 @@ const ScoreEstimateSchema = z.object({
   credibilityMultiplier: z.number(),
   reviewPenaltyMultiplier: z.number(),
   openPrMultiplier: z.number(),
+  openIssueMultiplier: z.number(),
+  mergedHistoryMultiplier: z.number(),
+  issueDiscoveryHistoryMultiplier: z.number(),
   timeDecayMultiplier: z.number(),
   estimatedMergedScore: z.number(),
   pendingSaturationScore: z.number(),
@@ -1277,6 +1282,14 @@ const ScoreGatesSchema = z.object({
   reviewCollateralMultiplier: z.number(),
   credibilityFloor: z.number(),
   credibilityObserved: z.number(),
+  openIssueThreshold: z.number(),
+  openIssueCount: z.number(),
+  mergedPrFloor: z.number(),
+  mergedPullRequests: z.number().optional(),
+  validSolvedIssuesFloor: z.number(),
+  validSolvedIssues: z.number().optional(),
+  issueCredibilityFloor: z.number(),
+  issueCredibility: z.number().optional(),
 });
 
 const BranchEligibilitySchema = z.object({
@@ -1296,6 +1309,9 @@ const ScoreGateBlockerSchema = z.object({
     "inactive_allocation",
     "base_token_gate",
     "open_pr_threshold",
+    "open_issue_threshold",
+    "merged_pr_history_floor",
+    "issue_discovery_validity_floor",
     "credibility_floor",
     "review_penalty",
     "metadata_only",
@@ -1303,13 +1319,22 @@ const ScoreGateBlockerSchema = z.object({
     "linked_issue_unvalidated",
     "branch_ineligible",
     "branch_eligibility_missing",
+    "duplicate_risk",
+    "stale_work",
   ]),
   severity: z.enum(["blocker", "reducer", "context"]),
   detail: z.string(),
 });
 
 const ScoreGateDeltaSchema = z.object({
-  gate: z.enum(["open_pr_threshold", "credibility_floor", "linked_issue_multiplier"]),
+  gate: z.enum([
+    "open_pr_threshold",
+    "open_issue_threshold",
+    "merged_pr_history_floor",
+    "issue_discovery_validity_floor",
+    "credibility_floor",
+    "linked_issue_multiplier",
+  ]),
   current: z.string(),
   projected: z.string(),
   explanation: z.string(),
@@ -2007,6 +2032,7 @@ export const RewardRiskActionSchema = z
       "maintainer_cut_readiness",
     ]),
     repoFullName: z.string(),
+    severity: z.enum(["critical", "warning", "tip", "info"]),
     priorityScore: z.number(),
     laneValueScore: z.number(),
     scoreabilityScore: z.number(),
@@ -2037,6 +2063,10 @@ export const RepoRewardRiskSchema = z
       issueMultiplier: z.number(),
       estimatedScoreIfClean: z.number(),
       currentEstimatedScore: z.number(),
+      opportunityFactors: z.object({
+        competitionFactor: z.number(),
+        freshnessFactor: z.number(),
+      }),
     }),
     scoreBlockers: z.array(z.string()),
     riskBreakdown: z.object({
@@ -2242,6 +2272,14 @@ export const ContributorRewardRiskStrategySchema = z
     reasoning: z.array(z.string()),
     actionImpact: z.array(z.string()),
     nextActions: z.array(z.string()),
+    eligibilityGap: z.array(
+      z.object({
+        repoFullName: z.string(),
+        prsToUnlock: z.number(),
+        estimatedScoreAtThreshold: z.number(),
+        recommendation: z.string(),
+      }),
+    ),
   })
   .openapi("ContributorRewardRiskStrategy");
 

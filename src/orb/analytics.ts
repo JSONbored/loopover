@@ -14,6 +14,11 @@ interface Cell {
   n: number;
 }
 
+interface CycleTime {
+  instance_id: string;
+  ms: number;
+}
+
 export interface InstanceMetrics {
   instanceId: string;
   decided: number;
@@ -90,7 +95,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   const cutoff = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
 
   let cells: Cell[] = [];
-  let cycle: number[] = [];
+  let cycleRows: CycleTime[] = [];
   let registered = new Set<string>();
   try {
     const matrix = await env.DB
@@ -103,10 +108,16 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       .all<Cell>();
     cells = matrix.results ?? [];
     const cy = await env.DB
-      .prepare(`SELECT time_to_close_ms AS ms FROM orb_signals WHERE received_at >= ? AND time_to_close_ms IS NOT NULL ORDER BY time_to_close_ms`)
+      .prepare(
+        `SELECT s.instance_id, s.time_to_close_ms AS ms
+         FROM orb_signals s
+         JOIN orb_instances i ON i.instance_id = s.instance_id AND i.registered = 1
+         WHERE s.received_at >= ? AND s.time_to_close_ms IS NOT NULL
+         ORDER BY s.time_to_close_ms`,
+      )
       .bind(cutoff)
-      .all<{ ms: number }>();
-    cycle = (cy.results ?? []).map((r) => r.ms);
+      .all<CycleTime>();
+    cycleRows = cy.results ?? [];
     // The fleet trust gate: only operator-registered instances count toward the median (open ingest stores
     // everyone's signals, but a stranger can't move calibration until a human opts them in — #1255).
     const reg = await env.DB.prepare(`SELECT instance_id FROM orb_instances WHERE registered = 1`).all<{ instance_id: string }>();
@@ -127,6 +138,8 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   // Fleet = median across REGISTERED instances with enough volume (robust to a single bad contributor and
   // to unregistered/untrusted senders — registration is the fleet's trust anchor).
   const eligible = instances.filter((i) => i.decided >= MIN_DECIDED && registered.has(i.instanceId));
+  const eligibleIds = new Set(eligible.map((i) => i.instanceId));
+  const cycle = cycleRows.filter((r) => eligibleIds.has(r.instance_id)).map((r) => r.ms);
   const nums = (sel: (i: InstanceMetrics) => number | null): number[] => eligible.map(sel).filter((v): v is number => v !== null);
   const fleetMergeP = median(nums((i) => i.mergePrecision));
   const fleetCloseP = median(nums((i) => i.closePrecision));

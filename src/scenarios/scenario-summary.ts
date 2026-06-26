@@ -79,6 +79,8 @@ const PUBLIC_BLOCKER_TEXT: Partial<Record<ScoreGateBlocker["code"], string>> = {
   base_token_gate: "The change size may be too small to meet the contribution threshold.",
   open_pr_threshold: "Too many concurrent open PRs exist; landing or closing some would help.",
   open_issue_threshold: "Too many open issues exist; closing excess issues would help.",
+  merged_pr_history_floor: "Merged PR history on this repo is below the upstream eligibility floor.",
+  issue_discovery_validity_floor: "Valid solved-issue history or issue credibility is below the upstream issue-discovery floor.",
   credibility_floor: "Contributor credibility evidence is below the expected floor.",
   review_penalty: "Review churn history may reduce the contribution quality signal.",
   metadata_only: "Only metadata signals are available; detailed analysis requires full context.",

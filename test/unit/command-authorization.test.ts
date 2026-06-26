@@ -45,6 +45,21 @@ describe("repo command authorization policy", () => {
     expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterLogin: "author", pullRequestAuthorLogin: "author", commenterAssociation: null })).toMatchObject({ authorized: false });
   });
 
+  it("matches command keys case-insensitively so a mixed-case name cannot dodge the maintainer-only restriction", () => {
+    // Policy keys are stored lowercased; a raw mixed-case/whitespace probe must normalize to the same key,
+    // otherwise it falls through to the permissive default and skips the maintainer-only guard.
+    expect(commandAuthorizationAllowedRoles(undefined, "Gate-Override")).toEqual(["maintainer", "collaborator"]);
+    expect(commandAuthorizationAllowedRoles(undefined, "  QUEUE-SUMMARY  ")).toEqual(["maintainer", "collaborator"]);
+    // A PR author invoking the maintainer-only command under a different casing is still denied (not granted
+    // the permissive default), and the miner lookup is still required where confirmed_miner is allowed.
+    expect(
+      evaluateCommandAuthorization({ commandName: "Gate-Override", commenterLogin: "author", pullRequestAuthorLogin: "author", commenterAssociation: null }),
+    ).toMatchObject({ authorized: false, reason: "maintainer_command_requires_maintainer", actorKind: "author" });
+    expect(
+      commandAuthorizationNeedsMinerDetection({ commandName: "REVIEW-NOW", commenterLogin: "miner", pullRequestAuthorLogin: "miner" }),
+    ).toBe(false);
+  });
+
   it("clamps the spoofable pr_author role off maintainer-only commands but keeps confirmed_miner (#824)", () => {
     const { policy, warnings } = normalizeCommandAuthorizationPolicy({
       commands: {

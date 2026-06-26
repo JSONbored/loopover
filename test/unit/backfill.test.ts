@@ -834,15 +834,17 @@ describe("GitHub backfill", () => {
         });
       }
       if (url.includes("/labels?")) return new Response("label failure", { status: 500 });
+      // Genuine overflow: GitHub advertises a real next page (rel="next"), so fetching only `limit`
+      // item(s) truncates the set and the segment is correctly capped with a live resume cursor.
       if (url.includes("/issues?")) {
-        return Response.json([
-          { number: 1, title: "Open issue", state: "open", user: {}, labels: [{}], body: "body" },
-        ]);
+        return Response.json([{ number: 1, title: "Open issue", state: "open", user: {}, labels: [{}], body: "body" }], {
+          headers: { link: '<https://api.github.com/repositories/1/issues?page=2>; rel="next"' },
+        });
       }
       if (url.includes("/pulls?state=open")) {
-        return Response.json([
-          { number: 10, title: "No head sha PR", state: "open", user: {}, labels: [{}], body: "", head: { sha: "badsha" }, updated_at: "not-a-date" },
-        ]);
+        return Response.json([{ number: 10, title: "No head sha PR", state: "open", user: {}, labels: [{}], body: "", head: { sha: "badsha" }, updated_at: "not-a-date" }], {
+          headers: { link: '<https://api.github.com/repositories/1/pulls?page=2>; rel="next"' },
+        });
       }
       if (url.includes("/pulls?state=closed")) {
         return Response.json([
@@ -864,6 +866,47 @@ describe("GitHub backfill", () => {
         expect.objectContaining({ segment: "open_issues", status: "capped", nextCursor: expect.any(String) }),
         expect.objectContaining({ segment: "open_pull_requests", status: "capped", nextCursor: expect.any(String) }),
         expect.objectContaining({ segment: "labels", status: "partial" }),
+      ]),
+    );
+  });
+
+  it("reports a repo with exactly the page limit and no next page as complete, not capped", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({
+          name: "gittensory",
+          full_name: "JSONbored/gittensory",
+          private: false,
+          default_branch: "main",
+          language: null,
+          owner: { login: "JSONbored" },
+        });
+      }
+      if (url.includes("/labels?")) return Response.json([]);
+      // Exactly `limit` item(s) returned in a full final page with NO rel="next" link: the entire set
+      // was fetched, so the segment must stay "complete" without a fabricated resume cursor.
+      if (url.includes("/issues?")) {
+        return Response.json([{ number: 1, title: "Only open issue", state: "open", user: { login: "reporter" }, labels: [], body: "" }]);
+      }
+      if (url.includes("/pulls?state=open")) {
+        return Response.json([{ number: 2, title: "Only open PR", state: "open", user: { login: "reporter" }, labels: [], body: "", head: { sha: "sha2" }, updated_at: "2026-05-22T00:00:00.000Z" }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRegisteredRepositories(env, { limits: { issues: 1, pullRequests: 1, recentMergedPullRequests: 0, pullRequestDetails: 0 } });
+
+    expect(result.repos[0]?.status).toBe("success");
+    expect(result.repos[0]?.dataQuality).toMatchObject({ capped: false, partial: false });
+    expect(result.repos[0]?.warnings).toEqual([]);
+    expect(await listRepoSyncStates(env)).toMatchObject([{ status: "success", openIssuesCount: 1, openPullRequestsCount: 1 }]);
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ segment: "open_issues", status: "complete", nextCursor: null }),
+        expect.objectContaining({ segment: "open_pull_requests", status: "complete", nextCursor: null }),
       ]),
     );
   });

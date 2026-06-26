@@ -359,6 +359,35 @@ describe("renderPublicScenarioSummary", () => {
     expect(summary.eligibilityNotes.join(" ")).not.toMatch(/Validating the linked issue would enable/i);
   });
 
+  it("maps contributor-history validity blockers to public-safe notes (#808)", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: "octo/demo",
+        sourceTokenScore: 60,
+        totalTokenScore: 80,
+        sourceLines: 50,
+        openPrCount: 0,
+        credibility: 1,
+        mergedPullRequests: 1,
+        validSolvedIssues: 1,
+        issueCredibility: 0.5,
+        linkedIssueMode: "standard",
+        linkedIssueContext: { status: "raw", source: "user_supplied", issueNumbers: [77] },
+      },
+    });
+    const summary = renderPublicScenarioSummary({
+      repoFullName: "octo/demo",
+      generatedAt: "2026-06-03T00:00:00.000Z",
+      publicBlockers: preview.blockedBy.filter((blocker) =>
+        ["merged_pr_history_floor", "issue_discovery_validity_floor"].includes(blocker.code),
+      ),
+    });
+    expect(summary.blockerNotes.join(" ")).toMatch(/Merged PR history on this repo is below the upstream eligibility floor/i);
+    expect(summary.blockerNotes.join(" ")).toMatch(/Valid solved-issue history or issue .* is below the upstream issue-discovery floor/i);
+  });
+
   it("omits projected open-count notes when pending detection has no after-cleanup projection", () => {
     const summary = renderPublicScenarioSummary({
       repoFullName: "octo/demo",

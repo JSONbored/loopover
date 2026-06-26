@@ -7,8 +7,10 @@
 // the secret is shown to the operator ONCE and stored only as a SHA-256 hash. The container then presents that
 // secret to /v1/orb/token. The minted token's installation_id comes from the enrollment ROW (bound server-side at
 // issue time) — never from the request — so a stolen secret for install X can never mint a token for install Y.
-// Every path is inert (404) until ORB_BROKER_ENABLED is set. (Maintainer-OAuth self-enrollment is a later layer;
-// the operator-issued path here avoids the OAuth privilege-escalation surface the red-team flagged.)
+// Every path is inert (404) until ORB_BROKER_ENABLED is set. Two issue paths exist: the operator-issued internal
+// endpoint here, and maintainer-OAuth SELF-enrollment (src/orb/oauth.ts), which proves the caller is an admin of
+// the installation's account server-side before issuing — both bind installation_id at issue time, so the OAuth
+// privilege-escalation surface the red-team flagged stays closed.
 import { createOpaqueToken, hashToken } from "../auth/security";
 import { createOrbInstallationToken } from "./app-auth";
 

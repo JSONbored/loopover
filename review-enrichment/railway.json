@@ -6,10 +6,13 @@
     "watchPatterns": ["review-enrichment/**"]
   },
   "deploy": {
+    "numReplicas": 1,
     "healthcheckPath": "/health",
     "healthcheckTimeout": 60,
+    "sleepApplication": false,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5,
-    "numReplicas": 1
+    "overlapSeconds": 0,
+    "drainingSeconds": 15
   }
 }

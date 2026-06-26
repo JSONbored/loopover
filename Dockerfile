@@ -23,7 +23,9 @@ ENV NODE_ENV=production \
     PLATFORM=self-hosted \
     PORT=8787 \
     DATABASE_PATH=/data/gittensory.sqlite \
-    MIGRATIONS_DIR=/app/migrations
+    MIGRATIONS_DIR=/app/migrations \
+    NPM_CONFIG_PREFIX=/home/node/.npm-global \
+    PATH=/home/node/.npm-global/bin:$PATH
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
 # Optional: bake the Claude Code / Codex CLIs so the `claude-code` / `codex` subscription providers (#979)
@@ -33,10 +35,13 @@ ARG INSTALL_AI_CLIS=false
 # codex's native (Rust) binary loads the SYSTEM CA trust store (rustls-native-certs); node:slim ships none, so the
 # `codex` provider fails every call with "no native root CA certificates found" without ca-certificates.
 RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*; fi
-# NB: NO --ignore-scripts here. claude-code's postinstall downloads its platform-native binary; skipping it makes
-# `claude` fail at runtime with "native binary not installed". These are trusted first-party CLIs, so their
-# install scripts are allowed to run.
+# claude-code's postinstall downloads its platform-native binary, so scripts must run. Install the optional
+# CLIs as the unprivileged user into a user-owned prefix while /app is still root-owned, keeping lifecycle
+# hooks from mutating the already-copied application bundle during the image build.
+RUN mkdir -p /home/node/.npm-global /home/node/.npm && chown -R node:node /home/node/.npm-global /home/node/.npm
+USER node
 RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0; fi
+USER root
 # Optional: enable visual review via an external Chrome sidecar (e.g. `browserless/chrome:latest`).
 # Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.
 ARG INSTALL_VISUAL_REVIEW=false

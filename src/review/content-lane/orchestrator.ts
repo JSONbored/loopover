@@ -85,6 +85,11 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
   }
   // A submission scope (entry/provider) always carries a directFile (classifier invariant; see classifyRegistryPrScope).
   const directFile = scope.directFile as string;
+  for (const file of input.changedFiles) {
+    const normalized = file.trim();
+    if (normalized === "" || normalized === directFile) continue;
+    return { verdict: "manual", summary: "Registry submission includes companion file changes — routing to review." };
+  }
   const headRaw = await input.loadFile(directFile, "head");
   if (scope.isProvider) {
     return fromProvider(assessProviderDocument(safeParseJson(headRaw), input.opts));

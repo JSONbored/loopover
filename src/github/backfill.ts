@@ -2141,6 +2141,15 @@ export async function fetchLivePullRequestMergeState(env: Env, repoFullName: str
   return result?.data.mergeable_state ?? undefined;
 }
 
+/** The PR's LIVE state ("open" / "closed") via REST `GET /pulls/{n}`. The stored open-PR cache lags GitHub, so a
+ *  sibling closed/merged on GitHub can still read `open` locally; the duplicate-winner election (#dup-winner /
+ *  audit #15) confirms a lower sibling's live state before treating this PR as a cluster loser. Best-effort:
+ *  returns undefined on any error so the caller fails open to the stored state. */
+export async function fetchLivePullRequestState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+  return result?.data.state ?? undefined;
+}
+
 /** Resolve the OPEN PRs associated with a commit SHA via the REST `GET /repos/{owner}/{repo}/commits/{sha}/pulls`
  *  endpoint. This is the only PR↔commit resolution that works for FORK (cross-repo) PRs, whose CI-completion
  *  webhooks (`check_suite`/`check_run`) carry an EMPTY `pull_requests[]`. Returns the de-duplicated open PR numbers.

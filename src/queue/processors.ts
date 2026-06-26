@@ -74,6 +74,7 @@ import {
   fetchLiveCiAggregate,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
+  fetchLivePullRequestState,
   fetchOpenPullRequestNumbersForCommit,
   fetchRequiredStatusContexts,
   refreshContributorActivity,
@@ -902,10 +903,13 @@ async function reReviewStoredPullRequest(
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
   // once the head is current and CI has settled (the sweep backstops a missed event).
   if (!(await prReadyForReview(env, installationId, repoFullName, pr, settings, deliveryId))) return;
-  const [otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
+  const [cachedOtherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
     listOtherOpenPullRequests(env, repoFullName, prNumber),
     resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
   ]);
+  // #dup-winner / audit #15: drop any cached-open duplicate sibling already closed on GitHub before the advisory
+  // (and the disposition below) elect the cluster winner, so the real lowest-OPEN PR is never demoted+auto-closed.
+  const otherOpenPullRequests = await reconcileLiveDuplicateSiblings(env, installationId, repoFullName, pr, cachedOtherOpenPullRequests);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
@@ -1687,11 +1691,14 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       }
       // Resolve settings first so the self-authored live-fetch fallback only fires when its gate is in block mode.
       const settings = await resolveRepositorySettings(env, repoFullName);
-      const [repo, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
+      const [repo, cachedOtherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
         getRepository(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
         resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
       ]);
+      // #dup-winner / audit #15: drop any cached-open duplicate sibling already closed on GitHub before the
+      // advisory (and the disposition) elect the cluster winner, so the real lowest-OPEN PR is never auto-closed.
+      const otherOpenPullRequests = await reconcileLiveDuplicateSiblings(env, installationId, repoFullName, pr, cachedOtherOpenPullRequests);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
         requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
@@ -2273,7 +2280,47 @@ export function dupWinnerLinkedDuplicateCount(openSiblingNumbers: number[], prNu
   return openSiblingNumbers.length;
 }
 
-function linkedIssueDuplicatePullRequestsForGate(pr: PullRequestRecord, pullRequests: PullRequestRecord[]): number[] {
+/**
+ * Live-reconcile the duplicate cluster's open siblings before the winner is elected (#dup-winner / audit #15).
+ *
+ * The stored open-PR cache ({@link listOtherOpenPullRequests}) lags GitHub: a sibling that was closed/merged on
+ * GitHub but is still cached `open` would keep "winning" the duplicate cluster, demoting the real lowest-OPEN PR
+ * to a loser and auto-closing it via the `duplicate_pr_risk` blocker. Only a LOWER-numbered overlapping sibling
+ * can demote this PR from winner, so re-fetch the LIVE state of just those siblings and drop any that are no
+ * longer open. Then the downstream election ({@link isDuplicateClusterWinner}) reflects ground truth.
+ *
+ * FAIL-OPEN to the stored state: a sibling is dropped ONLY on a positive "not open" confirmation — an unreadable
+ * live fetch keeps it, so a transient GitHub hiccup never newly spares a real loser. Flag-OFF (default), no
+ * linked issues, or no lower overlapping sibling ⇒ returns the input unchanged with no extra API calls.
+ */
+export async function reconcileLiveDuplicateSiblings(
+  env: Env,
+  installationId: number | null,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  otherOpenPullRequests: PullRequestRecord[],
+): Promise<PullRequestRecord[]> {
+  if (env.GITTENSORY_DUPLICATE_WINNER !== "true") return otherOpenPullRequests;
+  const linkedIssues = new Set(pr.linkedIssues);
+  if (linkedIssues.size === 0) return otherOpenPullRequests;
+  const lowerOverlapping = otherOpenPullRequests.filter(
+    (other) => other.number < pr.number && other.state === "open" && other.linkedIssues.some((issue) => linkedIssues.has(issue)),
+  );
+  if (lowerOverlapping.length === 0) return otherOpenPullRequests;
+  const installationToken = installationId === null ? undefined : await createInstallationToken(env, installationId).catch(() => undefined);
+  const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const staleClosed = new Set<number>();
+  await Promise.all(
+    lowerOverlapping.map(async (sibling) => {
+      const liveState = await fetchLivePullRequestState(env, repoFullName, sibling.number, token).catch(() => undefined);
+      if (liveState !== undefined && liveState !== "open") staleClosed.add(sibling.number);
+    }),
+  );
+  if (staleClosed.size === 0) return otherOpenPullRequests;
+  return otherOpenPullRequests.filter((other) => !staleClosed.has(other.number));
+}
+
+export function linkedIssueDuplicatePullRequestsForGate(pr: PullRequestRecord, pullRequests: PullRequestRecord[]): number[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
   return [

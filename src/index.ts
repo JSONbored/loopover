@@ -1,6 +1,6 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
-import { delayUntil, shouldWaitForGitHubRateLimit } from "./github/rate-limit";
+import { delayUntil, shouldWaitForGitHubRateLimit, MAINTENANCE_RESERVED_HEADROOM } from "./github/rate-limit";
 import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
 import { isOrbBrokerEnabled } from "./orb/broker";
@@ -60,7 +60,17 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // red-CI non-owner PR CLOSES promptly — reviewbot parity (its cron fired every minute). It re-fetches LIVE CI +
   // mergeable and only ACTS (merge/close/hold); it never re-runs the AI, so it is cheap enough for this cadence.
   // Previously this was gated by `isHourly`, so an approved PR could wait ~an hour for its merge pass.
-  const jobs: JobMessage[] = [{ type: "agent-regate-sweep", requestedBy: "schedule" }];
+  // BACKPRESSURE (#6): the sweep + its per-repo/per-PR fan-out is the heaviest GitHub-budget consumer. When the
+  // shared REST budget is already at/below the maintenance headroom, SKIP enqueuing it this tick so the remaining
+  // budget is reserved for webhooks (which drive timely reviews) instead of compounding the backlog; the next
+  // tick (~2 min) retries, and after the bucket resets the sweep resumes. Webhooks never pre-yield.
+  const jobs: JobMessage[] = [];
+  const sweepThrottledUntil = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
+  if (sweepThrottledUntil) {
+    console.log(JSON.stringify({ event: "regate_sweep_throttled", resetAt: sweepThrottledUntil }));
+  } else {
+    jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
+  }
   // Orb relay retry: re-attempt failed forwardOrbEvent calls each sweep cycle. Only enqueued when the
   // broker is enabled — brokered self-hosts register relay URLs; hosted-cloud instances have no relay failures.
   if (isOrbBrokerEnabled(env)) jobs.push({ type: "retry-orb-relay", requestedBy: "schedule" });

@@ -28,7 +28,7 @@ import {
 import { isOrbBrokerMode, registerOrbRelayTarget } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
-import { readiness } from "./selfhost/health";
+import { readiness, type ReadinessProbe } from "./selfhost/health";
 import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter } from "./selfhost/pg-adapter";
@@ -188,6 +188,12 @@ async function main(): Promise<void> {
   const aiReviewPlan = resolveAiReviewerPlan(process.env);
   if (aiReviewPlan) console.log(JSON.stringify({ event: "selfhost_ai_review_plan", reviewers: aiReviewPlan.reviewers.map((r) => r.model), combine: aiReviewPlan.combine }));
 
+  // /ready gates on every CONFIGURED optional backend (below) so a load balancer never routes to an instance whose
+  // Redis/Qdrant is down. Each probe owns a short timeout so a hung backend can't hang the readiness check.
+  const readinessProbes: ReadinessProbe[] = [];
+  const withTimeout = (p: Promise<boolean>, ms = 1500): Promise<boolean> =>
+    Promise.race([p, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms))]);
+
   // Redis fixed-window rate limiter + webhook dedup cache (else absent when REDIS_URL is unset).
   let rateLimiter: DurableObjectNamespace | undefined;
   let webhookCache: import("./selfhost/redis-cache").RedisCache | undefined;
@@ -198,16 +204,19 @@ async function main(): Promise<void> {
     const { createRedisCache } = await import("./selfhost/redis-cache");
     rateLimiter = createRedisRateLimiter(redisClient);
     webhookCache = createRedisCache(redisClient);
+    readinessProbes.push({ name: "redis", check: () => withTimeout(redisClient.ping().then(() => true)) });
     console.log(JSON.stringify({ event: "selfhost_rate_limiter", backend: "redis" }));
   }
 
   // Qdrant vector store — overrides the backend's built-in sqlite-vec / pgvector when QDRANT_URL is set.
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
+    const qdrantUrl = process.env.QDRANT_URL;
     const { createQdrantVectorize, initQdrantCollection } = await import("./selfhost/qdrant-vectorize");
     // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
-    await retryUntilReady("qdrant", () => initQdrantCollection(process.env.QDRANT_URL as string));
-    vectorizeOverride = createQdrantVectorize(process.env.QDRANT_URL);
+    await retryUntilReady("qdrant", () => initQdrantCollection(qdrantUrl));
+    vectorizeOverride = createQdrantVectorize(qdrantUrl);
+    readinessProbes.push({ name: "qdrant", check: () => withTimeout(fetch(qdrantUrl, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok).catch(() => false)) });
     console.log(JSON.stringify({ event: "selfhost_vectorize", backend: "qdrant" }));
   }
 
@@ -255,7 +264,7 @@ async function main(): Promise<void> {
         const path = new URL(request.url).pathname;
         if (path === "/health") return new Response(JSON.stringify({ status: "ok" }), { headers: { "content-type": "application/json" } });
         if (path === "/ready") {
-          const r = await readiness(backend.db);
+          const r = await readiness(backend.db, readinessProbes);
           return new Response(JSON.stringify(r), { status: r.ok ? 200 : 503, headers: { "content-type": "application/json" } });
         }
         if (path === "/metrics") return new Response(await renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } });

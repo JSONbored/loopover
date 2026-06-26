@@ -229,6 +229,18 @@ describe("buildUnifiedCommentBody", () => {
     expect(held).toContain("Held for maintainer review");
     expect(held).not.toContain("> [!TIP]");
   });
+
+  it("neverClosed renders a gate-failure (close) PR as HELD, not 'Closed' (#8/#9)", () => {
+    const args = { gate: gate({ conclusion: "failure" }), panelRows, readinessTotal: 40, changedFiles: 2, mergeReadiness: { ciState: "passed" as const }, footerMarkdown: footer };
+    // A contributor close → the red "Closed" headline.
+    const closed = buildUnifiedCommentBody(args);
+    expect(closed).toContain("Closed");
+    // The SAME verdict on an owner / automation-bot PR (never auto-closed) renders held, not Closed.
+    const held = buildUnifiedCommentBody({ ...args, neverClosed: true });
+    expect(held).toContain("> [!WARNING]");
+    expect(held).toContain("Held for maintainer review");
+    expect(held).not.toContain("Closed");
+  });
 });
 
 // ── Reconciliation invariant (#1016): comment-verdict ↔ gate-conclusion alignment ──────────────────

@@ -206,6 +206,9 @@ export interface UnifiedCommentContext {
   /** The host's disposition holds this PR for owner review (its diff touches a hard-guardrail path), so an
    *  otherwise-ready status renders as "held for review" instead of "safe to merge". (#guarded-hold-comment) */
   heldForReview?: boolean;
+  /** The PR's author is the repo owner or a protected automation bot — the disposition NEVER auto-closes them,
+   *  so a gate "close" verdict renders as "held", not "Closed" (#8/#9). */
+  neverClosed?: boolean;
 }
 
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
@@ -269,6 +272,15 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // PR that won't actually merge). Applied LAST so it only ever downgrades an otherwise-ready status — a real
   // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
   if (status === "ready" && ctx.heldForReview) return "held";
+  // Held-vs-closed disposition parity (#8/#9): a gate "close" verdict does NOT always close the PR. An
+  // owner/automation-bot author is NEVER auto-closed, and a guarded-path PR is held for owner review UNLESS a
+  // RED required check forces the close (ciState "failed" mirrors the disposition's redVerifiedRequiredCi). Render
+  // those as "held" so the headline matches the action (#4220 class); a genuine contributor close — red required
+  // CI, or a non-guarded block — still headlines "Closed".
+  if (input.decision === "close") {
+    if (ctx.neverClosed) return "held";
+    if (ctx.heldForReview && input.readiness?.ciState !== "failed") return "held";
+  }
   return status;
 }
 

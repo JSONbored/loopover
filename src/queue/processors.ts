@@ -2913,6 +2913,13 @@ async function maybePublishPrPublicSurface(
         unifiedFiles.map((file) => file.path),
         await loadHardGuardrailGlobs(env, repoFullName),
       );
+      // Held-vs-closed parity (#8/#9): the disposition NEVER auto-closes an owner / automation-bot PR, so a gate
+      // "close" verdict on one must headline "held", not "Closed". Compute the same author classification the
+      // planner uses (repo-owner login match + protected automation author) and thread it to the comment.
+      const commentRepoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
+      const commentAuthorLogin = pr.authorLogin ?? "";
+      const neverClosed =
+        (commentAuthorLogin.length > 0 && commentAuthorLogin.toLowerCase() === commentRepoOwner.toLowerCase()) || isProtectedAutomationAuthor(pr.authorLogin);
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: commentGate, duplicateWinnerEnabled });
       // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo
       // cutover gate both allow it (screenshotsAllowed) AND (2) the PR touches WEB-VISIBLE files (isVisualPath
@@ -2959,6 +2966,7 @@ async function maybePublishPrPublicSurface(
         ...(aiReview?.reviewerCount !== undefined ? { reviewerCount: aiReview.reviewerCount } : {}),
         mergeReadiness,
         heldForReview,
+        neverClosed,
         extraCollapsibles: buildPublicSafeCollapsibles({
           repo,
           pr,

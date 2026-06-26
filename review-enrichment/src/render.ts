@@ -72,6 +72,16 @@ export function renderBrief(
     }
   }
 
+  const actionPins = findings.actionPin ?? [];
+  if (actionPins.length) {
+    lines.push("### Unpinned GitHub Actions (pin to a commit SHA)");
+    for (const pin of actionPins) {
+      lines.push(
+        `- \`${pin.file}:${pin.line}\` — \`${pin.action}@${pin.ref}\` is a mutable ref; pin to a full commit SHA`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

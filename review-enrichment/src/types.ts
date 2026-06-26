@@ -67,11 +67,20 @@ export interface InstallScriptFinding {
   publishedAt: string | null;
 }
 
+/** A third-party GitHub Action referenced by a mutable tag/branch instead of a pinned commit SHA. */
+export interface ActionPinFinding {
+  file: string;
+  line: number;
+  action: string;
+  ref: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
   secret?: SecretFinding[];
   license?: LicenseFinding[];
+  actionPin?: ActionPinFinding[];
   installScript?: InstallScriptFinding[];
 }
 

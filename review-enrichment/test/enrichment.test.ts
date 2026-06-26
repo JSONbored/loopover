@@ -10,6 +10,10 @@ import { buildBrief } from "../dist/brief.js";
 import { scanPatch, scanSecrets } from "../dist/analyzers/secret-scan.js";
 import { scanLicenses } from "../dist/analyzers/license-check.js";
 import { scanInstallScripts } from "../dist/analyzers/install-scripts.js";
+import {
+  scanWorkflowPins,
+  scanActionPins,
+} from "../dist/analyzers/actions-pin.js";
 
 const npmFetch =
   (scripts, time = {}) =>
@@ -397,6 +401,70 @@ test("buildBrief: install-script analyzer runs alongside the others", async () =
     assert.equal(brief.analyzerStatus.installScript, "ok");
     assert.equal(brief.findings.installScript.length, 1);
     assert.match(brief.promptSection, /supply-chain risk/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("scanWorkflowPins: flags unpinned third-party actions, skips official + SHA-pinned + local, line-cited", () => {
+  const patch = [
+    "@@ -1,1 +1,5 @@",
+    " jobs:",
+    "+      - uses: actions/checkout@v4",
+    "+      - uses: tj-actions/changed-files@v44",
+    "+      - uses: pinned/action@1234567890123456789012345678901234567890",
+    "+      - uses: ./local-action",
+  ].join("\n");
+  const findings = scanWorkflowPins(".github/workflows/ci.yml", patch);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].action, "tj-actions/changed-files");
+  assert.equal(findings[0].ref, "v44");
+  assert.equal(findings[0].line, 3);
+});
+
+test("scanActionPins: only scans .github/workflows/* files", async () => {
+  const findings = await scanActionPins({
+    repoFullName: "o/r",
+    prNumber: 1,
+    files: [
+      {
+        path: ".github/workflows/ci.yml",
+        patch: "@@ -1,0 +1,1 @@\n+  uses: foo/bar@main",
+      },
+      { path: "src/x.ts", patch: "@@ -1,0 +1,1 @@\n+  uses: foo/bar@main" },
+    ],
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].action, "foo/bar");
+});
+
+test("renderBrief: renders the unpinned-actions block", () => {
+  const r = renderBrief({
+    actionPin: [
+      { file: ".github/workflows/ci.yml", line: 5, action: "tj/x", ref: "v1" },
+    ],
+  });
+  assert.match(r.promptSection, /Unpinned GitHub Actions/);
+  assert.match(r.promptSection, /`tj\/x@v1` is a mutable ref/);
+});
+
+test("buildBrief: action-pin analyzer runs (pure, no network)", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: ".github/workflows/ci.yml",
+          patch: "@@ -1,0 +1,1 @@\n+  uses: evil/action@main",
+        },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.actionPin, "ok");
+    assert.equal(brief.findings.actionPin.length, 1);
+    assert.match(brief.promptSection, /Unpinned GitHub Actions/);
   } finally {
     globalThis.fetch = realFetch;
   }

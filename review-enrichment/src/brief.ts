@@ -11,6 +11,7 @@ import { scanDependencies } from "./analyzers/dependency-scan.js";
 import { scanSecrets } from "./analyzers/secret-scan.js";
 import { scanLicenses } from "./analyzers/license-check.js";
 import { scanInstallScripts } from "./analyzers/install-scripts.js";
+import { scanActionPins } from "./analyzers/actions-pin.js";
 import { renderBrief } from "./render.js";
 
 type AnalyzerFn = (req: EnrichRequest) => Promise<unknown>;
@@ -21,6 +22,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   secret: (req) => scanSecrets(req),
   license: (req) => scanLicenses(req),
   installScript: (req) => scanInstallScripts(req),
+  actionPin: (req) => scanActionPins(req),
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

@@ -3198,6 +3198,46 @@ export async function persistAdvisory(env: Env, advisory: Advisory): Promise<voi
   });
 }
 
+/** #1 self-host AI-review cache. Returns the cached AI review for this exact (repo, pull, head SHA) ONLY when the
+ *  stored review mode matches — the LLM output changes only with the code (head SHA) or the review mode, so a re-run
+ *  at the same SHA+mode reuses it instead of re-spending the call. A nullish head SHA (no commit to key on) is a miss. */
+export async function getCachedAiReview(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  headSha: string | null | undefined,
+  mode: string,
+): Promise<{ notes: string; reviewerCount: number } | null> {
+  if (!headSha) return null;
+  const row = await env.DB
+    .prepare("SELECT notes, reviewer_count AS reviewerCount, ai_review_mode AS mode FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ?")
+    .bind(repoFullName, pullNumber, headSha)
+    .first<{ notes: string; reviewerCount: number; mode: string }>();
+  if (!row || row.mode !== mode) return null;
+  return { notes: row.notes, reviewerCount: row.reviewerCount };
+}
+
+/** Upsert the AI review for (repo, pull, head SHA). A nullish head SHA is a no-op. */
+export async function putCachedAiReview(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  headSha: string | null | undefined,
+  mode: string,
+  review: { notes: string; reviewerCount: number },
+): Promise<void> {
+  if (!headSha) return;
+  await env.DB
+    .prepare(
+      `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repo_full_name, pull_number, head_sha) DO UPDATE SET
+         ai_review_mode = excluded.ai_review_mode, notes = excluded.notes, reviewer_count = excluded.reviewer_count, created_at = CURRENT_TIMESTAMP`,
+    )
+    .bind(repoFullName, pullNumber, headSha, mode, review.notes, review.reviewerCount)
+    .run();
+}
+
 export async function replaceCollisionEdges(env: Env, repoFullName: string, edges: CollisionEdgeRecord[]): Promise<void> {
   const db = getDb(env.DB);
   await env.DB.prepare("DELETE FROM collision_edges WHERE repo_full_name = ?").bind(repoFullName).run();

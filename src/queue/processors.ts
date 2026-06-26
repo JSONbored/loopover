@@ -38,6 +38,8 @@ import {
   markInstallationDeleted,
   markRepositoriesRemovedFromInstallation,
   persistAdvisory,
+  getCachedAiReview,
+  putCachedAiReview,
   markPullRequestsRegated,
   getLatestRegatedAt,
   claimRegateFanoutSlot,
@@ -2695,24 +2697,34 @@ async function maybePublishPrPublicSurface(
       await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, placeholderBody, { mode }).catch(() => undefined);
     }
     if (aiReviewWillRun) {
-      // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
-      // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
-      // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
-      // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
-      // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
-      const { profile: reviewProfile, pathInstructions: reviewPathInstructions, excludePaths: reviewExcludePaths } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
-      aiReview = await runAiReviewForAdvisory(env, {
-        settings,
-        advisory,
-        repoFullName,
-        pr,
-        author,
-        confirmedContributor,
-        files: await getReviewFiles(),
-        reviewProfile,
-        reviewPathInstructions,
-        reviewExcludePaths,
-      });
+      // #1 self-host AI-review cache: the LLM output for a PR changes only when the code (head SHA) or the review
+      // mode changes, so reuse a prior review for this exact (repo, pr, head SHA, mode) — a re-delivered webhook or
+      // the block-mode ~2-min re-gate sweep (which re-runs the AI for every open PR) need not re-spend the call. On
+      // self-host there is no AI gateway, so this is the only AI cache. The deterministic gate below still runs.
+      const cachedReview = await getCachedAiReview(env, repoFullName, pr.number, advisory.headSha, settings.aiReviewMode).catch(() => null);
+      if (cachedReview) {
+        aiReview = cachedReview;
+      } else {
+        // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
+        // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
+        // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
+        // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
+        // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
+        const { profile: reviewProfile, pathInstructions: reviewPathInstructions, excludePaths: reviewExcludePaths } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
+        aiReview = await runAiReviewForAdvisory(env, {
+          settings,
+          advisory,
+          repoFullName,
+          pr,
+          author,
+          confirmedContributor,
+          files: await getReviewFiles(),
+          reviewProfile,
+          reviewPathInstructions,
+          reviewExcludePaths,
+        });
+        if (aiReview) await putCachedAiReview(env, repoFullName, pr.number, advisory.headSha, settings.aiReviewMode, aiReview).catch(() => undefined);
+      }
     }
 
     // Secrets-scan (#audit-3.4): always scans the REAL resolved diff and, on a CONCRETE credential hit, appends a

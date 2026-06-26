@@ -1793,6 +1793,78 @@ describe("queue processors", () => {
     expect(acted?.n).toBe(0);
   });
 
+  it("blacklist (#1425): a banned author's PR is labeled + closed deterministically with NO AI call and no merit merge", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "n/a", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      // The banned login is per-repo DB config; the label is the configurable `.gittensory.yml` value below —
+      // nothing is hard-coded.
+      contributorBlacklist: [{ login: "baduser", reason: "plagiarism" }],
+    });
+    // The label is configurable via `.gittensory.yml` (default "slop"); set a custom one to prove it's not hardcoded.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { blacklistLabel: "spam" } }, "repo_file");
+    const seen = { closed: false, labels: [] as string[], comments: [] as string[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/55/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/55/reviews")) return Response.json([]);
+      if (url.includes("/pulls/55/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/55") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 55, state: "closed" }); }
+      if (url.endsWith("/pulls/55")) return Response.json({ number: 55, state: "open", user: { login: "baduser" }, head: { sha: "bl55" }, mergeable_state: "clean" });
+      if (url.includes("/commits/bl55/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/bl55/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/55/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/55/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
+      if (url.includes("/issues/55/comments") && method === "POST") { seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? "")); return Response.json({ id: 1 }, { status: 201 }); }
+      if (url.includes("/issues/55/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "blacklist-close",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Banned author PR", state: "open", user: { login: "baduser" }, head: { sha: "bl55" }, labels: [], body: "Closes #1", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    // Deterministic gate: closed + labeled (with the configured label), and the AI was NEVER called.
+    expect(aiCalls).toBe(0);
+    expect(seen.closed).toBe(true);
+    expect(seen.labels).toContain("spam");
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+    expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+    // No merit merge despite a clean+green+approved PR (the blacklist short-circuits ahead of merit).
+    const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.merge'").first<{ n: number }>();
+    expect(mergeAudit?.n).toBe(0);
+    // The close comment is public-safe and explains the block.
+    expect(seen.comments.some((c) => c.includes("blocked from contributing"))).toBe(true);
+  });
+
   // #1092: prReadyForReview rebases a BEHIND-base PR through the agent executor (gated by update_branch autonomy
   // + pull_requests:write) before reviewing, then defers — the synchronize on the new head re-runs review.
   async function seedBehindRepo(env: Env, over: { autonomy?: Record<string, string>; agentPaused?: boolean; perms?: Record<string, string>; noInstall?: boolean } = {}) {

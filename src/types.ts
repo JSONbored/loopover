@@ -559,6 +559,11 @@ export type RepositorySettings = {
    *  DB) and unioned with the shared/global list at the point of use. Always populated by the DB layer
    *  (default `[]`); optional so existing settings fixtures/callers need not be touched. */
   contributorBlacklist?: ContributorBlacklistEntry[] | undefined;
+  /** The label applied to a blacklisted contributor's PR (#1425). Configurable per-repo (dashboard/DB +
+   *  `.gittensory.yml` `settings.blacklistLabel`); defaults to `"slop"` so the disposition works regardless of
+   *  the label a repo sets. Always populated by the DB layer (default `"slop"`); optional so existing settings
+   *  fixtures/callers need not be touched (mirrors the sibling `contributorBlacklist`). */
+  blacklistLabel?: string | undefined;
   /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
    *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
    *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */

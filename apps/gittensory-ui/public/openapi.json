@@ -8178,6 +8178,9 @@
                 "login"
               ]
             }
+          },
+          "blacklistLabel": {
+            "type": "string"
           }
         },
         "required": [
@@ -8200,6 +8203,7 @@
           "slopAiAdvisory",
           "autoLabelEnabled",
           "gittensorLabel",
+          "blacklistLabel",
           "createMissingLabel",
           "publicSurface",
           "includeMaintainerAuthors",
@@ -8803,6 +8807,9 @@
                   "advisory",
                   "block"
                 ]
+              },
+              "blacklistLabel": {
+                "type": "string"
               }
             },
             "required": [
@@ -8824,6 +8831,7 @@
               "firstTimeContributorGrace",
               "autoLabelEnabled",
               "gittensorLabel",
+              "blacklistLabel",
               "createMissingLabel",
               "includeMaintainerAuthors",
               "requireLinkedIssue",

@@ -195,6 +195,7 @@ export type RepoSettingsPreview = {
     slopGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
+    blacklistLabel: string;
     createMissingLabel: boolean;
     includeMaintainerAuthors: boolean;
     requireLinkedIssue: boolean;
@@ -318,6 +319,7 @@ export function buildRepoSettingsPreview(args: {
       slopGateMinScore: settings.slopGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
+      blacklistLabel: settings.blacklistLabel ?? "slop",
       createMissingLabel: settings.createMissingLabel,
       includeMaintainerAuthors: settings.includeMaintainerAuthors,
       requireLinkedIssue: settings.requireLinkedIssue,

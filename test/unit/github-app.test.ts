@@ -378,6 +378,38 @@ describe("GitHub check runs", () => {
     });
   });
 
+  it("publishes the precomputed authoritative gate (surface-lane override) instead of re-deriving (#5)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 91 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    // The advisory is CLEAN (re-deriving via evaluateGateCheck would publish "success"), but the surface lane
+    // REJECTED the PR. The published check must reflect the authoritative override, not the generic re-derivation.
+    const surfaceGate = {
+      enabled: true,
+      conclusion: "failure" as const,
+      title: "Metagraphed surface review",
+      summary: "Surface payload rejected.",
+      blockers: [{ code: "surface_lane_reject", title: "Surface rejected", severity: "critical" as const, detail: "Registry payload failed validation." }],
+      warnings: [],
+    };
+    const result = await createOrUpdateGateCheckRun(env, 123, "JSONbored/gittensory", gateAdvisory("surface-sha"), {}, { gate: surfaceGate });
+
+    expect(result).toEqual({ kind: "published", id: 91 });
+    expect(capturedBody.conclusion).toBe("failure"); // the surface override, NOT the clean re-derivation
+    expect(capturedBody.output?.title).toBe("Metagraphed surface review");
+  });
+
   it("updates an existing pending Gate check without adding a conclusion", async () => {
     const privateKey = await generatePrivateKeyPem();
     let capturedBody: { status?: string; conclusion?: string } = {};

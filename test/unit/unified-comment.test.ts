@@ -3,9 +3,11 @@ import {
   buildUnifiedReviewInput,
   deriveUnifiedStatus,
   type DualReviewNote,
+  renderReviewingPlaceholder,
   renderUnifiedReviewComment,
   type ReviewNotes,
   type ReviewRecommendation,
+  shouldPostReviewingPlaceholder,
   type UnifiedCommentContext,
   type UnifiedReviewInput,
 } from "../../src/review/unified-comment";
@@ -72,10 +74,24 @@ describe("deriveUnifiedStatus", () => {
   it("a guarded-path hold downgrades a would-be-ready PR to held — never 'safe to merge' (#guarded-hold-comment)", () => {
     // A clean+green PR that touches a hard-guardrail path is HELD for owner review, so the comment says held.
     expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { heldForReview: true })).toBe("held");
-    // It only downgrades an otherwise-ready status — a real close/blocked verdict still wins over the hold.
-    expect(deriveUnifiedStatus({ ...base, decision: "close" }, { heldForReview: true })).toBe("blocked");
+    // A guarded close with RED required CI still closes (the red check overrides the guardrail hold), so the
+    // headline stays "blocked"/Closed. The held-vs-closed nuance for non-red guarded closes is covered below.
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { heldForReview: true })).toBe("blocked");
     // Without the hold flag, the same clean+green PR is ready.
     expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { heldForReview: false })).toBe("ready");
+  });
+
+  it("renders a non-closing disposition as held, not Closed (#8/#9)", () => {
+    // #9: an owner / automation-bot author is NEVER auto-closed → a gate "close" verdict renders held, even on red CI.
+    expect(deriveUnifiedStatus({ ...base, decision: "close" }, { neverClosed: true })).toBe("held");
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { neverClosed: true })).toBe("held");
+    // #8: a guarded-path close is the disposition's HOLD (owner review) unless a red required check forces it.
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "passed" } }, { heldForReview: true })).toBe("held");
+    expect(deriveUnifiedStatus({ ...base, decision: "close" }, { heldForReview: true })).toBe("held"); // CI not yet reported → held
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { heldForReview: true })).toBe("blocked"); // red required CI → real close
+    // A genuine contributor close (no guard, not owner/bot) still headlines Closed/blocked.
+    expect(deriveUnifiedStatus({ ...base, decision: "close" })).toBe("blocked");
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } })).toBe("blocked");
   });
 
   it("honors an explicit host status override", () => {
@@ -374,5 +390,70 @@ describe("buildUnifiedReviewInput", () => {
     expect(input.readiness).toEqual({ ciState: "passed" });
     expect(input.merged).toBe(true);
     expect(input.verdictReason).toBe("auto-merged after green CI");
+  });
+});
+
+describe("renderReviewingPlaceholder", () => {
+  it("renders the IMPORTANT (purple) GitHub alert type", () => {
+    const body = renderReviewingPlaceholder();
+    expect(body).toContain("[!IMPORTANT]");
+  });
+
+  it("includes the 🟪 reviewing square in the body and legend", () => {
+    const body = renderReviewingPlaceholder();
+    // Appears at least twice: the repeating banner and the legend entry.
+    expect(body.split("🟪").length).toBeGreaterThan(2);
+    expect(body).toContain("🟪 Reviewing");
+  });
+
+  it("includes the reviewing-in-progress prose", () => {
+    const body = renderReviewingPlaceholder();
+    expect(body).toContain("is reviewing");
+    expect(body).toContain("in progress");
+    expect(body).toContain("will update when the review is complete");
+  });
+
+  it("uses the default brand when none is provided", () => {
+    expect(renderReviewingPlaceholder()).toContain("Gittensory is reviewing");
+  });
+
+  it("respects a custom brand override", () => {
+    expect(renderReviewingPlaceholder({ brand: "MyBot" })).toContain("MyBot is reviewing");
+  });
+
+  it("angle-escapes HTML in the brand to prevent comment injection", () => {
+    const body = renderReviewingPlaceholder({ brand: "<script>alert(1)</script>" });
+    expect(body).not.toContain("<script>");
+    expect(body).toContain("&lt;script&gt;");
+  });
+
+  it("includes the full legend row with all four final-state colors", () => {
+    const body = renderReviewingPlaceholder();
+    expect(body).toContain("🟩");
+    expect(body).toContain("🟦");
+    expect(body).toContain("🟨");
+    expect(body).toContain("🟥");
+  });
+});
+
+describe("shouldPostReviewingPlaceholder", () => {
+  it("returns true when AI will run, mode is live, and a comment will be posted", () => {
+    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "live", willComment: true })).toBe(true);
+  });
+
+  it("returns false when AI review will not run", () => {
+    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: false, mode: "live", willComment: true })).toBe(false);
+  });
+
+  it("returns false in dry-run mode — placeholder must never write to GitHub in non-live mode", () => {
+    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "dry_run", willComment: true })).toBe(false);
+  });
+
+  it("returns false in paused mode", () => {
+    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "paused", willComment: true })).toBe(false);
+  });
+
+  it("returns false when no comment will be posted — avoids a permanent orphaned purple comment", () => {
+    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "live", willComment: false })).toBe(false);
   });
 });

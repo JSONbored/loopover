@@ -308,6 +308,35 @@ test("scanLicenses: flags copyleft + unknown, skips permissive + fetch-fail", as
   assert.equal(failed.length, 0);
 });
 
+test("scanLicenses: caps deps.dev lookups from large manifest diffs", async () => {
+  const patch = Array.from(
+    { length: 40 },
+    (_, i) => `+    "pkg-${i}": "1.0.0",`,
+  ).join("\n");
+  let calls = 0;
+  const findings = await scanLicenses(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [{ path: "package.json", patch }],
+    },
+    async () => {
+      calls += 1;
+      return { ok: true, json: async () => ({ licenses: ["MIT"] }) };
+    },
+  );
+  assert.equal(findings.length, 0);
+  assert.equal(calls, 25);
+});
+
+test("scanLicenses: passes an abort signal and degrades failed lookups", async () => {
+  const findings = await scanLicenses(pkgPatch("slow"), async (_url, init) => {
+    assert.ok(init?.signal instanceof AbortSignal);
+    throw new Error("network down");
+  });
+  assert.equal(findings.length, 0);
+});
+
 test("renderBrief: renders the license block", () => {
   const r = renderBrief({
     license: [

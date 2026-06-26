@@ -63,8 +63,8 @@ describe("buildSlopOutcomeCalibration", () => {
 });
 
 describe("buildRecommendationOutcomeCalibration", () => {
-  function outcome(state: AgentRecommendationOutcomeState): AgentRecommendationOutcomeRecord {
-    return { actionId: `a-${state}`, runId: "r", actorLogin: "miner", actionType: "choose_next_work", source: "explicit", outcomeState: state, outcomeTargetType: "pull_request", maintainerLane: false, confidence: "high", reason: "x", metadata: {} };
+  function outcome(state: AgentRecommendationOutcomeState, maintainerLane = false): AgentRecommendationOutcomeRecord {
+    return { actionId: `a-${state}-${maintainerLane}`, runId: "r", actorLogin: "miner", actionType: "choose_next_work", source: "explicit", outcomeState: state, outcomeTargetType: "pull_request", maintainerLane, confidence: "high", reason: "x", metadata: {} };
   }
   it("splits positive / negative / pending and computes a positive rate over resolved", () => {
     const result = buildRecommendationOutcomeCalibration([outcome("merged"), outcome("improved"), outcome("accepted"), outcome("closed"), outcome("stale"), outcome("ignored")]);
@@ -73,6 +73,10 @@ describe("buildRecommendationOutcomeCalibration", () => {
   it("reports a null rate when nothing is resolved", () => {
     expect(buildRecommendationOutcomeCalibration([outcome("stale")]).positiveRate).toBeNull();
     expect(buildRecommendationOutcomeCalibration([]).positiveRate).toBeNull();
+  });
+  it("can restrict calibration to maintainer-lane outcomes for live self-tune policy", () => {
+    const outcomes = [outcome("closed"), outcome("rejected"), outcome("accepted", true), outcome("closed", true), outcome("ignored", true)];
+    expect(buildRecommendationOutcomeCalibration(outcomes, undefined, { maintainerOnly: true })).toMatchObject({ total: 3, positive: 1, negative: 1, pending: 1, positiveRate: 0.5 });
   });
   it("scopes to a repo (case-insensitive, by outcome repo then target repo) when repoFullName is given", () => {
     const outcomes: AgentRecommendationOutcomeRecord[] = [

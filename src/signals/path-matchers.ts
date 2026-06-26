@@ -29,6 +29,7 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "npm-shrinkwrap.json",
   "yarn.lock",
   "pnpm-lock.yaml",
+  "bun.lock",
   "bun.lockb",
   "cargo.lock",
   "poetry.lock",
@@ -39,12 +40,16 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "uv.lock",
   "packages.lock.json",
   "flake.lock",
+  "deno.lock",
+  "pubspec.lock",
+  "podfile.lock",
 ]);
 
 const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([
   "package.json",
   "cargo.toml",
   "go.mod",
+  "go.work",
   "requirements.txt",
   "pyproject.toml",
   "pipfile",
@@ -53,6 +58,11 @@ const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([
   "build.gradle",
   "build.gradle.kts",
   "pom.xml",
+  "deno.json",
+  "deno.jsonc",
+  "pubspec.yaml",
+  "mix.exs",
+  "uv.toml",
 ]);
 
 const DOCS_EXTENSIONS: ReadonlySet<string> = new Set(["md", "mdx", "markdown", "rst", "adoc", "asciidoc"]);
@@ -61,10 +71,22 @@ const DOCS_EXTENSIONS: ReadonlySet<string> = new Set(["md", "mdx", "markdown", "
 const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
   "dockerfile",
   "makefile",
+  "caddyfile",
+  "justfile",
+  "procfile",
+  "codeowners",
   ".editorconfig",
   ".nvmrc",
   ".npmrc",
   ".browserslistrc",
+  ".tool-versions",
+  ".pre-commit-config.yaml",
+  ".gitleaks.toml",
+  ".gittensory.yml",
+  ".gittensory.yml.example",
+  ".gitlab-ci.yml",
+  "azure-pipelines.yml",
+  "jenkinsfile",
   // Monorepo / task-runner config (Turborepo, Nx, Lerna).
   "turbo.json",
   "nx.json",
@@ -72,6 +94,18 @@ const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
   // Linter / formatter config that does not follow the `.eslintrc` / `*.config.*` shapes (Biome).
   "biome.json",
   "biome.jsonc",
+  // Deploy / automation / quality config.
+  "codecov.yml",
+  "renovate.json",
+  "railway.json",
+  "vercel.json",
+  "netlify.toml",
+  "mise.toml",
+  "cliff.toml",
+  "taskfile.yml",
+  "taskfile.yaml",
+  "docker-compose.yml",
+  "docker-compose.yaml",
   // VCS and build ignore/attribute config (siblings to the existing Dockerfile entry).
   ".gitignore",
   ".gitattributes",
@@ -90,6 +124,8 @@ const CONFIG_FILE_PREFIXES: readonly string[] = [
   "postcss.config",
   "tailwind.config",
   "next.config",
+  "playwright.config",
+  "eslint.config",
   ".env",
   ".eslint",
   ".prettier",
@@ -98,6 +134,16 @@ const CONFIG_FILE_PREFIXES: readonly string[] = [
   // The trailing dot keeps unrelated names like `wranglers-guide.md` from matching.
   "wrangler.",
 ];
+
+/** CI workflow and automation entrypoints under conventional directories. */
+function isCiConfigPath(path: string): boolean {
+  const norm = normalize(path);
+  return (
+    /(^|\/)\.github\/workflows\/[^/]+\.(ya?ml)$/.test(norm) ||
+    /(^|\/)\.github\/dependabot\.ya?ml$/.test(norm) ||
+    /(^|\/)\.circleci\/config\.ya?ml$/.test(norm)
+  );
+}
 
 /** Machine-generated output (codegen, protobuf, source maps, typegen). */
 export function isGeneratedFile(path: string): boolean {
@@ -145,6 +191,7 @@ export function isDependencyManifestFile(path: string): boolean {
  * lower-effort than genuine source changes, so slop signals can weight them differently (#561).
  */
 export function isConfigFile(path: string): boolean {
+  if (isCiConfigPath(path)) return true;
   const base = basename(path);
   if (CONFIG_FILE_NAMES.has(base)) return true;
   if (CONFIG_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))) return true;

@@ -63,6 +63,10 @@ describe("isLockfile", () => {
       "go.sum",
       "uv.lock",
       "poetry.lock",
+      "deno.lock",
+      "bun.lock",
+      "pubspec.lock",
+      "ios/Podfile.lock",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }
@@ -115,7 +119,20 @@ describe("defensive input handling", () => {
 
 describe("isDependencyManifestFile", () => {
   it("matches dependency manifests", () => {
-    for (const path of ["package.json", "Cargo.toml", "go.mod", "requirements.txt", "pyproject.toml", "build.gradle.kts"]) {
+    for (const path of [
+      "package.json",
+      "Cargo.toml",
+      "go.mod",
+      "go.work",
+      "requirements.txt",
+      "pyproject.toml",
+      "build.gradle.kts",
+      "deno.json",
+      "deno.jsonc",
+      "pubspec.yaml",
+      "mix.exs",
+      "uv.toml",
+    ]) {
       expect(isDependencyManifestFile(path)).toBe(true);
     }
   });
@@ -148,7 +165,7 @@ describe("isConfigFile", () => {
     }
   });
 
-  it("matches monorepo, linter, and VCS/build config by exact basename", () => {
+  it("matches monorepo, linter, VCS/build, deploy, and toolchain config by exact basename", () => {
     for (const path of [
       "turbo.json",
       "nx.json",
@@ -158,7 +175,45 @@ describe("isConfigFile", () => {
       "packages/app/.gitignore",
       ".gitattributes",
       "services/api/.dockerignore",
+      ".pre-commit-config.yaml",
+      ".gitleaks.toml",
+      ".gittensory.yml",
+      ".gittensory.yml.example",
+      "codecov.yml",
+      "renovate.json",
+      "railway.json",
+      "vercel.json",
+      "netlify.toml",
+      "mise.toml",
+      ".tool-versions",
+      "Taskfile.yml",
+      "Taskfile.yaml",
+      "justfile",
+      "Caddyfile",
+      "docker-compose.yml",
+      "Procfile",
+      "CODEOWNERS",
+      ".gitlab-ci.yml",
+      "azure-pipelines.yml",
+      "Jenkinsfile",
     ]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("matches GitHub Actions and other CI workflow entrypoints", () => {
+    for (const path of [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yaml",
+      ".github/dependabot.yml",
+      ".circleci/config.yml",
+    ]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("matches test-runner and lint config by known filename prefix", () => {
+    for (const path of ["tsconfig.build.json", "vitest.config.ts", ".env.local", ".eslintrc.json", ".prettierrc.js", "playwright.config.ts", "eslint.config.js"]) {
       expect(isConfigFile(path)).toBe(true);
     }
   });
@@ -175,9 +230,9 @@ describe("isConfigFile", () => {
     }
   });
 
-  it("matches config files by known filename prefix", () => {
-    for (const path of ["tsconfig.build.json", "vitest.config.ts", ".env.local", ".eslintrc.json", ".prettierrc.js"]) {
-      expect(isConfigFile(path)).toBe(true);
+  it("does not classify workflow-like names outside CI directories as config", () => {
+    for (const path of ["docs/ci.yml", "scripts/release.yaml", "src/workflow.ts"]) {
+      expect(isConfigFile(path)).toBe(false);
     }
   });
 
@@ -207,10 +262,16 @@ describe("classifyChangedFile", () => {
       ["src/api.generated.ts", "generated"],
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
+      ["deno.lock", "lockfile"],
+      ["pubspec.lock", "lockfile"],
       ["package.json", "dependency_manifest"],
+      ["deno.json", "dependency_manifest"],
+      ["pubspec.yaml", "dependency_manifest"],
       ["tsconfig.json", "config"],
       ["vitest.config.ts", "config"],
       ["wrangler.jsonc", "config"],
+      [".github/workflows/ci.yml", "config"],
+      [".pre-commit-config.yaml", "config"],
       ["turbo.json", "config"],
       ["test/unit/app.test.ts", "test"],
       ["README.md", "docs"],

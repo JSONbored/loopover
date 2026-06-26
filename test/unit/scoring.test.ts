@@ -836,6 +836,9 @@ NOVELTY_BONUS_SCALAR = 3
     expect(labelMultiplierFor({ "[!]": 2 }, ["!"])).toBe(1);
     // An empty `[]` class stays literal too (the `rawBody === ""` arm): pattern `[]` matches only the label `[]`.
     expect(labelMultiplierFor({ "[]": 2 }, ["[]"])).toBe(2);
+    // An ASCENDING range (`[a-c]`) has a `-` but is NOT descending, so it compiles as a real class (the other
+    // arm of the descending-range check): `b` is in `[a-c]`, so `[a-c]ug` matches `bug`.
+    expect(labelMultiplierFor({ "[a-c]ug": 1.5 }, ["bug"])).toBe(1.5);
     // A `[` with no closing bracket is a literal, not a class.
     expect(labelMultiplierFor({ "a[b": 0.7 }, ["a[b"])).toBe(0.7);
     // Regex metacharacters in a literal key stay literal: `.` matches only a dot, not any char.

@@ -1,6 +1,6 @@
 export function isTestPath(file: string): boolean {
   return (
-    /(^|\/)(test|tests|spec|__tests__|e2e|integration|playwright|cypress)\//i.test(file) ||
+    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
     /(^|\/)src\/test\//i.test(file) ||
     /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||

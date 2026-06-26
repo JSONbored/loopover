@@ -153,6 +153,8 @@ describe("product usage events", () => {
         cwd: "/Users/example/private/project",
         nested: {
           localPath: "/Users/example/private/project/file.ts",
+          rootPath: "/root/work/private/project/file.ts",
+          varPath: "/var/log/private/app.log",
           values: ["see /Users/example/private/file.ts", "github_pat_1234567890abcdef"],
           safe: "kept",
         },
@@ -174,7 +176,7 @@ describe("product usage events", () => {
     expect(row.metadata).not.toHaveProperty("body");
     expect(row.metadata).not.toHaveProperty("diff");
     expect(row.metadata).not.toHaveProperty("cwd");
-    expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
+    expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|\/root\/|\/var\/|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
   });
 
   it("persists normalized role on the event row and strips private scoreability metadata", async () => {

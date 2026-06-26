@@ -1,9 +1,16 @@
 # Self-hosting Gittensory
 
 Gittensory ships as a Cloudflare Worker, but the **same** review engine runs unchanged on a plain Node
-container so you can self-host it next to your own GitHub App. `docker compose up` gives you the full
-reviewer — webhooks, the deterministic gate, AI summaries, the maintain/sweep cron, and (optionally) full
-maintainer autonomy — backed by a local SQLite database.
+container so you can self-host it on your own infrastructure (Docker, Railway, Fly, a VM …). `docker
+compose up` gives you the full reviewer — webhooks, the deterministic gate, AI summaries, the
+maintain/sweep cron, and (optionally) full maintainer autonomy — backed by a local SQLite database.
+
+Self-host connects to the **Gittensory Orb** — our central GitHub App that brokers GitHub access and
+collects anonymized fleet calibration. This is the **gittensor-Mirror model**: you install the **Orb App**
+on your repos and run the container; you **do not create your own GitHub App or manage a private key**, the
+Orb relays your repos' events to your container and mints short-lived GitHub tokens on demand, and your
+instance contributes anonymized review outcomes that keep the gate calibrated across the whole fleet (and
+power the public stats on gittensory.aethereal.dev).
 
 > **How it works (one paragraph).** The Worker's Cloudflare bindings are swapped for self-host adapters and
 > nothing else changes: **D1 → `node:sqlite`** (a faithful `D1Database` shim, so Drizzle + every raw query +
@@ -13,17 +20,50 @@ maintainer autonomy — backed by a local SQLite database.
 
 ---
 
-## 1. Quick start
+## 1. Quick start (Orb-brokered)
+
+### Step 1 — Install the Gittensory Orb App
+
+[![Install the Gittensory Orb App](https://img.shields.io/badge/Install-Gittensory%20Orb%20App-1f6feb?style=for-the-badge&logo=github)](https://github.com/apps/gittensory-orb/installations/new)
+
+> **→ [github.com/apps/gittensory-orb](https://github.com/apps/gittensory-orb/installations/new)** — install it on the
+> repositories you want reviewed.
+
+The Orb App is a GitHub App **we** run; you don't create one. Installing it lets the Orb deliver your repos'
+events to your container and mint short-lived GitHub tokens for it on demand.
+
+### Step 2 — Get your enrollment secret (self-service)
+
+When the install is authorized, GitHub returns you to a Gittensory page that — once we've verified you're an
+**admin of the installed account** — shows your **`ORB_ENROLLMENT_SECRET` once**. Copy it (it isn't shown
+again). This is a per-install secret; treat it like a password.
+
+> First-time installs are reviewed by the operator before the secret is issued (a one-time approval; you'll see
+> "not enabled yet" until it's done, then re-open the install to get your secret). The secret is **self-issued —
+> the operator never sees or hands you a credential.**
+
+### Step 3 — Configure `.env` and run
 
 ```bash
-cp .env.example .env          # then edit .env — see §3
+cp .env.example .env
+# set in .env:
+#   ORB_ENROLLMENT_SECRET=<the secret from step 2>
+#   ORB_BROKER_URL=https://gittensory-api.aethereal.dev   # default — the Orb broker + collector
+#   PUBLIC_API_ORIGIN=https://<your-host>                 # your container's public URL — MUST be reachable by the Orb
 docker compose up --build
-curl localhost:8787/health    # {"status":"ok"}
+curl https://<your-host>/health    # {"status":"ok"}
 ```
 
-On first boot the container creates the SQLite database on the `gittensory-data` volume and applies all 56
-migrations automatically (`{"event":"selfhost_migrations_applied","count":56}` in the logs). Point your
-GitHub App's webhook at `https://<your-host>/v1/github/webhook` (expose port 8787 behind your own TLS).
+On boot the container creates the SQLite database on the `gittensory-data` volume, applies all migrations
+automatically (`{"event":"selfhost_migrations_applied",…}` in the logs), then **registers its relay URL**
+(`PUBLIC_API_ORIGIN` + `/v1/orb/relay`) with the Orb. From there the Orb **forwards your install's webhooks**
+to the container, HMAC-signed with your enrollment secret — there is **no GitHub webhook to configure**. GitHub
+API actions (comment, label, merge, close) use **short-lived installation tokens brokered from the Orb on
+demand**, so the container never holds a GitHub App private key.
+
+> **The container must be reachable by the Orb.** `PUBLIC_API_ORIGIN` has to resolve from the public internet
+> (the Orb POSTs your events to `PUBLIC_API_ORIGIN/v1/orb/relay`). Put it behind your own TLS / reverse proxy and
+> expose port 8787. Confirm `GET /ready` returns `200` once migrations are applied.
 
 **Or use the published image** (multi-arch, ~254 MB) instead of building:
 
@@ -46,39 +86,36 @@ GitHub Release.
 
 ---
 
-## 2. Create the GitHub App
+## 2. Telemetry — Orb fleet calibration
 
-**One-click (recommended):** before setting any GitHub secrets, set `PUBLIC_API_ORIGIN` and a long random
-`SELFHOST_SETUP_TOKEN`, boot the container, then visit **`/setup`** and enter your `SELFHOST_SETUP_TOKEN`
-in the form (the token is sent in the POST body, never the URL, so it can't leak to logs or browser history).
-It creates the App for you via GitHub's App-manifest flow (correct permissions/events + webhook URL), then
-writes the credentials to `/data/gittensory-app.env`. Add those to your `.env`, install the App on your repos,
-and restart. `/setup` requires the setup token and is disabled once `GITHUB_APP_ID` is set, so it can't rebind
-a live install. (Scripted setups can pass the token via an `x-setup-token` header instead.)
+Self-hosting is a **fleet-telemetry contract**: each instance exports an anonymized, reversal-aware
+review-outcome signal to the Orb collector (`ORB_COLLECTOR_URL`, default the hosted collector). This is
+what calibrates the gate across the whole self-host fleet and produces the accurate aggregate numbers on
+gittensory.aethereal.dev — it is **on by default** once your App is configured.
 
-**Or manually**, create a GitHub App (the hosted gittensory[bot] is separate) with:
-
-- **Webhook URL** `https://<your-host>/v1/github/webhook`, and a **webhook secret** (→ `GITHUB_WEBHOOK_SECRET`).
-- **Permissions**: Pull requests (read/write), Contents (read; read/write if you want merge), Issues
-  (read/write), Checks (read), Metadata (read). Commit statuses (read).
-- **Events**: Pull request, Pull request review, Push, Issues, Check suite, Check run, Status.
-- Generate a **private key** (→ `GITHUB_APP_PRIVATE_KEY`), and note the **App ID** (→ `GITHUB_APP_ID`) and the
-  app **slug** (→ `GITHUB_APP_SLUG`). Install the app on the repos you want reviewed.
+- **Anonymized.** Repo/PR identifiers are HMAC-hashed with a per-instance secret the collector **never
+  holds**, so it can't de-anonymize you. The payload is only `verdict + outcome + reversal + a bucketed
+  reason category + cycle time` — **no diffs, no code, no comments, no logins, no commit SHAs**.
+- It is part of the broker contract (a brokered instance relies on the Orb for tokens + relay), so it stays on.
+  `ORB_ANONYMIZE` (default `true`) controls the hashing.
 
 ---
 
 ## 3. Configuration
 
 Everything is environment variables — see [`.env.example`](../.env.example) for the annotated list (it holds
-**sample placeholders only; never commit a real `.env`** — it is gitignored). The required core secrets:
+**sample placeholders only; never commit a real `.env`** — it is gitignored). The required core secrets for
+the **Orb-brokered** path:
 
 | Variable | What it is |
 | --- | --- |
-| `GITHUB_APP_ID` / `GITHUB_APP_SLUG` | your GitHub App's id + slug |
-| `GITHUB_APP_PRIVATE_KEY` | the App's PKCS#8 private key (or mount `GITHUB_APP_PRIVATE_KEY_FILE`) |
-| `GITHUB_WEBHOOK_SECRET` | the webhook secret you set on the App |
+| `ORB_ENROLLMENT_SECRET` | your one-time enrollment secret from the install flow (§1, step 2) |
+| `ORB_BROKER_URL` | the Orb broker + collector base (default `https://gittensory-api.aethereal.dev`) |
+| `PUBLIC_API_ORIGIN` | your container's public base URL — **must be reachable by the Orb relay** |
 | `GITTENSOR_REGISTRY_URL` | registry endpoint (or any reachable placeholder if you don't use the registry) |
 | `GITTENSORY_API_TOKEN` / `GITTENSORY_MCP_TOKEN` / `INTERNAL_JOB_TOKEN` | bearer tokens — generate your own (`openssl rand -hex 32`) |
+
+(You set **no** `GITHUB_APP_*` secrets — the Orb holds the App key and mints tokens for you on demand.)
 
 Runtime knobs: `PORT` (default 8787), `DATABASE_PATH` (default `/data/gittensory.sqlite`), `CRON_INTERVAL_MS`
 (default 120000 ≈ the hosted every-2-minutes cron).

@@ -474,6 +474,9 @@ function buildLocalScoreInput(args: {
     nonCodeLines: nonCodeLineCount,
     openPrCount: args.outcomeHistory.totals.openPullRequests,
     openIssueCount: args.repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues,
+    mergedPullRequests: args.repoOutcome?.mergedPullRequests ?? args.outcomeHistory.totals.mergedPullRequests,
+    validSolvedIssues: args.repoOutcome?.validSolvedIssues ?? args.outcomeHistory.totals.validSolvedIssues,
+    issueCredibility: args.repoOutcome?.issueCredibility ?? args.outcomeHistory.totals.issueCredibility,
     credibility: args.repoOutcome?.credibility ?? args.outcomeHistory.totals.credibility,
     metadataOnly: scorer?.mode !== "gittensor_root" && scorer?.mode !== "external_command",
     pendingMergedPrCount: args.input.pendingMergedPrCount,
@@ -1003,7 +1006,7 @@ function branchQualityBlockersFor(preflight: LocalDiffPreflightResult, localFind
 
 function accountStateBlockersFor(scorePreview: ScorePreviewResult): string[] {
   return scorePreview.blockedBy
-    .filter((blocker) => ["repo_not_registered", "inactive_allocation", "open_pr_threshold", "credibility_floor"].includes(blocker.code))
+    .filter((blocker) => ["repo_not_registered", "inactive_allocation", "open_pr_threshold", "open_issue_threshold", "merged_pr_history_floor", "issue_discovery_validity_floor", "credibility_floor"].includes(blocker.code))
     .map((blocker) => blocker.detail)
     .filter(unique);
 }

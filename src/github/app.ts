@@ -4,7 +4,7 @@ import { makeInstallationOctokit } from "./client";
 import { maintainerControlPanelUrl } from "./footer";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { signRs256Jwt } from "../utils/crypto";
-import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type CheckRunAnnotationContext, type CheckRunOutput, type GateCheckConclusion, type GateCheckPolicy } from "../rules/advisory";
+import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type CheckRunAnnotationContext, type CheckRunOutput, type GateCheckConclusion, type GateCheckEvaluation, type GateCheckPolicy } from "../rules/advisory";
 
 type CheckRunResponse = {
   id: number;
@@ -159,10 +159,14 @@ export async function createOrUpdateGateCheckRun(
   repoFullName: string,
   advisory: Advisory,
   policy: GateCheckPolicy = {},
-  options: { checkRunId?: number | undefined } = {},
+  options: { checkRunId?: number | undefined; gate?: GateCheckEvaluation | undefined } = {},
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
-  const gate = evaluateGateCheck(advisory, policy);
+  // Prefer the AUTHORITATIVE pre-computed evaluation when the caller has one (#5 / audit): the surface/content
+  // lane can OVERRIDE the generic verdict (surface_lane_reject → failure, surface_lane_manual → action_required),
+  // and re-deriving here via evaluateGateCheck would discard that override — publishing a GREEN check while the
+  // PR is actually auto-closed/held. Callers without a surface lane omit `gate` and re-derive as before (identical).
+  const gate = options.gate ?? evaluateGateCheck(advisory, policy);
   return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
     name: GITTENSORY_GATE_CHECK_NAME,
     status: "completed",

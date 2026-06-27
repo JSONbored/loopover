@@ -536,9 +536,10 @@ describe("queue processors", () => {
     ]);
   });
 
-  it("agent re-gate sweep fans out only to repos that opted the agent in (#777)", async () => {
+  it("agent re-gate sweep fans out to acting-autonomy repos (#777), skipping non-acting ones when not allowlisted", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "", // isolate the acting-autonomy gate from the allowlist-sweep path (tested below)
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -563,6 +564,22 @@ describe("queue processors", () => {
     }>();
     expect(fanout?.outcome).toBe("queued");
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2, requestedBy: "schedule" });
+  });
+
+  it("agent re-gate sweep ALSO fans out to allowlisted repos regardless of autonomy mode (#sweep-all-modes)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    // advisory-repo is allowlisted but autonomy is observe (NOT acting) — it must STILL be swept so advisory reviews fire.
+    await upsertRepositoryFromGitHub(env, { name: "advisory-repo", full_name: "owner/advisory-repo", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/advisory-repo", autonomy: { merge: "observe", close: "observe" } });
+    // off-repo is neither allowlisted nor acting → still skipped.
+    await upsertRepositoryFromGitHub(env, { name: "off-repo", full_name: "owner/off-repo", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/off-repo", autonomy: { review: "observe" } });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" });
+
+    const swept = sent.filter((m): m is Extract<import("../../src/types").JobMessage, { type: "agent-regate-sweep" }> => m.type === "agent-regate-sweep").map((m) => m.repoFullName);
+    expect(swept).toEqual(["owner/advisory-repo"]); // allowlisted observe repo IS swept; off-repo is not
   });
 
   it("agent re-gate sweep recomputes stale open PR verdicts as an advisory audit, never publishing (#777)", async () => {
@@ -979,7 +996,7 @@ describe("queue processors", () => {
 
   it("INVARIANT (in-flight guard): the fan-out SKIPS a repo whose prior sweep is still draining, enqueues an idle one (#audit-sweep-fanout)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertInstallation(env, { action: "created", installation: { id: 9101, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     for (const name of ["draining", "idle"]) {
       await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9101);

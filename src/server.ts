@@ -250,7 +250,25 @@ async function main(): Promise<void> {
   // arrives, by which point env is set).
   let env: Env;
   const consume = async (message: JobMessage): Promise<void> => {
-    await processJob(env, message);
+    try {
+      await processJob(env, message);
+    } catch (error) {
+      // Self-host best-effort jobs (#registry-soft-fail): the periodic gittensor-registry refresh re-runs every cron
+      // tick, so a degraded/unconfigured GITTENSOR_REGISTRY_URL would otherwise retry→dead-letter EVERY cycle and
+      // flood the dead-letter alert. Swallow its failure here (the next scheduled tick is the retry); keep the last
+      // snapshot. The Cloudflare Worker path (src/index.ts) is untouched, so its rate-limit-aware retry is preserved.
+      if (message.type === "refresh-registry") {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "refresh_registry_soft_fail",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return;
+      }
+      throw error;
+    }
   };
 
   const databaseUrl = process.env.DATABASE_URL;

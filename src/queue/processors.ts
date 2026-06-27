@@ -762,23 +762,39 @@ async function fanOutAgentRegateSweepJobs(
     });
     return;
   }
-  const repositories = await listRepositories(env);
+  // Sweep every REVIEW-ACTIVE repo (#sweep-all-modes): the convergence allowlist (GITTENSORY_REVIEW_REPOS) UNION the
+  // webhook-registered repos, deduped case-insensitively. A repo is swept when it is review-active (allowlisted) OR
+  // has acting autonomy — so ADVISORY repos (autonomy=observe) are re-gated and get fresh reviews too, not only repos
+  // that can merge/close. The action layer (maybeRunAgentMaintenance) stays autonomy-gated, so an observe repo is
+  // re-reviewed but never auto-actioned. This is what makes advisory reviews fire on existing open PRs without
+  // depending on a fresh webhook per PR.
+  const byKey = new Map<string, string>();
+  for (const repo of await listRepositories(env))
+    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
+  for (const fullName of listConvergenceRepos(env))
+    byKey.set(fullName.toLowerCase(), fullName);
   const configured: string[] = [];
   let skippedDraining = 0;
-  for (const repo of repositories) {
-    const settings = await resolveRepositorySettings(env, repo.fullName);
-    if (!isAgentConfigured(settings.autonomy)) continue;
+  for (const repoFullName of byKey.values()) {
+    const settings = await resolveRepositorySettings(env, repoFullName);
+    if (
+      !(
+        isConvergenceRepoAllowed(env, repoFullName) ||
+        isAgentConfigured(settings.autonomy)
+      )
+    )
+      continue;
     // In-flight guard (#audit-sweep-fanout): skip a repo whose prior sweep is still draining — its per-PR jobs are
     // mid-flight and stamping last_regated_at as they run, so the freshest stamp being within the sweep window
     // means a sweep is active. Re-arming now would enqueue duplicate per-PR jobs for the not-yet-drained
     // candidates, so this is what finally stops the 2-min cron piling a second full sweep on an unfinished one.
     if (
-      isRegateSweepDraining(await getLatestRegatedAt(env, repo.fullName), now)
+      isRegateSweepDraining(await getLatestRegatedAt(env, repoFullName), now)
     ) {
       skippedDraining += 1;
       continue;
     }
-    configured.push(repo.fullName);
+    configured.push(repoFullName);
   }
   await Promise.all(
     configured.map((repoFullName, index) => {
@@ -925,8 +941,16 @@ async function sweepRepoRegate(
 ): Promise<void> {
   if (!repoFullName) return;
   const settings = await resolveRepositorySettings(env, repoFullName);
-  // Defensive: a repo can lose its acting autonomy between fan-out and processing.
-  if (!isAgentConfigured(settings.autonomy)) return;
+  // Defensive re-check between fan-out and processing (#sweep-all-modes): the repo must still be review-active
+  // (allowlisted) OR have acting autonomy. Advisory/observe repos pass here and are re-reviewed; the action layer
+  // stays autonomy-gated, so they are never auto-actioned.
+  if (
+    !(
+      isConvergenceRepoAllowed(env, repoFullName) ||
+      isAgentConfigured(settings.autonomy)
+    )
+  )
+    return;
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), // env brake OR DB kill-switch (#audit-§5.2)
     agentPaused: settings.agentPaused,
@@ -1112,7 +1136,10 @@ async function regatePullRequest(
     repoFullName,
     prNumber,
     undefined,
-    { skipAiReview: settings.aiReviewMode !== "block" },
+    // Run the AI review on the sweep for BOTH advisory and block modes (#sweep-all-modes) — only skip when AI is
+    // OFF. The #1462 per-(repo,pr,headSha,mode) cache bounds the cost: an unchanged PR re-gates from cache with no
+    // re-spend, so an advisory PR gets a posted review without burning a token every sweep tick.
+    { skipAiReview: settings.aiReviewMode === "off" },
   ).catch((error) => {
     console.error(
       JSON.stringify({

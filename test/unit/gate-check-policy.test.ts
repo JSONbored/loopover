@@ -602,3 +602,25 @@ describe("size + guardrail manual-review HOLD (#gate-size / #gate-guardrail)", (
     expect(eff.sizeGateMode).toBe("advisory");
   });
 });
+
+describe("dry-run disposition (#gate-dryrun): would-be verdict without enforcing", () => {
+  it("posts the real non-enforcing conclusion but exposes the would-be conclusion as displayConclusion", () => {
+    // advisory linked-issue ⇒ the missing-issue finding does NOT block (posted = success), but promoted to block it WOULD close
+    const out = evaluateGateCheck(missingIssueAdvisory(), { dryRun: true, linkedIssueGateMode: "advisory" });
+    expect(out.conclusion).toBe("success"); // POSTED — non-blocking pass
+    expect(out.displayConclusion).toBe("failure"); // would-be — drives the "close" verdict in the comment
+  });
+  it("a clean PR in dry-run shows a would-be PASS (displayConclusion = success)", () => {
+    const clean = { ...missingIssueAdvisory(), findings: [] };
+    expect(evaluateGateCheck(clean, { dryRun: true, linkedIssueGateMode: "advisory" }).displayConclusion).toBe("success");
+  });
+  it("outside dry-run, displayConclusion is absent (the verdict falls back to the posted conclusion)", () => {
+    const out = evaluateGateCheck(missingIssueAdvisory(), { linkedIssueGateMode: "advisory" });
+    expect(out.conclusion).toBe("success");
+    expect(out.displayConclusion).toBeUndefined();
+  });
+  it("resolveEffectiveSettings maps gate.dryRun → gateDryRun", () => {
+    const eff = resolveEffectiveSettings(settings({}), parseFocusManifest({ gate: { dryRun: true } }));
+    expect(eff.gateDryRun).toBe(true);
+  });
+});

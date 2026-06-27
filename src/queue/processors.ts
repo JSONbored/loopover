@@ -3338,6 +3338,8 @@ export function gateCheckPolicy(
     changedFileCount: sizeContext?.changedFileCount ?? null,
     changedLineCount: sizeContext?.changedLineCount ?? null,
     guardrailHit: sizeContext?.guardrailHit ?? false,
+    // #gate-dryrun: render the would-be merge/close/manual verdict (advisory promoted to block) without enforcing.
+    dryRun: settings.gateDryRun ?? false,
   };
 }
 

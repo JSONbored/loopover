@@ -321,7 +321,10 @@ export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedColl
  * lets it override the reviewer recommendation.
  */
 export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string {
-  const verdict = gateConclusionToVerdict(args.gate.conclusion);
+  // #gate-dryrun: in dry-run mode the gate exposes the would-be conclusion (advisory promoted to block) as
+  // `displayConclusion` so the rendered merge/close/manual verdict reflects what it WOULD do; the posted check
+  // stays the real, non-enforcing `conclusion`. Outside dry-run, displayConclusion is absent ⇒ falls back.
+  const verdict = gateConclusionToVerdict(args.gate.displayConclusion ?? args.gate.conclusion);
   const consensusDefect = consensusDefectFromFindings(args.advisoryFindings);
   const reviews = buildDualReviewNotes({
     aiReview: args.aiReview,

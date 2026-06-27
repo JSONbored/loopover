@@ -509,6 +509,10 @@ export type RepositorySettings = {
    *  >= 10 changed files OR >= 500 changed (added+deleted) lines that would otherwise pass is HELD for manual review
    *  (neutral gate → "manual" verdict), never auto-merged and never a hard failure. Opt-in via `gate.size.mode`. */
   sizeGateMode?: GateRuleMode | undefined;
+  /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
+   *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
+   *  preview exactly what it would do before the maintainer flips to real enforcement. Default off. */
+  gateDryRun?: boolean | undefined;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;
   /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (blocked paths,

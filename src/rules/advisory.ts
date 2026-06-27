@@ -67,11 +67,19 @@ export type GateCheckPolicy = {
    *  A guardrail hit HOLDS an otherwise-passing gate for manual review (neutral → "manual"), never auto-merged.
    *  Always-on (the guardrail globs default to the crucial/config-as-code/engine paths). (#gate-guardrail) */
   guardrailHit?: boolean | undefined;
+  /** Dry-run disposition (#gate-dryrun). When true, the gate ALSO computes the would-be conclusion with every
+   *  `advisory` sub-gate promoted to `block` and exposes it as `displayConclusion` (the rendered merge/close/manual
+   *  verdict), WITHOUT changing the posted, non-enforcing `conclusion`. Lets advisory mode show exactly what it WOULD
+   *  do (close/merge/manual) before the maintainer flips to real enforcement. Default off. */
+  dryRun?: boolean | undefined;
 };
 
 export type GateCheckEvaluation = {
   enabled: boolean;
   conclusion: GateCheckConclusion;
+  /** Dry-run only (#gate-dryrun): the would-be conclusion (advisory sub-gates promoted to block) used to render the
+   *  merge/close/manual verdict. Absent ⇒ the renderer falls back to `conclusion`. Never affects what is posted. */
+  displayConclusion?: GateCheckConclusion | undefined;
   title: string;
   summary: string;
   blockers: AdvisoryFinding[];
@@ -424,7 +432,36 @@ function buildGuardrailHoldFinding(): AdvisoryFinding {
   };
 }
 
+/** Dry-run disposition (#gate-dryrun): promote every `advisory` sub-gate mode to `block` so the core eval yields the
+ *  would-be conclusion. `off`/`block`/unset modes are untouched; non-mode policy (grace, size HOLD, guardrail) is
+ *  preserved as-is, so the would-be verdict still honours newcomer grace and the manual-review holds. PURE. */
+function promoteAdvisoryToBlock(policy: GateCheckPolicy): GateCheckPolicy {
+  const block = (mode: GateRuleMode | undefined): GateRuleMode | undefined => (mode === "advisory" ? "block" : mode);
+  return {
+    ...policy,
+    dryRun: false,
+    linkedIssueGateMode: block(policy.linkedIssueGateMode),
+    duplicatePrGateMode: block(policy.duplicatePrGateMode),
+    qualityGateMode: block(policy.qualityGateMode),
+    aiReviewGateMode: block(policy.aiReviewGateMode),
+    slopGateMode: block(policy.slopGateMode),
+    mergeReadinessGateMode: block(policy.mergeReadinessGateMode),
+    manifestPolicyGateMode: block(policy.manifestPolicyGateMode),
+    selfAuthoredLinkedIssueGateMode: block(policy.selfAuthoredLinkedIssueGateMode),
+  };
+}
+
+/** Public entry. In normal mode this is exactly `evaluateGateCheckCore`. In dry-run mode (#gate-dryrun) it ALSO runs
+ *  the core eval with advisory sub-gates promoted to block and attaches that as `displayConclusion` — the would-be
+ *  merge/close/manual verdict — while the POSTED `conclusion` stays the real, non-enforcing one. */
 export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
+  const result = evaluateGateCheckCore(advisoryResult, policy);
+  if (!policy.dryRun) return result;
+  const wouldBe = evaluateGateCheckCore(advisoryResult, promoteAdvisoryToBlock(policy));
+  return { ...result, displayConclusion: wouldBe.conclusion };
+}
+
+function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
   const warnings = advisoryResult.findings.filter((finding) => finding.severity === "warning");
   // App/infra state (repo not synced yet, PR not cached): gittensory cannot evaluate this PR yet, so the
   // gate is NEUTRAL (non-blocking) and re-evaluates automatically on the next sync/webhook. Never block a

@@ -36,6 +36,7 @@ export type FocusManifestGateConfig = {
   mergeReadiness: GateRuleMode | null;
   manifestPolicy: GateRuleMode | null;
   selfAuthoredLinkedIssue: GateRuleMode | null;
+  dryRun: boolean | null;
   firstTimeContributorGrace: boolean | null;
 };
 
@@ -249,6 +250,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   mergeReadiness: null,
   manifestPolicy: null,
   selfAuthoredLinkedIssue: null,
+  dryRun: null,
   firstTimeContributorGrace: null,
 };
 
@@ -409,6 +411,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     mergeReadiness: normalizeOptionalGateMode(record.mergeReadiness, "gate.mergeReadiness", warnings),
     manifestPolicy: normalizeOptionalGateMode(record.manifestPolicy, "gate.manifestPolicy", warnings),
     selfAuthoredLinkedIssue: normalizeOptionalGateMode(record.selfAuthoredLinkedIssue, "gate.selfAuthoredLinkedIssue", warnings),
+    dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
   gate.present =
@@ -430,6 +433,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.mergeReadiness !== null ||
     gate.manifestPolicy !== null ||
     gate.selfAuthoredLinkedIssue !== null ||
+    gate.dryRun !== null ||
     gate.firstTimeContributorGrace !== null;
   return gate;
 }
@@ -471,6 +475,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) out.manifestPolicy = gate.manifestPolicy;
   if (gate.selfAuthoredLinkedIssue !== null) out.selfAuthoredLinkedIssue = gate.selfAuthoredLinkedIssue;
+  if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   return out;
 }
@@ -937,6 +942,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
   if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;
+  if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).

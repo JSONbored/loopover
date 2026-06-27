@@ -564,7 +564,7 @@ export type RepositorySettings = {
   aiReviewAllAuthors: boolean;
   /** Minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK under `aiReviewMode: block` (#7).
    *  A dual-model consensus defect / split blocks only when its finding `confidence >= aiReviewCloseConfidence`;
-   *  below-threshold AI defects stay advisory (visible, never block). Config-as-code only — set via
+   *  below-threshold AI defects hold for human review rather than passing. Config-as-code only — set via
    *  `.gittensory.yml gate.aiReview.closeConfidence` (no dashboard/DB column); unset ⇒ the gate uses the 0.9
    *  default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence?: number | null | undefined;

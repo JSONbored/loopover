@@ -3765,13 +3765,13 @@ export async function runAiReviewForAdvisory(
         detail: result.consensusDefect.detail,
         action:
           "Resolve the flagged defect, or override if the AI reviewers are mistaken, then re-run the gate.",
-        // Calibrated confidence (#8): the gate blocks this defect only when it clears aiReviewCloseConfidence.
+        // Calibrated confidence (#8): clears aiReviewCloseConfidence ⇒ block; below it ⇒ human-review hold.
         confidence: result.consensusDefect.confidence,
       });
     } else if (result.split) {
-      // The reviewers DISAGREED — exactly one flagged a blocking defect. reviewbot's quorum: ANY reviewer
-      // rejection closes the PR, so a split is a HARD BLOCKER (advisory.ts gates `ai_review_split` like a
-      // consensus defect → gate failure → close); the contributor resubmits a fresh PR. (#ai-review-split)
+      // The reviewers DISAGREED — exactly one flagged a blocking defect. reviewbot's quorum treats any reviewer
+      // rejection as a configured AI defect; advisory.ts gates `ai_review_split` like a consensus defect, with
+      // the same confidence floor deciding block vs human-review hold. (#ai-review-split)
       findings.push({
         code: "ai_review_split",
         severity: "critical",
@@ -3780,10 +3780,10 @@ export async function runAiReviewForAdvisory(
           "One AI reviewer independently flagged a concrete must-fix defect in this change (the other did not). Under the quorum rule, a single rejection closes the PR; see the review notes for specifics.",
         action:
           "Resolve the flagged defect and open a new pull request, or override if the reviewers are mistaken.",
-        // Calibrated confidence (#8) of the lone flagging reviewer; the gate blocks only when it clears
-        // aiReviewCloseConfidence. A consensus split ALWAYS carries this (combineReviews sets it whenever split is
-        // true), so the spread is effectively unconditional; the guard is a defensive belt-and-braces — an absent
-        // value would degrade to 1.0 in the threshold check (advisory.ts `?? 1`), matching today's always-block.
+        // Calibrated confidence (#8) of the lone flagging reviewer; clears aiReviewCloseConfidence ⇒ block,
+        // below it ⇒ human-review hold. A consensus split ALWAYS carries this (combineReviews sets it whenever
+        // split is true), so the spread is effectively unconditional; the guard is a defensive belt-and-braces —
+        // an absent value degrades to 1.0 in the threshold check (advisory.ts `?? 1`), matching today's always-block.
         /* v8 ignore next 3 -- a split always carries splitConfidence; the absent arm is an unreachable guard. */
         ...(result.splitConfidence !== undefined
           ? { confidence: result.splitConfidence }

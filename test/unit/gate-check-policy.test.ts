@@ -229,23 +229,25 @@ describe("AI close-confidence threshold gate (#7)", () => {
     expect(out.blockers.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
   });
 
-  it("does NOT block when mode=block but confidence < the floor — the AI defect stays advisory (#7)", () => {
+  it("holds for human review when mode=block but confidence < the floor (#7 regression)", () => {
     const out = evaluateGateCheck(aiDefectWith(0.5), gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true));
-    expect(out.conclusion).toBe("success"); // below 0.9 → not a blocker, never closes
+    expect(out.conclusion).toBe("neutral"); // below 0.9 → manual hold, not an auto-mergeable pass
+    expect(out.title).toBe("Gittensory Gate — held for human review");
     expect(out.blockers).toEqual([]);
+    expect(out.warnings.map((f) => f.code)).toContain("ai_consensus_defect");
   });
 
   it("blocks exactly AT the floor (>= boundary) and not just below it", () => {
     // policy.aiReviewCloseConfidence is threaded onto the policy from settings.
     const policy = gateCheckPolicy(settings({ aiReviewMode: "block", aiReviewCloseConfidence: 0.7 }), null, true);
     expect(evaluateGateCheck(aiDefectWith(0.7), policy).conclusion).toBe("failure"); // == threshold → blocks
-    expect(evaluateGateCheck(aiDefectWith(0.69), policy).conclusion).toBe("success"); // just below → advisory
+    expect(evaluateGateCheck(aiDefectWith(0.69), policy).conclusion).toBe("neutral"); // just below → manual hold
   });
 
   it("honors a custom aiReviewCloseConfidence (the `?? 0.9` default is NOT used when set) (#7)", () => {
-    // A high custom floor of 0.99 keeps a 0.95 defect advisory (the 0.9 default would have blocked it).
+    // A high custom floor of 0.99 holds a 0.95 defect for human review (the 0.9 default would have blocked it).
     const strict = gateCheckPolicy(settings({ aiReviewMode: "block", aiReviewCloseConfidence: 0.99 }), null, true);
-    expect(evaluateGateCheck(aiDefectWith(0.95), strict).conclusion).toBe("success");
+    expect(evaluateGateCheck(aiDefectWith(0.95), strict).conclusion).toBe("neutral");
     // A low custom floor of 0.3 blocks a 0.5 defect that the 0.9 default would have left advisory.
     const lenient = gateCheckPolicy(settings({ aiReviewMode: "block", aiReviewCloseConfidence: 0.3 }), null, true);
     expect(evaluateGateCheck(aiDefectWith(0.5), lenient).conclusion).toBe("failure");
@@ -263,7 +265,7 @@ describe("AI close-confidence threshold gate (#7)", () => {
   it("applies the same confidence floor to an ai_review_split finding (#7)", () => {
     const policy = gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true);
     expect(evaluateGateCheck(splitDefectWith(0.95), policy).conclusion).toBe("failure"); // clears 0.9 → blocks
-    expect(evaluateGateCheck(splitDefectWith(0.5), policy).conclusion).toBe("success"); // below 0.9 → advisory
+    expect(evaluateGateCheck(splitDefectWith(0.5), policy).conclusion).toBe("neutral"); // below 0.9 → manual hold
   });
 
   it("resolveEffectiveSettings maps gate.aiReview.closeConfidence (clamped) into the policy floor (#7)", () => {

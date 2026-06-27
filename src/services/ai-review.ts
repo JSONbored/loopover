@@ -221,7 +221,7 @@ export type ModelReview = {
   nits: string[];
   suggestions: string[];
   // Calibrated confidence in [0,1] (#8): the reviewer's own probability that its blocker(s) are a REAL defect. Drives
-  // the gate's `aiReviewCloseConfidence` floor (an AI defect blocks only when confidence clears it). parseModelReview
+  // the gate's `aiReviewCloseConfidence` floor (clear ⇒ block; below ⇒ human-review hold). parseModelReview
   // sets it from the model's `confidence` field; an absent/unparseable/out-of-range value degrades to 1.0 (FALLBACK),
   // so behavior matches the historical hardcoded `confidence: 1` until a calibrated value is actually present.
   confidence: number;

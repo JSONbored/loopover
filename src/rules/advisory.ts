@@ -25,9 +25,9 @@ export type GateCheckPolicy = {
   aiReviewGateMode?: GateRuleMode | undefined;
   /** Minimum calibrated confidence (0-1) for an AI-judgment defect (`ai_consensus_defect` / `ai_review_split`) to
    *  BLOCK under `aiReviewGateMode: block` (#7). The finding blocks only when its `confidence >= this`; below-threshold
-   *  AI defects stay advisory (visible, never block). `null`/undefined ⇒ the 0.9 default. A finding with no
-   *  confidence (deterministic, or a graceful-fallback AI defect) is treated as 1.0 and always clears the floor —
-   *  matching the historical always-block behavior. */
+   *  AI defects hold for human review instead of passing or auto-closing. `null`/undefined ⇒ the 0.9 default. A finding
+   *  with no confidence (deterministic, or a graceful-fallback AI defect) is treated as 1.0 and always clears the floor
+   *  — matching the historical always-block behavior. */
   aiReviewCloseConfidence?: number | null | undefined;
   readinessScore?: number | null | undefined;
   /** When `block`, the deterministic slop score becomes a hard blocker once `slopRisk >= slopGateMinScore`
@@ -487,6 +487,7 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
   const qualityBlocker = buildQualityGateBlocker(effective);
   const slopBlocker = buildSlopGateBlocker(effective);
   const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : []), ...(slopBlocker ? [slopBlocker] : [])];
+  const lowConfidenceAiHolds = advisoryResult.findings.filter((finding) => isLowConfidenceAiReviewHold(finding, effective));
   // Non-confirmed contributors are gated NORMALLY (real blockers → failure → one-shot close; clean → success →
   // merge), the SAME as confirmed contributors: the review + CI + guardrail vet every PR, and confirmed-status
   // affects only on-chain SCORING, never the merge/close decision. (#gate-nonconfirmed) The old blanket
@@ -512,6 +513,16 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     };
   }
   if (blockers.length === 0) {
+    if (lowConfidenceAiHolds.length > 0) {
+      return {
+        enabled: true,
+        conclusion: "neutral",
+        title: "Gittensory Gate — held for human review",
+        summary: "The AI review flagged a possible must-fix defect below the automatic close-confidence floor, so the gate is held for a human reviewer instead of passed automatically.",
+        blockers: [],
+        warnings: [...warnings, ...lowConfidenceAiHolds],
+      };
+    }
     // Fail-CLOSED AI hold (#ai-fail-closed, #audit-3.5): with NO deterministic blocker, a block-mode AI review
     // that could not return a usable verdict HOLDS the gate (neutral) for a human rather than passing
     // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
@@ -830,10 +841,10 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // most conservative AI signal (two independent models) but still confirmed-contributor gated by
   // evaluateGateCheck, and advisory by default.
   // A consensus defect (both reviewers) OR a SPLIT (one reviewer flagged a blocker the other did not) both block
-  // when aiReviewGateMode is `block` AND the finding's CALIBRATED confidence clears the close-confidence floor (#7):
-  // the historical hardcoded `confidence: 1` always blocked, so a below-floor AI defect now stays advisory (visible,
-  // never closes) instead of false-closing. A finding with no confidence (graceful fallback) is treated as 1.0 and
-  // always clears the floor — byte-identical to today's behavior. (#ai-review-split)
+  // when aiReviewGateMode is `block` AND the finding's CALIBRATED confidence clears the close-confidence floor (#7).
+  // Below-floor AI defects are handled as a neutral human-review HOLD in evaluateGateCheckCore: the LLM-provided
+  // confidence must never turn a concrete AI defect into an auto-mergeable passing gate. A finding with no confidence
+  // (graceful fallback) is treated as 1.0 and always clears the floor — byte-identical to today's behavior. (#ai-review-split)
   if (code === "ai_consensus_defect" || code === "ai_review_split") {
     if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
     const confidence = finding.confidence ?? 1;
@@ -859,6 +870,13 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
   if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory") === "block";
   return false;
+}
+
+function isLowConfidenceAiReviewHold(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
+  if (!AI_JUDGMENT_BLOCKER_CODES.has(finding.code)) return false;
+  if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
+  const confidence = finding.confidence ?? 1;
+  return confidence < (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
 }
 
 function buildQualityGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {

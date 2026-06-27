@@ -73,7 +73,7 @@ a live install. (Scripted setups can pass the token via an `x-setup-token` heade
 
 - **Webhook URL** `https://<your-host>/v1/github/webhook`, and a **webhook secret** (→ `GITHUB_WEBHOOK_SECRET`).
 - **Permissions**: Pull requests (read/write), Contents (read; read/write if you want merge), Issues
-  (read/write), Checks (read), Metadata (read). Commit statuses (read).
+  (read/write), Checks (read/write), Metadata (read). Commit statuses (read).
 - **Events**: Pull request, Pull request review, Push, Issues, Check suite, Check run, Status.
 - Generate a **private key** (→ `GITHUB_APP_PRIVATE_KEY`), and note the **App ID** (→ `GITHUB_APP_ID`) and the
   app **slug** (→ `GITHUB_APP_SLUG`). Install the app on the repos you want reviewed.

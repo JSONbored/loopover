@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAiReviewDiff, runAiReviewForAdvisory } from "../../src/queue/processors";
+import { buildAiReviewDiff, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
 import { BEST_REVIEW_MODELS } from "../../src/services/ai-review";
 import { upsertRepositoryAiKey } from "../../src/db/repositories";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { setLocalManifestReader } from "../../src/signals/focus-manifest-loader";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -66,6 +67,42 @@ function aiEnv(run: () => Promise<unknown>, flags = true) {
   });
 }
 
+describe("shouldStartAiReviewForAdvisory", () => {
+  const enabledEnv = () => aiEnv(async () => ({ response: notesOnlyJson() }));
+  const base = { settings: { aiReviewMode: "advisory", gatePack: "gittensor" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", author: "alice", confirmedContributor: true };
+
+  it("matches the AI review entry gates before the reviewing placeholder is posted", async () => {
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), base)).resolves.toBe(true);
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, skipAiReview: true })).resolves.toBe(false);
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, settings: { aiReviewMode: "off" } as RepositorySettings })).resolves.toBe(false);
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, confirmedContributor: false })).resolves.toBe(false);
+    await expect(
+      shouldStartAiReviewForAdvisory(enabledEnv(), {
+        ...base,
+        settings: { aiReviewMode: "advisory", gatePack: "gittensor", aiReviewAllAuthors: true } as RepositorySettings,
+        confirmedContributor: false,
+      }),
+    ).resolves.toBe(true);
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, settings: { aiReviewMode: "block", gatePack: "oss-anti-slop" } as RepositorySettings, confirmedContributor: false })).resolves.toBe(true);
+    const noSha = advisory();
+    delete (noSha as Partial<Advisory>).headSha;
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, advisory: noSha })).resolves.toBe(false);
+  });
+
+  it("does not start when AI comments are disabled or the Workers AI binding is unavailable", async () => {
+    const commentsDisabled = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "false" });
+    await expect(shouldStartAiReviewForAdvisory(commentsDisabled, base)).resolves.toBe(false);
+    const missingBinding = createTestEnv({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
+    await expect(shouldStartAiReviewForAdvisory(missingBinding, base)).resolves.toBe(false);
+  });
+
+  it("does not start when the reputation gate downgrades the PR to deterministic-only", async () => {
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" });
+    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    await expect(shouldStartAiReviewForAdvisory(env, base)).resolves.toBe(false);
+  });
+});
+
 describe("runAiReviewForAdvisory", () => {
   it("no-ops when aiReviewMode is off", async () => {
     const adv = advisory();
@@ -79,6 +116,43 @@ describe("runAiReviewForAdvisory", () => {
     });
     expect(result).toBeUndefined();
     expect(adv.findings).toEqual([]);
+  });
+
+  it("survives a focus-manifest load failure during feature resolution (fail-safe → allowlist default, review still runs)", async () => {
+    // loadRepoFocusManifest REJECTS (localManifestReader throws, outside its try/catch) while RAG is flag-enabled,
+    // so runAiReviewForAdvisory takes the featureManifest-load arm and its `.catch(() => null)` fires; reputation/rag
+    // then fall back to the (empty) allowlist → no RAG build, the review still runs.
+    setLocalManifestReader(() => {
+      throw new Error("manifest read boom");
+    });
+    try {
+      const env = aiEnv(async () => ({ response: defectJson() }));
+      (env as unknown as { GITTENSORY_REVIEW_RAG: string }).GITTENSORY_REVIEW_RAG = "true";
+      const result = await runAiReviewForAdvisory(env, {
+        settings: { aiReviewMode: "block" } as RepositorySettings,
+        advisory: advisory(),
+        repoFullName: "acme/widgets",
+        pr,
+        author: "alice",
+        confirmedContributor: true,
+      });
+      expect(result).toBeDefined();
+    } finally {
+      setLocalManifestReader(null);
+    }
+  });
+
+  it("degrades when the provider throws and records the CONFIGURED reviewer, not the Workers-AI models (#1566)", async () => {
+    // The CLI/provider throwing (e.g. claude-code binary absent → ENOENT) must degrade to no-usable-output, and the
+    // usage event must attribute the ACTUAL configured reviewer — not the hardcoded Workers-AI ids that hid the
+    // silent outage. Exercises runWorkersOpinion's now-logging catch + reviewerModelLabel's provider arm.
+    const env = aiEnv(async () => { throw new Error("claude CLI not found"); });
+    (env as unknown as { AI_PROVIDER: string; AI_MODEL: string }).AI_PROVIDER = "claude-code";
+    (env as unknown as { AI_PROVIDER: string; AI_MODEL: string }).AI_MODEL = "claude-sonnet-4-6";
+    const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
+    expect(result).toBeUndefined(); // provider threw → no usable output, degraded not crashed
+    const usage = await env.DB.prepare("SELECT model FROM ai_usage_events WHERE feature = 'ai_review_pr' ORDER BY created_at DESC LIMIT 1").first<{ model: string }>();
+    expect(usage?.model).toBe("claude-code:claude-sonnet-4-6");
   });
 
   it("no-ops for a non-confirmed contributor under the gittensor pack and when there is no head SHA", async () => {
@@ -102,6 +176,24 @@ describe("runAiReviewForAdvisory", () => {
     });
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
     expect(result?.notes).toContain("Likely crash.");
+  });
+
+  it("runs the review for a non-confirmed contributor when aiReviewAllAuthors is on (per-repo opt-in)", async () => {
+    // The default confirmed-contributor AI-spend gate (line 87 above) returns undefined for an unconfirmed
+    // author; aiReviewAllAuthors flips that to run the review for EVERY author (a self-host operator paying for
+    // their own AI). gittensor pack + advisory mode, so neither packAllowsAnyAuthorBlockingReview nor confirmation
+    // is what lets it through — only the new flag.
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesOnlyJson() })), {
+      settings: { aiReviewMode: "advisory", gatePack: "gittensor", aiReviewAllAuthors: true , closeOwnerAuthors: false} as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: false,
+    });
+    expect(result?.notes).toContain("Add a test.");
+    expect(adv.findings).toEqual([]); // advisory mode: notes only, no blocker
   });
 
   it("appends an ai_consensus_defect finding in block mode when the models agree", async () => {
@@ -134,6 +226,25 @@ describe("runAiReviewForAdvisory", () => {
     });
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
     expect(result?.notes).toBeDefined(); // the single parseable opinion still produces advisory notes
+  });
+
+  it("appends an ai_review_split finding (lone-blocker HOLD) when the two block-mode reviewers disagree", async () => {
+    const adv = advisory();
+    // Both opinions parse, but only the FIRST reviewer names a blocker → consensus needs BOTH → no defect → split
+    // (reviewbot's quorum: a lone rejection holds the PR). The split finding must be both applied to the advisory
+    // AND round-tripped on the returned cache payload so a cache hit can replay this blocker (#ai-review-split).
+    const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? defectJson() : notesOnlyJson() })) as unknown as () => Promise<unknown>;
+    const result = await runAiReviewForAdvisory(aiEnv(run), {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_split"]); // applied to the advisory (gate blocker)
+    expect(result?.findings.map((f) => f.code)).toEqual(["ai_review_split"]); // returned for the AI cache to persist
+    expect(result?.notes).toBeDefined();
   });
 
   it("uses the caller's pre-resolved files (FIX B) instead of the stored read, so the model sees the real diff", async () => {

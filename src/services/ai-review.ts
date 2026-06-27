@@ -22,8 +22,9 @@ import {
   sumAiEstimatedNeuronsSince,
 } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
-import { defangReviewInput, isSafetyEnabled } from "../review/safety";
-import { isConvergenceRepoAllowed } from "../review/cutover-gate";
+import { defangReviewInput } from "../review/safety";
+import { convergedFeatureActive } from "../review/feature-activation";
+import { errorMessage } from "../utils/json";
 import type { ReviewProfile } from "../signals/focus-manifest";
 
 /**
@@ -41,6 +42,9 @@ export const RELIABLE_FALLBACK_MODELS: readonly [string, string] = [
   "@cf/mistralai/mistral-small-3.1-24b-instruct",
 ];
 
+export const INCOHERENT_DIFF_ASSESSMENT =
+  "Cannot review — the diff appears out of sync with the PR head.";
+
 const REVIEW_SYSTEM_PROMPT = [
   "You are a senior open-source maintainer giving a FOCUSED, high-signal code review of a single pull request diff.",
   "Read each meaningful hunk and review like a careful human; judge ONLY the diff and the context provided.",
@@ -54,6 +58,8 @@ const REVIEW_SYSTEM_PROMPT = [
   "DEDUPLICATE — if the same kind of issue recurs across several functions or lines, report it ONCE and note it applies broadly; never repeat a near-identical finding per occurrence.",
   "SEVERITY DISCIPLINE — defensive or speculative hardening ('should handle X', 'consider validating', 'add error handling') is a NIT, not a blocker, UNLESS a real input WILL actually trigger the failure. CI or check status itself (failing, pending, unverified) is NOT a code defect — never list it (the gate evaluates CI separately).",
   "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
+  "TRACE BEFORE ASSERTING ABSENCE — this rule extends to ANY 'X is missing' blocker (a missing schema/annotation/field, a missing null/array/type guard, a missing await/error-handler, an unregistered route/tool/handler): a backfill loop, a default, an early guard, or a registration ELSEWHERE may already supply it. Before calling absence a blocker, find the line in the visible context that WOULD break and reference it; if you cannot SEE the breaking code, downgrade to a nit phrased as a verification ('confirm X is registered/guarded'), never a blocker.",
+  `FAIL CLOSED ON AN INCOHERENT DIFF — if the diff does not cohere with the PR title/description (it appears to describe a DIFFERENT change, the changed-file set looks stale or wrong, or you cannot map it to one coherent change), DO NOT emit a confident assessment or approval: set assessment to exactly '${INCOHERENT_DIFF_ASSESSMENT}' and return empty blockers, nits, and suggestions. Never rubber-stamp a change you cannot actually see.`,
   "Do NOT rubber-stamp: if the diff is genuinely clean, the assessment states specifically why and blockers is [].",
   "Never mention rewards, rankings, payouts, wallets, hotkeys, coldkeys, trust scores, scoreability, reviewability, or farming.",
 ].join(" ");
@@ -152,6 +158,12 @@ export type GittensoryAiReviewInput = {
    * instructions passed the manifest's public-safe filter at parse time).
    */
   pathGuidance?: string | null | undefined;
+  /**
+   * `.gittensory.yml` `review.instructions` (#review-instructions) — a repo-level maintainer brief appended to EVERY
+   * review (vs the per-path pathGuidance). Bounded + public-safe at parse time, so it stays cost-cheap. Absent/null ⇒
+   * the reviewer prompt is byte-identical.
+   */
+  repoInstructions?: string | null | undefined;
   /**
    * `.gittensory.yml` `review.inline_comments` (#inline-comments) — when true (the caller has already ANDed the
    * operator flag + cutover allowlist + the per-repo manifest toggle), the reviewer is asked to ALSO emit an
@@ -381,6 +393,7 @@ export function parseModelReview(text: string): ModelReview | null {
     const nits = toList(obj.nits);
     const suggestions = toList(obj.suggestions);
     const inlineFindings = toInlineFindings(obj.inlineFindings);
+    if (assessment === INCOHERENT_DIFF_ASSESSMENT) return null;
     if (
       !assessment &&
       blockers.length === 0 &&
@@ -452,8 +465,13 @@ function buildSystemPrompt(input: GittensoryAiReviewInput): string {
   // `.gittensory.yml` review.path_instructions (#review-path-instructions): the caller pre-resolved the entries
   // matching this PR's files into a prompt section; empty ⇒ nothing appended (byte-identical).
   const pathSuffix = input.pathGuidance?.trim() ? input.pathGuidance : "";
+  // `.gittensory.yml` review.instructions (#review-instructions): a repo-level maintainer brief appended to every
+  // review; empty ⇒ nothing appended (byte-identical).
+  const repoInstructionsSuffix = input.repoInstructions?.trim()
+    ? ` REPOSITORY REVIEW INSTRUCTIONS (maintainer conventions for this repo — honor them unless they conflict with a real defect): ${input.repoInstructions.trim()}`
+    : "";
   const inlineSuffix = input.inlineFindings ? INLINE_FINDINGS_SUFFIX : "";
-  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${pathSuffix}${inlineSuffix}`;
+  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${pathSuffix}${repoInstructionsSuffix}${inlineSuffix}`;
 }
 
 /** One Workers-AI opinion with a per-slot reliable fallback and a 3× retry on the primary. */
@@ -493,8 +511,19 @@ async function runWorkersOpinion(
         );
         const parsed = parseModelReview(coerceAiText(result));
         if (parsed) return parsed;
-      } catch {
-        /* retry / fall through to fallback */
+      } catch (error) {
+        // Fail-LOUD (#1566): a provider/CLI failure (e.g. the claude-code CLI absent → spawn ENOENT, or an auth/API
+        // error) must be VISIBLE, not silently swallowed into a "no usable output" review. Log every failed attempt;
+        // the loop still falls through to the fallback model so a transient error doesn't abort the whole review.
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "ai_review_provider_attempt_failed",
+            model,
+            attempt,
+            error: errorMessage(error),
+          }),
+        );
       }
     }
   }
@@ -791,13 +820,16 @@ export async function runGittensoryAiReview(
   // prompt-injection payload never reaches the model verbatim. Flag-OFF (default) passes `input` through
   // unchanged → the prompt is byte-identical to today. Only the title/body/diff fed to buildUserPrompt are
   // affected; this NEVER changes the verdict (a redaction is data, not a finding).
-  // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the defang activates for THIS PR's repo only when it
-  // is allowlisted AND the global safety flag is ON. Empty/unset allowlist → `input` passes through unchanged
-  // for every repo (the prompt is byte-identical to today) regardless of GITTENSORY_REVIEW_SAFETY.
-  const promptInput =
-    isSafetyEnabled(env) && isConvergenceRepoAllowed(env, input.repoFullName)
-      ? { ...input, ...defangReviewInput(input) }
-      : input;
+  // Per-repo feature override (phase 2): the defang activates when the global GITTENSORY_REVIEW_SAFETY kill-switch
+  // is ON and the repo's container-private `.gittensory.yml` `features.safety` opts in — falling back to the
+  // GITTENSORY_REVIEW_REPOS allowlist when the manifest says nothing (byte-identical default).
+  const promptInput = (await convergedFeatureActive(
+    env,
+    input.repoFullName,
+    "safety",
+  ))
+    ? { ...input, ...defangReviewInput(input) }
+    : input;
   const user = buildUserPrompt(promptInput);
   // Grounding-discipline SYSTEM suffix (convergence, flag-gated). When the caller supplied grounding, the
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
@@ -973,9 +1005,11 @@ export async function runGittensoryAiReview(
   );
   const advisoryNotes =
     reviewsForNotes.length > 0 ? composeAdvisoryNotes(reviewsForNotes) : null;
-  // Line-anchored inline findings (#inline-comments): empty unless the caller asked for them (the prompt suffix
-  // is conditional) AND the model emitted any. Inert until the posting path (PR B) consumes them.
-  const inlineFindings = composeInlineFindings(reviewsForNotes);
+  // Line-anchored inline findings (#inline-comments): only propagate model output when the resolved feature gate
+  // asked for it. AI output is PR-author-influenced, so the prompt suffix is not an authorization boundary.
+  const inlineFindings = input.inlineFindings
+    ? composeInlineFindings(reviewsForNotes)
+    : [];
 
   await record(
     env,
@@ -1012,6 +1046,15 @@ export async function runGittensoryAiReview(
   };
 }
 
+/** The actual configured reviewer label for usage attribution (#1566): the self-host `AI_PROVIDER:AI_MODEL` when set,
+ *  else the Worker dual-AI models. Without this, self-host claude-code reviews were mis-logged as the Workers-AI model
+ *  ids (`@cf/openai/gpt-oss-120b+…`), which hid the silent claude-CLI-missing outage. */
+function reviewerModelLabel(env: Env): string {
+  const e = env as unknown as { AI_PROVIDER?: string; AI_MODEL?: string };
+  if (!e.AI_PROVIDER) return BEST_REVIEW_MODELS.join("+");
+  return [e.AI_PROVIDER, e.AI_MODEL].filter(Boolean).join(":");
+}
+
 async function record(
   env: Env,
   input: GittensoryAiReviewInput,
@@ -1027,7 +1070,7 @@ async function record(
     route: "github_app.ai_review",
     model: input.providerKey
       ? `byok:${input.providerKey.provider}`
-      : BEST_REVIEW_MODELS.join("+"),
+      : reviewerModelLabel(env),
     status,
     estimatedNeurons,
     detail,

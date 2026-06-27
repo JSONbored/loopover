@@ -6,13 +6,19 @@
 // Serves the Hono app via @hono/node-server, drives the queue with the same processJob, ticks the same
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
+import {
+  createOpenAiCompatibleAi,
+  createSelfHostAi,
+  resolveAiReviewerPlan,
+  resolveRequiredCliProviders,
+} from "./selfhost/ai";
 import {
   cookieValue,
   credentialsToEnv,
@@ -41,9 +47,15 @@ import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
 import { createFsBlobStore } from "./selfhost/blob-store";
-import { makeLocalManifestReader } from "./selfhost/private-config";
+import {
+  makeLocalManifestReader,
+  makeLocalReviewContextReader,
+} from "./selfhost/private-config";
 import { captureError, flushSentry, initSentry } from "./selfhost/sentry";
-import { setLocalManifestReader } from "./signals/focus-manifest-loader";
+import {
+  setLocalManifestReader,
+  setLocalReviewContextReader,
+} from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -220,6 +232,11 @@ async function main(): Promise<void> {
   setLocalManifestReader(
     makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
   );
+  // Per-repo review CONTEXT (#review-skills): the same config dir also holds `<repo>/review/CLAUDE.md` + skills/*.md,
+  // injected into the reviewer prompt so reviews follow each repo's conventions. Unset dir ⇒ null reader ⇒ no change.
+  setLocalReviewContextReader(
+    makeLocalReviewContextReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
+  );
   // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
   // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,
   // review failures) are wired at their sites.
@@ -246,7 +263,25 @@ async function main(): Promise<void> {
   // arrives, by which point env is set).
   let env: Env;
   const consume = async (message: JobMessage): Promise<void> => {
-    await processJob(env, message);
+    try {
+      await processJob(env, message);
+    } catch (error) {
+      // Self-host best-effort jobs (#registry-soft-fail): the periodic gittensor-registry refresh re-runs every cron
+      // tick, so a degraded/unconfigured GITTENSOR_REGISTRY_URL would otherwise retry→dead-letter EVERY cycle and
+      // flood the dead-letter alert. Swallow its failure here (the next scheduled tick is the retry); keep the last
+      // snapshot. The Cloudflare Worker path (src/index.ts) is untouched, so its rate-limit-aware retry is preserved.
+      if (message.type === "refresh-registry") {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "refresh_registry_soft_fail",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return;
+      }
+      throw error;
+    }
   };
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -291,6 +326,41 @@ async function main(): Promise<void> {
         provider: process.env.AI_PROVIDER,
       }),
     );
+  // Fail-LOUD preflight (#1566): a CLI-subscription provider (claude-code/codex) reviews by spawning the CLI as a
+  // subprocess; if the binary is absent (image built without INSTALL_AI_CLIS=true) the spawn ENOENTs and EVERY AI
+  // review silently degrades to "no usable output". Shout at boot so the misconfig is obvious, never invisible.
+  const pathDirs = (process.env.PATH ?? "").split(delimiter);
+  for (const { provider, cli } of resolveRequiredCliProviders(process.env)) {
+    if (pathDirs.some((d) => d && existsSync(join(d, cli)))) continue;
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_ai_cli_missing",
+        provider,
+        cli,
+        message: `AI_PROVIDER=${process.env.AI_PROVIDER} includes ${provider} but '${cli}' is not on PATH — every ${provider} AI review will produce NO output. Rebuild the image with --build-arg INSTALL_AI_CLIS=true (or use the published image) and authenticate the CLI.`,
+      }),
+    );
+  }
+  // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
+  // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of
+  // the review chain — so a Claude/Codex outage never falls reviews back to a weak local model. Unset ⇒ absent ⇒
+  // createReviewAdapters falls back to the review `ai` for embeds (byte-identical to before).
+  const embedAi = process.env.AI_EMBED_BASE_URL
+    ? createOpenAiCompatibleAi({
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
+        embedModel: process.env.AI_EMBED_MODEL,
+      })
+    : undefined;
+  if (embedAi)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_embed_provider",
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        model: process.env.AI_EMBED_MODEL ?? "bge-m3",
+      }),
+    );
   // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
   // below so the review call site uses it. Undefined for a single provider's default review or no AI.
   const aiReviewPlan = resolveAiReviewerPlan(process.env);
@@ -323,12 +393,33 @@ async function main(): Promise<void> {
     const { createRedisCache } = await import("./selfhost/redis-cache");
     rateLimiter = createRedisRateLimiter(redisClient);
     webhookCache = createRedisCache(redisClient);
+    // Persist the installation-token cache in Redis so warm GitHub App tokens survive restarts/deploys and are
+    // shared across replicas (the in-isolate Map otherwise re-mints — an Orb round-trip — per replica/cold start).
+    const { createRedisTokenCache } =
+      await import("./selfhost/redis-token-cache");
+    const { setInstallationTokenStore, setGitHubResponseCache } =
+      await import("./github/app");
+    setInstallationTokenStore(createRedisTokenCache(redisClient));
+    // Short-TTL cache for safe GitHub GET responses (dedups the ~24 reads per review). Default 20s; 0 disables.
+    const ghCacheTtl = Math.max(
+      0,
+      Number(process.env.GITHUB_CACHE_TTL_SECONDS ?? "20"),
+    );
+    if (ghCacheTtl > 0) {
+      const { createRedisResponseCache } =
+        await import("./selfhost/redis-response-cache");
+      setGitHubResponseCache(createRedisResponseCache(redisClient, ghCacheTtl));
+    }
     readinessProbes.push({
       name: "redis",
       check: () => withTimeout(redisClient.ping().then(() => true)),
     });
     console.log(
-      JSON.stringify({ event: "selfhost_rate_limiter", backend: "redis" }),
+      JSON.stringify({
+        event: "selfhost_rate_limiter",
+        backend: "redis",
+        githubResponseCacheTtl: ghCacheTtl,
+      }),
     );
   }
 
@@ -336,7 +427,7 @@ async function main(): Promise<void> {
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
     const qdrantUrl = process.env.QDRANT_URL;
-    const { createQdrantVectorize, initQdrantCollection } =
+    const { createQdrantVectorize, initQdrantCollection, qdrantReadyzUrl } =
       await import("./selfhost/qdrant-vectorize");
     // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
     await retryUntilReady("qdrant", () => initQdrantCollection(qdrantUrl));
@@ -345,7 +436,9 @@ async function main(): Promise<void> {
       name: "qdrant",
       check: () =>
         withTimeout(
-          fetch(qdrantUrl, { signal: AbortSignal.timeout(1500) })
+          fetch(qdrantReadyzUrl(qdrantUrl), {
+            signal: AbortSignal.timeout(1500),
+          })
             .then((r) => r.ok)
             .catch(() => false),
         ),
@@ -361,6 +454,7 @@ async function main(): Promise<void> {
     JOBS: backend.queue.binding,
     WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(embedAi ? { AI_EMBED: embedAi as unknown as Ai } : {}),
     ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
     ...(vectorizeOverride

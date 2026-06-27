@@ -76,4 +76,7 @@ for (let i = 1; i < numbers.length; i += 1) {
 
 const first = String(numbers[0]).padStart(4, "0");
 const last = String(numbers.at(-1)).padStart(4, "0");
-process.stdout.write(`check-migrations: ${files.length} migrations OK — contiguous ${first}..${last} (2 grandfathered duplicates: 0015, 0017), no new duplicates. Next free: ${nextFree()}\n`);
+const grandfatheredNumbers = [...KNOWN_DUPLICATES.keys()]
+  .sort((a, b) => a - b)
+  .map((number) => String(number).padStart(4, "0"));
+process.stdout.write(`check-migrations: ${files.length} migrations OK — contiguous ${first}..${last} (${grandfatheredNumbers.length} grandfathered duplicates: ${grandfatheredNumbers.join(", ")}), no new duplicates. Next free: ${nextFree()}\n`);

@@ -27,15 +27,33 @@ export type FocusManifestGateConfig = {
   slopMode: GateRuleMode | null;
   slopMinScore: number | null;
   slopAiAdvisory: boolean | null;
+  sizeMode: GateRuleMode | null;
   aiReviewMode: GateRuleMode | null;
   aiReviewByok: boolean | null;
   aiReviewProvider: "anthropic" | "openai" | null;
   aiReviewModel: string | null;
+  aiReviewAllAuthors: boolean | null;
   mergeReadiness: GateRuleMode | null;
   manifestPolicy: GateRuleMode | null;
   selfAuthoredLinkedIssue: GateRuleMode | null;
+  dryRun: boolean | null;
   firstTimeContributorGrace: boolean | null;
 };
+
+// The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
+// `.gittensory.yml`. Each feature ALSO has a GLOBAL env flag (GITTENSORY_REVIEW_*) that stays a master
+// kill-switch (the feature never runs when its env flag is off, regardless of this block). See
+// review/feature-activation.ts for the resolver (env kill-switch → per-repo override → env-allowlist default).
+// NOTE: only the per-PR REVIEW features whose every activation site is migrated are listed here. grounding,
+// screenshots, and contentLane stay on the GITTENSORY_REVIEW_REPOS allowlist for now (grounding + contentLane are
+// coupled to the merge/close DISPOSITION path; screenshots' capture path needs dedicated coverage) — a follow-up.
+export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety"] as const;
+export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
+
+/** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
+ *  feature on/off for THIS repo (subject to the env kill-switch); `null` (unset) ⇒ the resolver falls back to the
+ *  `GITTENSORY_REVIEW_REPOS` allowlist default, so an operator who sets nothing keeps today's behavior. */
+export type FocusManifestFeaturesConfig = { present: boolean } & Record<ConvergedFeatureKey, boolean | null>;
 
 /**
  * Generic repository-settings override declared in `.gittensory.yml` under `settings:`. A partial of
@@ -62,6 +80,8 @@ export type FocusManifestSettings = Partial<
     | "aiReviewByok"
     | "aiReviewProvider"
     | "aiReviewModel"
+    | "aiReviewAllAuthors"
+    | "closeOwnerAuthors"
     | "autoLabelEnabled"
     | "gittensorLabel"
     | "createMissingLabel"
@@ -112,6 +132,11 @@ export type FocusManifestReviewConfig = {
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
    *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
+  /** `review.instructions`: a repo-level natural-language brief handed to the AI reviewer on EVERY review (vs the
+   *  per-path path_instructions) — the maintainer's conventions/voice for this repo. Bounded + public-safe at parse
+   *  time (so it stays cost-cheap, unlike ingesting a whole CLAUDE.md). null (default, absent) ⇒ byte-identical
+   *  reviewer prompt. (#review-instructions) */
+  instructions: string | null;
   /** `review.exclude_paths`: globs whose matching files are EXCLUDED from the AI review (diff + grounding + RAG)
    *  — generated/vendored/lockfiles the maintainer doesn't want reviewed. Empty (default) ⇒ every file is
    *  reviewed (byte-identical). Gate/slop/secret-scan are UNAFFECTED — this only narrows the AI review.
@@ -165,6 +190,7 @@ export type FocusManifest = {
   gate: FocusManifestGateConfig;
   settings: FocusManifestSettings;
   review: FocusManifestReviewConfig;
+  features: FocusManifestFeaturesConfig;
   warnings: string[];
 };
 
@@ -215,14 +241,25 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   slopMode: null,
   slopMinScore: null,
   slopAiAdvisory: null,
+  sizeMode: null,
   aiReviewMode: null,
   aiReviewByok: null,
   aiReviewProvider: null,
   aiReviewModel: null,
+  aiReviewAllAuthors: null,
   mergeReadiness: null,
   manifestPolicy: null,
   selfAuthoredLinkedIssue: null,
+  dryRun: null,
   firstTimeContributorGrace: null,
+};
+
+const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
+  present: false,
+  rag: null,
+  reputation: null,
+  unifiedComment: null,
+  safety: null,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -238,7 +275,8 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+  review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+  features: { ...EMPTY_FEATURES_CONFIG },
   warnings: [],
 };
 
@@ -251,7 +289,7 @@ export function isFocusManifestPublicSafe(text: string): boolean {
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {
-  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] } };
+  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] }, features: { ...EMPTY_FEATURES_CONFIG } };
 }
 
 function normalizeStringList(value: JsonValue | undefined, field: string, warnings: string[]): string[] {
@@ -348,6 +386,11 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   if (slop !== undefined && slop !== null && slopRecord === undefined) {
     warnings.push(`Manifest gate field "gate.slop" must be a mapping; ignoring it.`);
   }
+  const size = record.size;
+  const sizeRecord = size !== null && typeof size === "object" && !Array.isArray(size) ? (size as Record<string, JsonValue>) : undefined;
+  if (size !== undefined && size !== null && sizeRecord === undefined) {
+    warnings.push(`Manifest gate field "gate.size" must be a mapping; ignoring it.`);
+  }
   const gate: FocusManifestGateConfig = {
     present: false,
     enabled: normalizeOptionalBoolean(record.enabled, "gate.enabled", warnings),
@@ -359,13 +402,16 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
     slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
     slopAiAdvisory: normalizeOptionalBoolean(slopRecord?.aiAdvisory, "gate.slop.aiAdvisory", warnings),
+    sizeMode: normalizeOptionalGateMode(sizeRecord?.mode, "gate.size.mode", warnings),
     aiReviewMode: normalizeOptionalGateMode(aiReviewRecord?.mode, "gate.aiReview.mode", warnings),
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
+    aiReviewAllAuthors: normalizeOptionalBoolean(aiReviewRecord?.allAuthors, "gate.aiReview.allAuthors", warnings),
     mergeReadiness: normalizeOptionalGateMode(record.mergeReadiness, "gate.mergeReadiness", warnings),
     manifestPolicy: normalizeOptionalGateMode(record.manifestPolicy, "gate.manifestPolicy", warnings),
     selfAuthoredLinkedIssue: normalizeOptionalGateMode(record.selfAuthoredLinkedIssue, "gate.selfAuthoredLinkedIssue", warnings),
+    dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
   gate.present =
@@ -378,13 +424,16 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.slopMode !== null ||
     gate.slopMinScore !== null ||
     gate.slopAiAdvisory !== null ||
+    gate.sizeMode !== null ||
     gate.aiReviewMode !== null ||
     gate.aiReviewByok !== null ||
     gate.aiReviewProvider !== null ||
     gate.aiReviewModel !== null ||
+    gate.aiReviewAllAuthors !== null ||
     gate.mergeReadiness !== null ||
     gate.manifestPolicy !== null ||
     gate.selfAuthoredLinkedIssue !== null ||
+    gate.dryRun !== null ||
     gate.firstTimeContributorGrace !== null;
   return gate;
 }
@@ -406,6 +455,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.readinessMinScore !== null) readiness.minScore = gate.readinessMinScore;
     out.readiness = readiness;
   }
+  if (gate.sizeMode !== null) out.size = { mode: gate.sizeMode };
   if (gate.slopMode !== null || gate.slopMinScore !== null || gate.slopAiAdvisory !== null) {
     const slop: Record<string, JsonValue> = {};
     if (gate.slopMode !== null) slop.mode = gate.slopMode;
@@ -413,18 +463,52 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.slopAiAdvisory !== null) slop.aiAdvisory = gate.slopAiAdvisory;
     out.slop = slop;
   }
-  if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null) {
+  if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null || gate.aiReviewAllAuthors !== null) {
     const aiReview: Record<string, JsonValue> = {};
     if (gate.aiReviewMode !== null) aiReview.mode = gate.aiReviewMode;
     if (gate.aiReviewByok !== null) aiReview.byok = gate.aiReviewByok;
     if (gate.aiReviewProvider !== null) aiReview.provider = gate.aiReviewProvider;
     if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
+    if (gate.aiReviewAllAuthors !== null) aiReview.allAuthors = gate.aiReviewAllAuthors;
     out.aiReview = aiReview;
   }
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) out.manifestPolicy = gate.manifestPolicy;
   if (gate.selfAuthoredLinkedIssue !== null) out.selfAuthoredLinkedIssue = gate.selfAuthoredLinkedIssue;
+  if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
+  return out;
+}
+
+/**
+ * Parse the optional `features:` mapping — per-repo activation overrides for the converged review features.
+ * Each recognized key becomes a tri-state (`true`/`false`/`null`); unknown keys and non-boolean values are
+ * dropped with a warning. `present` is true when at least one key was explicitly set, so an operator can make
+ * the manifest "present" with only a `features:` block.
+ */
+function parseFeaturesConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestFeaturesConfig {
+  const features: FocusManifestFeaturesConfig = { ...EMPTY_FEATURES_CONFIG };
+  if (value === undefined || value === null) return features;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest "features" must be a mapping; ignoring it.');
+    return features;
+  }
+  const record = value as Record<string, JsonValue>;
+  for (const key of CONVERGED_FEATURE_KEYS) {
+    features[key] = normalizeOptionalBoolean(record[key], `features.${key}`, warnings);
+  }
+  features.present = CONVERGED_FEATURE_KEYS.some((key) => features[key] !== null);
+  return features;
+}
+
+/** Serialize a features config back into the parse-compatible `features:` shape so a cached snapshot round-trips
+ *  through {@link parseFeaturesConfig} unchanged. Returns null when nothing is configured. */
+export function featuresConfigToJson(features: FocusManifestFeaturesConfig): JsonValue {
+  if (!features.present) return null;
+  const out: Record<string, JsonValue> = {};
+  for (const key of CONVERGED_FEATURE_KEYS) {
+    if (features[key] !== null) out[key] = features[key];
+  }
   return out;
 }
 
@@ -488,7 +572,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (blacklistLabel !== null) out.blacklistLabel = blacklistLabel;
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
-  for (const key of ["aiReviewByok", "autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled", "agentPaused", "agentDryRun"] as const) {
+  for (const key of ["aiReviewByok", "aiReviewAllAuthors", "closeOwnerAuthors", "autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled", "agentPaused", "agentDryRun"] as const) {
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
   }
@@ -539,7 +623,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -562,6 +646,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const profile = parseReviewProfile(r.profile, warnings);
   const inlineComments = normalizeOptionalBoolean(r.inline_comments, "review.inline_comments", warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
+  const instructions = parsePublicSafeText(r.instructions, "review.instructions", warnings);
   const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
   const preMergeChecks = parseReviewPreMergeChecks(r.pre_merge_checks, warnings);
   return {
@@ -571,6 +656,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       profile !== null ||
       inlineComments !== null ||
       pathInstructions.length > 0 ||
+      instructions !== null ||
       excludePaths.length > 0 ||
       preMergeChecks.length > 0 ||
       Object.keys(fields).length > 0,
@@ -580,6 +666,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     profile,
     inlineComments,
     pathInstructions,
+    instructions,
     excludePaths,
     preMergeChecks,
   };
@@ -724,6 +811,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.note !== null) out.note = review.note;
   if (review.profile !== null) out.profile = review.profile;
   if (review.inlineComments !== null) out.inline_comments = review.inlineComments;
+  if (review.instructions !== null) out.instructions = review.instructions;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
   if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];
   if (review.preMergeChecks.length > 0) {
@@ -759,10 +847,10 @@ export function resolveReviewPathInstructions(pathInstructions: ReviewPathInstru
  *  a possibly-null manifest (null = load failure). A null manifest yields the byte-identical defaults. Centralized
  *  so the AI-review caller threads them in one place with the null-manifest branch covered here (unit-tested)
  *  rather than inline in the processor. (#review-profile / #review-path-instructions / #review-exclude-paths) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; inlineComments: boolean; pathInstructions: ReviewPathInstruction[]; excludePaths: string[] } {
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; inlineComments: boolean; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[] } {
   // inlineComments resolves to a strict boolean — true ONLY when the manifest explicitly set review.inline_comments:
   // true; null/false/absent ⇒ false. The caller ANDs this per-repo toggle with the operator flag + cutover allowlist.
-  return { profile: manifest?.review.profile ?? null, inlineComments: manifest?.review.inlineComments === true, pathInstructions: manifest?.review.pathInstructions ?? [], excludePaths: manifest?.review.excludePaths ?? [] };
+  return { profile: manifest?.review.profile ?? null, inlineComments: manifest?.review.inlineComments === true, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [] };
 }
 
 /** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized
@@ -770,6 +858,54 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
  *  than inline in the processor. (#review-pre-merge-checks) */
 export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): PreMergeCheck[] {
   return manifest?.review.preMergeChecks ?? [];
+}
+
+/** One per-repo review SKILL (#review-skills): a maintainer-maintained rubric module loaded from the container-private
+ *  config dir (`<repo>/review/skills/*.md`). `when` is "always" (repo-wide) or a path glob / brace-list that gates it to
+ *  matching changed files (cost: only relevant skills are injected). */
+export type RepoReviewSkill = { name: string; when: string; body: string };
+/** The per-repo review CONTEXT (#review-skills): an always-on `review/CLAUDE.md` guide + the skill rubric modules. */
+export type RepoReviewContext = { guide: string | null; skills: RepoReviewSkill[] };
+
+/** Hard cap on the injected per-repo review context — a cost guard so a runaway guide/skills set can't bloat every
+ *  prompt. The maintained files are concise by design; this only bites pathological inputs. */
+const MAX_REVIEW_CONTEXT_CHARS = 16_000;
+
+/** True when a skill's `when` applies to this PR: "always"/empty ⇒ yes; otherwise the (possibly brace-listed) glob must
+ *  match at least one changed path. Reuses the manifest path matcher so it behaves exactly like path_instructions. */
+function reviewSkillApplies(when: string, changedPaths: string[]): boolean {
+  const w = when.trim();
+  if (!w || w.toLowerCase() === "always") return true;
+  const patterns = w
+    .replace(/^\{|\}$/g, "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return patterns.some((pat) =>
+    changedPaths.some((path) => matchesManifestPath(path, pat)),
+  );
+}
+
+/** Compose the per-repo review context into a prompt section (#review-skills): the always-on guide + every skill whose
+ *  `when` applies to this PR's changed files. Bounded for cost. Null/empty ⇒ "" (byte-identical reviewer prompt). The
+ *  caller folds the result into the `review.instructions` slot, so it inherits the same prompt wrapper + public-safe
+ *  handling. */
+export function composeRepoReviewContext(
+  context: RepoReviewContext | null,
+  changedPaths: string[],
+): string {
+  if (!context) return "";
+  const parts: string[] = [];
+  if (context.guide?.trim()) parts.push(context.guide.trim());
+  for (const skill of context.skills) {
+    if (reviewSkillApplies(skill.when, changedPaths) && skill.body.trim())
+      parts.push(`## skill: ${skill.name}\n${skill.body.trim()}`);
+  }
+  if (parts.length === 0) return "";
+  const joined = parts.join("\n\n");
+  return joined.length > MAX_REVIEW_CONTEXT_CHARS
+    ? joined.slice(0, MAX_REVIEW_CONTEXT_CHARS)
+    : joined;
 }
 
 /** Filter a PR's changed files down to the set the AI review should see — dropping any whose path matches a
@@ -795,6 +931,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
+  if (gate.sizeMode !== null) effective.sizeGateMode = gate.sizeMode;
   if (gate.slopMode !== null) effective.slopGateMode = gate.slopMode;
   if (gate.slopMinScore !== null) effective.slopGateMinScore = gate.slopMinScore;
   if (gate.slopAiAdvisory !== null) effective.slopAiAdvisory = gate.slopAiAdvisory;
@@ -802,9 +939,11 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
+  if (gate.aiReviewAllAuthors !== null) effective.aiReviewAllAuthors = gate.aiReviewAllAuthors;
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
   if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;
+  if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
@@ -840,6 +979,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     gate: parseGateConfig(record.gate, warnings),
     settings: parseSettingsOverride(record.settings, warnings),
     review: parseReviewConfig(record.review, warnings),
+    features: parseFeaturesConfig(record.features, warnings),
     warnings,
   };
   if (
@@ -853,7 +993,8 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     manifest.issueDiscoveryPolicy === "neutral" &&
     !manifest.gate.present &&
     Object.keys(manifest.settings).length === 0 &&
-    !manifest.review.present
+    !manifest.review.present &&
+    !manifest.features.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;

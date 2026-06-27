@@ -4,6 +4,7 @@
 // new ones (idempotent), mirroring wrangler's migration ledger.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorMessage } from "../utils/json";
 
 export async function runSelfHostMigrations(db: D1Database, dir: string): Promise<number> {
   await db.exec("CREATE TABLE IF NOT EXISTS _selfhost_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -13,7 +14,16 @@ export async function runSelfHostMigrations(db: D1Database, dir: string): Promis
   let count = 0;
   for (const file of files) {
     if (applied.has(file)) continue;
-    await db.exec(readFileSync(join(dir, file), "utf8"));
+    try {
+      await db.exec(readFileSync(join(dir, file), "utf8"));
+    } catch (error) {
+      // Idempotency (#migrate-drift): a renumbered/duplicated migration whose schema change is ALREADY present (e.g. a
+      // column added under an earlier filename by a prior deploy, then renumbered before merge) must not crash-loop the
+      // boot. "duplicate column" / "already exists" means the target schema is satisfied — record the file applied and
+      // continue. Any OTHER error is a real failure and still aborts the boot.
+      if (!/duplicate column|already exists/i.test(errorMessage(error)))
+        throw error;
+    }
     await db.prepare("INSERT INTO _selfhost_migrations (name, applied_at) VALUES (?, ?)").bind(file, new Date().toISOString()).run();
     count += 1;
   }

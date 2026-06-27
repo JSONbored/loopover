@@ -7,6 +7,14 @@ import type { EnrichRequest, InstallScriptFinding } from "../types.js";
 import { extractDependencyChanges } from "./dependency-scan.js";
 
 const INSTALL_HOOKS = ["preinstall", "install", "postinstall"];
+const NPM_PACKAGE_RE =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/;
+const SEMVER_RE =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+function isSafeNpmChange(name: string, version: string): boolean {
+  return NPM_PACKAGE_RE.test(name) && SEMVER_RE.test(version);
+}
 
 /** Analyzer entrypoint: changed npm deps → registry packument → only the versions that run install scripts. */
 export async function scanInstallScripts(
@@ -15,10 +23,13 @@ export async function scanInstallScripts(
 ): Promise<InstallScriptFinding[]> {
   const findings: InstallScriptFinding[] = [];
   for (const change of extractDependencyChanges(req.files ?? [])) {
-    if (change.ecosystem !== "npm") continue;
-    // Scoped packages (@scope/name) encode only the slash in the registry path; the @ stays literal.
+    if (
+      change.ecosystem !== "npm" ||
+      !isSafeNpmChange(change.package, change.to)
+    )
+      continue;
     const response = await fetchImpl(
-      `https://registry.npmjs.org/${change.package.replace("/", "%2F")}`,
+      `https://registry.npmjs.org/${encodeURIComponent(change.package)}`,
     );
     if (!response.ok) continue;
     const data = (await response.json()) as {

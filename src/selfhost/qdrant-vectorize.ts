@@ -48,6 +48,11 @@ function qdrantHeaders(): Record<string, string> {
   return h;
 }
 
+/** Build the unauthenticated Kubernetes-style readiness endpoint for a configured Qdrant base URL. */
+export function qdrantReadyzUrl(url: string): string {
+  return `${url.replace(/\/+$/, "")}/readyz`;
+}
+
 /**
  * Ensures the Qdrant collection exists. Safe to call on every startup — a 409 (already exists)
  * is silently ignored. Call this before createQdrantVectorize() when QDRANT_URL is set.

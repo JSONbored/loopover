@@ -50,6 +50,20 @@ export function resolveEffort(configured: string | undefined): string {
   return VALID_EFFORTS.has(level) ? level : "high";
 }
 
+// Per-effort subprocess timeout (ms) for the subscription CLIs. A higher effort legitimately runs longer, so the
+// old fixed 120s cap silently SIGKILLed a large max-effort review mid-generation (the review then degrades to
+// nothing). These scale the ceiling with the effort dial; AI_TIMEOUT_MS overrides them outright.
+const EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 120_000, high: 240_000, xhigh: 360_000, max: 600_000 };
+
+/** Resolve the subscription-CLI subprocess timeout (ms). An explicit `AI_TIMEOUT_MS` wins, clamped to a sane
+ *  30s–30min range so a typo can neither hang a worker nor cut a review off after a few seconds. Absent/invalid ⇒
+ *  it scales with the `AI_EFFORT` dial (resolveEffort always yields a known level, so the map lookup is total). */
+export function resolveCliTimeoutMs(env: Record<string, string | undefined>): number {
+  const raw = Number(env.AI_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(1_800_000, Math.max(30_000, raw));
+  return EFFORT_TIMEOUT_MS[resolveEffort(env.AI_EFFORT)]!;
+}
+
 /** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
 export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: string | undefined; model?: string | undefined; embedModel?: string | undefined }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
@@ -114,15 +128,50 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
 }
 
 // ── Subscription CLI providers (#979) — locally-authenticated `claude` / `codex` as a subprocess ──────────
-// SECURITY: the child env DELETES the billable API keys so a misconfigured CLI cannot silently bill the
-// metered API instead of using the subscription OAuth token. The CLI runs read-only / no extra tools. Any
-// non-zero exit / empty output / error-envelope THROWS so the caller degrades — never a silent answer.
-const BILLABLE_KEY_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"] as const;
+// SECURITY: subscription CLIs get a strict allowlisted env, not the worker env. This keeps runtime
+// credentials out of prompt-injectable subprocesses while preserving CLI auth/home/proxy/cert settings. The CLI
+// runs read-only / no extra tools, and non-zero exit / empty output / error-envelope THROWS so the caller degrades.
+const SUBSCRIPTION_CLI_ENV_ALLOWLIST = [
+  "CODEX_HOME",
+  "HOME",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "LANG",
+  "LC_ALL",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_PROXY",
+  "PATH",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "TERM",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+] as const;
 
-function scrubBillableKeys(parent: Record<string, string | undefined>): Record<string, string | undefined> {
-  const child = { ...parent };
-  for (const k of BILLABLE_KEY_VARS) delete child[k];
+export function subscriptionCliEnv(
+  parent: Record<string, string | undefined>,
+  extra: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  const child: Record<string, string | undefined> = {};
+  for (const key of SUBSCRIPTION_CLI_ENV_ALLOWLIST) {
+    const value = parent[key];
+    if (value !== undefined) child[key] = value;
+  }
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) child[key] = value;
+  }
   return child;
+}
+
+async function isolatedCliCwd(): Promise<string> {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  return mkdtemp(join(tmpdir(), "gittensory-ai-"));
 }
 
 /** Pull the assistant's final text out of a CLI's JSON output (Claude Code `{result}` or Codex JSONL). */
@@ -163,14 +212,18 @@ export function claudeErrorStatus(stdout: string): string | null {
   return null;
 }
 
-type SpawnFn = (cmd: string, args: string[], opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number }) => Promise<{ stdout: string; code: number | null }>;
+type SpawnFn = (
+  cmd: string,
+  args: string[],
+  opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number; cwd?: string },
+) => Promise<{ stdout: string; code: number | null }>;
 
 async function defaultSpawn(): Promise<SpawnFn> {
   const cp = await import("node:child_process");
   return (cmd, args, o) =>
     new Promise((resolve, reject) => {
       const stdio: ["pipe", "pipe", "pipe"] = ["pipe", "pipe", "pipe"];
-      const child = cp.spawn(cmd, args, { env: o.env as NodeJS.ProcessEnv, stdio });
+      const child = cp.spawn(cmd, args, { cwd: o.cwd, env: o.env as NodeJS.ProcessEnv, stdio });
       let stdout = "";
       /* v8 ignore start */ // a 120s subprocess timeout is not unit-testable without a 2-minute wait
       const timer = setTimeout(() => {
@@ -198,15 +251,22 @@ async function defaultSpawn(): Promise<SpawnFn> {
 export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
+      // Claude has no embeddings model (CLI or API), so REJECT an embed request and let the provider chain fall
+      // through to an embed-capable provider (ollama/openai-compatible). Without this throw the chain would treat
+      // claude's empty-prompt text answer as "success" and never reach the embed provider → RAG silently breaks.
+      if (options.text) throw new Error("claude_code_no_embed");
       const token = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
       if (!token) throw new Error("claude_code_no_oauth_token");
-      const env = scrubBillableKeys(parentEnv);
-      env.CLAUDE_CODE_OAUTH_TOKEN = token;
+      const env = subscriptionCliEnv(parentEnv, { CLAUDE_CODE_OAUTH_TOKEN: token });
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
       const claudeModel = resolveModel(configuredModel(parentEnv), model, "claude-sonnet-4-6");
       const effort = resolveEffort(parentEnv.AI_EFFORT);
-      const { stdout, code } = await spawn("claude", ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"], { env, input: prompt, timeoutMs: 120_000 });
+      const { stdout, code } = await spawn(
+        "claude",
+        ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"],
+        { env, input: prompt, timeoutMs: resolveCliTimeoutMs(parentEnv), cwd: await isolatedCliCwd() },
+      );
       if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}`);
       const errStatus = claudeErrorStatus(stdout);
       if (errStatus) throw new Error(`claude_code_error_${errStatus}`);
@@ -223,7 +283,9 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
 export function createCodexAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
-      const env = scrubBillableKeys(parentEnv);
+      // Codex is chat-only here — reject embed requests so the chain routes them to an embed-capable provider.
+      if (options.text) throw new Error("codex_no_embed");
+      const env = subscriptionCliEnv(parentEnv);
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
       // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).
@@ -234,7 +296,11 @@ export function createCodexAi(parentEnv: Record<string, string | undefined>, spa
       const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
       if (codexModel) args.push("--model", codexModel);
       args.push("--", prompt);
-      const { stdout, code } = await spawn("codex", args, { env, timeoutMs: 120_000 });
+      const { stdout, code } = await spawn("codex", args, {
+        env,
+        timeoutMs: resolveCliTimeoutMs(parentEnv),
+        cwd: await isolatedCliCwd(),
+      });
       if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}`);
       const text = extractCliText(stdout);
       if (!text) throw new Error("codex_empty_output");
@@ -326,6 +392,20 @@ function buildProviders(env: Record<string, string | undefined>): Array<{ name: 
 /** The credentialed self-host provider names from AI_PROVIDER, in order. Empty when unconfigured. */
 export function resolveProviderNames(env: Record<string, string | undefined>): string[] {
   return buildProviders(env).map((p) => p.name);
+}
+
+/** CLI-subscription providers need their binary present on PATH; keep boot preflight parsing identical to AI_PROVIDER. */
+export function resolveRequiredCliProviders(env: Record<string, string | undefined>): Array<{ provider: string; cli: string }> {
+  const seen = new Set<string>();
+  return resolveProviderNames(env)
+    .map((provider) =>
+      provider === "claude-code" ? { provider, cli: "claude" } : provider === "codex" ? { provider, cli: "codex" } : undefined,
+    )
+    .filter((required): required is { provider: string; cli: string } => {
+      if (!required || seen.has(required.provider)) return false;
+      seen.add(required.provider);
+      return true;
+    });
 }
 
 /** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list of TWO+ providers is addressable

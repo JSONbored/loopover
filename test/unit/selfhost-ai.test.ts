@@ -206,6 +206,20 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
     const ai = createSelfHostAi({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant", AI_BASE_URL: "http://o/v1" });
     expect(typeof ai?.run).toBe("function");
   });
+
+  it("createSelfHostAi routes a SINGLE provider through the router too — a name address yields the provider default, never `--model <provider>` (#1610)", async () => {
+    // Regression (#1610): a single-provider self-host returned env.AI as the BARE provider, so the reviewer plan's
+    // name address ({ model: "openai-compatible" } — or "claude-code") reached it as a model id. `claude --model
+    // claude-code` 404'd and broke EVERY review. The router must strip the name to the provider's own default.
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = (JSON.parse(init.body) as { model: string }).model;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    const ai = createSelfHostAi({ AI_PROVIDER: "openai-compatible", AI_BASE_URL: "http://o/v1" });
+    await ai?.run("openai-compatible", { prompt: "x" }); // the single-provider reviewer-plan address IS the provider name
+    expect(sentModel).toBe("llama3.1"); // resolveModel(undefined, "", "llama3.1") — NOT the literal "openai-compatible"
+  });
 });
 
 describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () => {

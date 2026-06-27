@@ -436,13 +436,16 @@ export function resolveRequiredCliProviders(env: Record<string, string | undefin
     });
 }
 
-/** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list of TWO+ providers is addressable
- *  by name for dual review (see `routeProviders`) and otherwise falls back through them in order; a single
- *  provider is used directly. Returns undefined when unconfigured or no provider has its credential. */
+/** Select the self-host AI provider(s) from AI_PROVIDER and wrap them in the name-aware router. A comma-separated
+ *  list of TWO+ providers is addressable by name for dual review (see `routeProviders`) and otherwise falls back
+ *  through them in order; a SINGLE provider is wrapped the same way — NOT returned bare — so a reviewer-plan address
+ *  that names the provider (`{ model: "claude-code" }`, the single-provider plan from `resolveAiReviewerPlan`)
+ *  resolves to that provider's own default model instead of reaching it verbatim as `claude --model claude-code`
+ *  (a 404 that broke every review on a single-provider self-host, #1610). Returns undefined when unconfigured or no
+ *  provider has its credential. */
 export function createSelfHostAi(env: Record<string, string | undefined>): SelfHostAi | undefined {
   const providers = buildProviders(env);
   if (providers.length === 0) return undefined;
-  if (providers.length === 1) return providers[0]?.ai;
   return routeProviders(providers);
 }
 

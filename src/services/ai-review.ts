@@ -42,6 +42,9 @@ export const RELIABLE_FALLBACK_MODELS: readonly [string, string] = [
   "@cf/mistralai/mistral-small-3.1-24b-instruct",
 ];
 
+export const INCOHERENT_DIFF_ASSESSMENT =
+  "Cannot review — the diff appears out of sync with the PR head.";
+
 const REVIEW_SYSTEM_PROMPT = [
   "You are a senior open-source maintainer giving a FOCUSED, high-signal code review of a single pull request diff.",
   "Read each meaningful hunk and review like a careful human; judge ONLY the diff and the context provided.",
@@ -56,7 +59,7 @@ const REVIEW_SYSTEM_PROMPT = [
   "SEVERITY DISCIPLINE — defensive or speculative hardening ('should handle X', 'consider validating', 'add error handling') is a NIT, not a blocker, UNLESS a real input WILL actually trigger the failure. CI or check status itself (failing, pending, unverified) is NOT a code defect — never list it (the gate evaluates CI separately).",
   "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
   "TRACE BEFORE ASSERTING ABSENCE — this rule extends to ANY 'X is missing' blocker (a missing schema/annotation/field, a missing null/array/type guard, a missing await/error-handler, an unregistered route/tool/handler): a backfill loop, a default, an early guard, or a registration ELSEWHERE may already supply it. Before calling absence a blocker, find the line in the visible context that WOULD break and reference it; if you cannot SEE the breaking code, downgrade to a nit phrased as a verification ('confirm X is registered/guarded'), never a blocker.",
-  "FAIL CLOSED ON AN INCOHERENT DIFF — if the diff does not cohere with the PR title/description (it appears to describe a DIFFERENT change, the changed-file set looks stale or wrong, or you cannot map it to one coherent change), DO NOT emit a confident assessment or approval: set assessment to exactly 'Cannot review — the diff appears out of sync with the PR head.' and return empty blockers, nits, and suggestions. Never rubber-stamp a change you cannot actually see.",
+  `FAIL CLOSED ON AN INCOHERENT DIFF — if the diff does not cohere with the PR title/description (it appears to describe a DIFFERENT change, the changed-file set looks stale or wrong, or you cannot map it to one coherent change), DO NOT emit a confident assessment or approval: set assessment to exactly '${INCOHERENT_DIFF_ASSESSMENT}' and return empty blockers, nits, and suggestions. Never rubber-stamp a change you cannot actually see.`,
   "Do NOT rubber-stamp: if the diff is genuinely clean, the assessment states specifically why and blockers is [].",
   "Never mention rewards, rankings, payouts, wallets, hotkeys, coldkeys, trust scores, scoreability, reviewability, or farming.",
 ].join(" ");
@@ -384,6 +387,7 @@ export function parseModelReview(text: string): ModelReview | null {
     const nits = toList(obj.nits);
     const suggestions = toList(obj.suggestions);
     const inlineFindings = toInlineFindings(obj.inlineFindings);
+    if (assessment === INCOHERENT_DIFF_ASSESSMENT) return null;
     if (
       !assessment &&
       blockers.length === 0 &&

@@ -824,6 +824,29 @@ describe("pure helpers", () => {
     expect(parsed?.blockers).toContain("Null deref in src/a.ts");
   });
 
+  it("parseModelReview treats the incoherent-diff sentinel as unparseable so block mode holds fail-closed", () => {
+    const sentinel =
+      "Cannot review — the diff appears out of sync with the PR head.";
+
+    const parsed = parseModelReview(
+      JSON.stringify({
+        assessment: sentinel,
+        blockers: [],
+        nits: [],
+        suggestions: [],
+      }),
+    );
+
+    expect(parsed).toBeNull();
+    expect(combineReviews([parsed, parsed], { strategy: "consensus" })).toEqual(
+      {
+        defect: null,
+        split: false,
+        inconclusive: true,
+      },
+    );
+  });
+
   it("parseModelReview coerces non-string/non-array fields to safe defaults", () => {
     const parsed = parseModelReview(
       '{"assessment":"ok","suggestions":"not-an-array","blockers":7,"nits":null}',

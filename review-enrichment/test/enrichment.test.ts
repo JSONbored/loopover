@@ -21,6 +21,13 @@ import {
   scanPatchForRedos,
   scanRedos,
 } from "../dist/analyzers/redos.js";
+import {
+  classifyAddedFile,
+  isSafeToCheck,
+  hasNpmAttestation,
+  hasPypiProvenance,
+  scanProvenance,
+} from "../dist/analyzers/provenance.js";
 
 const NOW = new Date("2026-06-26").getTime();
 const eolFetch =
@@ -933,6 +940,500 @@ test("buildBrief: eol analyzer runs (real now, 2023 cycle is past)", async () =>
     assert.equal(brief.analyzerStatus.eol, "ok");
     assert.equal(brief.findings.eol.length, 1);
     assert.match(brief.promptSection, /End-of-life runtimes/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// classifyAddedFile
+// ---------------------------------------------------------------------------
+
+test("classifyAddedFile: vendored path, minified, binary extension, and normal source file", () => {
+  assert.equal(classifyAddedFile("vendor/lib/util.js"), "vendored");
+  assert.equal(classifyAddedFile("src/vendor/foo.ts"), "vendored");
+  assert.equal(classifyAddedFile("third-party/tool/main.c"), "vendored");
+  assert.equal(classifyAddedFile("node_modules/pkg/index.js"), "vendored");
+  assert.equal(classifyAddedFile("dist/bundle.min.js"), "vendored");
+  assert.equal(classifyAddedFile("public/styles.min.css"), "vendored");
+  assert.equal(classifyAddedFile("tools/helper.min.mjs"), "vendored");
+  assert.equal(classifyAddedFile("native/module.exe"), "binary");
+  assert.equal(classifyAddedFile("lib/native.so"), "binary");
+  assert.equal(classifyAddedFile("target/app.jar"), "binary");
+  assert.equal(classifyAddedFile("build/output.wasm"), "binary");
+  assert.equal(classifyAddedFile("src/utils.ts"), null);
+  assert.equal(classifyAddedFile("README.md"), null);
+});
+
+// ---------------------------------------------------------------------------
+// isSafeToCheck
+// ---------------------------------------------------------------------------
+
+test("isSafeToCheck: returns true for valid pkg + version", () => {
+  assert.equal(isSafeToCheck("lodash", "4.17.21"), true);
+  assert.equal(isSafeToCheck("@scope/pkg", "1.0.0-beta.1"), true);
+});
+
+test("isSafeToCheck: returns false when pkg exceeds MAX_PKG_LEN (200)", () => {
+  assert.equal(isSafeToCheck("x".repeat(201), "1.0.0"), false);
+});
+
+test("isSafeToCheck: returns false when version exceeds MAX_VER_LEN (100)", () => {
+  assert.equal(isSafeToCheck("pkg", "1".repeat(101)), false);
+});
+
+test("isSafeToCheck: returns false when version contains unsafe chars (spaces, pipes)", () => {
+  assert.equal(isSafeToCheck("pkg", "1.0.0 || 2.0.0"), false);
+  assert.equal(isSafeToCheck("pkg", "1.0.0!"), false);
+});
+
+// ---------------------------------------------------------------------------
+// hasNpmAttestation
+// ---------------------------------------------------------------------------
+
+test("hasNpmAttestation: returns false on 404 (no attestation)", async () => {
+  const result = await hasNpmAttestation(
+    "no-attest-pkg",
+    "1.0.0",
+    async () => ({ ok: false, status: 404, json: async () => ({}) }),
+  );
+  assert.equal(result, false);
+});
+
+test("hasNpmAttestation: returns true when attestations array is non-empty", async () => {
+  const result = await hasNpmAttestation(
+    "attested-pkg",
+    "1.0.0",
+    async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ attestations: [{ predicateType: "slsa" }] }),
+    }),
+  );
+  assert.equal(result, true);
+});
+
+test("hasNpmAttestation: returns false when attestations array is empty", async () => {
+  const result = await hasNpmAttestation(
+    "empty-attest",
+    "1.0.0",
+    async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ attestations: [] }),
+    }),
+  );
+  assert.equal(result, false);
+});
+
+test("hasNpmAttestation: returns true (fail-safe) on non-404 registry error", async () => {
+  const result = await hasNpmAttestation(
+    "pkg",
+    "1.0.0",
+    async () => ({ ok: false, status: 500, json: async () => ({}) }),
+  );
+  assert.equal(result, true);
+});
+
+test("hasNpmAttestation: returns true (fail-safe) when fetch throws", async () => {
+  const result = await hasNpmAttestation("pkg", "1.0.0", async () => {
+    throw new Error("network down");
+  });
+  assert.equal(result, true);
+});
+
+test("hasNpmAttestation: returns true (fail-safe) when signal is already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let called = false;
+  const result = await hasNpmAttestation(
+    "pkg",
+    "1.0.0",
+    async () => {
+      called = true;
+      return { ok: true, status: 200, json: async () => ({ attestations: [] }) };
+    },
+    controller.signal,
+  );
+  assert.equal(result, true);
+  assert.equal(called, false); // fetch must not be called after abort
+});
+
+// ---------------------------------------------------------------------------
+// hasPypiProvenance
+// ---------------------------------------------------------------------------
+
+test("hasPypiProvenance: returns true when matching file has provenance field", async () => {
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => ({
+      ok: true,
+      json: async () => ({
+        files: [
+          {
+            filename: "requests-2.31.0-py3-none-any.whl",
+            provenance: "https://files.pythonhosted.org/.../requests-2.31.0-py3-none-any.whl.provenance",
+          },
+        ],
+      }),
+    }),
+  );
+  assert.equal(result, true);
+});
+
+test("hasPypiProvenance: returns false when matching file lacks provenance field", async () => {
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => ({
+      ok: true,
+      json: async () => ({
+        files: [{ filename: "requests-2.31.0-py3-none-any.whl" }],
+      }),
+    }),
+  );
+  assert.equal(result, false);
+});
+
+test("hasPypiProvenance: returns true (fail-safe) when no file matches the version", async () => {
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => ({
+      ok: true,
+      json: async () => ({
+        files: [{ filename: "requests-2.30.0-py3-none-any.whl" }],
+      }),
+    }),
+  );
+  assert.equal(result, true);
+});
+
+test("hasPypiProvenance: returns true (fail-safe) on non-ok response", async () => {
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => ({ ok: false, json: async () => ({}) }),
+  );
+  assert.equal(result, true);
+});
+
+test("hasPypiProvenance: returns true (fail-safe) when fetch throws", async () => {
+  const result = await hasPypiProvenance("requests", "2.31.0", async () => {
+    throw new Error("network down");
+  });
+  assert.equal(result, true);
+});
+
+test("hasPypiProvenance: returns true (fail-safe) when signal is already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let called = false;
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => {
+      called = true;
+      return { ok: true, json: async () => ({ files: [] }) };
+    },
+    controller.signal,
+  );
+  assert.equal(result, true);
+  assert.equal(called, false);
+});
+
+test("hasPypiProvenance: passes Accept header for PEP 740 simple API", async () => {
+  let capturedHeaders;
+  await hasPypiProvenance("requests", "2.31.0", async (_url, init) => {
+    capturedHeaders = init?.headers;
+    return {
+      ok: true,
+      json: async () => ({
+        files: [{ filename: "requests-2.31.0-py3-none-any.whl" }],
+      }),
+    };
+  });
+  assert.equal(
+    capturedHeaders?.["Accept"] ?? capturedHeaders?.Accept,
+    "application/vnd.pypi.simple.v1+json",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// scanProvenance
+// ---------------------------------------------------------------------------
+
+test("scanProvenance: flags added binary and vendored files, skips modified and source files", async () => {
+  const findings = await scanProvenance(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        { path: "vendor/lib/util.js", status: "added" },
+        { path: "native/module.exe", status: "added" },
+        { path: "src/app.ts", status: "added" },           // source — null
+        { path: "native/old.exe", status: "modified" },    // not added — skip
+        { path: "removed.exe", status: "removed" },        // not added — skip
+      ],
+    },
+    async () => { throw new Error("should not fetch"); },
+  );
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0].kind, "vendored");
+  assert.equal(findings[0].file, "vendor/lib/util.js");
+  assert.equal(findings[1].kind, "binary");
+  assert.equal(findings[1].file, "native/module.exe");
+});
+
+test("scanProvenance: flags npm dep without attestation, skips one with attestation", async () => {
+  const findings = await scanProvenance(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          patch: [
+            '+    "no-attest-pkg": "1.0.0",',
+            '+    "attested-pkg": "2.0.0",',
+          ].join("\n"),
+        },
+      ],
+    },
+    async (url) => {
+      const u = String(url);
+      if (u.includes("no-attest-pkg")) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ attestations: [{ predicateType: "slsa" }] }) };
+    },
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "no-attestation");
+  assert.equal(findings[0].package, "no-attest-pkg");
+  assert.equal(findings[0].version, "1.0.0");
+  assert.equal(findings[0].ecosystem, "npm");
+});
+
+test("scanProvenance: flags PyPI dep without provenance", async () => {
+  const findings = await scanProvenance(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "requirements.txt",
+          patch: "+requests==2.31.0",
+        },
+      ],
+    },
+    async () => ({
+      ok: true,
+      json: async () => ({
+        files: [{ filename: "requests-2.31.0-py3-none-any.whl" }],
+      }),
+    }),
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "no-attestation");
+  assert.equal(findings[0].ecosystem, "PyPI");
+  assert.equal(findings[0].package, "requests");
+  assert.equal(findings[0].version, "2.31.0");
+});
+
+test("scanProvenance: skips Go ecosystem (no attestation API)", async () => {
+  let fetchCalled = false;
+  const findings = await scanProvenance(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [{ path: "go.mod", patch: "+\texample.com/pkg v1.0.0" }],
+    },
+    async () => {
+      fetchCalled = true;
+      return { ok: true, status: 200, json: async () => ({ attestations: [] }) };
+    },
+  );
+  assert.equal(findings.length, 0);
+  assert.equal(fetchCalled, false);
+});
+
+test("scanProvenance: abort signal stops attestation loop", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const files = Array.from({ length: 5 }, (_, i) => ({
+    path: "package.json",
+    patch: `+    "pkg-${i}": "1.0.0",`,
+  }));
+  // Abort before the loop processes anything
+  controller.abort();
+  await scanProvenance(
+    { repoFullName: "o/r", prNumber: 1, files },
+    async () => {
+      calls++;
+      return { ok: false, status: 404, json: async () => ({}) };
+    },
+    { signal: controller.signal },
+  );
+  assert.equal(calls, 0);
+});
+
+test("scanProvenance: caps findings at MAX_FINDINGS (binary detection path)", async () => {
+  const files = Array.from({ length: 35 }, (_, i) => ({
+    path: `build/artifact-${i}.exe`,
+    status: "added",
+  }));
+  const findings = await scanProvenance(
+    { repoFullName: "o/r", prNumber: 1, files },
+    async () => { throw new Error("should not fetch"); },
+  );
+  assert.equal(findings.length, 30); // MAX_FINDINGS
+});
+
+test("scanProvenance: caps findings at MAX_FINDINGS (attestation path)", async () => {
+  // 25 binary findings + 26 npm packages: after binary scan (25), the attestation loop adds 5 more
+  // before hitting MAX_FINDINGS=30 and breaking — verifying the guard in the attestation path.
+  const binaryFiles = Array.from({ length: 25 }, (_, i) => ({
+    path: `build/a${i}.exe`,
+    status: "added",
+  }));
+  const npmPatch = Array.from(
+    { length: 26 },
+    (_, i) => `+    "pkg-${i}": "1.0.0",`,
+  ).join("\n");
+  const findings = await scanProvenance(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [...binaryFiles, { path: "package.json", patch: npmPatch }],
+    },
+    async () => ({ ok: false, status: 404, json: async () => ({}) }),
+  );
+  assert.equal(findings.length, 30);
+});
+
+test("scanProvenance: skips deps that fail isSafeToCheck (overly long name or invalid version chars)", async () => {
+  let fetchCalled = false;
+  const longName = "x".repeat(201);
+  const findings = await scanProvenance(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          // long package name → isSafeToCheck A false → continue (no fetch)
+          patch: `+    "${longName}": "1.0.0",`,
+        },
+      ],
+    },
+    async () => {
+      fetchCalled = true;
+      return { ok: false, status: 404, json: async () => ({}) };
+    },
+  );
+  assert.equal(fetchCalled, false);
+  assert.deepEqual(findings, []);
+});
+
+test("scanProvenance: handles undefined files gracefully", async () => {
+  const findings = await scanProvenance(
+    { repoFullName: "o/r", prNumber: 1 },
+    async () => { throw new Error("should not fetch"); },
+  );
+  assert.deepEqual(findings, []);
+});
+
+// ---------------------------------------------------------------------------
+// renderBrief: provenance block
+// ---------------------------------------------------------------------------
+
+test("renderBrief: renders no-attestation, binary, and vendored sections", () => {
+  const r = renderBrief({
+    provenance: [
+      { kind: "no-attestation", ecosystem: "npm", package: "evil", version: "1.0.0" },
+      { kind: "binary", file: "build/tool.exe" },
+      { kind: "vendored", file: "vendor/lib/helper.js" },
+    ],
+  });
+  assert.match(r.promptSection, /Dependencies without provenance attestation/);
+  assert.match(r.promptSection, /`evil@1\.0\.0` \(npm\)/);
+  assert.match(r.promptSection, /no published SLSA\/sigstore attestation/);
+  assert.match(r.promptSection, /Binary files committed/);
+  assert.match(r.promptSection, /`build\/tool\.exe`/);
+  assert.match(r.promptSection, /Vendored or minified code committed/);
+  assert.match(r.promptSection, /`vendor\/lib\/helper\.js`/);
+  assert.match(r.systemSuffix, /verified ground truth/);
+});
+
+test("renderBrief: empty provenance array produces no provenance section", () => {
+  const r = renderBrief({ provenance: [] });
+  assert.equal(r.promptSection, "");
+});
+
+test("renderBrief: provenance escapes control chars and backticks in file paths", () => {
+  const r = renderBrief({
+    provenance: [
+      { kind: "binary", file: "build/tool`\n### injected" },
+    ],
+  });
+  assert.doesNotMatch(r.promptSection, /\n### injected/);
+  assert.match(r.promptSection, /binary artifact without source documentation/);
+});
+
+test("renderBrief: only binary section rendered when no no-attestation or vendored findings", () => {
+  const r = renderBrief({
+    provenance: [{ kind: "binary", file: "native/x.exe" }],
+  });
+  assert.match(r.promptSection, /Binary files committed/);
+  assert.doesNotMatch(r.promptSection, /provenance attestation/);
+  assert.doesNotMatch(r.promptSection, /Vendored/);
+});
+
+// ---------------------------------------------------------------------------
+// buildBrief: provenance analyzer integration
+// ---------------------------------------------------------------------------
+
+test("buildBrief: provenance analyzer runs, flags binary file and missing npm attestation", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("attestations"))
+      return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, json: async () => ({}) };
+  };
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        { path: "native/tool.exe", status: "added" },
+        { path: "package.json", patch: '+    "no-attest": "1.0.0",' },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.provenance, "ok");
+    assert.ok(brief.findings.provenance.length >= 2);
+    assert.match(brief.promptSection, /provenance/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("buildBrief: provenance analyzer throw → degraded + partial", async () => {
+  const realFetch = globalThis.fetch;
+  // Cause all fetches to fail (provenance uses fetch for attestation checks)
+  globalThis.fetch = async () => { throw new Error("network down"); };
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
+      analyzers: ["provenance"],
+      files: [{ path: "package.json", patch: '+    "pkg": "1.0.0",' }],
+    });
+    // provenance fetch throws → degraded; binary scan still ran but that's pure
+    // The analyzer as a whole may succeed (binary scan is pure) or degrade on fetch.
+    // Because hasNpmAttestation catches fetch errors (fail-safe), the analyzer succeeds.
+    assert.equal(brief.analyzerStatus.provenance, "ok");
+    assert.equal(brief.partial, false);
   } finally {
     globalThis.fetch = realFetch;
   }

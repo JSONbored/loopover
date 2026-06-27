@@ -129,6 +129,41 @@ export function renderBrief(
     }
   }
 
+  const provenance = findings.provenance ?? [];
+  if (provenance.length) {
+    const noAttest = provenance.filter((f) => f.kind === "no-attestation");
+    const binaries = provenance.filter((f) => f.kind === "binary");
+    const vendored = provenance.filter((f) => f.kind === "vendored");
+    if (noAttest.length) {
+      lines.push(
+        "### Dependencies without provenance attestation (supply-chain integrity risk)",
+      );
+      for (const f of noAttest) {
+        lines.push(
+          `- ${safeCodeSpan(`${f.package!}@${f.version!}`)} (${f.ecosystem!}): no published SLSA/sigstore attestation — package was not built through a verifiable CI pipeline`,
+        );
+      }
+    }
+    if (binaries.length) {
+      lines.push("### Binary files committed (no reviewable source)");
+      for (const f of binaries) {
+        lines.push(
+          `- ${safeCodeSpan(f.file!)} — binary artifact without source documentation`,
+        );
+      }
+    }
+    if (vendored.length) {
+      lines.push(
+        "### Vendored or minified code committed (audit source before merging)",
+      );
+      for (const f of vendored) {
+        lines.push(
+          `- ${safeCodeSpan(f.file!)} — vendored or minified code without upstream source reference`,
+        );
+      }
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

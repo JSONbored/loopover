@@ -14,6 +14,7 @@ import { scanInstallScripts } from "./analyzers/install-scripts.js";
 import { scanActionPins } from "./analyzers/actions-pin.js";
 import { scanEol } from "./analyzers/eol-check.js";
 import { scanRedos } from "./analyzers/redos.js";
+import { scanProvenance } from "./analyzers/provenance.js";
 import { renderBrief } from "./render.js";
 
 type AnalyzerFn = (req: EnrichRequest, signal: AbortSignal) => Promise<unknown>;
@@ -27,6 +28,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   actionPin: (req) => scanActionPins(req),
   eol: (req) => scanEol(req),
   redos: (req) => scanRedos(req),
+  provenance: (req, signal) => scanProvenance(req, fetch, { signal }),
 };
 
 function runWithTimeout<T>(

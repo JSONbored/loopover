@@ -93,6 +93,20 @@ export interface RedosFinding {
   pattern: string;
 }
 
+/** A newly-added dependency (npm/PyPI) lacking a published provenance attestation, or a binary/vendored file
+ *  committed without auditable source — supply-chain integrity risks the no-checkout reviewer cannot verify. */
+export interface ProvenanceFinding {
+  kind: "no-attestation" | "binary" | "vendored";
+  /** Ecosystem — set for no-attestation findings. */
+  ecosystem?: string;
+  /** Package name — set for no-attestation findings. */
+  package?: string;
+  /** Resolved version — set for no-attestation findings. */
+  version?: string;
+  /** File path — set for binary and vendored findings. */
+  file?: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -102,6 +116,7 @@ export interface BriefFindings {
   installScript?: InstallScriptFinding[];
   eol?: EolFinding[];
   redos?: RedosFinding[];
+  provenance?: ProvenanceFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

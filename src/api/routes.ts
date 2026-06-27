@@ -621,6 +621,7 @@ const repositorySettingsSchema = z.object({
   aiReviewProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
   aiReviewModel: z.string().trim().min(1).max(120).nullable().optional(),
   aiReviewAllAuthors: z.boolean().default(false),
+  closeOwnerAuthors: z.boolean().default(false),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   blacklistLabel: z.string().trim().min(1).max(50).default("slop"),
@@ -675,6 +676,7 @@ const maintainerSettingsSchema = z
     blacklistLabel: z.string().trim().min(1).max(50),
     createMissingLabel: z.boolean(),
     includeMaintainerAuthors: z.boolean(),
+    closeOwnerAuthors: z.boolean(),
     requireLinkedIssue: z.boolean(),
     badgeEnabled: z.boolean(),
     agentPaused: z.boolean(),
@@ -713,6 +715,7 @@ const repositoryAiReviewSchema = z.object({
   provider: z.enum(["anthropic", "openai"]).nullable().optional(),
   model: z.string().trim().min(1).max(120).nullable().optional(),
   allAuthors: z.boolean().default(false),
+  closeOwnerAuthors: z.boolean().default(false),
 });
 
 const contributorIssueDraftGenerateSchema = z.object({
@@ -2250,6 +2253,7 @@ export function createApp() {
       aiReviewProvider: parsed.data.provider,
       aiReviewModel: parsed.data.model,
       aiReviewAllAuthors: parsed.data.allAuthors,
+      closeOwnerAuthors: parsed.data.closeOwnerAuthors,
     });
     // getRepositorySettings normalizes these to a concrete value or null (never undefined).
     return c.json({
@@ -3387,6 +3391,7 @@ export function createApp() {
         aiReviewProvider: parsed.data.aiReviewProvider,
         aiReviewModel: parsed.data.aiReviewModel,
         aiReviewAllAuthors: parsed.data.aiReviewAllAuthors,
+        closeOwnerAuthors: parsed.data.closeOwnerAuthors,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         blacklistLabel: parsed.data.blacklistLabel,

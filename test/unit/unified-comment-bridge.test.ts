@@ -8,6 +8,7 @@ import {
   isUnifiedReviewCommentEnabled,
   panelRowsToSignalRows,
   PR_PANEL_COMMENT_MARKER,
+  splitAiReviewNits,
   verdictToRecommendation,
 } from "../../src/review/unified-comment-bridge";
 import { PR_PANEL_COMMENT_MARKER as MARKER_FROM_COMMENTS } from "../../src/github/comments";
@@ -118,6 +119,41 @@ describe("buildDualReviewNotes", () => {
     });
     expect(reviews[0]?.notes?.blockers).toEqual(["Null deref"]); // title only, no trailing ": "
     expect(reviews[0]?.notes?.nits).toEqual(["No test"]); // title only, no trailing " — "
+  });
+
+  it("demotes the AI review's **Nits (N)** out of the assessment into the collapsible nits, ahead of gate warnings", () => {
+    const reviews = buildDualReviewNotes({
+      aiReview: {
+        notes:
+          "Solid change.\n\n**Blockers**\n- none\n\n**Nits (2)**\n- Rename `x` to `count`.\n- Add a doc comment.",
+      },
+      warnings: [{ code: "w1", severity: "warning", title: "Missing test", detail: "...", action: "Add a test." }],
+      recommendation: "merge",
+      verdict: "comment",
+    });
+    // assessment keeps the prose + real Blockers; the nits are gone from the headline
+    expect(reviews[0]?.notes?.assessment).toBe("Solid change.\n\n**Blockers**\n- none");
+    // AI nits lead, gate warnings follow — all in the collapsible nits section
+    expect(reviews[0]?.notes?.nits).toEqual([
+      "Rename `x` to `count`.",
+      "Add a doc comment.",
+      "Missing test — Add a test.",
+    ]);
+  });
+});
+
+describe("splitAiReviewNits", () => {
+  it("splits trailing **Nits (N)** bullets from the body, leaving the assessment + blockers in the body", () => {
+    expect(splitAiReviewNits("Assessment.\n\n**Blockers**\n- bug\n\n**Nits (2)**\n- a\n- b")).toEqual({
+      main: "Assessment.\n\n**Blockers**\n- bug",
+      nits: ["a", "b"],
+    });
+  });
+  it("returns the whole blob as main with no nits when there is no Nits section (byte-identical to before)", () => {
+    expect(splitAiReviewNits("Just an assessment.")).toEqual({ main: "Just an assessment.", nits: [] });
+  });
+  it("handles an empty blob", () => {
+    expect(splitAiReviewNits("")).toEqual({ main: "", nits: [] });
   });
 });
 

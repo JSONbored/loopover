@@ -1146,7 +1146,10 @@ async function regatePullRequest(
     // Run the AI review on the sweep for BOTH advisory and block modes (#sweep-all-modes) — only skip when AI is
     // OFF. The #1462 per-(repo,pr,headSha,mode) cache bounds the cost: an unchanged PR re-gates from cache with no
     // re-spend, so an advisory PR gets a posted review without burning a token every sweep tick.
-    { skipAiReview: settings.aiReviewMode === "off" },
+    {
+      skipAiReview: settings.aiReviewMode === "off",
+      skipWhenSurfaceCurrent: true,
+    },
   ).catch((error) => {
     console.error(
       JSON.stringify({
@@ -1476,7 +1479,7 @@ async function reReviewStoredPullRequest(
   repoFullName: string,
   prNumber: number,
   previewPollAttempt?: number,
-  options: { skipAiReview?: boolean } = {},
+  options: { skipAiReview?: boolean; skipWhenSurfaceCurrent?: boolean } = {},
 ): Promise<void> {
   const [repo, settings] = await Promise.all([
     getRepository(env, repoFullName),
@@ -1509,13 +1512,13 @@ async function reReviewStoredPullRequest(
     /* v8 ignore next -- the row was just upserted above, so the re-read always returns it; `?? pr` is belt-and-suspenders fail-open. */
     pr = (await getPullRequest(env, repoFullName, prNumber)) ?? pr;
   }
-  // Over-publish dedup (#4): the resync above made pr.headSha the LIVE head. If the public surface was already
-  // published at this exact head, the verdict + comment are already current — skip the re-review + re-publish so the
-  // sweep stops re-publishing every open PR every ~2-min cycle. A never-published PR (NULL marker) or a drifted head
-  // (push/rebase/force-push → marker !== live head) falls THROUGH and re-reviews at the new head; the AI cache is
-  // head_sha-keyed too, so a rebase misses it and gets a fresh review. (Webhook synchronize/opened paths review
-  // directly and always re-stamp — this guard only gates the scheduled sweep.)
-  if (pr.lastPublishedSurfaceSha && pr.lastPublishedSurfaceSha === pr.headSha) {
+  // Over-publish dedup (#4): only scheduled sweeps opt into the head-only shortcut. Event-driven
+  // re-reviews (CI completion, deployment/preview refreshes) must re-evaluate dynamic same-head state.
+  if (
+    options.skipWhenSurfaceCurrent &&
+    pr.lastPublishedSurfaceSha &&
+    pr.lastPublishedSurfaceSha === pr.headSha
+  ) {
     console.log(JSON.stringify({ level: "info", event: "rereview_skipped_surface_current", deliveryId, repository: repoFullName, pullNumber: prNumber, headSha: pr.headSha }));
     return;
   }

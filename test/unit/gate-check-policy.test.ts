@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
-import { buildAuthorizedPrActionAdvisory, gateCheckPolicy, resolveLinkedIssueAuthorLogins, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
+import { buildAuthorizedPrActionAdvisory, gateCheckPolicy, resolveLinkedIssueAuthorLogins, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRefreshFilesForPreMergeChecks, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
 import { createTestEnv } from "../helpers/d1";
 import { upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { Advisory, PullRequestRecord, RepositorySettings } from "../../src/types";
 
 function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
@@ -264,6 +265,35 @@ describe("merge-readiness evidence collection (#551)", () => {
     expect(shouldCollectSlopEvidence(settings({ slopGateMode: "off", mergeReadinessGateMode: "block" }))).toBe(true);
     expect(shouldCollectSlopEvidence(settings({ slopGateMode: "off", mergeReadinessGateMode: "advisory" }))).toBe(true);
     expect(shouldCollectSlopEvidence(settings({ slopGateMode: "off", mergeReadinessGateMode: "off" }))).toBe(false);
+  });
+
+  it("refreshes files when pre-merge checks are path-gated (#review-pre-merge-checks)", async () => {
+    const env = createTestEnv();
+
+    expect(await shouldRefreshFilesForPreMergeChecks(env, "JSONbored/gittensory")).toBe(false);
+
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      review: { pre_merge_checks: [{ name: "Approval", require_label: "approved" }] },
+    });
+    expect(await shouldRefreshFilesForPreMergeChecks(env, "JSONbored/gittensory")).toBe(false);
+
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      review: { pre_merge_checks: [{ name: "Migration approval", require_label: "approved", when_paths: ["migrations/**"] }] },
+    });
+    expect(await shouldRefreshFilesForPreMergeChecks(env, "JSONbored/gittensory")).toBe(true);
+  });
+
+  it("fails safe to false when the focus-manifest load throws (#review-pre-merge-checks)", async () => {
+    // A manifest-load failure must NOT trigger a refresh — the `.catch(() => null)` fail-safe resolves to an
+    // empty check set, so `.some()` is false and the path-gated refresh stays off.
+    const env = createTestEnv({
+      DB: {
+        prepare() {
+          throw new Error("D1 unavailable");
+        },
+      } as unknown as Env["DB"],
+    });
+    expect(await shouldRefreshFilesForPreMergeChecks(env, "JSONbored/gittensory")).toBe(false);
   });
 
   it("runs AI slop advisory only when the slop gate is explicitly enabled", () => {

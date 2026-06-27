@@ -69,11 +69,15 @@ export function setGitHubResponseCache(
   responseCache = cache;
 }
 
-/** Only cache GETs to the GitHub REST API, and never the token-minting or rate-limit endpoints (volatile /
- *  per-call). Everything else (PR/file/user/org reads) is safe to dedup for a short window. Exported for tests. */
+/** Only cache safe GETs to the GitHub REST API. Never cache token-minting, rate-limit, or
+ * authorization/permission endpoints whose response must reflect the live caller context. Exported for tests. */
 export function isCacheableGithubUrl(url: string): boolean {
   if (!url.startsWith("https://api.github.com/")) return false;
-  return !url.includes("/access_tokens") && !url.includes("/rate_limit");
+  if (url.includes("/access_tokens") || url.includes("/rate_limit"))
+    return false;
+  return !/\/repos\/[^/]+\/[^/]+\/collaborators\/[^/]+\/permission(?:$|[?#])/.test(
+    url,
+  );
 }
 
 async function timeoutFetch(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildRepoSettingsPreview, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../../src/github/backfill";
+import { RepoSettingsPreviewSchema } from "../../src/openapi/schemas";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
 
 const FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE =
@@ -60,6 +61,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     privateTrustEnabled: true,
     aiReviewMode: "off",
     aiReviewByok: false,
+    aiReviewAllAuthors: false, closeOwnerAuthors: false,
     ...overrides,
   };
 }
@@ -120,6 +122,8 @@ describe("buildRepoSettingsPreview", () => {
     const preview = buildRepoSettingsPreview({ ...base, settings: settings(), installation: healthyInstall, sample: { authorLogin: "miner", minerStatus: "confirmed" } });
     expect(preview.decision.willComment).toBe(true);
     expect(preview.appliedLabel).toBe("gittensor");
+    expect(preview.settings.blacklistLabel).toBe("slop");
+    expect(() => RepoSettingsPreviewSchema.parse(preview)).not.toThrow();
     expect(preview.previewComment).toContain("<!-- gittensory-pr-panel:v1 -->");
     expect(preview.previewComment).toContain("Gittensory");
     expect(preview.previewComment).toContain("Confirmed Gittensor contributor");
@@ -152,6 +156,18 @@ describe("buildRepoSettingsPreview", () => {
         preview.installPreview.checklist.map((item) => [item.summary, item.action]),
       ]),
     ).not.toMatch(FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE);
+  });
+
+  it("includes the configured blacklist label required by the OpenAPI contract", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ blacklistLabel: "abuse" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+
+    expect(preview.settings.blacklistLabel).toBe("abuse");
+    expect(() => RepoSettingsPreviewSchema.parse(preview)).not.toThrow();
   });
 
   it("uses safe defaults for an empty sample preview", () => {

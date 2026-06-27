@@ -24,6 +24,7 @@ import {
 import { sanitizePublicComment } from "../queue-intelligence";
 import { defangReviewInput } from "../review/safety";
 import { convergedFeatureActive } from "../review/feature-activation";
+import { errorMessage } from "../utils/json";
 import type { ReviewProfile } from "../signals/focus-manifest";
 
 /**
@@ -493,8 +494,19 @@ async function runWorkersOpinion(
         );
         const parsed = parseModelReview(coerceAiText(result));
         if (parsed) return parsed;
-      } catch {
-        /* retry / fall through to fallback */
+      } catch (error) {
+        // Fail-LOUD (#1566): a provider/CLI failure (e.g. the claude-code CLI absent → spawn ENOENT, or an auth/API
+        // error) must be VISIBLE, not silently swallowed into a "no usable output" review. Log every failed attempt;
+        // the loop still falls through to the fallback model so a transient error doesn't abort the whole review.
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "ai_review_provider_attempt_failed",
+            model,
+            attempt,
+            error: errorMessage(error),
+          }),
+        );
       }
     }
   }
@@ -1017,6 +1029,15 @@ export async function runGittensoryAiReview(
   };
 }
 
+/** The actual configured reviewer label for usage attribution (#1566): the self-host `AI_PROVIDER:AI_MODEL` when set,
+ *  else the Worker dual-AI models. Without this, self-host claude-code reviews were mis-logged as the Workers-AI model
+ *  ids (`@cf/openai/gpt-oss-120b+…`), which hid the silent claude-CLI-missing outage. */
+function reviewerModelLabel(env: Env): string {
+  const e = env as unknown as { AI_PROVIDER?: string; AI_MODEL?: string };
+  if (!e.AI_PROVIDER) return BEST_REVIEW_MODELS.join("+");
+  return [e.AI_PROVIDER, e.AI_MODEL].filter(Boolean).join(":");
+}
+
 async function record(
   env: Env,
   input: GittensoryAiReviewInput,
@@ -1032,7 +1053,7 @@ async function record(
     route: "github_app.ai_review",
     model: input.providerKey
       ? `byok:${input.providerKey.provider}`
-      : BEST_REVIEW_MODELS.join("+"),
+      : reviewerModelLabel(env),
     status,
     estimatedNeurons,
     detail,

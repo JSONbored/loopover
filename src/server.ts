@@ -6,7 +6,8 @@
 // Serves the Hono app via @hono/node-server, drives the queue with the same processJob, ticks the same
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
@@ -313,6 +314,30 @@ async function main(): Promise<void> {
         provider: process.env.AI_PROVIDER,
       }),
     );
+  // Fail-LOUD preflight (#1566): a CLI-subscription provider (claude-code/codex) reviews by spawning the CLI as a
+  // subprocess; if the binary is absent (image built without INSTALL_AI_CLIS=true) the spawn ENOENTs and EVERY AI
+  // review silently degrades to "no usable output". Shout at boot so the misconfig is obvious, never invisible.
+  const requiredCli =
+    process.env.AI_PROVIDER === "claude-code"
+      ? "claude"
+      : process.env.AI_PROVIDER === "codex"
+        ? "codex"
+        : null;
+  if (
+    requiredCli &&
+    !(process.env.PATH ?? "")
+      .split(delimiter)
+      .some((d) => d && existsSync(join(d, requiredCli)))
+  )
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_ai_cli_missing",
+        provider: process.env.AI_PROVIDER,
+        cli: requiredCli,
+        message: `AI_PROVIDER=${process.env.AI_PROVIDER} but '${requiredCli}' is not on PATH — every AI review will produce NO output. Rebuild the image with --build-arg INSTALL_AI_CLIS=true (or use the published image) and authenticate the CLI.`,
+      }),
+    );
   // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
   // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of
   // the review chain — so a Claude/Codex outage never falls reviews back to a weak local model. Unset ⇒ absent ⇒
@@ -407,7 +432,9 @@ async function main(): Promise<void> {
       name: "qdrant",
       check: () =>
         withTimeout(
-          fetch(qdrantReadyzUrl(qdrantUrl), { signal: AbortSignal.timeout(1500) })
+          fetch(qdrantReadyzUrl(qdrantUrl), {
+            signal: AbortSignal.timeout(1500),
+          })
             .then((r) => r.ok)
             .catch(() => false),
         ),

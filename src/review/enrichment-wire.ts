@@ -108,7 +108,11 @@ export async function buildReviewEnrichment(
           ? ENRICHMENT_SYSTEM_SUFFIX
           : "",
     };
-  } catch {
+  } catch (error) {
+    // Surface the failure (#5 review observability): the REES enrichment call can fail (timeout / network / parse)
+    // and the review then silently proceeds without the brief. ERROR level so the central Sentry forwarder captures
+    // a broken/slow REES backend instead of it degrading invisibly.
+    console.error(JSON.stringify({ level: "error", event: "review_context_fetch_failed", repository: input.repoFullName, contextType: "enrichment", message: String(error).slice(0, 200) }));
     return undefined; // timeout / network / parse ⇒ fail-safe; review proceeds without the brief
   }
 }

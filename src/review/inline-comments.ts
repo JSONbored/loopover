@@ -118,7 +118,9 @@ export async function postInlineReviewComments(
     await createPullRequestReviewComments(env, args.installationId, args.repoFullName, args.pullNumber, args.commitId, comments, args.mode);
     return { posted: comments.length };
   } catch (error) {
-    console.warn(JSON.stringify({ level: "warn", event: "inline_comments_post_failed", repository: args.repoFullName, pullNumber: args.pullNumber, count: comments.length, error: errorMessage(error) }));
+    // ERROR level (#5 review observability) so the central Sentry forwarder captures a failing inline-comment post
+    // (auth/permission/422) — it degrades silently (gate unaffected) and was otherwise invisible at warn.
+    console.error(JSON.stringify({ level: "error", event: "inline_comments_post_failed", repository: args.repoFullName, pullNumber: args.pullNumber, count: comments.length, error: errorMessage(error) }));
     return { posted: 0 };
   }
 }

@@ -99,6 +99,17 @@ describe("buildReviewEnrichment", () => {
     ).toBeUndefined();
   });
 
+  it("undefined on a fetch error (network/timeout) and surfaces it at ERROR for Sentry (#5)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    expect(await buildReviewEnrichment(env({ REES_URL: "https://r" }), input)).toBeUndefined();
+    // A broken/slow REES backend now surfaces at level:error (central Sentry forwarder) instead of degrading silently.
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("review_context_fetch_failed") && String(c[0]).includes('"contextType":"enrichment"'))).toBe(true);
+    errSpy.mockRestore();
+  });
+
   it("undefined on an empty promptSection (no findings)", async () => {
     globalThis.fetch = vi.fn(
       async () =>

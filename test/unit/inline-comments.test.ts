@@ -118,13 +118,17 @@ describe("postInlineReviewComments (#inline-comments, fail-safe)", () => {
     expect(calls[0]?.body).toMatchObject({ event: "COMMENT", commit_id: "headsha", comments: [{ path: "src/a.ts", line: 2, side: "RIGHT", body: "**Nit:** guard this" }] });
   });
 
-  it("swallows an API error (the gate is never affected) and reports 0 posted", async () => {
+  it("swallows an API error (the gate is never affected), reports 0 posted, and surfaces it at ERROR for Sentry (#5)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("boom", { status: 500 }); // /reviews → non-2xx → octokit throws → caught
     });
     expect(await postInlineReviewComments(envWithKey(), { ...base, commitId: "headsha", findings })).toEqual({ posted: 0 });
+    // The failure is now emitted at level:error so the central Sentry forwarder captures it (was an invisible warn).
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("inline_comments_post_failed") && String(c[0]).includes('"level":"error"'))).toBe(true);
+    errSpy.mockRestore();
   });
 });
 

@@ -407,7 +407,10 @@ export async function retrieveContext(
     );
     return out;
   } catch (error) {
-    console.log(JSON.stringify({ ev: "rag_retrieve_error", message: String(error).slice(0, 200) }));
+    // ERROR level (#5 review observability): emit so the central Sentry forwarder captures a broken RAG backend
+    // (qdrant/embedder down) — retrieval degrades the review to diff-only, and this was previously a no-`level`
+    // console.log invisible to Sentry. Keeps the `ev` tag for log continuity.
+    console.error(JSON.stringify({ level: "error", event: "review_context_fetch_failed", contextType: "rag", ev: "rag_retrieve_error", message: String(error).slice(0, 200) }));
     return "";
   }
 }

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DependencyScanTruncatedError,
   extractDependencyChanges,
   queryOsv,
   scanDependencies,
@@ -131,6 +132,80 @@ test("scanDependencies: only deps with vulns are returned", async () => {
   assert.equal(findings.length, 1);
   assert.equal(findings[0].direction, "add");
   assert.equal(findings[0].cves[0].severity, "critical");
+});
+
+test("scanDependencies: truncation fails closed instead of hiding later vulnerable deps", async () => {
+  const files = [
+    {
+      path: "package.json",
+      patch: Array.from(
+        { length: 26 },
+        (_, i) => `+    "pkg-${i}": "1.0.0",`,
+      ).join("\n"),
+    },
+  ];
+  let calls = 0;
+  await assert.rejects(
+    scanDependencies(
+      { repoFullName: "o/r", prNumber: 1, files },
+      async () => {
+        calls += 1;
+        return { ok: true, json: async () => ({ vulns: [] }) };
+      },
+    ),
+    DependencyScanTruncatedError,
+  );
+  assert.equal(calls, 0);
+});
+
+test("scanDependencies: manifest and patch-line truncation fail closed", () => {
+  const manifestFiles = Array.from({ length: 21 }, (_, i) => ({
+    path: `pkg-${i}/package.json`,
+    patch: `+    "pkg-${i}": "1.0.0",`,
+  }));
+  assert.throws(
+    () => extractDependencyChanges(manifestFiles),
+    DependencyScanTruncatedError,
+  );
+
+  assert.throws(
+    () =>
+      extractDependencyChanges([
+        {
+          path: "package.json",
+          patch: Array.from({ length: 501 }, (_, i) =>
+            i === 500 ? '+    "lodash": "4.17.20",' : " context",
+          ).join("\n"),
+        },
+      ]),
+    DependencyScanTruncatedError,
+  );
+});
+
+test("buildBrief: truncated dependency scan marks the brief degraded", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = okFetch([]);
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 9,
+      analyzers: ["dependency"],
+      files: [
+        {
+          path: "package.json",
+          patch: Array.from(
+            { length: 26 },
+            (_, i) => `+    "pkg-${i}": "1.0.0",`,
+          ).join("\n"),
+        },
+      ],
+    });
+    assert.equal(brief.partial, true);
+    assert.equal(brief.analyzerStatus.dependency, "degraded");
+    assert.equal(brief.findings.dependency, undefined);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("renderBrief: sorts by severity, empty when no findings", () => {
@@ -597,27 +672,37 @@ test("buildBrief: action-pin analyzer runs (pure, no network)", async () => {
   }
 });
 
-test("extractDependencyChanges: caps manifest files and patch lines", () => {
-  const changes = extractDependencyChanges(
-    [
-      {
-        path: "package.json",
-        patch: ['+    "first": "1.0.0",', '+    "second": "1.0.0",'].join(
-          "\n",
-        ),
-      },
-      { path: "nested/package.json", patch: '+    "third": "1.0.0",' },
-    ],
-    { maxManifestFiles: 1, maxPatchLinesPerFile: 1 },
+test("extractDependencyChanges: rejects truncated manifest files and patch lines", () => {
+  assert.throws(
+    () =>
+      extractDependencyChanges(
+        [
+          { path: "package.json", patch: '+    "first": "1.0.0",' },
+          { path: "nested/package.json", patch: '+    "second": "1.0.0",' },
+        ],
+        { maxManifestFiles: 1 },
+      ),
+    DependencyScanTruncatedError,
   );
 
-  assert.deepEqual(
-    changes.map((change) => change.package),
-    ["first"],
+  assert.throws(
+    () =>
+      extractDependencyChanges(
+        [
+          {
+            path: "package.json",
+            patch: ['+    "first": "1.0.0",', '+    "second": "1.0.0",'].join(
+              "\n",
+            ),
+          },
+        ],
+        { maxPatchLinesPerFile: 1 },
+      ),
+    DependencyScanTruncatedError,
   );
 });
 
-test("scanDependencies: caps OSV queries and forwards abort signals", async () => {
+test("scanDependencies: forwards abort signals without truncation", async () => {
   const seenSignals = [];
   const files = Array.from({ length: 3 }, (_, index) => ({
     path: "package.json",
@@ -631,11 +716,11 @@ test("scanDependencies: caps OSV queries and forwards abort signals", async () =
       seenSignals.push(init.signal);
       return { ok: true, json: async () => ({ vulns: [] }) };
     },
-    { signal: controller.signal, limits: { maxDependencyQueries: 2 } },
+    { signal: controller.signal, limits: { maxDependencyQueries: 3 } },
   );
 
   assert.equal(findings.length, 0);
-  assert.equal(seenSignals.length, 2);
+  assert.equal(seenSignals.length, 3);
   assert.ok(seenSignals.every((signal) => signal instanceof AbortSignal));
 });
 

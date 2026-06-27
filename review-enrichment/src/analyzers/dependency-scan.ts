@@ -25,6 +25,13 @@ interface ScanOptions {
   limits?: ScanLimits;
 }
 
+export class DependencyScanTruncatedError extends Error {
+  constructor(reason: string) {
+    super(`dependency_scan_truncated:${reason}`);
+    this.name = "DependencyScanTruncatedError";
+  }
+}
+
 // Per-manifest line parsers. Each returns [name, version] for a `+`/`-` diff line, or null. Heuristic (line-based,
 // not a full manifest parse) — good enough to flag the deps a PR adds/bumps without resolving the whole tree.
 const NPM_RE = /^"([^"]+)"\s*:\s*"([\^~>=<\s]*[0-9][^"]*)"/;
@@ -73,8 +80,12 @@ export function extractDependencyChanges(
     const ecosystem = ECOSYSTEM[manifest];
     if (!ecosystem || !file.patch) continue;
     manifestFiles += 1;
-    if (manifestFiles > maxManifestFiles) break;
-    for (const line of file.patch.split("\n", maxPatchLinesPerFile)) {
+    if (manifestFiles > maxManifestFiles)
+      throw new DependencyScanTruncatedError("manifest_file_limit");
+    const patchLines = file.patch.split("\n");
+    if (patchLines.length > maxPatchLinesPerFile)
+      throw new DependencyScanTruncatedError("patch_line_limit");
+    for (const line of patchLines) {
       const sign = line[0];
       if (
         (sign !== "+" && sign !== "-") ||
@@ -180,10 +191,11 @@ export async function scanDependencies(
   fetchImpl: typeof fetch = fetch,
   options: ScanOptions = {},
 ): Promise<DependencyFinding[]> {
-  const changes = extractDependencyChanges(req.files ?? [], options.limits).slice(
-    0,
-    options.limits?.maxDependencyQueries ?? MAX_DEPENDENCY_QUERIES,
-  );
+  const changes = extractDependencyChanges(req.files ?? [], options.limits);
+  const maxDependencyQueries =
+    options.limits?.maxDependencyQueries ?? MAX_DEPENDENCY_QUERIES;
+  if (changes.length > maxDependencyQueries)
+    throw new DependencyScanTruncatedError("dependency_query_limit");
   const findings: DependencyFinding[] = [];
   for (const change of changes) {
     if (options.signal?.aborted) break;

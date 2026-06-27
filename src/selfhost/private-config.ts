@@ -15,9 +15,16 @@
 // `.yaml` / `.json` are accepted everywhere `.yml` is. The first existing candidate wins outright (a present
 // per-repo file fully REPLACES the global fallback — "fallback" means "used only when no per-repo file exists",
 // not a deep merge). The slug is lowercased (GitHub repo full-names are case-insensitive; #1390 already lowercased).
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { RepoFocusManifestFetcher } from "../signals/focus-manifest-loader";
+import type {
+  RepoReviewContext,
+  RepoReviewSkill,
+} from "../signals/focus-manifest";
+import type {
+  RepoFocusManifestFetcher,
+  RepoReviewContextReader,
+} from "../signals/focus-manifest-loader";
 
 /** The bare config filenames tried inside a per-repo folder and at the dir root (global fallback), in priority order. */
 const CONFIG_BASENAMES = [".gittensory.yml", ".gittensory.yaml", ".gittensory.json"] as const;
@@ -74,5 +81,63 @@ export function makeLocalManifestReader(dir: string | undefined): RepoFocusManif
       }
     }
     return null;
+  };
+}
+
+/** Per-repo review-context candidate FOLDERS (relative to GITTENSORY_REPO_CONFIG_DIR): `{owner}__{repo}/review` then
+ *  `{repo}/review`. Same owner/repo validation as localConfigCandidates; an invalid full name yields none. (#review-skills) */
+function reviewContextFolders(repoFullName: string): string[] {
+  const slash = repoFullName.indexOf("/");
+  if (slash <= 0 || slash === repoFullName.length - 1 || slash !== repoFullName.lastIndexOf("/")) return [];
+  const owner = repoFullName.slice(0, slash).toLowerCase();
+  const repo = repoFullName.slice(slash + 1).toLowerCase();
+  if (!GITHUB_OWNER_SEGMENT.test(owner) || !isSafeRepoSegment(repo)) return [];
+  return [join(`${owner}__${repo}`, "review"), join(repo, "review")];
+}
+
+/** Parse a skill markdown file into {name, when, body}. YAML frontmatter (`---\nname:\nwhen:\n---`) is optional; name
+ *  defaults to the filename and `when` to "always". */
+export function parseReviewSkill(filename: string, text: string): RepoReviewSkill {
+  const fm = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(text);
+  const head = fm?.[1] ?? "";
+  const body = (fm?.[2] ?? text).trim();
+  const name = /(?:^|\n)name:\s*(.+)/.exec(head)?.[1]?.trim() || filename.replace(/\.md$/i, "");
+  const whenRaw = /(?:^|\n)when:\s*(.+)/.exec(head)?.[1]?.trim();
+  const when = (whenRaw ?? "always").replace(/^["']|["']$/g, "") || "always";
+  return { name, when, body };
+}
+
+/** Build the container-local review-context reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset. Per
+ *  repo (first existing folder wins) reads `review/CLAUDE.md` (the guide) + every `review/skills/*.md` (rubric modules,
+ *  sorted). Missing files/dir degrade to nulls/empty; a per-file read error skips that file. (#review-skills) */
+export function makeLocalReviewContextReader(dir: string | undefined): RepoReviewContextReader | null {
+  const trimmed = (dir ?? "").trim();
+  if (!trimmed) return null;
+  const base = resolve(trimmed);
+  return async (repoFullName: string): Promise<RepoReviewContext> => {
+    for (const folder of reviewContextFolders(repoFullName)) {
+      const abs = resolve(base, folder);
+      let guide: string | null = null;
+      try {
+        guide = await readFile(resolve(abs, "CLAUDE.md"), "utf8");
+      } catch {
+        // no per-repo review guide
+      }
+      const skills: RepoReviewSkill[] = [];
+      try {
+        const entries = (await readdir(resolve(abs, "skills"))).filter((f) => f.toLowerCase().endsWith(".md")).sort();
+        for (const f of entries) {
+          try {
+            skills.push(parseReviewSkill(f, await readFile(resolve(abs, "skills", f), "utf8")));
+          } catch {
+            // unreadable skill file → skip it
+          }
+        }
+      } catch {
+        // no skills/ dir
+      }
+      if (guide !== null || skills.length > 0) return { guide, skills };
+    }
+    return { guide: null, skills: [] };
   };
 }

@@ -844,6 +844,54 @@ export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): Pre
   return manifest?.review.preMergeChecks ?? [];
 }
 
+/** One per-repo review SKILL (#review-skills): a maintainer-maintained rubric module loaded from the container-private
+ *  config dir (`<repo>/review/skills/*.md`). `when` is "always" (repo-wide) or a path glob / brace-list that gates it to
+ *  matching changed files (cost: only relevant skills are injected). */
+export type RepoReviewSkill = { name: string; when: string; body: string };
+/** The per-repo review CONTEXT (#review-skills): an always-on `review/CLAUDE.md` guide + the skill rubric modules. */
+export type RepoReviewContext = { guide: string | null; skills: RepoReviewSkill[] };
+
+/** Hard cap on the injected per-repo review context — a cost guard so a runaway guide/skills set can't bloat every
+ *  prompt. The maintained files are concise by design; this only bites pathological inputs. */
+const MAX_REVIEW_CONTEXT_CHARS = 16_000;
+
+/** True when a skill's `when` applies to this PR: "always"/empty ⇒ yes; otherwise the (possibly brace-listed) glob must
+ *  match at least one changed path. Reuses the manifest path matcher so it behaves exactly like path_instructions. */
+function reviewSkillApplies(when: string, changedPaths: string[]): boolean {
+  const w = when.trim();
+  if (!w || w.toLowerCase() === "always") return true;
+  const patterns = w
+    .replace(/^\{|\}$/g, "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return patterns.some((pat) =>
+    changedPaths.some((path) => matchesManifestPath(path, pat)),
+  );
+}
+
+/** Compose the per-repo review context into a prompt section (#review-skills): the always-on guide + every skill whose
+ *  `when` applies to this PR's changed files. Bounded for cost. Null/empty ⇒ "" (byte-identical reviewer prompt). The
+ *  caller folds the result into the `review.instructions` slot, so it inherits the same prompt wrapper + public-safe
+ *  handling. */
+export function composeRepoReviewContext(
+  context: RepoReviewContext | null,
+  changedPaths: string[],
+): string {
+  if (!context) return "";
+  const parts: string[] = [];
+  if (context.guide?.trim()) parts.push(context.guide.trim());
+  for (const skill of context.skills) {
+    if (reviewSkillApplies(skill.when, changedPaths) && skill.body.trim())
+      parts.push(`## skill: ${skill.name}\n${skill.body.trim()}`);
+  }
+  if (parts.length === 0) return "";
+  const joined = parts.join("\n\n");
+  return joined.length > MAX_REVIEW_CONTEXT_CHARS
+    ? joined.slice(0, MAX_REVIEW_CONTEXT_CHARS)
+    : joined;
+}
+
 /** Filter a PR's changed files down to the set the AI review should see — dropping any whose path matches a
  *  `review.exclude_paths` glob (generated/vendored/lockfiles). Empty `excludePaths` ⇒ the same array (byte-identical
  *  review). Pure; the gate/slop/secret-scan operate on the unfiltered files. (#review-exclude-paths) */

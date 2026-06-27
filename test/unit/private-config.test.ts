@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { GLOBAL_CONFIG_CANDIDATES, localConfigCandidates, makeLocalManifestReader } from "../../src/selfhost/private-config";
+import { GLOBAL_CONFIG_CANDIDATES, localConfigCandidates, makeLocalManifestReader, makeLocalReviewContextReader, parseReviewSkill } from "../../src/selfhost/private-config";
+import { loadRepoReviewContext, setLocalReviewContextReader } from "../../src/signals/focus-manifest-loader";
 
 describe("localConfigCandidates (container-private config paths)", () => {
   it("builds owner-folder → repo-folder → flat candidates (lowercased), each in .yml/.yaml/.json order", () => {
@@ -102,5 +103,63 @@ describe("makeLocalManifestReader (GITTENSORY_REPO_CONFIG_DIR)", () => {
     writeFileSync(join(dirname(dir), ".gittensory.yml"), "gate:\n  enabled: true\n");
     const reader = makeLocalManifestReader(dir);
     expect(await reader!("owner/..")).toBeNull();
+  });
+});
+
+describe("parseReviewSkill (#review-skills)", () => {
+  it("parses frontmatter name + when (quotes stripped); body is the remainder", () => {
+    expect(parseReviewSkill("sql.md", '---\nname: sql-rubric\nwhen: "**/*.sql"\n---\nCheck the index.\n')).toEqual({ name: "sql-rubric", when: "**/*.sql", body: "Check the index." });
+  });
+  it("defaults name to the filename and when to 'always' with no frontmatter", () => {
+    expect(parseReviewSkill("voice.md", "Be decisive.")).toEqual({ name: "voice", when: "always", body: "Be decisive." });
+  });
+  it("treats a quotes-only/empty when as 'always'", () => {
+    expect(parseReviewSkill("x.md", '---\nwhen: ""\n---\nbody').when).toBe("always");
+  });
+});
+
+describe("makeLocalReviewContextReader (#review-skills)", () => {
+  it("returns null when the dir is unset/blank", () => {
+    expect(makeLocalReviewContextReader(undefined)).toBeNull();
+    expect(makeLocalReviewContextReader("  ")).toBeNull();
+  });
+
+  it("reads the owner-qualified review/CLAUDE.md + skills/*.md (sorted, .md only)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-review-"));
+    const rev = join(dir, "jsonbored__gittensory", "review");
+    mkdirSync(join(rev, "skills"), { recursive: true });
+    writeFileSync(join(rev, "CLAUDE.md"), "Review gittensory carefully.\n");
+    writeFileSync(join(rev, "skills", "b-second.md"), "---\nname: second\nwhen: always\n---\nSecond.\n");
+    writeFileSync(join(rev, "skills", "a-first.md"), "First with no frontmatter.\n");
+    writeFileSync(join(rev, "skills", "notes.txt"), "ignored — not .md\n");
+    const reader = makeLocalReviewContextReader(dir)!;
+    const ctx = await reader("JSONbored/gittensory");
+    expect(ctx.guide).toContain("Review gittensory carefully.");
+    expect(ctx.skills.map((s) => s.name)).toEqual(["a-first", "second"]); // sorted by filename; .txt ignored
+  });
+
+  it("falls back to the bare repo-name folder; returns empty for a missing or invalid repo", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-review-"));
+    mkdirSync(join(dir, "metagraphed", "review"), { recursive: true });
+    writeFileSync(join(dir, "metagraphed", "review", "CLAUDE.md"), "Bare-folder guide.\n");
+    const reader = makeLocalReviewContextReader(dir)!;
+    expect((await reader("JSONbored/metagraphed")).guide).toContain("Bare-folder guide.");
+    expect(await reader("JSONbored/unknown-repo")).toEqual({ guide: null, skills: [] }); // no folder
+    expect(await reader("owner/..")).toEqual({ guide: null, skills: [] }); // invalid repo segment → no candidates
+    expect(await reader("noslash")).toEqual({ guide: null, skills: [] }); // invalid full name (no slash)
+  });
+});
+
+describe("loadRepoReviewContext + setLocalReviewContextReader (#review-skills)", () => {
+  it("empty with no reader; uses the registered reader; degrades to empty on error", async () => {
+    setLocalReviewContextReader(null);
+    expect(await loadRepoReviewContext("o/r")).toEqual({ guide: null, skills: [] });
+    setLocalReviewContextReader(async () => ({ guide: "G", skills: [{ name: "s", when: "always", body: "B" }] }));
+    expect(await loadRepoReviewContext("o/r")).toEqual({ guide: "G", skills: [{ name: "s", when: "always", body: "B" }] });
+    setLocalReviewContextReader(async () => {
+      throw new Error("read failed");
+    });
+    expect(await loadRepoReviewContext("o/r")).toEqual({ guide: null, skills: [] });
+    setLocalReviewContextReader(null); // reset for other tests
   });
 });

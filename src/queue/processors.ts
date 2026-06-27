@@ -279,6 +279,7 @@ import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
 import {
   buildFocusManifestGuidance,
+  composeRepoReviewContext,
   excludeReviewPaths,
   resolveReviewPathInstructions,
   resolveReviewPreMergeChecks,
@@ -287,7 +288,10 @@ import {
   type ReviewPathInstruction,
   type ReviewProfile,
 } from "../signals/focus-manifest";
-import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import {
+  loadRepoFocusManifest,
+  loadRepoReviewContext,
+} from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
@@ -4471,7 +4475,7 @@ async function maybePublishPrPublicSurface(
           profile: reviewProfile,
           inlineComments: reviewInlineComments,
           pathInstructions: reviewPathInstructions,
-          instructions: reviewInstructions,
+          instructions: manifestReviewInstructions,
           excludePaths: reviewExcludePaths,
         } = resolveReviewPromptOverrides(
           await loadRepoFocusManifest(env, repoFullName).catch(() => null),
@@ -4481,6 +4485,21 @@ async function maybePublishPrPublicSurface(
           repoFullName,
           reviewInlineComments,
         );
+        // Per-repo review CONTEXT (#review-skills): fold the container-private review/CLAUDE.md guide + the matching
+        // review/skills/*.md modules into the SAME review-instructions slot, so reviews follow each repo's conventions.
+        // Glob-gated for cost (only skills matching the changed files are injected); absent config dir ⇒ empty ⇒
+        // byte-identical prompt. getReviewFiles() is memoized, so the second call reuses the loaded diff.
+        const reviewInstructions =
+          [
+            manifestReviewInstructions,
+            composeRepoReviewContext(
+              await loadRepoReviewContext(repoFullName),
+              (await getReviewFiles()).map((file) => file.path),
+            ),
+          ]
+            .map((part) => part?.trim())
+            .filter(Boolean)
+            .join("\n\n") || null;
         aiReview = await runAiReviewForAdvisory(env, {
           settings,
           advisory,

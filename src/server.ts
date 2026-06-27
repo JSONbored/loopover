@@ -46,9 +46,15 @@ import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
 import { createFsBlobStore } from "./selfhost/blob-store";
-import { makeLocalManifestReader } from "./selfhost/private-config";
+import {
+  makeLocalManifestReader,
+  makeLocalReviewContextReader,
+} from "./selfhost/private-config";
 import { captureError, flushSentry, initSentry } from "./selfhost/sentry";
-import { setLocalManifestReader } from "./signals/focus-manifest-loader";
+import {
+  setLocalManifestReader,
+  setLocalReviewContextReader,
+} from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -224,6 +230,11 @@ async function main(): Promise<void> {
   // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
   setLocalManifestReader(
     makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
+  );
+  // Per-repo review CONTEXT (#review-skills): the same config dir also holds `<repo>/review/CLAUDE.md` + skills/*.md,
+  // injected into the reviewer prompt so reviews follow each repo's conventions. Unset dir ⇒ null reader ⇒ no change.
+  setLocalReviewContextReader(
+    makeLocalReviewContextReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
   );
   // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
   // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,

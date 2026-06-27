@@ -13,6 +13,7 @@ import {
   excludeReviewPaths,
   resolveReviewPathInstructions,
   resolveReviewPreMergeChecks,
+  composeRepoReviewContext,
   resolveReviewPromptOverrides,
   reviewConfigToJson,
   settingsOverrideToJson,
@@ -1363,5 +1364,47 @@ describe("review.pre_merge_checks (#review-pre-merge-checks)", () => {
     const manifest = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l" }] } });
     expect(resolveReviewPreMergeChecks(manifest)).toEqual(manifest.review.preMergeChecks);
     expect(resolveReviewPreMergeChecks(null)).toEqual([]);
+  });
+});
+
+describe("composeRepoReviewContext (#review-skills)", () => {
+  it("returns '' for null/empty/whitespace-only context", () => {
+    expect(composeRepoReviewContext(null, ["a.ts"])).toBe("");
+    expect(composeRepoReviewContext({ guide: null, skills: [] }, ["a.ts"])).toBe("");
+    expect(composeRepoReviewContext({ guide: "   ", skills: [] }, ["a.ts"])).toBe("");
+  });
+
+  it("includes the guide + always/blank-when/glob-matched skills, excluding non-matching ones", () => {
+    const ctx = {
+      guide: "Review THIS repo carefully.",
+      skills: [
+        { name: "voice", when: "always", body: "Be decisive." },
+        { name: "blank", when: "", body: "Blank-when is always-on." },
+        { name: "sql", when: "**/*.sql", body: "Check the index usage." },
+        { name: "schema", when: "{**/db/schema.ts,**/*.sql}", body: "Migration parity." },
+        { name: "ui", when: "app/**", body: "Should not appear." },
+      ],
+    };
+    const out = composeRepoReviewContext(ctx, ["migrations/0079_x.sql"]);
+    expect(out).toContain("Review THIS repo carefully.");
+    expect(out).toContain("## skill: voice");
+    expect(out).toContain("## skill: blank");
+    expect(out).toContain("## skill: sql"); // **/*.sql matched the .sql file
+    expect(out).toContain("## skill: schema"); // brace-list matched the .sql file
+    expect(out).not.toContain("## skill: ui"); // app/** did not match
+    expect(out).not.toContain("Should not appear.");
+  });
+
+  it("drops empty-body and non-matching skills (⇒ '' when nothing applies)", () => {
+    const out = composeRepoReviewContext(
+      { guide: null, skills: [{ name: "empty", when: "always", body: "   " }, { name: "x", when: "src/**", body: "nope" }] },
+      ["README.md"],
+    );
+    expect(out).toBe("");
+  });
+
+  it("bounds the injected context to the cost cap", () => {
+    const out = composeRepoReviewContext({ guide: "x".repeat(20_000), skills: [] }, []);
+    expect(out.length).toBeLessThanOrEqual(16_000);
   });
 });

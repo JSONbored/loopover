@@ -1,11 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock("@/lib/api/request", () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 vi.mock("@/lib/api/origin", () => ({ getApiOrigin: () => "https://api.test" }));
+
+afterEach(() => vi.unstubAllGlobals());
 
 import { ProofOfPowerStats } from "@/components/site/proof-of-power-stats";
 import {
@@ -121,8 +123,18 @@ describe("ProofOfPowerStats", () => {
   });
 
   it("settles the count-up on the real reviewed total (not stuck at 0 when rAF never fires)", async () => {
+    // Deterministic (#flake): force prefers-reduced-motion so useCountUp lands the final value synchronously on
+    // mount, instead of running the requestAnimationFrame tween. jsdom has no matchMedia, so the unfixed test took
+    // the animated path and raced the 3s findByText timeout under CI load. This still pins the intent — the count
+    // settles on the real reviewed total, never stuck at 0 — without depending on animation-frame timing.
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
     apiFetch.mockResolvedValue({ ok: true, status: 200, durationMs: 1, data: PAYLOAD });
     renderWithClient(<ProofOfPowerStats />);
-    expect(await screen.findByText("2,708", undefined, { timeout: 3000 })).toBeTruthy();
+    expect(await screen.findByText("2,708")).toBeTruthy();
   });
 });

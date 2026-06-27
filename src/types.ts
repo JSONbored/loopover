@@ -453,6 +453,10 @@ export type PullRequestRecord = {
    *  review write that would bump updatedAt is suppressed (dry-run / paused). Sweep-written; read straight from
    *  the row (never the GitHub payload). */
   lastRegatedAt?: string | null | undefined;
+  /** Over-publish dedup: the head SHA at which the public surface was last published. The re-gate sweep skips
+   *  re-reviewing + re-publishing while lastPublishedSurfaceSha === headSha; a new commit (push/rebase/force-push)
+   *  clears the match so the surface re-publishes the new code. Publish-written; read straight from the row. */
+  lastPublishedSurfaceSha?: string | null | undefined;
 };
 
 export type IssueRecord = {

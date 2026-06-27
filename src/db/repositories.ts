@@ -2627,6 +2627,20 @@ export async function markPullRequestApproved(env: Env, fullName: string, number
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
+/** Over-publish dedup (#4): record the head SHA at which the PR's public surface was just published. The scheduled
+ *  re-gate sweep skips re-reviewing while last_published_surface_sha == headSha. Scoped to headSha so a later commit
+ *  (push/rebase/force-push — the live head no longer matches) re-publishes the new code without any manual reset.
+ *  The eq(headSha) in the WHERE is load-bearing: if the live head advanced between review and this write, the UPDATE
+ *  no-ops (never stamps a stale head) → the next sweep correctly re-reviews. Mirrors markPullRequestApproved. */
+export async function markPullRequestSurfacePublished(env: Env, fullName: string, number: number, headSha: string | null | undefined): Promise<void> {
+  if (!headSha) return; // no head to key the marker on → nothing to stamp (the caller's advisory had no head SHA)
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ lastPublishedSurfaceSha: headSha, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
 /** Sweep convergence: stamp the timestamp the scheduled re-gate sweep just recomputed this PR. A plain D1 UPDATE
  *  — NOT routed through the agent-action-executor chokepoint (#1258) — so it advances even when GitHub writes are
  *  suppressed (dry-run / paused). selectRegateCandidates orders the sweep by last_regated_at, so a just-regated PR
@@ -4161,6 +4175,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     approvedHeadSha: row.approvedHeadSha,
     // Read straight from the row, NEVER the GitHub payload — this is a gittensory-internal sweep marker.
     lastRegatedAt: row.lastRegatedAt,
+    lastPublishedSurfaceSha: row.lastPublishedSurfaceSha,
   };
 }
 

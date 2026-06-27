@@ -41,6 +41,7 @@ import {
   getCachedAiReview,
   putCachedAiReview,
   markPullRequestsRegated,
+  markPullRequestSurfacePublished,
   getLatestRegatedAt,
   claimRegateFanoutSlot,
   recordAgentCommandFeedback,
@@ -1507,6 +1508,16 @@ async function reReviewStoredPullRequest(
     );
     /* v8 ignore next -- the row was just upserted above, so the re-read always returns it; `?? pr` is belt-and-suspenders fail-open. */
     pr = (await getPullRequest(env, repoFullName, prNumber)) ?? pr;
+  }
+  // Over-publish dedup (#4): the resync above made pr.headSha the LIVE head. If the public surface was already
+  // published at this exact head, the verdict + comment are already current — skip the re-review + re-publish so the
+  // sweep stops re-publishing every open PR every ~2-min cycle. A never-published PR (NULL marker) or a drifted head
+  // (push/rebase/force-push → marker !== live head) falls THROUGH and re-reviews at the new head; the AI cache is
+  // head_sha-keyed too, so a rebase misses it and gets a fresh review. (Webhook synchronize/opened paths review
+  // directly and always re-stamp — this guard only gates the scheduled sweep.)
+  if (pr.lastPublishedSurfaceSha && pr.lastPublishedSurfaceSha === pr.headSha) {
+    console.log(JSON.stringify({ level: "info", event: "rereview_skipped_surface_current", deliveryId, repository: repoFullName, pullNumber: prNumber, headSha: pr.headSha }));
+    return;
   }
   // Operator review flow: rebase-if-behind → wait for ALL CI to finish → only THEN review. Defers (returns) when
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
@@ -5327,6 +5338,13 @@ async function maybePublishPrPublicSurface(
       publishedOutputs,
       failedOutputs,
     },
+  });
+  // Over-publish dedup (#4): stamp the head SHA we just published at, so the scheduled sweep skips re-reviewing +
+  // re-publishing this PR until its head changes (see the guard in reReviewStoredPullRequest). Reached only when at
+  // least one surface output actually published (the zero-output early-return above covers the suppressed/dry-run
+  // case). The helper no-ops on a null head, and its WHERE pins head_sha so a head that advanced mid-pass won't stamp.
+  await markPullRequestSurfacePublished(env, repoFullName, pr.number, advisory.headSha).catch((error) => {
+    console.error(JSON.stringify({ level: "warn", event: "surface_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
   });
   return gateEvaluation;
 }

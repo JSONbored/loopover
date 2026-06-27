@@ -304,6 +304,12 @@ export const pullRequests = sqliteTable(
     // review WRITE that would bump updated_at is suppressed (dry-run / paused). gittensory-computed (sweep-written),
     // omitted from the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors approved_head_sha.)
     lastRegatedAt: text("last_regated_at"),
+    // Over-publish dedup: the head SHA at which the public surface (comment/label/check-run) was LAST published.
+    // The sweep skips re-reviewing + re-publishing a PR while last_published_surface_sha === headSha (already
+    // current). Keyed to head SHA → a push/rebase/force-push (new head) clears the match and the next sweep
+    // re-reviews + re-publishes. gittensory-computed (publish-written), omitted from the GitHub-sync SET clause so
+    // a later sync cannot clobber it. (Mirrors approved_head_sha.)
+    lastPublishedSurfaceSha: text("last_published_surface_sha"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

@@ -12,6 +12,7 @@ import {
   listRepoSyncStates,
   markPullRequestRegated,
   markPullRequestsRegated,
+  markPullRequestSurfacePublished,
   recordAuditEvent,
   recordWebhookEvent,
   upsertOfficialMinerDetection,
@@ -99,6 +100,25 @@ describe("database row parser hardening", () => {
     const after = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 5);
     expect(typeof after?.lastRegatedAt).toBe("string"); // marker stamped with an ISO timestamp
     expect(after?.title).toBe("Stale PR"); // INVARIANT: a plain D1 UPDATE — it touches only the marker, not PR content
+  });
+
+  it("markPullRequestSurfacePublished stamps last_published_surface_sha only at the matching live head (#4 over-publish dedup)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "PR", state: "open", user: { login: "alice" }, head: { sha: "headA" }, labels: [] });
+
+    const before = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 9);
+    expect(before?.lastPublishedSurfaceSha ?? null).toBeNull(); // never published → marker absent
+
+    await markPullRequestSurfacePublished(env, "owner/repo", 9, null); // null head → no-op (the !headSha guard)
+    expect((await listPullRequests(env, "owner/repo")).find((p) => p.number === 9)?.lastPublishedSurfaceSha ?? null).toBeNull();
+
+    await markPullRequestSurfacePublished(env, "owner/repo", 9, "oldHead"); // stale head → WHERE head_sha mismatch → no-op
+    expect((await listPullRequests(env, "owner/repo")).find((p) => p.number === 9)?.lastPublishedSurfaceSha ?? null).toBeNull();
+
+    await markPullRequestSurfacePublished(env, "owner/repo", 9, "headA"); // matches the live head → stamps
+    const after = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 9);
+    expect(after?.lastPublishedSurfaceSha).toBe("headA");
+    expect(after?.title).toBe("PR"); // INVARIANT: touches only the marker, not PR content
   });
 
   it("markPullRequestsRegated batch-stamps every candidate at dispatch and no-ops on an empty list (#audit-sweep-dispatch-stamp)", async () => {

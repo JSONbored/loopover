@@ -42,6 +42,10 @@ services:
       # files (and an optional root .gittensory.yml global fallback). Keeps each repo's policy OUT of the public
       # GitHub repo so contributors can't game the rules. Empty/unmounted ⇒ repos use the public file / defaults.
       GITTENSORY_REPO_CONFIG_DIR: "${GITTENSORY_REPO_CONFIG_DIR:-/config}"
+      # Codex (ChatGPT subscription) reviewer home (#979). The `codex` CLI reads auth.json from $CODEX_HOME and
+      # REFRESHES the OAuth token in place, so the home MUST be writable — that's the codex-home named volume below,
+      # NOT the read-only /config mount. Defaults to the image `node` run user's ~/.codex; override to relocate.
+      CODEX_HOME: "${CODEX_HOME:-/home/node/.codex}"
       # Claude Code usage telemetry → OTEL collector → Prometheus → Claude usage dashboard. OFF unless you set
       # CLAUDE_CODE_ENABLE_TELEMETRY=1 in .env (requires --profile observability so the otel-collector is up).
       CLAUDE_CODE_ENABLE_TELEMETRY: "${CLAUDE_CODE_ENABLE_TELEMETRY:-}"
@@ -74,6 +78,12 @@ services:
       # Container-private per-repo config dir (read-only). Create ./gittensory-config/{owner}__{repo}/.gittensory.yml
       # locally (gitignored — never commit real policy). Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
       - ./gittensory-config:/config:ro
+      # Persistent, WRITABLE Codex home for the `codex` (ChatGPT subscription) reviewer — survives restarts so the
+      # auth.json you drop in (and codex's in-place token refresh + app-server state) outlive the container. The
+      # node run user owns /home/node, so the volume is writable. Drop your `codex login` auth.json in with:
+      #   docker compose cp ~/.codex/auth.json gittensory:/home/node/.codex/auth.json
+      # If you override CODEX_HOME above, change this mount target to match (it must equal $CODEX_HOME).
+      - codex-home:/home/node/.codex
     depends_on:
       # Gate startup on a healthy Qdrant when --profile qdrant is active; required:false means the
       # dependency is ignored when qdrant isn't started (default/other profiles). Belt-and-suspenders
@@ -455,6 +465,7 @@ services:
 
 volumes:
   gittensory-data:
+  codex-home:
   gittensory-pg:
   qdrant-data:
   ollama-models:

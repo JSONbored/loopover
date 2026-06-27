@@ -132,7 +132,7 @@ describe("maybePostInlineComments (#inline-comments, review-path entry)", () => 
   afterEach(() => vi.unstubAllGlobals());
   const files = [fileWith("src/a.ts", "@@ -1,1 +1,2 @@\n ctx\n+added2")];
   const findings: InlineFinding[] = [{ path: "src/a.ts", line: 2, severity: "nit", body: "guard this" }];
-  const base = { installationId: 7, repoFullName: "acme/widgets", pullNumber: 3, commitId: "headsha", mode: "live" as const };
+  const base = { installationId: 7, repoFullName: "acme/widgets", pullNumber: 3, commitId: "headsha", mode: "live" as const, inlineCommentsEnabled: true };
 
   it("is a no-op — it does not even load the PR files — when the review produced no findings", async () => {
     const getFiles = vi.fn(async () => files);
@@ -144,6 +144,23 @@ describe("maybePostInlineComments (#inline-comments, review-path entry)", () => 
     await maybePostInlineComments(envWithKey(), { ...base, aiReview: undefined, getFiles });
     await maybePostInlineComments(envWithKey(), { ...base, aiReview: { inlineFindings: undefined }, getFiles });
     await maybePostInlineComments(envWithKey(), { ...base, aiReview: { inlineFindings: [] }, getFiles });
+    expect(getFiles).not.toHaveBeenCalled();
+    expect(fetched).toBe(false);
+  });
+
+  it("is a no-op at the write boundary when inline comments are disabled, even with model findings", async () => {
+    const getFiles = vi.fn(async () => files);
+    let fetched = false;
+    vi.stubGlobal("fetch", async () => {
+      fetched = true;
+      return Response.json({});
+    });
+    await maybePostInlineComments(envWithKey(), {
+      ...base,
+      inlineCommentsEnabled: false,
+      aiReview: { inlineFindings: findings },
+      getFiles,
+    });
     expect(getFiles).not.toHaveBeenCalled();
     expect(fetched).toBe(false);
   });

@@ -12,7 +12,11 @@ import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
+import {
+  createOpenAiCompatibleAi,
+  createSelfHostAi,
+  resolveAiReviewerPlan,
+} from "./selfhost/ai";
 import {
   cookieValue,
   credentialsToEnv,
@@ -246,7 +250,25 @@ async function main(): Promise<void> {
   // arrives, by which point env is set).
   let env: Env;
   const consume = async (message: JobMessage): Promise<void> => {
-    await processJob(env, message);
+    try {
+      await processJob(env, message);
+    } catch (error) {
+      // Self-host best-effort jobs (#registry-soft-fail): the periodic gittensor-registry refresh re-runs every cron
+      // tick, so a degraded/unconfigured GITTENSOR_REGISTRY_URL would otherwise retry→dead-letter EVERY cycle and
+      // flood the dead-letter alert. Swallow its failure here (the next scheduled tick is the retry); keep the last
+      // snapshot. The Cloudflare Worker path (src/index.ts) is untouched, so its rate-limit-aware retry is preserved.
+      if (message.type === "refresh-registry") {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "refresh_registry_soft_fail",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return;
+      }
+      throw error;
+    }
   };
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -289,6 +311,25 @@ async function main(): Promise<void> {
       JSON.stringify({
         event: "selfhost_ai_provider",
         provider: process.env.AI_PROVIDER,
+      }),
+    );
+  // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
+  // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of
+  // the review chain — so a Claude/Codex outage never falls reviews back to a weak local model. Unset ⇒ absent ⇒
+  // createReviewAdapters falls back to the review `ai` for embeds (byte-identical to before).
+  const embedAi = process.env.AI_EMBED_BASE_URL
+    ? createOpenAiCompatibleAi({
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
+        embedModel: process.env.AI_EMBED_MODEL,
+      })
+    : undefined;
+  if (embedAi)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_embed_provider",
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        model: process.env.AI_EMBED_MODEL ?? "bge-m3",
       }),
     );
   // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
@@ -357,7 +398,7 @@ async function main(): Promise<void> {
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
     const qdrantUrl = process.env.QDRANT_URL;
-    const { createQdrantVectorize, initQdrantCollection } =
+    const { createQdrantVectorize, initQdrantCollection, qdrantReadyzUrl } =
       await import("./selfhost/qdrant-vectorize");
     // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
     await retryUntilReady("qdrant", () => initQdrantCollection(qdrantUrl));
@@ -366,7 +407,7 @@ async function main(): Promise<void> {
       name: "qdrant",
       check: () =>
         withTimeout(
-          fetch(qdrantUrl, { signal: AbortSignal.timeout(1500) })
+          fetch(qdrantReadyzUrl(qdrantUrl), { signal: AbortSignal.timeout(1500) })
             .then((r) => r.ok)
             .catch(() => false),
         ),
@@ -382,6 +423,7 @@ async function main(): Promise<void> {
     JOBS: backend.queue.binding,
     WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(embedAi ? { AI_EMBED: embedAi as unknown as Ai } : {}),
     ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
     ...(vectorizeOverride

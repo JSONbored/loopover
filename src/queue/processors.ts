@@ -260,10 +260,7 @@ import {
 } from "../signals/engine";
 import { isDuplicateClusterWinner } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff } from "../review/review-diff";
-import {
-  buildUnifiedCommentBody,
-  isUnifiedReviewCommentEnabled,
-} from "../review/unified-comment-bridge";
+import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { screenshotsAllowed } from "../review/visual-wire";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, type CaptureRoute } from "../review/visual/capture";
@@ -294,6 +291,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
+  isEnabled,
   runGittensoryAiReview,
   type InlineFinding,
 } from "../services/ai-review";
@@ -329,7 +327,14 @@ import {
   recordReputationOutcome,
   shouldSkipAiForReputation,
 } from "../review/reputation-wire";
-import { isConvergenceRepoAllowed } from "../review/cutover-gate";
+import {
+  isConvergenceRepoAllowed,
+  listConvergenceRepos,
+} from "../review/cutover-gate";
+import {
+  convergedFeatureActive,
+  resolveConvergedFeature,
+} from "../review/feature-activation";
 import {
   deploymentStatusToPreview,
   type DeploymentStatusPayload,
@@ -758,23 +763,39 @@ async function fanOutAgentRegateSweepJobs(
     });
     return;
   }
-  const repositories = await listRepositories(env);
+  // Sweep every REVIEW-ACTIVE repo (#sweep-all-modes): the convergence allowlist (GITTENSORY_REVIEW_REPOS) UNION the
+  // webhook-registered repos, deduped case-insensitively. A repo is swept when it is review-active (allowlisted) OR
+  // has acting autonomy — so ADVISORY repos (autonomy=observe) are re-gated and get fresh reviews too, not only repos
+  // that can merge/close. The action layer (maybeRunAgentMaintenance) stays autonomy-gated, so an observe repo is
+  // re-reviewed but never auto-actioned. This is what makes advisory reviews fire on existing open PRs without
+  // depending on a fresh webhook per PR.
+  const byKey = new Map<string, string>();
+  for (const repo of await listRepositories(env))
+    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
+  for (const fullName of listConvergenceRepos(env))
+    byKey.set(fullName.toLowerCase(), fullName);
   const configured: string[] = [];
   let skippedDraining = 0;
-  for (const repo of repositories) {
-    const settings = await resolveRepositorySettings(env, repo.fullName);
-    if (!isAgentConfigured(settings.autonomy)) continue;
+  for (const repoFullName of byKey.values()) {
+    const settings = await resolveRepositorySettings(env, repoFullName);
+    if (
+      !(
+        isConvergenceRepoAllowed(env, repoFullName) ||
+        isAgentConfigured(settings.autonomy)
+      )
+    )
+      continue;
     // In-flight guard (#audit-sweep-fanout): skip a repo whose prior sweep is still draining — its per-PR jobs are
     // mid-flight and stamping last_regated_at as they run, so the freshest stamp being within the sweep window
     // means a sweep is active. Re-arming now would enqueue duplicate per-PR jobs for the not-yet-drained
     // candidates, so this is what finally stops the 2-min cron piling a second full sweep on an unfinished one.
     if (
-      isRegateSweepDraining(await getLatestRegatedAt(env, repo.fullName), now)
+      isRegateSweepDraining(await getLatestRegatedAt(env, repoFullName), now)
     ) {
       skippedDraining += 1;
       continue;
     }
-    configured.push(repo.fullName);
+    configured.push(repoFullName);
   }
   await Promise.all(
     configured.map((repoFullName, index) => {
@@ -813,8 +834,9 @@ async function runRagIndexJob(
     return;
   }
   if (!repoFullName) return;
-  // Defensive: a repo can drop out of the allowlist between fan-out and processing. Only index converged repos.
-  if (!isConvergenceRepoAllowed(env, repoFullName)) return;
+  // Defensive: a repo can drop out of activation between fan-out and processing. Only index repos where RAG is
+  // active (per-repo `features.rag` override, allowlist fallback) — coherent with retrieval at review time.
+  if (!(await convergedFeatureActive(env, repoFullName, "rag"))) return;
   const repo = await getRepository(env, repoFullName);
   /* v8 ignore next -- defensive: a fanned-out repo is always present; the null is belt-and-suspenders. */
   if (!repo) return;
@@ -834,15 +856,29 @@ async function fanOutRagIndexJobs(
   env: Env,
   requestedBy: "schedule" | "api" | "webhook" | "test",
 ): Promise<void> {
-  const repositories = (await listRepositories(env)).filter(
-    (repo) => repo.isRegistered && isConvergenceRepoAllowed(env, repo.fullName),
+  // Candidate repos = the webhook-REGISTERED repos UNION the maintainer's CONFIGURED repos (GITTENSORY_REVIEW_REPOS).
+  // The union is the fix for the brokered self-host: a maintainer's repos are is_registered=0 (never went through the
+  // registration webhook), so a registered-only fan-out never indexed them — leaving reviews without codebase context.
+  // Deduped case-insensitively (a repo can be both registered AND configured). Each is then filtered by whether RAG is
+  // active for it (`features.rag` override → GITTENSORY_REVIEW_REPOS allowlist default), so nothing extra is indexed.
+  const byKey = new Map<string, string>();
+  for (const repo of (await listRepositories(env)).filter(
+    (r) => r.isRegistered,
+  ))
+    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
+  for (const fullName of listConvergenceRepos(env))
+    byKey.set(fullName.toLowerCase(), fullName);
+  const candidates = [...byKey.values()];
+  const ragActiveByRepo = await Promise.all(
+    candidates.map((fullName) => convergedFeatureActive(env, fullName, "rag")),
   );
+  const repositories = candidates.filter((_, index) => ragActiveByRepo[index]);
   await Promise.all(
-    repositories.map((repo, index) => {
+    repositories.map((fullName, index) => {
       const message: JobMessage = {
         type: "rag-index-repo",
         requestedBy,
-        repoFullName: repo.fullName,
+        repoFullName: fullName,
       };
       const delaySeconds = Math.min(index * 30, 900);
       return delaySeconds > 0
@@ -879,8 +915,7 @@ async function maybeEnqueueRagReindexForMergedPr(
   action: string | undefined,
   mergedAt: string | null | undefined,
 ): Promise<void> {
-  if (!isRagEnabled(env) || !isConvergenceRepoAllowed(env, repoFullName))
-    return;
+  if (!(await convergedFeatureActive(env, repoFullName, "rag"))) return;
   // A PR that merged: closed action + a merged_at timestamp. (A closed-unmerged PR changed nothing on the base.)
   if (!PR_GATE_CLOSED_ACTIONS.has(action ?? "") || !mergedAt) return;
   const files = await listPullRequestFiles(env, repoFullName, pullNumber);
@@ -907,8 +942,16 @@ async function sweepRepoRegate(
 ): Promise<void> {
   if (!repoFullName) return;
   const settings = await resolveRepositorySettings(env, repoFullName);
-  // Defensive: a repo can lose its acting autonomy between fan-out and processing.
-  if (!isAgentConfigured(settings.autonomy)) return;
+  // Defensive re-check between fan-out and processing (#sweep-all-modes): the repo must still be review-active
+  // (allowlisted) OR have acting autonomy. Advisory/observe repos pass here and are re-reviewed; the action layer
+  // stays autonomy-gated, so they are never auto-actioned.
+  if (
+    !(
+      isConvergenceRepoAllowed(env, repoFullName) ||
+      isAgentConfigured(settings.autonomy)
+    )
+  )
+    return;
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), // env brake OR DB kill-switch (#audit-§5.2)
     agentPaused: settings.agentPaused,
@@ -1094,7 +1137,10 @@ async function regatePullRequest(
     repoFullName,
     prNumber,
     undefined,
-    { skipAiReview: settings.aiReviewMode !== "block" },
+    // Run the AI review on the sweep for BOTH advisory and block modes (#sweep-all-modes) — only skip when AI is
+    // OFF. The #1462 per-(repo,pr,headSha,mode) cache bounds the cost: an unchanged PR re-gates from cache with no
+    // re-spend, so an advisory PR gets a posted review without burning a token every sweep tick.
+    { skipAiReview: settings.aiReviewMode === "off" },
   ).catch((error) => {
     console.error(
       JSON.stringify({
@@ -1151,6 +1197,10 @@ export function hasVerifiedRequiredContexts(
   return requiredContexts != null && requiredContexts.size > 0;
 }
 
+export function agentMaintenanceHeadMatchesGate(reviewedHeadSha: string | null | undefined, currentHeadSha: string | null | undefined): boolean {
+  return reviewedHeadSha == null || currentHeadSha == null || currentHeadSha === reviewedHeadSha;
+}
+
 /**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
@@ -1186,6 +1236,10 @@ async function maybeRunAgentMaintenance(
   /* v8 ignore next -- defensive: the PR was upserted earlier in this same webhook, so it is always present. */
   if (!pr) return;
   if (pr.state !== "open") return;
+  // The gate verdict belongs to the webhook/re-review head that produced it. Under concurrent self-host queues, a
+  // newer synchronize can advance the stored row before this job acts; fail closed rather than pairing a stale
+  // passing gate with a newer, unreviewed head for CI, planning, or merge execution.
+  if (!agentMaintenanceHeadMatchesGate(args.pr.headSha, pr.headSha)) return;
   // Drafts are work-in-progress: never auto-approve / merge / close / label a draft. Symmetric with the re-gate
   // sweep, which drops drafts (agent-sweep.ts). A draft signals "not ready"; the agent acts once it is marked
   // ready_for_review (which re-triggers this path on the now-undrafted PR). The converted_to_draft draft-dodge
@@ -1308,6 +1362,7 @@ async function maybeRunAgentMaintenance(
     hardGuardrailGlobs,
     authorIsOwner,
     authorIsAutomationBot,
+    closeOwnerAuthors: settings.closeOwnerAuthors,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
@@ -1466,7 +1521,8 @@ async function reReviewStoredPullRequest(
   await persistAdvisory(env, advisory);
   if (
     shouldCollectSlopEvidence(settings) ||
-    settings.manifestPolicyGateMode !== "off"
+    settings.manifestPolicyGateMode !== "off" ||
+    (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
   ) {
     await refreshPullRequestDetails(env, repoFullName, prNumber).catch(
       () => undefined,
@@ -1900,6 +1956,9 @@ async function maybeCaptureOnDeploymentStatus(
   const preview = deploymentStatusToPreview(
     payload as unknown as DeploymentStatusPayload,
   );
+  // The deployment-status re-review just refreshes the visual capture; the capture site itself honors the per-repo
+  // `features.screenshots` override, so this trigger stays on the convergence allowlist (a re-review for a repo
+  // with screenshots disabled simply produces no capture — same outcome, no incoherence).
   if (preview && isConvergenceRepoAllowed(env, repoFullName)) {
     await reReviewStoredPullRequest(
       env,
@@ -2908,7 +2967,8 @@ async function processGitHubWebhook(
         if (
           shouldCollectSlopEvidence(settings) ||
           settings.manifestPolicyGateMode !== "off" ||
-          isAgentConfigured(settings.autonomy)
+          isAgentConfigured(settings.autonomy) ||
+          (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
         ) {
           await refreshPullRequestDetails(env, repoFullName, pr.number);
         }
@@ -2986,11 +3046,13 @@ async function processGitHubWebhook(
         // outcome is derived ONLY from the PR's realized terminal state + the gate verdict (no PR content);
         // nothing is ever surfaced publicly. Flag-OFF (default) is an immediate no-op (nothing recorded), so the
         // path is byte-identical. Best-effort: a record failure must never affect the gate or the public surface.
-        const reputationOutcome =
-          isReputationEnabled(env) &&
-          isConvergenceRepoAllowed(env, repoFullName)
-            ? reputationOutcomeFromTerminalState(pr, payload.pull_request, gate)
-            : undefined;
+        const reputationOutcome = (await convergedFeatureActive(
+          env,
+          repoFullName,
+          "reputation",
+        ))
+          ? reputationOutcomeFromTerminalState(pr, payload.pull_request, gate)
+          : undefined;
         if (reputationOutcome) {
           await recordReputationOutcome(env, {
             project: repoFullName,
@@ -3204,6 +3266,16 @@ export function shouldCollectSlopEvidence(
   return settings.slopGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
 
+export async function shouldRefreshFilesForPreMergeChecks(
+  env: Env,
+  repoFullName: string,
+): Promise<boolean> {
+  const checks = resolveReviewPreMergeChecks(
+    await loadRepoFocusManifest(env, repoFullName).catch(() => null),
+  );
+  return checks.some((check) => check.whenPaths.length > 0);
+}
+
 export function shouldRunSlopAiAdvisory(
   settings: Pick<RepositorySettings, "slopAiAdvisory" | "slopGateMode">,
 ): boolean {
@@ -3385,6 +3457,23 @@ export function buildSecretScanDiff(
  * Fully fail-safe: disabled / ineligible author / no head SHA / non-ok AI / any thrown error → no finding
  * and no notes.
  */
+
+export async function shouldStartAiReviewForAdvisory(
+  env: Env,
+  args: {
+    settings: RepositorySettings;
+    advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha">;
+    repoFullName: string;
+    author: string | null;
+    confirmedContributor: boolean;
+    skipAiReview?: boolean | undefined;
+  },
+): Promise<boolean> {
+  const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
+  if (args.skipAiReview || args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha || !isEnabled(env.AI_SUMMARIES_ENABLED) || !isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED) || !env.AI) return false;
+  return !(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName) && (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author })));
+}
+
 export async function runAiReviewForAdvisory(
   env: Env,
   args: {
@@ -3427,9 +3516,16 @@ export async function runAiReviewForAdvisory(
   const packAllowsAnyAuthorBlockingReview =
     args.settings.gatePack === "oss-anti-slop" &&
     args.settings.aiReviewMode === "block";
+  // `aiReviewAllAuthors` (per-repo opt-in, default false) widens the AI-spend gate to EVERY author — a self-host
+  // operator who wants real reviews on all PRs (incl. their own / unconfirmed contributors) and pays for the AI
+  // themselves. Default false ⇒ the confirmed-contributor gate is byte-identical to today.
+  const reviewableAuthor =
+    args.confirmedContributor ||
+    packAllowsAnyAuthorBlockingReview ||
+    args.settings.aiReviewAllAuthors;
   if (
     args.settings.aiReviewMode === "off" ||
-    (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) ||
+    !reviewableAuthor ||
     !args.advisory.headSha
   )
     return undefined;
@@ -3438,6 +3534,27 @@ export async function runAiReviewForAdvisory(
   // feature's global flag below. Empty/unset allowlist → false → every converged branch here is unreachable
   // (byte-identical to today) regardless of the global flags.
   const convergedRepoAllowed = isConvergenceRepoAllowed(env, args.repoFullName);
+  // Per-repo feature overrides (phase 2): reputation + RAG honor the container-private `.gittensory.yml` `features:`
+  // block, falling back to the `convergedRepoAllowed` allowlist when unset (byte-identical default). The (cached)
+  // manifest is loaded once and shared, and ONLY when at least one of the two features is globally enabled — so a
+  // deploy with both flags off does no extra read (preserves the no-op default). Grounding deliberately stays on
+  // `convergedRepoAllowed` here so it remains coherent with the disposition-side CI-refutation gate (#deferred).
+  const featureManifest =
+    isReputationEnabled(env) || isRagEnabled(env)
+      ? await loadRepoFocusManifest(env, args.repoFullName).catch(() => null)
+      : null;
+  const reputationActive = resolveConvergedFeature(
+    env,
+    featureManifest,
+    "reputation",
+    args.repoFullName,
+  );
+  const ragActive = resolveConvergedFeature(
+    env,
+    featureManifest,
+    "rag",
+    args.repoFullName,
+  );
   // Reputation anti-abuse (convergence, flag-gated by GITTENSORY_REVIEW_REPUTATION). Extends the AI-spend gate above:
   // an INTERNAL low-reputation / burst / new submitter is downgraded to a DETERMINISTIC-ONLY review — the
   // (paid) AI neurons are skipped here exactly as they are for an unconfirmed contributor, so a serial abuser
@@ -3446,8 +3563,7 @@ export async function runAiReviewForAdvisory(
   // read, no new branch) → the AI-spend gate is byte-identical to today. Fail-safe (the read degrades to
   // neutral → false on any error).
   if (
-    isReputationEnabled(env) &&
-    convergedRepoAllowed &&
+    reputationActive &&
     (await shouldSkipAiForReputation(env, {
       project: args.repoFullName,
       submitter: args.author,
@@ -3508,20 +3624,19 @@ export async function runAiReviewForAdvisory(
     // semantically related to the changed files and append them as additive reference context — exactly like
     // grounding. Flag-OFF (default) → NO new branch: no adapter use, no vector query, and `ragContext` is left
     // undefined so the prompt is byte-identical to today. Fully fail-safe (a missing/cold index degrades to "").
-    const ragContext =
-      isRagEnabled(env) && convergedRepoAllowed
-        ? await buildReviewRagContext(env, {
-            repoFullName: args.repoFullName,
-            title: args.pr.title,
-            files: files.map((file) => ({
-              path: file.path,
-              patch:
-                typeof file.payload?.patch === "string"
-                  ? file.payload.patch
-                  : undefined,
-            })),
-          })
-        : undefined;
+    const ragContext = ragActive
+      ? await buildReviewRagContext(env, {
+          repoFullName: args.repoFullName,
+          title: args.pr.title,
+          files: files.map((file) => ({
+            path: file.path,
+            patch:
+              typeof file.payload?.patch === "string"
+                ? file.payload.patch
+                : undefined,
+          })),
+        })
+      : undefined;
     // Review-enrichment (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
     // REES for the heavy/external analysis the reviewer can't run (dependency CVEs, secrets, license/EOL/supply-chain);
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
@@ -3895,13 +4010,15 @@ async function maybePublishPrPublicSurface(
   // a dry-run / pause / global-freeze publishes NOTHING (check-run, comment, label) — the gate verdict is still
   // computed + returned for the disposition logic, the writes are just suppressed + audited. (#dry-run-chokepoint)
   const mode = await resolveRepoActionMode(env, settings);
-  // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the unified converged comment renders for THIS repo
-  // only when it is allowlisted AND the global GITTENSORY_REVIEW_UNIFIED_COMMENT flag is ON. Computed once and ANDed into
-  // both unified-comment sites below (closed/skipped + open). Empty/unset allowlist → false → both sites keep
-  // the LEGACY panel byte-identical for every repo regardless of GITTENSORY_REVIEW_UNIFIED_COMMENT.
-  const unifiedCommentAllowed =
-    isUnifiedReviewCommentEnabled(env) &&
-    isConvergenceRepoAllowed(env, repoFullName);
+  // Per-repo feature override (phase 2): the unified converged comment renders for THIS repo when the global
+  // GITTENSORY_REVIEW_UNIFIED_COMMENT kill-switch is ON and the repo's container-private `.gittensory.yml`
+  // `features.unifiedComment` opts in — falling back to the GITTENSORY_REVIEW_REPOS allowlist when the manifest
+  // says nothing (byte-identical default). Computed once and used by both unified-comment sites below.
+  const unifiedCommentAllowed = await convergedFeatureActive(
+    env,
+    repoFullName,
+    "unifiedComment",
+  );
   // `settings` is the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved by the caller via
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
   // file. The gate verdict is the same for every author; confirmedContributor feeds only on-chain scoring.
@@ -4079,6 +4196,7 @@ async function maybePublishPrPublicSurface(
         findings?: AdvisoryFinding[];
       }
     | undefined;
+  let inlineCommentsEnabledForReview = false;
   let gateFinalized = false;
   // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
   // scan, the check-run, and the unified comment. Resolve them AT MOST ONCE per review and share across the
@@ -4294,10 +4412,15 @@ async function maybePublishPrPublicSurface(
       settings.contributorBlacklist,
     );
     const aiReviewWillRun =
-      !webhook.skipAiReview &&
-      settings.aiReviewMode !== "off" &&
-      Boolean(advisory.headSha) &&
-      !authorBlacklisted;
+      !authorBlacklisted &&
+      (await shouldStartAiReviewForAdvisory(env, {
+        settings,
+        advisory,
+        repoFullName,
+        author,
+        confirmedContributor,
+        skipAiReview: webhook.skipAiReview,
+      }));
     // Post a transient "🟪 reviewing…" placeholder BEFORE the AI runs so contributors see the bot
     // is actively working rather than silent. In-place upsert: once the final verdict is ready it
     // overwrites this comment. Best-effort — a failed post never aborts the review. (#reviewing-placeholder)
@@ -4346,6 +4469,11 @@ async function maybePublishPrPublicSurface(
           excludePaths: reviewExcludePaths,
         } = resolveReviewPromptOverrides(
           await loadRepoFocusManifest(env, repoFullName).catch(() => null),
+        );
+        inlineCommentsEnabledForReview = shouldRequestInlineFindings(
+          env,
+          repoFullName,
+          reviewInlineComments,
         );
         aiReview = await runAiReviewForAdvisory(env, {
           settings,
@@ -4941,6 +5069,7 @@ async function maybePublishPrPublicSurface(
       commitId: advisory.headSha,
       getFiles: getReviewFiles,
       mode,
+      inlineCommentsEnabled: inlineCommentsEnabledForReview,
     });
   }
   if (decision.willLabel) {
@@ -5673,7 +5802,8 @@ async function maybeProcessPrPanelRetrigger(
   // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set.
   if (
     shouldCollectSlopEvidence(settings) ||
-    settings.manifestPolicyGateMode !== "off"
+    settings.manifestPolicyGateMode !== "off" ||
+    (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
   ) {
     await refreshPullRequestDetails(env, repoFullName, pr.number);
   }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
-import { forwardOrbEvent, registerOrbRelay, relaySignature, relayVerify, retryFailedRelays, storeRelayFailure } from "../../src/orb/relay";
+import { forwardOrbEvent, MAX_ORB_RELAY_REGISTER_BODY_BYTES, readOrbRelayRegisterBody, registerOrbRelay, relaySignature, relayVerify, retryFailedRelays, storeRelayFailure } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
@@ -79,18 +79,62 @@ describe("POST /v1/orb/relay/register", () => {
     expect(await ok.json()).toMatchObject({ ok: true, installationId: 710 });
   });
 
-  it("maps each failure to its status: 401 bad secret, 403 ineligible, 400 SSRF, 500 no-encryption", async () => {
+  it("maps each failure to its status: 401 bad secret, 403 ineligible, 400 SSRF, 413 too-large body, 500 no-encryption", async () => {
     const e = brokeredEnv();
     const sBad = "Bearer orbsec_bad";
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: sBad }, body: JSON.stringify({ relayUrl: "https://x.example" }) }, e)).status).toBe(401);
     const s1 = await enroll(e, 711);
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s1}` }, body: JSON.stringify({ relayUrl: "http://127.0.0.1" }) }, e)).status).toBe(400);
+    expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s1}` }, body: JSON.stringify({ relayUrl: `${"https://x.example/"}${"a".repeat(4096)}` }) }, e)).status).toBe(413);
     const s2 = await enroll(e, 712);
     await db(e).prepare("UPDATE orb_github_installations SET registered=0 WHERE installation_id=712").run();
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s2}` }, body: JSON.stringify({ relayUrl: "https://x.example" }) }, e)).status).toBe(403);
     const noEnc = createTestEnv({ ORB_BROKER_ENABLED: "true" });
     const s3 = await enroll(noEnc, 713);
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s3}` }, body: JSON.stringify({ relayUrl: "https://x.example/relay" }) }, noEnc)).status).toBe(500);
+  });
+
+  it("rejects an invalid enrollment before reading the registration body", async () => {
+    const e = brokeredEnv();
+    let bodyAccesses = 0;
+    const req = new Request("http://localhost/v1/orb/relay/register", { method: "POST", headers: { authorization: "Bearer orbsec_bad" } });
+    Object.defineProperty(req, "body", {
+      get() {
+        bodyAccesses += 1;
+        throw new Error("body should not be read before enrollment validation");
+      },
+    });
+    const res = await app.fetch(req, e);
+    expect(res.status).toBe(401);
+    expect(bodyAccesses).toBe(0);
+  });
+});
+
+describe("readOrbRelayRegisterBody", () => {
+  it("returns an empty string when the request has no body stream", async () => {
+    // A request without a body (e.g. a bodyless POST) has request.body === null — the empty-body path.
+    const req = new Request("http://localhost/v1/orb/relay/register", { method: "POST" });
+    expect(req.body).toBeNull();
+    expect(await readOrbRelayRegisterBody(req, null)).toBe(""); // null content-length → declared null → empty stream
+    expect(await readOrbRelayRegisterBody(req, undefined)).toBe(""); // undefined header → typeof !== "string" arm
+  });
+
+  it("rejects an oversized DECLARED content-length up front (before touching the stream)", async () => {
+    // Past the ceiling: parseContentLength returns a valid integer that exceeds MAX → short-circuit to null.
+    const req = new Request("http://localhost/v1/orb/relay/register", { method: "POST", body: "{}" });
+    expect(await readOrbRelayRegisterBody(req, String(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1))).toBeNull();
+  });
+
+  it("ignores a malformed or negative content-length and reads the actual body", async () => {
+    // Number("abc")=NaN and "-1"<0 → parseContentLength returns null → the declared-too-large guard is skipped.
+    expect(await readOrbRelayRegisterBody(new Request("http://localhost/r", { method: "POST", body: "{}" }), "abc")).toBe("{}"); // non-integer
+    expect(await readOrbRelayRegisterBody(new Request("http://localhost/r", { method: "POST", body: "{}" }), "-1")).toBe("{}"); // negative
+  });
+
+  it("returns null when the STREAMED body exceeds the ceiling regardless of the declared length", async () => {
+    // No content-length declared, but the stream itself runs past MAX → reader is cancelled, null returned.
+    const req = new Request("http://localhost/r", { method: "POST", body: "x".repeat(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1) });
+    expect(await readOrbRelayRegisterBody(req, null)).toBeNull();
   });
 });
 

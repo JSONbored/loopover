@@ -22,8 +22,8 @@ import {
   sumAiEstimatedNeuronsSince,
 } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
-import { defangReviewInput, isSafetyEnabled } from "../review/safety";
-import { isConvergenceRepoAllowed } from "../review/cutover-gate";
+import { defangReviewInput } from "../review/safety";
+import { convergedFeatureActive } from "../review/feature-activation";
 import type { ReviewProfile } from "../signals/focus-manifest";
 
 /**
@@ -791,13 +791,16 @@ export async function runGittensoryAiReview(
   // prompt-injection payload never reaches the model verbatim. Flag-OFF (default) passes `input` through
   // unchanged → the prompt is byte-identical to today. Only the title/body/diff fed to buildUserPrompt are
   // affected; this NEVER changes the verdict (a redaction is data, not a finding).
-  // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the defang activates for THIS PR's repo only when it
-  // is allowlisted AND the global safety flag is ON. Empty/unset allowlist → `input` passes through unchanged
-  // for every repo (the prompt is byte-identical to today) regardless of GITTENSORY_REVIEW_SAFETY.
-  const promptInput =
-    isSafetyEnabled(env) && isConvergenceRepoAllowed(env, input.repoFullName)
-      ? { ...input, ...defangReviewInput(input) }
-      : input;
+  // Per-repo feature override (phase 2): the defang activates when the global GITTENSORY_REVIEW_SAFETY kill-switch
+  // is ON and the repo's container-private `.gittensory.yml` `features.safety` opts in — falling back to the
+  // GITTENSORY_REVIEW_REPOS allowlist when the manifest says nothing (byte-identical default).
+  const promptInput = (await convergedFeatureActive(
+    env,
+    input.repoFullName,
+    "safety",
+  ))
+    ? { ...input, ...defangReviewInput(input) }
+    : input;
   const user = buildUserPrompt(promptInput);
   // Grounding-discipline SYSTEM suffix (convergence, flag-gated). When the caller supplied grounding, the
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
@@ -973,9 +976,11 @@ export async function runGittensoryAiReview(
   );
   const advisoryNotes =
     reviewsForNotes.length > 0 ? composeAdvisoryNotes(reviewsForNotes) : null;
-  // Line-anchored inline findings (#inline-comments): empty unless the caller asked for them (the prompt suffix
-  // is conditional) AND the model emitted any. Inert until the posting path (PR B) consumes them.
-  const inlineFindings = composeInlineFindings(reviewsForNotes);
+  // Line-anchored inline findings (#inline-comments): only propagate model output when the resolved feature gate
+  // asked for it. AI output is PR-author-influenced, so the prompt suffix is not an authorization boundary.
+  const inlineFindings = input.inlineFindings
+    ? composeInlineFindings(reviewsForNotes)
+    : [];
 
   await record(
     env,

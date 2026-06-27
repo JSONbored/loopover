@@ -251,6 +251,30 @@ async function defaultSpawn(): Promise<SpawnFn> {
     });
 }
 
+/** Credential/token shapes that must never reach logs or Sentry. High-precision (prefixed key formats + JWT, each
+ *  anchored on a word boundary) so genuine diagnostics — auth/rate-limit/model errors — survive redaction. */
+const SECRET_PATTERNS: readonly RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g, // OpenAI / Anthropic keys (sk-..., sk-ant-..., sk-proj-...)
+  /\bgh[oprsu]_[A-Za-z0-9]{20,}/g, // GitHub PAT / OAuth / server / refresh tokens
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // GitHub fine-grained PAT
+  /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, // JWT (header.payload.signature)
+  /\bAKIA[0-9A-Z]{16}/g, // AWS access key id
+];
+
+/** Redact secrets from untrusted CLI stderr before it enters an error message that flows to logs/Sentry. The
+ *  claude/codex subprocesses can echo back the OAuth token we hand them via env (or a key from a config they read),
+ *  and the central Sentry forwarder only scrubs secret-KEYED fields, never free-text — so a token inside an error
+ *  string would otherwise leak. Strips the caller's known secret values exactly, then well-known token shapes. */
+export function redactSecrets(text: string, knownSecrets: readonly string[] = []): string {
+  let out = text;
+  for (const secret of knownSecrets) {
+    // Length-guard so a short/empty token (e.g. a stubbed "t") can't blank out unrelated diagnostic text.
+    if (secret.length >= 8) out = out.split(secret).join("[redacted]");
+  }
+  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, "[redacted]");
+  return out;
+}
+
 /** Claude Code subscription (CLAUDE_CODE_OAUTH_TOKEN via `claude setup-token`). Headless, read-only, JSON. */
 export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
@@ -271,7 +295,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"],
         { env, input: prompt, timeoutMs: resolveCliTimeoutMs(parentEnv), cwd: await isolatedCliCwd() },
       );
-      if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}: ${(stderr ?? "").slice(0, 500)}`);
+      if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}: ${redactSecrets(stderr ?? "", [token]).slice(0, 500)}`);
       const errStatus = claudeErrorStatus(stdout);
       if (errStatus) throw new Error(`claude_code_error_${errStatus}`);
       const text = extractCliText(stdout);
@@ -305,7 +329,7 @@ export function createCodexAi(parentEnv: Record<string, string | undefined>, spa
         timeoutMs: resolveCliTimeoutMs(parentEnv),
         cwd: await isolatedCliCwd(),
       });
-      if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}: ${(stderr ?? "").slice(0, 500)}`);
+      if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}: ${redactSecrets(stderr ?? "").slice(0, 500)}`);
       const text = extractCliText(stdout);
       if (!text) throw new Error("codex_empty_output");
       return { response: text };

@@ -1188,6 +1188,43 @@ describe("pure helpers", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("logs ai_review_provider_exhausted at error level when every attempt throws (#26 fail-loud)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = vi.fn(async () => {
+      throw new Error("ENOENT: claude binary not found");
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const result = await runWorkersOpinion(env, "primary-model", "", "sys", "user", 256);
+    expect(result).toBeNull();
+    const exhausted = logSpy.mock.calls
+      .map((c) => c[0])
+      .find((l) => typeof l === "string" && l.includes("ai_review_provider_exhausted"));
+    expect(exhausted).toBeDefined();
+    expect(JSON.parse(exhausted as string)).toMatchObject({
+      level: "error",
+      event: "ai_review_provider_exhausted",
+      primary: "primary-model",
+      error: expect.stringContaining("ENOENT"),
+    });
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT log exhausted when the model runs but returns unparseable output (no provider error)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const run = vi.fn(async () => ({ response: "not json at all" }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const result = await runWorkersOpinion(env, "primary-model", "", "sys", "user", 256);
+    expect(result).toBeNull();
+    expect(
+      logSpy.mock.calls
+        .map((c) => c[0])
+        .some((l) => typeof l === "string" && l.includes("ai_review_provider_exhausted")),
+    ).toBe(false);
+    logSpy.mockRestore();
+  });
+
   it("applies the default daily neuron budget when none is configured", async () => {
     const run = vi.fn(async (_model: string) => ({ response: reviewJson() }));
     const env = createTestEnv({

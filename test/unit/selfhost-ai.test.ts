@@ -52,7 +52,7 @@ describe("resolveCliTimeoutMs (#selfhost — subprocess timeout scales with effo
 
 afterEach(() => vi.unstubAllGlobals());
 
-type SpawnResult = { stdout: string; code: number | null };
+type SpawnResult = { stdout: string; code: number | null; stderr?: string };
 type StubSpawn = (
   cmd: string,
   args: string[],
@@ -454,6 +454,37 @@ describe("subscription CLI helpers + fail-safe", () => {
   it("Codex throws on empty output", async () => {
     const empty: StubSpawn = async () => ({ stdout: "", code: 0 });
     await expect(createCodexAi({}, empty).run("gpt-5", { prompt: "x" })).rejects.toThrow(/codex_empty_output/);
+  });
+
+  it("surfaces the CLI's stderr in the non-zero-exit error (diagnosable failures, #26)", async () => {
+    // Without stderr in the message, a `claude_code_exit_1` / `codex_exit_1` is an opaque dead-end; with it the real
+    // cause (auth, rate limit, model-not-supported) reaches the logs + Sentry. (stderr-present branch of `?? ""`.)
+    const claudeErr: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "Invalid API key · auth_error" });
+    await expect(
+      createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, claudeErr).run("m", { prompt: "x" }),
+    ).rejects.toThrow(/claude_code_exit_1: Invalid API key/);
+    const codexErr: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "stream error: rate limit reached" });
+    await expect(createCodexAi({}, codexErr).run("m", { prompt: "x" })).rejects.toThrow(
+      /codex_exit_1: stream error: rate limit reached/,
+    );
+  });
+
+  it("defaultSpawn captures a failing CLI's stderr and surfaces it on the exit error (#26)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
+    const fake = join(dir, "claude");
+    // a fake `claude` that reads stdin (so the parent's write never EPIPEs), then writes to STDERR and exits non-zero
+    // — the real failure shape we previously couldn't diagnose.
+    writeFileSync(fake, "#!/usr/bin/env node\nlet i='';process.stdin.on('data',d=>i+=d);process.stdin.on('end',()=>{process.stderr.write('BOOM: auth failed');process.exit(1);});\n");
+    chmodSync(fake, 0o755);
+    const origPath = process.env.PATH;
+    process.env.PATH = `${dir}:${origPath ?? ""}`;
+    try {
+      await expect(
+        createClaudeCodeAi({ ...process.env, CLAUDE_CODE_OAUTH_TOKEN: "t" }).run("sonnet", { prompt: "x" }),
+      ).rejects.toThrow(/claude_code_exit_1: BOOM: auth failed/);
+    } finally {
+      process.env.PATH = origPath;
+    }
   });
 
   it("defaultSpawn rejects when the CLI binary is missing (error handler)", async () => {

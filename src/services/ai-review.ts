@@ -518,6 +518,9 @@ async function runWorkersOpinion(
   const extra: AiGatewayOptions | undefined = gatewayId
     ? { gateway: { id: gatewayId } }
     : undefined;
+  // Track the last provider error so we can fail-LOUD once ALL models × attempts are exhausted (below). Per-attempt
+  // logs are warn (noisy retries, skipped by the central Sentry forwarder); the exhausted summary is error (#26).
+  let lastError: unknown;
   for (const model of fallback && fallback !== primary
     ? [primary, fallback]
     : [primary]) {
@@ -550,8 +553,23 @@ async function runWorkersOpinion(
             error: errorMessage(error),
           }),
         );
+        lastError = error;
       }
     }
+  }
+  // All models × attempts threw (vs "ran but returned unparseable output", where lastError stays undefined): the
+  // reviewer is genuinely DOWN. Emit one level:error log so the central Sentry forwarder surfaces the outage — the
+  // per-attempt warns above are invisible to it. (#26 fail-loud)
+  if (lastError !== undefined) {
+    console.log(
+      JSON.stringify({
+        level: "error",
+        event: "ai_review_provider_exhausted",
+        primary,
+        fallback,
+        error: errorMessage(lastError),
+      }),
+    );
   }
   return null;
 }

@@ -12,7 +12,15 @@ export async function recordOrbPrOutcome(env: Env, eventName: string, payload: G
   const repo = payload.repository?.full_name;
   if (!pr?.number || !repo) return;
   // merged_at is set iff the PR was merged; a close without it is a plain close (rejected / abandoned).
-  const outcome = pr.merged_at ? "merged" : "closed";
+  const merged = Boolean(pr.merged_at);
+  // A PR author closing their OWN unmerged PR is not authoritative ground truth and must not feed the public
+  // homepage counter (mirrors the cloud recordPrOutcome anti-poisoning guard). Merges stay trusted (GitHub enforces
+  // merge permission); a maintainer/bot close is not a self-close. The early-return leaves any prior row untouched.
+  const senderLogin = (payload.sender?.login ?? "").toLowerCase();
+  const authorLogin = (pr.user?.login ?? "").toLowerCase();
+  const botWasActor = payload.sender?.type === "Bot";
+  if (!merged && !botWasActor && senderLogin && authorLogin && senderLogin === authorLogin) return;
+  const outcome = merged ? "merged" : "closed";
   await env.DB.prepare(
     `INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, installation_id, outcome, occurred_at)
      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)

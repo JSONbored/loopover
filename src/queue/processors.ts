@@ -74,6 +74,7 @@ import {
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
+  fetchLivePullRequest,
   fetchLivePullRequestHeadSha,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
@@ -1480,8 +1481,33 @@ async function reReviewStoredPullRequest(
     getRepository(env, repoFullName),
     resolveRepositorySettings(env, repoFullName),
   ]);
-  const pr = await getPullRequest(env, repoFullName, prNumber);
+  let pr = await getPullRequest(env, repoFullName, prNumber);
   if (!pr || pr.state !== "open") return;
+  // #sweep-resync: RESYNC the stored PR to its LIVE head before reviewing. The self-host relay can drop the
+  // `synchronize` webhook (relay down), so a push/rebase never refreshes the stored head SHA + cached files; the
+  // sweep would then review a STALE diff and the AI fail-closes it as INCOHERENT_DIFF, stranding the PR in "held".
+  // Fetch the live PR, and if its head drifted, upsert it + refresh the files so the review runs on the current
+  // head. FAIL OPEN: any token/fetch/undefined-head hiccup proceeds with the stored `pr` (never stall the sweep).
+  const resyncToken =
+    (await createInstallationToken(env, installationId).catch(
+      () => undefined,
+    )) ?? env.GITHUB_PUBLIC_TOKEN;
+  const live = await fetchLivePullRequest(
+    env,
+    repoFullName,
+    prNumber,
+    resyncToken,
+  );
+  if (live?.head?.sha && live.head.sha !== pr.headSha) {
+    await upsertPullRequestFromGitHub(env, repoFullName, live).catch(
+      () => undefined,
+    );
+    await refreshPullRequestDetails(env, repoFullName, prNumber).catch(
+      () => undefined,
+    );
+    /* v8 ignore next -- the row was just upserted above, so the re-read always returns it; `?? pr` is belt-and-suspenders fail-open. */
+    pr = (await getPullRequest(env, repoFullName, prNumber)) ?? pr;
+  }
   // Operator review flow: rebase-if-behind → wait for ALL CI to finish → only THEN review. Defers (returns) when
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
   // once the head is current and CI has settled (the sweep backstops a missed event).
@@ -3751,6 +3777,16 @@ export async function runAiReviewForAdvisory(
           "The dual-model AI review did not return a usable verdict for this change.",
         action:
           "The gate is held for a human reviewer rather than passed automatically; it re-evaluates on the next update.",
+      });
+      // A review that could not be produced is a real failure the maintainer must SEE — surface it to Sentry as an
+      // ERROR (this also covers the INCOHERENT_DIFF bail, which parses to a missing opinion → inconclusive). (#1468)
+      captureReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), {
+        kind: "review",
+        reason: "ai_review_inconclusive",
+        owner: args.repoFullName.split("/")[0],
+        repo: args.repoFullName,
+        pr: args.pr.number,
+        head_sha: args.advisory.headSha,
       });
     }
     args.advisory.findings.push(...findings);

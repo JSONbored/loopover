@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAiReviewDiff, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
-import { BEST_REVIEW_MODELS } from "../../src/services/ai-review";
+import { BEST_REVIEW_MODELS, INCOHERENT_DIFF_ASSESSMENT } from "../../src/services/ai-review";
+import * as sentryModule from "../../src/selfhost/sentry";
 import { upsertRepositoryAiKey } from "../../src/db/repositories";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -211,11 +212,12 @@ describe("runAiReviewForAdvisory", () => {
     expect(result?.notes).toContain("Likely crash.");
   });
 
-  it("appends an ai_review_inconclusive finding (fail-closed hold) when block-mode AI lacks a second opinion", async () => {
+  it("appends an ai_review_inconclusive finding (fail-closed hold) when block-mode AI lacks a second opinion, surfacing it to Sentry as an error", async () => {
     const adv = advisory();
     // The first slot parses; the second slot's primary AND its reliable fallback fail → no consensus possible.
     const run = (async (model: string) => ({ response: model === BEST_REVIEW_MODELS[0] ? notesOnlyJson() : "garbage" })) as unknown as () => Promise<unknown>;
     const env = aiEnv(run);
+    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
     const result = await runAiReviewForAdvisory(env, {
       settings: { aiReviewMode: "block" } as RepositorySettings,
       advisory: adv,
@@ -226,6 +228,36 @@ describe("runAiReviewForAdvisory", () => {
     });
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
     expect(result?.notes).toBeDefined(); // the single parseable opinion still produces advisory notes
+    // The unproducible review is reported to Sentry with PR context so the maintainer can SEE it (#1468).
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), {
+      kind: "review",
+      reason: "ai_review_inconclusive",
+      owner: "acme",
+      repo: "acme/widgets",
+      pr: 3,
+      head_sha: "sha3",
+    });
+    captureSpy.mockRestore();
+  });
+
+  it("surfaces the INCOHERENT_DIFF bail to Sentry as a review failure (stale-head review)", async () => {
+    const adv = advisory();
+    // Both reviewers return the INCOHERENT_DIFF assessment — the diff is out of sync with the PR head, so each
+    // opinion parses to null → the combiner yields `inconclusive`, the same review-failure path as a missing opinion.
+    const incoherent = JSON.stringify({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [] });
+    const env = aiEnv((async () => ({ response: incoherent })) as unknown as () => Promise<unknown>);
+    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
+    await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ reason: "ai_review_inconclusive", repo: "acme/widgets", head_sha: "sha3" }));
+    captureSpy.mockRestore();
   });
 
   it("appends an ai_review_split finding (lone-blocker HOLD) when the two block-mode reviewers disagree", async () => {

@@ -64,14 +64,15 @@ export function captureError(
   });
 }
 
-/** Capture a degraded/failed review at WARNING level, tagged by repo/PR/SHA for triage. No-op when off. */
+/** Capture a failed review at ERROR level, tagged by repo/PR/SHA for triage. A review that cannot be produced is a
+ *  real failure the maintainer must SEE — not a warning that hides in the noise. No-op when off. */
 export function captureReviewFailure(
   error: unknown,
   context?: Record<string, unknown>,
 ): void {
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
-    scope.setLevel("warning");
+    scope.setLevel("error");
     if (context) {
       scope.setContext("review", context);
       for (const tag of ["owner", "repo", "pr", "head_sha"]) {

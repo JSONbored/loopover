@@ -2159,6 +2159,16 @@ export async function fetchLivePullRequestHeadSha(env: Env, repoFullName: string
   return result?.data.head?.sha ?? undefined;
 }
 
+/** The PR's FULL live payload via REST `GET /pulls/{n}`, ready to feed `upsertPullRequestFromGitHub`. The scheduled
+ *  re-gate sweep uses this to RESYNC a stored PR to its live head when a `synchronize` webhook was lost (e.g. the
+ *  self-host relay was down), so the re-review runs on the current head + fresh files instead of a stale cached diff
+ *  the AI fail-closes as INCOHERENT_DIFF (#sweep-resync). Best-effort: returns undefined on any error so the caller
+ *  fails open to the stored PR (the sweep must never stall on a hiccup). */
+export async function fetchLivePullRequest(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<GitHubPullRequestPayload | undefined> {
+  const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+  return result?.data ?? undefined;
+}
+
 /** Resolve the OPEN PRs associated with a commit SHA via the REST `GET /repos/{owner}/{repo}/commits/{sha}/pulls`
  *  endpoint. This is the only PR↔commit resolution that works for FORK (cross-repo) PRs, whose CI-completion
  *  webhooks (`check_suite`/`check_run`) carry an EMPTY `pull_requests[]`. Returns the de-duplicated open PR numbers.

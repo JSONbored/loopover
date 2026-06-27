@@ -124,7 +124,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureException).toHaveBeenCalledTimes(2);
   });
 
-  it("captureReviewFailure sets warning level + repo/PR/SHA tags, skipping null/undefined, and works without context", async () => {
+  it("captureReviewFailure sets error level + repo/PR/SHA tags, skipping null/undefined, and works without context", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureReviewFailure(new Error("rev"), {
       repo: "o/r",
@@ -132,7 +132,7 @@ describe("enabled when SENTRY_DSN is set", () => {
       head_sha: "abc",
       owner: null,
     });
-    expect(mocks.scope.setLevel).toHaveBeenCalledWith("warning");
+    expect(mocks.scope.setLevel).toHaveBeenCalledWith("error");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "o/r");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("pr", "7");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("head_sha", "abc");

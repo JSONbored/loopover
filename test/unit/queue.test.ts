@@ -735,6 +735,99 @@ describe("queue processors", () => {
     expect(mergeAudit?.n).toBe(0);
   });
 
+  // #sweep-resync: when a `synchronize` webhook is lost (self-host relay down), the stored head SHA + cached files
+  // go stale and the sweep would review an INCOHERENT diff. The re-review now RESYNCS the stored PR to its live head
+  // before reviewing. These two cases pin both arms of the drift check (differs → resync fires, matches → no-op).
+  it("#sweep-resync: re-review RESYNCS the stored PR to the live head when it drifted, then reviews on the new head", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    // STORED head is the stale a7; GitHub's LIVE head is b8 (a push the lost synchronize never delivered).
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    let liveFilesFetched = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // GET /pulls/7 reports the live head b8 — the resync upserts this over the stale a7.
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) { liveFilesFetched = true; return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]); }
+      if (url.includes("/commits/b8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "resync-drift", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // The stored PR was resynced to the live head, and its files were refreshed (so the review runs on b8, not a7).
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("b8");
+    expect(liveFilesFetched).toBe(true);
+  });
+
+  it("#sweep-resync: re-review does NOT resync when the stored head already matches the live head", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    const resyncUpsertSpy = vi.spyOn(repositoriesModule, "upsertPullRequestFromGitHub");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // GET /pulls/7 reports the SAME head a7 — no drift, so the resync upsert must not fire.
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "resync-nodrift", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // No drift → the resync branch's upsert never ran; the stored head is unchanged.
+    expect(resyncUpsertSpy).not.toHaveBeenCalled();
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("a7");
+    resyncUpsertSpy.mockRestore();
+  });
+
+  it("#sweep-resync: a failing resync upsert is swallowed (fail-open) — the sweep never throws", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    // The live head drifted (b8 ≠ a7), so the resync upsert fires — but it REJECTS. The `.catch(() => undefined)`
+    // must swallow it so the sweep proceeds on the stored `pr` rather than stalling (#sweep-resync fail-open).
+    const resyncUpsertSpy = vi.spyOn(repositoriesModule, "upsertPullRequestFromGitHub").mockRejectedValueOnce(new Error("D1 upsert failed"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs") || url.includes("/commits/b8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status") || url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    // The rejecting upsert is caught; the job resolves without throwing and the stored head stays a7 (fail-open).
+    await expect(processJob(env, { type: "agent-regate-pr", deliveryId: "resync-failopen", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 })).resolves.toBeUndefined();
+    expect(resyncUpsertSpy).toHaveBeenCalledTimes(1);
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("a7");
+    resyncUpsertSpy.mockRestore();
+  });
+
   it("#1: the block-mode re-gate sweep replays cached AI findings before gate evaluation", async () => {
     let aiCalls = 0;
     const env = createTestEnv({

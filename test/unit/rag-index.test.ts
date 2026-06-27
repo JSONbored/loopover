@@ -187,6 +187,23 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     errSpy.mockRestore();
   });
 
+  it("bounds the tree + contents GitHub fetches with an abort-timeout signal (a hung connection can't stall the queue worker)", async () => {
+    const { env } = indexEnv();
+    const inits: Array<RequestInit | undefined> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      inits.push(init);
+      const url = input.toString();
+      if (url.includes("/git/trees/")) return Response.json({ tree: [{ type: "blob", path: "src/a.ts", size: 20 }], truncated: false });
+      if (url.includes("/contents/")) return new Response("export const a = 1;\n", { status: 200 });
+      return new Response("missing", { status: 404 });
+    });
+    await indexRepo(env, PROJECT, REPO);
+    // Both the tree fetch and each per-file contents fetch must carry an AbortSignal so a stalled GitHub connection
+    // aborts (→ the existing fail-safe catches) instead of pinning the index job + its queue consumer indefinitely.
+    expect(inits.length).toBeGreaterThan(1);
+    expect(inits.every((i) => i?.signal instanceof AbortSignal)).toBe(true);
+  });
+
   it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes) + surfaces it at ERROR for Sentry (#5)", async () => {
     const { env } = indexEnv();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});

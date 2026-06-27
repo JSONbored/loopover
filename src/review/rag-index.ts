@@ -45,6 +45,10 @@ type TreeEntry = { path: string; size?: number | undefined };
  *  embedTexts itself batches the AI calls at EMBED_BATCH internally). */
 const UPSERT_BATCH = 50;
 
+/** Abort a GitHub read that hangs — a stalled connection on the tree/contents fetch would otherwise pin the whole
+ *  index job (and the queue consumer running it) indefinitely. Aborts land in the existing fail-safe catches. */
+const GITHUB_FETCH_TIMEOUT_MS = 10_000;
+
 /** Resolve the read token once for a repo: installation token (private-repo read) → public token → none.
  *  Best-effort — a token failure degrades to the next fallback, never throws. (Mirrors makeGithubFileFetcher.) */
 async function resolveReadToken(env: Env, installationId: number | null | undefined): Promise<string | undefined> {
@@ -73,7 +77,7 @@ async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token:
   try {
     const { owner, name } = repoParts(repoFullName);
     const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
-    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github+json") });
+    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github+json"), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
     if (!response.ok) return null;
     const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number }> } | null;
     const entries: TreeEntry[] = [];
@@ -137,7 +141,7 @@ async function fetchFileText(
       .split("/")
       .map(encodeURIComponent)
       .join("/")}?ref=${encodeURIComponent(ref)}`;
-    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github.raw+json") });
+    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github.raw+json"), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
     if (!response.ok) return null;
     return await readTextCapped(response, maxBytes);
   } catch {

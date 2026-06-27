@@ -6,6 +6,7 @@ import {
   consensusDefectFromFindings,
   gateConclusionToVerdict,
   isUnifiedReviewCommentEnabled,
+  isBoilerplateNit,
   panelRowsToSignalRows,
   PR_PANEL_COMMENT_MARKER,
   splitAiReviewNits,
@@ -121,6 +122,20 @@ describe("buildDualReviewNotes", () => {
     expect(reviews[0]?.notes?.nits).toEqual(["No test"]); // title only, no trailing " — "
   });
 
+  it("demotes self-host environmental/process warnings out of the nits, keeping real code nits (#review-accuracy)", () => {
+    const reviews = buildDualReviewNotes({
+      aiReview: { notes: "Looks fine." },
+      warnings: [
+        { code: "missing_linked_issue", severity: "warning", title: "No linked issue detected", detail: "...", action: "Link it." },
+        { code: "repo_not_registered", severity: "warning", title: "Registration is not available in the local Gittensory cache", detail: "..." },
+        { code: "real_code_nit", severity: "warning", title: "Missing test", detail: "...", action: "Add a test." },
+      ],
+      recommendation: "merge",
+      verdict: "comment",
+    });
+    expect(reviews[0]?.notes?.nits).toEqual(["Missing test — Add a test."]); // only the real code nit survives
+  });
+
   it("demotes the AI review's **Nits (N)** out of the assessment into the collapsible nits, ahead of gate warnings", () => {
     const reviews = buildDualReviewNotes({
       aiReview: {
@@ -154,6 +169,14 @@ describe("splitAiReviewNits", () => {
   });
   it("handles an empty blob", () => {
     expect(splitAiReviewNits("")).toEqual({ main: "", nits: [] });
+  });
+});
+
+describe("isBoilerplateNit", () => {
+  it("flags environmental/process findings by code or title, never real code nits", () => {
+    expect(isBoilerplateNit({ code: "missing_linked_issue", severity: "warning", title: "No linked issue detected", detail: "" })).toBe(true); // code match
+    expect(isBoilerplateNit({ code: "x", severity: "warning", title: "Repository registration is not available in the local Gittensory cache", detail: "" })).toBe(true); // title match
+    expect(isBoilerplateNit({ code: "real_nit", severity: "warning", title: "Missing test", detail: "" })).toBe(false); // real code nit
   });
 });
 

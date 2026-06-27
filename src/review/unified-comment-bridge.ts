@@ -138,6 +138,26 @@ export function splitAiReviewNits(notes: string): { main: string; nits: string[]
   return { main: notes.slice(0, marker).trim(), nits };
 }
 
+/** Self-host environmental + process findings that are already represented in the signal table and are NOT code
+ *  observations — keep them OUT of the Nits list so the nit count reflects real code review, not boilerplate that
+ *  padded nearly every review (#review-accuracy). */
+const BOILERPLATE_NIT_CODES = new Set([
+  "repo_not_registered",
+  "repo_not_seen",
+  "pr_not_cached",
+  "pre_merge_check_unresolved",
+  "missing_linked_issue",
+  "no_linked_issue_without_rationale",
+]);
+const BOILERPLATE_NIT_TITLE =
+  /local gittensory cache|registration is not available|config was not parsed|not registered/i;
+export function isBoilerplateNit(finding: AdvisoryFinding): boolean {
+  return (
+    BOILERPLATE_NIT_CODES.has(finding.code) ||
+    BOILERPLATE_NIT_TITLE.test(finding.title)
+  );
+}
+
 /** Build the single AI reviewer note from gittensory's AI output: the composed advisory write-up (minus its nits)
  *  becomes the assessment; a consensus defect (recovered from the advisory findings) becomes a blocker; the AI's own
  *  nits AND the gate's non-blocking warnings become the collapsible nits. Returns `[]` when there is nothing
@@ -176,6 +196,7 @@ export function buildDualReviewNotes(args: {
   // PRIVATE_FORBIDDEN_TERMS above. (The consensus-defect blocker is already public-safe via toPublicSafe; the
   // gate blockers above go through the SAME scrub as Nits.)
   const gateNits = (args.warnings ?? [])
+    .filter((warning) => !isBoilerplateNit(warning))
     .map((warning) => `${warning.title}${warning.action ? ` — ${warning.action}` : ""}`.trim())
     .filter(Boolean)
     .map((line) => publicSafeNit(line))

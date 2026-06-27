@@ -75,6 +75,15 @@ export interface ActionPinFinding {
   ref: string;
 }
 
+/** A runtime/base-image/engine pinned to a release that is past end-of-support (or EOL within 90 days). */
+export interface EolFinding {
+  file: string;
+  product: string;
+  version: string;
+  eol: string;
+  status: "eol" | "soon";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -82,6 +91,7 @@ export interface BriefFindings {
   license?: LicenseFinding[];
   actionPin?: ActionPinFinding[];
   installScript?: InstallScriptFinding[];
+  eol?: EolFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

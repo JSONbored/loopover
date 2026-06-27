@@ -4,6 +4,11 @@ declare global {
     JOBS: Queue;
     RATE_LIMITER?: DurableObjectNamespace;
     AI?: Ai;
+    /** Self-host (RAG): a DEDICATED embedding provider, kept SEPARATE from the review chat chain so the reviewer
+     *  stays frontier-only (claude-code/codex) while embeddings — which those CLIs cannot produce — route to a
+     *  local/openai-compatible endpoint (ollama). Built at boot from AI_EMBED_BASE_URL/AI_EMBED_MODEL. Absent ⇒
+     *  `createReviewAdapters` falls back to `env.AI` (byte-identical to before). */
+    AI_EMBED?: Ai;
     /** Convergence (infra): Vectorize index for codebase RAG retrieval (Layer C). Optional — the review is
      *  fully fail-safe without it (absent ⇒ no RAG, review proceeds with no retrieved context). The index is
      *  created with bge-m3's 1024 dimensions. Unused until the per-module RAG wiring chunk; an unbound deploy
@@ -118,6 +123,11 @@ declare global {
      *  (ONE in-place comment in the converged shape) instead of the legacy `buildPublicPrIntelligenceComment`
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
     GITTENSORY_REVIEW_UNIFIED_COMMENT?: string;
+    /** Inline comments (#inline-comments): when truthy (AND the repo is in GITTENSORY_REVIEW_REPOS AND the repo's
+     *  `.gittensory.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
+     *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —
+     *  unset/false keeps the review path byte-identical (the model is never asked for inline findings). */
+    GITTENSORY_REVIEW_INLINE_COMMENTS?: string;
     /** Convergence (safety): when truthy, the ported safety scan runs in the review path — (1) untrusted PR
      *  title/body/diff is defanged (prompt-injection neutralized) before it reaches the AI reviewer, and (2)
      *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —

@@ -92,6 +92,10 @@ export type AgentActionPlanInput = {
   // accumulator like automation/readme-refresh, or dependabot/renovate). These are NEVER auto-closed — a noise
   // heuristic (duplicate/slop) must not kill a recurring maintainer-managed PR. They may still auto-merge.
   authorIsAutomationBot: boolean;
+  // Per-repo toggle (#configurable-owner-close): when TRUE, the repo OWNER's own PRs are eligible for auto-close
+  // like a contributor's (still gated by the `close` autonomy class + adverse-signal conditions). Default/undefined
+  // ⇒ owner PRs are exempt (merge or manual-hold only). Automation-bot PRs stay exempt regardless.
+  closeOwnerAuthors?: boolean | undefined;
   // Live CI aggregate over ALL of the PR's checks — required OR not, including non-required ones like
   // codecov/patch and every commit-status (reviewbot parity). "passed" = every check completed and none
   // failed; "failed" = at least one check failed; "pending" = at least one check still running; "unverified"
@@ -118,8 +122,8 @@ export type AgentActionPlanInput = {
   // global), the disposition SHORT-CIRCUITS to a deterministic close ahead of ALL merit/CI/AI analysis — the
   // banned account never gets merit-reviewed or auto-merged. Zero-hallucination (not an AI judgment), so its
   // close is EXEMPT from the AI-refutation breaker (closeKind "blacklist"). Fires for a CONTRIBUTOR only
-  // (owner/automation bots are never auto-closed). `reason` is the entry's public-safe reason (or null). Absent /
-  // not-matched ⇒ no effect. The close comment is sanitized through the public-safe sanitizer before posting.
+  // (owner/automation bots are never auto-closed). `reason` is private maintainer metadata used only for matching
+  // context; the public close comment intentionally uses static copy. Absent / not-matched ⇒ no effect.
   blacklistMatch?: { matched: boolean; reason: string | null | undefined } | undefined;
   // The repo-configured label applied to a blacklisted author's PR (#1425), resolved from `.gittensory.yml`.
   // Absent ⇒ the default (`DEFAULT_BLACKLIST_LABEL` = "slop"), so the disposition works regardless of the label set.
@@ -230,10 +234,10 @@ function closeMessage(reasons: string[]): string {
   return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs are re-reviewed automatically, so an inaccurate close may be reopened, but that does not guarantee it can merge (e.g. if conflicts or failing CI remain).`;
 }
 
-// The close comment for a blacklisted author (#1425). The maintainer-supplied `reason` is sanitized by the caller
-// through the public-safe sanitizer, so this never leaks a private term into the public PR thread.
-function blacklistCloseMessage(reason: string): string {
-  return `Gittensory is closing this pull request on the maintainer's behalf: ${reason}. This account is blocked from contributing to this repository, so the change was not reviewed on its merits. This is an automated maintenance action.`;
+// The close comment for a blacklisted author (#1425). Do not interpolate maintainer-supplied blacklist metadata:
+// reasons/evidence may come from private configuration, and this string is posted to the public PR thread.
+function blacklistCloseMessage(): string {
+  return "Gittensory is closing this pull request on the maintainer's behalf. This account is blocked from contributing to this repository, so the change was not reviewed on its merits. This is an automated maintenance action.";
 }
 
 /**
@@ -259,14 +263,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // the standing rule). Zero-hallucination, so its close is `closeKind: "blacklist"` — exempt from the AI-refutation
   // breaker like the linked-issue hard rule. The `acting`/`approval` gates here + the executor's pause/dry-run/
   // kill-switch gate make it dry-run-able and approval-gated exactly like every other action. The close comment is
-  // run through the public-safe sanitizer so a maintainer's reason can never leak a private term.
+  // static by construction so private maintainer metadata from the blacklist entry cannot leak.
   const blacklistContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
   if (input.blacklistMatch?.matched === true && blacklistContributor) {
     const label = input.blacklistLabel ?? DEFAULT_BLACKLIST_LABEL;
     if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "blacklisted contributor", label, labelOp: "add" });
     if (acting("close")) {
-      const reason = input.blacklistMatch.reason ?? "this account is blocked from contributing to this repository";
-      actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: "blacklisted contributor", closeComment: sanitizePublicComment(blacklistCloseMessage(reason)), closeKind: "blacklist" });
+      actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: "blacklisted contributor", closeComment: sanitizePublicComment(blacklistCloseMessage()), closeKind: "blacklist" });
     }
     return actions;
   }
@@ -327,6 +330,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const ciUnverified = input.ciState === "unverified";
   const reviewGood = gatePassing && ciPassed;
   const isContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
+  // The owner-close exemption is PER-REPO CONFIGURABLE (#configurable-owner-close): by default the repo owner's
+  // own PRs are exempt from auto-close (closeOwnerAuthors !== true ⇒ merge or manual-hold only), but a maintainer
+  // can opt in to closing them like a contributor's. Automation bots stay exempt regardless (a noise heuristic
+  // must not kill a recurring maintainer-managed accumulator).
+  const closeEligible = isContributor || (input.authorIsOwner && input.closeOwnerAuthors === true);
   const mergeableClean = input.pr.mergeableState === "clean";
   const isConflict = input.pr.mergeableState === "dirty"; // conflicts with base — can't merge as-is
   // RC3: a prior merge attempt failed terminally for THIS exact head SHA (403/405/409/conflict) → never re-plan
@@ -352,7 +360,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // have folded in optional / third-party checks and must keep the hard-guardrail manual hold.
   // (Rebase-if-behind already ran above, so a red CI here is on the latest base — not a stale-base artifact.) (#ci-fail-closes-guarded)
   const redVerifiedRequiredCi = ciFailed && input.ciRequiredContextsVerified === true;
-  const willClose = isContributor && acting("close") && (redVerifiedRequiredCi || (!guardrailHit && (ciFailed || conclusion === "failure" || isConflict)));
+  const willClose = closeEligible && acting("close") && (redVerifiedRequiredCi || (!guardrailHit && (ciFailed || conclusion === "failure" || isConflict)));
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
   // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
   // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR
@@ -361,7 +369,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const linkedIssueHardRule = input.linkedIssueHardRule;
   // Base condition: a CONTRIBUTOR PR links an issue tripping a deterministic hard rule AND the `close` autonomy
   // class is acting. (The owner/automation exemption lives in `isContributor`.)
-  const linkedIssueViolated = linkedIssueHardRule?.violated === true && isContributor && acting("close");
+  const linkedIssueViolated = linkedIssueHardRule?.violated === true && closeEligible && acting("close");
   // Flag-then-close double-check (#linked-issue-verify-before-close). Default behavior when the caller doesn't
   // pass the config is IMMEDIATE close (back-compat). When verifyBeforeClose is on, the close is a TWO-PASS
   // label-state machine: Pass 1 flags (adds the pending-closure label + a warning comment) and Pass 2 — the next

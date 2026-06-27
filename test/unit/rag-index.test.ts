@@ -3,6 +3,7 @@ import { indexRepo, reindexChangedPaths } from "../../src/review/rag-index";
 import { MAX_CHUNKS_PER_REPO, MAX_FILE_BYTES, RAG_DIMENSIONS, ragNamespace } from "../../src/review/rag";
 import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 // A valid bge-m3-width (1024-d) embedding vector — embedTexts rejects any other width.
@@ -491,6 +492,30 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, requestedBy: "schedule" });
   });
 
+  it("cron fan-out ALSO indexes CONFIGURED (GITTENSORY_REVIEW_REPOS) repos never registered via webhook (brokered self-host fix)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/metagraphed, JSONbored/gittensory", // configured, NOT registered (is_registered=0)
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    // No registerRepo() — these are is_registered=0 (the brokered model); the old registered-only fan-out indexed NOTHING.
+    await processJob(env, { type: "rag-index-repo", requestedBy: "schedule" });
+    expect(sent.map((m) => (m as { repoFullName?: string }).repoFullName).sort()).toEqual(["JSONbored/gittensory", "JSONbored/metagraphed"]);
+  });
+
+  it("dedupes a repo that is BOTH registered and configured (no double-index)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    await registerRepo(env, "JSONbored/gittensory"); // registered AND configured → must appear exactly once
+    await processJob(env, { type: "rag-index-repo", requestedBy: "schedule" });
+    expect(sent.filter((m) => (m as { repoFullName?: string }).repoFullName === "JSONbored/gittensory").length).toBe(1);
+  });
+
   it("FLAG-OFF cron fan-out is a no-op (no per-repo jobs enqueued, no fan-out audit)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
@@ -512,19 +537,37 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(1);
   });
 
-  it("per-repo dispatch SKIPS a non-allowlisted repo (no indexing)", async () => {
+  it("per-repo dispatch SKIPS a repo where RAG is not active (no indexing)", async () => {
     const env = createTestEnv({
       GITTENSORY_REVIEW_RAG: "true",
-      GITTENSORY_REVIEW_REPOS: "", // empty allowlist → nothing converged
+      GITTENSORY_REVIEW_REPOS: "", // empty allowlist → not active (no per-repo features.rag override either)
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: aiStub() as unknown as Ai,
     });
     await registerRepo(env, "JSONbored/gittensory");
-    const fetchSpy = vi.fn();
+    // The manifest IS consulted now (that's how a per-repo `features.rag: true` override would activate an
+    // un-allowlisted repo); it returns no manifest here, so the repo stays inactive and is never indexed.
+    const fetchSpy = vi.fn(async (url: RequestInfo | URL) => new Response("", { status: 404, headers: { "x-url": String(url) } }));
     vi.stubGlobal("fetch", fetchSpy);
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // No indexing work: the GitHub git/trees endpoint (the index walk) was never hit.
+    expect(fetchSpy.mock.calls.some((call) => String(call[0]).includes("/git/trees/"))).toBe(false);
     expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(0);
+  });
+
+  it("per-repo dispatch INDEXES an un-allowlisted repo when features.rag is overridden on via the private config", async () => {
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      GITTENSORY_REVIEW_REPOS: "", // not allowlisted — only the per-repo override activates it
+      VECTORIZE: vectorizeStub() as unknown as Vectorize,
+      AI: aiStub() as unknown as Ai,
+    });
+    await registerRepo(env, "JSONbored/gittensory");
+    // Private-config override: features.rag = true. upsert persists it as an api_record the loader reads.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { features: { rag: true } });
+    stubGithub({ tree: [{ path: "src/a.ts", size: 30 }], files: { "src/a.ts": "export const a = 1;\n" } });
+    await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(1); // indexed despite the empty allowlist
   });
 
   it("per-repo INCREMENTAL dispatch (with paths) runs reindexChangedPaths", async () => {

@@ -89,6 +89,10 @@ function isValidSlackWebhook(url: string): boolean {
   }
 }
 
+function escapeSlackMrkdwnText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Post a per-action Slack message (merged/closed/manual) to `SLACK_WEBHOOK_URL` as a Block Kit section. Best-effort:
  *  never throws. The modular self-host default — ANY repo notifies the operator's single Slack channel when
  *  `SLACK_WEBHOOK_URL` is set; unset → no-op, byte-identical to today. Sibling of {@link notifyActionToDiscord}. */
@@ -100,8 +104,9 @@ export async function notifyActionToSlack(
   if (typeof webhookUrl !== "string" || !isValidSlackWebhook(webhookUrl)) return;
   const meta = OUTCOME_META[params.outcome];
   const prUrl = `https://github.com/${params.repoFullName}/pull/${params.pullNumber}`;
-  const lines = [`*<${prUrl}|${params.repoFullName}#${params.pullNumber}>* · ${meta.word}`, (params.summary || meta.word).slice(0, 1800)];
-  if (params.submitter) lines.push(`Submitter: @${params.submitter}`);
+  const prLabel = escapeSlackMrkdwnText(`${params.repoFullName}#${params.pullNumber}`);
+  const lines = [`*<${prUrl}|${prLabel}>* · ${meta.word}`, escapeSlackMrkdwnText(params.summary || meta.word).slice(0, 1800)];
+  if (params.submitter) lines.push(`Submitter: @${escapeSlackMrkdwnText(params.submitter)}`);
   const body = {
     text: `${params.repoFullName}#${params.pullNumber} ${meta.word}`,
     blocks: [{ type: "section", text: { type: "mrkdwn", text: lines.join("\n") } }],

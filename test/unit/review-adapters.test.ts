@@ -62,6 +62,26 @@ describe("createReviewAdapters: bundle assembly + graceful degradation", () => {
     expect(infra.inference).toBeDefined();
   });
 
+  it("prefers the dedicated AI_EMBED provider for inference, keeping the review chain frontier-only", async () => {
+    const { DB } = dbStub();
+    const reviewAi = { run: vi.fn(async () => ({ response: "review text" })) }; // would NOT return embed data
+    const embedAi = { run: vi.fn(async () => ({ data: [[0.1, 0.2]] })) };
+    const infra = createReviewAdapters({ DB, VECTORIZE: vectorizeStub(), AI: reviewAi, AI_EMBED: embedAi } as unknown as Env);
+    // The embed call goes to AI_EMBED (ollama), never the review chain.
+    await infra.inference!.run("bge-m3", { text: ["hi"] });
+    expect(embedAi.run).toHaveBeenCalledTimes(1);
+    expect(reviewAi.run).not.toHaveBeenCalled();
+  });
+
+  it("falls back to env.AI for inference when no dedicated AI_EMBED is configured (byte-identical to before)", async () => {
+    const { DB } = dbStub();
+    const ai = aiStub();
+    const infra = createReviewAdapters({ DB, AI: ai } as unknown as Env);
+    expect(infra.inference).toBeDefined();
+    await infra.inference!.run("bge-m3", { text: ["hi"] });
+    expect(ai.run).toHaveBeenCalledTimes(1);
+  });
+
   it("degrades to no-RAG/no-context when VECTORIZE and AI are absent (storage always present, never throws)", () => {
     const { DB } = dbStub();
     const infra = createReviewAdapters({ DB } as unknown as Env);

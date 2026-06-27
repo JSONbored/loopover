@@ -41,7 +41,7 @@ async function seedRegisteredRepo(env: Env, fullName: string, autonomyJson: stri
 // Seed N resolved recommendation outcomes for a repo: `negative` rejected/closed (the dangerous error a
 // tightening fixes) + `positive` accepted. Inserted directly (FKs off) — buildRepoOutcomeCalibration reads
 // the outcome_state split, which is all the eval mapping needs.
-async function seedRecommendationOutcomes(env: Env, repoFullName: string, positive: number, negative: number): Promise<void> {
+async function seedRecommendationOutcomes(env: Env, repoFullName: string, positive: number, negative: number, maintainerLane = true): Promise<void> {
   await env.DB.prepare("PRAGMA foreign_keys=OFF").run();
   let i = 0;
   const insert = async (state: string) => {
@@ -50,9 +50,9 @@ async function seedRecommendationOutcomes(env: Env, repoFullName: string, positi
       `INSERT INTO agent_recommendation_outcomes
         (id, action_id, run_id, actor_login, action_type, outcome_state, outcome_target_type, outcome_repo_full_name,
          maintainer_lane, confidence, reason, source, updated_at)
-       VALUES (?, ?, ?, ?, 'review', ?, 'pull_request', ?, 0, 'medium', 'seed', 'inferred', CURRENT_TIMESTAMP)`,
+       VALUES (?, ?, ?, ?, 'review', ?, 'pull_request', ?, ?, 'medium', 'seed', 'inferred', CURRENT_TIMESTAMP)`,
     )
-      .bind(`o${i}`, `a${i}`, `r${i}`, "bot", state, repoFullName)
+      .bind(`o${i}`, `a${i}`, `r${i}`, "bot", state, repoFullName, maintainerLane ? 1 : 0)
       .run();
   };
   for (let n = 0; n < positive; n += 1) await insert("accepted");
@@ -152,6 +152,18 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
     expect(shadow?.override.confidenceFloor).toBeGreaterThan(0);
     expect(await loadOverride(env as never, "owner/repo")).toBeNull(); // not promoted within one tick (still soaking)
     expect((await listOverrideAudit(env as never, "owner/repo")).some((a) => a.eventType === "override_shadowed")).toBe(true);
+  });
+
+  it("ignores contributor-lane closures when building live self-tune policy", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
+    await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
+    await seedRecommendationOutcomes(env, "owner/repo", 0, 10, false);
+
+    await runSelfTune(env);
+
+    expect(await loadShadowOverride(env as never, "owner/repo")).toBeNull();
+    expect(await loadOverride(env as never, "owner/repo")).toBeNull();
+    expect((await listOverrideAudit(env as never, "owner/repo")).length).toBe(0);
   });
 
   it("FLAG-ON: promotes a SOAKED tightening shadow override to live on a later tick (tightening + evidence + soaked)", async () => {

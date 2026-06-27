@@ -4062,6 +4062,30 @@ describe("api routes", () => {
     });
   });
 
+  it("POST /v1/internal/jobs/rag-index queues a fan-out (no body) or a single-repo index; 404 when RAG is off", async () => {
+    const app = createApp();
+    const sent: unknown[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      JOBS: { async send(message: unknown) { sent.push(message); } } as unknown as Queue,
+    });
+    const headers = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
+    // No body → re-index every configured repo (the operator's "index all my repos" button).
+    const all = await app.request("/v1/internal/jobs/rag-index", { method: "POST", headers, body: "{}" }, env);
+    expect(all.status).toBe(202);
+    await expect(all.json()).resolves.toMatchObject({ ok: true, status: "queued", scope: "all-configured-repos" });
+    expect(sent.at(-1)).toEqual({ type: "rag-index-repo", requestedBy: "api" });
+    // A repoFullName → index just that repo (adding/refreshing one repo on demand).
+    const one = await app.request("/v1/internal/jobs/rag-index", { method: "POST", headers, body: JSON.stringify({ repoFullName: " JSONbored/gittensory " }) }, env);
+    expect(one.status).toBe(202);
+    await expect(one.json()).resolves.toMatchObject({ scope: "JSONbored/gittensory" });
+    expect(sent.at(-1)).toEqual({ type: "rag-index-repo", requestedBy: "api", repoFullName: "JSONbored/gittensory" });
+    // RAG globally off → the endpoint does not exist.
+    const offEnv = createTestEnv({ JOBS: { async send() {} } as unknown as Queue });
+    const offHeaders = { authorization: `Bearer ${offEnv.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
+    expect((await app.request("/v1/internal/jobs/rag-index", { method: "POST", headers: offHeaders, body: "{}" }, offEnv)).status).toBe(404);
+  });
+
   it("covers live app auth, validation, and internal job queue edge routes", async () => {
     const app = createApp();
     const sent: Array<{ message: unknown; options?: unknown }> = [];

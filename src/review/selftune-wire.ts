@@ -17,8 +17,10 @@
 // advisor consumes a GateEvalReport (per-project confusion matrix). We build that report from gittensory's
 // NATIVE outcome sources via the SAME aggregation services ops-wire already reuses (no new queries / schema):
 //   • agent_recommendation_outcomes (#543) — the positive/negative resolved split (buildRepoOutcomeCalibration).
-//     A NEGATIVE outcome (gittensory recommended "proceed", the human CLOSED) is the gittensory-native analogue
-//     of reviewbot's "would-merge BUT human closed" (mergeFalse) — the dangerous error a TIGHTENING fixes.
+//     Only maintainer-lane outcomes are authoritative enough for live self-tune policy changes; contributor-lane
+//     closures can be self-authored and stay reporting-only. A maintainer-lane NEGATIVE outcome (gittensory
+//     recommended "proceed", the human CLOSED) is the gittensory-native analogue of reviewbot's "would-merge
+//     BUT human closed" (mergeFalse) — the dangerous error a TIGHTENING fixes.
 // The mapping is deliberately conservative: it only ever populates the would-MERGE side of the matrix, so the
 // advisor can only ever recommend a TIGHTENING (raise the floor) or a no-op — never a loosening.
 //
@@ -81,7 +83,7 @@ export function evalRowFromCalibration(project: string, positive: number, negati
 
 /** Build the per-project GateEvalReport from gittensory's recommendation-outcome calibration for one repo. */
 async function buildEvalRow(env: Env, repoFullName: string): Promise<GateEvalRow> {
-  const calibration = await buildRepoOutcomeCalibration(env, repoFullName);
+  const calibration = await buildRepoOutcomeCalibration(env, repoFullName, undefined, { maintainerOnly: true });
   return evalRowFromCalibration(repoFullName, calibration.recommendations.positive, calibration.recommendations.negative);
 }
 

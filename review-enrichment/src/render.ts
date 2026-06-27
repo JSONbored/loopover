@@ -2,6 +2,22 @@
 // so each analyzer's rendering is one function and the brief stays deterministic + cap-bounded.
 import type { BriefFindings } from "./types.js";
 
+const CODE_SPAN_UNSAFE = /[`\u0000-\u001f\u007f]/g;
+
+const CODE_SPAN_REPLACEMENTS: Record<string, string> = {
+  "`": "\u02cb",
+  "\n": "\u2424",
+  "\r": "\u240d",
+  "\t": "\u2409",
+};
+
+function safeCodeSpan(value: string): string {
+  return `\`${value.replace(
+    CODE_SPAN_UNSAFE,
+    (char) => CODE_SPAN_REPLACEMENTS[char] ?? "\ufffd",
+  )}\``;
+}
+
 const SEVERITY_RANK: Record<string, number> = {
   critical: 0,
   high: 1,
@@ -42,7 +58,7 @@ export function renderBrief(
     );
     for (const secret of secrets) {
       lines.push(
-        `- \`${secret.file}:${secret.line}\` — ${secret.kind} (${secret.confidence} confidence)`,
+        `- ${safeCodeSpan(`${secret.file}:${secret.line}`)} — ${secret.kind} (${secret.confidence} confidence)`,
       );
     }
   }
@@ -77,7 +93,18 @@ export function renderBrief(
     lines.push("### Unpinned GitHub Actions (pin to a commit SHA)");
     for (const pin of actionPins) {
       lines.push(
-        `- \`${pin.file}:${pin.line}\` — \`${pin.action}@${pin.ref}\` is a mutable ref; pin to a full commit SHA`,
+        `- ${safeCodeSpan(`${pin.file}:${pin.line}`)} — ${safeCodeSpan(`${pin.action}@${pin.ref}`)} is a mutable ref; pin to a full commit SHA`,
+      );
+    }
+  }
+
+  const eol = findings.eol ?? [];
+  if (eol.length) {
+    lines.push("### End-of-life runtimes (upgrade before merging)");
+    for (const item of eol) {
+      const label = item.status === "eol" ? "END-OF-LIFE" : "EOL soon";
+      lines.push(
+        `- \`${item.file}\` pins ${item.product} ${item.version} — **${label}** (EOL ${item.eol})`,
       );
     }
   }

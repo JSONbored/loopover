@@ -542,6 +542,17 @@ export type RepositorySettings = {
   /** Config-as-code model override for the BYOK advisory write-up (e.g. "claude-3-5-sonnet-latest").
    *  `null` = use the key record's model, else a conservative per-provider default. */
   aiReviewModel?: string | null | undefined;
+  /** Review EVERY PR's author, not only confirmed Gittensor contributors. The AI maintainer review is
+   *  confirmed-contributor-gated by default (an AI-spend guard). When true the review runs for any author —
+   *  intended for a self-host operator who wants real reviews on all PRs (incl. their own) and pays for the
+   *  AI themselves. Default false — opt-in via `.gittensory.yml gate.aiReview.allAuthors`. Independent of
+   *  `aiReviewMode`: `off` still means no AI; this only widens WHO an enabled review covers. */
+  aiReviewAllAuthors: boolean;
+  /** When TRUE, the repo OWNER's (and maintainer's) own PRs are eligible for auto-CLOSE like a contributor's
+   *  (still subject to the `close` autonomy class + the same adverse-signal conditions). Default FALSE — owner
+   *  PRs are exempt from auto-close (merge or manual-hold only). Per-repo configurable so maintainers choose
+   *  rather than inheriting a hardwired opinion. */
+  closeOwnerAuthors: boolean;
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;
@@ -588,14 +599,14 @@ export type RepositoryCommandAuthorizationPolicy = {
   commands: Record<string, CommandAuthorizationRole[]>;
 };
 
-/** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional PUBLIC metadata. The converged
+/** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged
  *  engine short-circuits a blacklisted author's PR/issue to a deterministic close ahead of any merit/CI/AI
- *  analysis. `login` is public data — entries NEVER carry wallets/hotkeys/trust-scores/private values. */
+ *  analysis. Metadata can come from private configuration and must not be echoed to public surfaces. */
 export type ContributorBlacklistEntry = {
   login: string;
-  /** Why the account is blocked, e.g. `plagiarism` / `farming`. Free-text, public-safe. */
+  /** Why the account is blocked. Free-text maintainer metadata; not published in automated close comments. */
   reason?: string | undefined;
-  /** Public PR/issue URLs (or other public refs) evidencing the block. */
+  /** PR/issue URLs (or other maintainer refs) evidencing the block. */
   evidence?: string[] | undefined;
   /** ISO-8601 date the entry was added. */
   addedAt?: string | undefined;

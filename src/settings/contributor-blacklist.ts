@@ -1,7 +1,7 @@
 // Contributor blacklist (#1425, anti-abuse). Pure resolution + matching for the banned-login list the converged
 // engine acts on. Config-driven and layered the same as other settings (`.gittensory.yml` > DB) and unioned with
 // the shared/global list at the point of use — NEVER hard-coded for any repo. Logins are public data; entries
-// carry only public-safe metadata (no wallets/hotkeys/trust-scores/private values). Mirrors the shape of
+// may carry private maintainer metadata, so public surfaces must not echo it. Mirrors the shape of
 // command-authorization.ts (normalize → typed policy + warnings).
 import type { ContributorBlacklistEntry } from "../types";
 

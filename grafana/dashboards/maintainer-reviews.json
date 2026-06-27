@@ -1,0 +1,35 @@
+{
+  "uid": "gittensory-maintainer",
+  "title": "Gittensory \u2014 Reviews & PRs (maintainer)",
+  "tags": [
+    "gittensory",
+    "maintainer"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "1m",
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "Maintainer review dashboard disabled",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Maintainer review dashboard disabled\n\nThis dashboard no longer queries the live Gittensory SQLite database from Grafana. Direct datasource access would bypass application authorization and expose private application tables. Use the application API or a separately redacted reporting database for maintainer review analytics."
+      }
+    }
+  ]
+}

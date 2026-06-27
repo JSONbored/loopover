@@ -24,6 +24,7 @@
 // once a repo's merge precision actually drops below the floor over a real sample.
 
 import { recordAuditEvent } from "../db/repositories";
+import { notifyDiscordReview } from "../selfhost/discord-notify";
 import type { GitHubWebhookPayload } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 import {
@@ -40,7 +41,9 @@ import { computeGateEval } from "./parity";
 
 /** PURE: parse the PR number an "Reverts #N / Reverts owner/repo#N" body refers to (GitHub's revert PRs).
  *  Mirrors reviewbot runtime.ts parseRevertedPrNumber. Returns undefined when the body isn't a revert. */
-export function parseRevertedPrNumber(body: string | null | undefined): number | undefined {
+export function parseRevertedPrNumber(
+  body: string | null | undefined,
+): number | undefined {
   const m = /Reverts\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/i.exec(body ?? "");
   return m ? Number(m[1]) : undefined;
 }
@@ -57,12 +60,19 @@ function flagTruthy(v: string | null | undefined): boolean {
  *  This is the read the merge path consults to downgrade a would-MERGE into a HOLD. */
 export async function isHoldOnly(env: Env, project: string): Promise<boolean> {
   try {
-    const res = await env.DB.prepare("SELECT key, value FROM system_flags").all<{ key: string; value: string }>();
+    const res = await env.DB.prepare(
+      "SELECT key, value FROM system_flags",
+    ).all<{ key: string; value: string }>();
     const set = new Set<string>();
     for (const r of res.results ?? []) if (flagTruthy(r.value)) set.add(r.key);
     return set.has("holdonly:global") || set.has(`holdonly:${project}`);
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "flags_read_error", message: errorMessage(error).slice(0, 120) }));
+    console.warn(
+      JSON.stringify({
+        ev: "flags_read_error",
+        message: errorMessage(error).slice(0, 120),
+      }),
+    );
     return false; // fail-OPEN: a DB blip must never silently change the merge path
   }
 }
@@ -71,14 +81,24 @@ export async function isHoldOnly(env: Env, project: string): Promise<boolean> {
  *  globally)? Reads the SAME system_flags table via a single scan and tests the `closehold:` namespace. This is
  *  the read the close path consults to downgrade a would-CLOSE into a HOLD. Fail-OPEN (false) on a DB error so a
  *  blip never silently changes the close path. */
-export async function isCloseHoldOnly(env: Env, project: string): Promise<boolean> {
+export async function isCloseHoldOnly(
+  env: Env,
+  project: string,
+): Promise<boolean> {
   try {
-    const res = await env.DB.prepare("SELECT key, value FROM system_flags").all<{ key: string; value: string }>();
+    const res = await env.DB.prepare(
+      "SELECT key, value FROM system_flags",
+    ).all<{ key: string; value: string }>();
     const set = new Set<string>();
     for (const r of res.results ?? []) if (flagTruthy(r.value)) set.add(r.key);
     return set.has("closehold:global") || set.has(`closehold:${project}`);
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "flags_read_error", message: errorMessage(error).slice(0, 120) }));
+    console.warn(
+      JSON.stringify({
+        ev: "flags_read_error",
+        message: errorMessage(error).slice(0, 120),
+      }),
+    );
     return false; // fail-OPEN: a DB blip must never silently change the close path
   }
 }
@@ -91,7 +111,11 @@ export function createFlagStore(env: Env): FlagStore {
       // Per-key check (NOT the global-or-project read above): applyAutoTune dedups on whether THIS project's
       // breaker is already engaged, so it must read the per-project key, not fold in the global one.
       try {
-        const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`holdonly:${project}`).first<{ value: string }>();
+        const row = await env.DB.prepare(
+          "SELECT value FROM system_flags WHERE key = ?",
+        )
+          .bind(`holdonly:${project}`)
+          .first<{ value: string }>();
         return flagTruthy(row?.value);
       } catch {
         return false;
@@ -101,7 +125,11 @@ export function createFlagStore(env: Env): FlagStore {
       // Per-key check (mirrors isHoldOnly): applyCloseAutoTune dedups on whether THIS project's CLOSE breaker is
       // already engaged, so it reads the per-project `closehold:` key, not the global-or-project read above.
       try {
-        const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`closehold:${project}`).first<{ value: string }>();
+        const row = await env.DB.prepare(
+          "SELECT value FROM system_flags WHERE key = ?",
+        )
+          .bind(`closehold:${project}`)
+          .first<{ value: string }>();
         return flagTruthy(row?.value);
       } catch {
         return false;
@@ -109,14 +137,24 @@ export function createFlagStore(env: Env): FlagStore {
     },
     async setFlag(key: string, on: boolean): Promise<void> {
       if (on) {
-        await env.DB.prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES (?, '1', CURRENT_TIMESTAMP)").bind(key).run();
+        await env.DB.prepare(
+          "INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES (?, '1', CURRENT_TIMESTAMP)",
+        )
+          .bind(key)
+          .run();
       } else {
-        await env.DB.prepare("DELETE FROM system_flags WHERE key = ?").bind(key).run();
+        await env.DB.prepare("DELETE FROM system_flags WHERE key = ?")
+          .bind(key)
+          .run();
       }
     },
     async flagSetAt(key: string): Promise<string | null> {
       try {
-        const row = await env.DB.prepare("SELECT updated_at FROM system_flags WHERE key = ?").bind(key).first<{ updated_at: string }>();
+        const row = await env.DB.prepare(
+          "SELECT updated_at FROM system_flags WHERE key = ?",
+        )
+          .bind(key)
+          .first<{ updated_at: string }>();
         return row?.updated_at ?? null;
       } catch {
         return null;
@@ -137,17 +175,38 @@ function reviewAuditTargetId(repoFullName: string, pullNumber: number): string {
  *  webhook). `decision` is the realized merge/close for a pr_outcome row; null for a reversal marker row. */
 async function appendReviewAudit(
   env: Env,
-  input: { project: string; targetId: string; eventType: string; decision?: string | null; summary?: string | null },
+  input: {
+    project: string;
+    targetId: string;
+    eventType: string;
+    decision?: string | null;
+    summary?: string | null;
+  },
 ): Promise<void> {
   try {
     await env.DB.prepare(
       `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at)
        VALUES (?, ?, ?, ?, ?, 'gittensory-native', NULL, ?, ?)`,
     )
-      .bind(`${input.eventType}:${input.targetId}:${nowIso()}:${Math.random().toString(36).slice(2, 8)}`, input.project, input.targetId, input.eventType, input.decision ?? null, input.summary ?? null, nowIso())
+      .bind(
+        `${input.eventType}:${input.targetId}:${nowIso()}:${Math.random().toString(36).slice(2, 8)}`,
+        input.project,
+        input.targetId,
+        input.eventType,
+        input.decision ?? null,
+        input.summary ?? null,
+        nowIso(),
+      )
       .run();
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "review_audit_record_error", event: input.eventType, project: input.project, message: errorMessage(error).slice(0, 160) }));
+    console.warn(
+      JSON.stringify({
+        ev: "review_audit_record_error",
+        event: input.eventType,
+        project: input.project,
+        message: errorMessage(error).slice(0, 160),
+      }),
+    );
   }
 }
 
@@ -162,7 +221,31 @@ async function appendReviewAudit(
  * general audit ledger (audit_events, via recordAuditEvent, per the GAP-4 task). Best-effort throughout. A
  * non-closed action, or a payload with no PR number, records nothing.
  */
-export async function recordPrOutcome(env: Env, eventName: string, payload: GitHubWebhookPayload): Promise<void> {
+/** Enrich a disposition notification with the AI's reasoning: the latest recorded gate verdict (the reasonCode
+ *  summary on the most recent `gate_decision` row for this PR). Falls back to the plain disposition reason when
+ *  no verdict is recorded or the read fails. Exported for tests. */
+export async function resolveDispositionReason(
+  env: Env,
+  targetId: string,
+  fallback: string,
+): Promise<string> {
+  try {
+    const verdict = await env.DB.prepare(
+      "SELECT summary FROM review_audit WHERE target_id = ? AND event_type = 'gate_decision' AND summary IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+    )
+      .bind(targetId)
+      .first<{ summary: string | null }>();
+    return verdict?.summary || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function recordPrOutcome(
+  env: Env,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<void> {
   if (eventName !== "pull_request" || payload.action !== "closed") return;
   const pr = payload.pull_request;
   const repoFullName = payload.repository?.full_name;
@@ -176,12 +259,24 @@ export async function recordPrOutcome(env: Env, eventName: string, payload: GitH
   // authoritative ground truth for the repository's merge/close decision and must not feed the precision
   // circuit-breaker; otherwise contributors can poison merge precision by closing their own mergeable PRs.
   // Merges remain trusted because GitHub requires merge permission, and maintainer/bot closes are not self-closes.
-  if (!merged && !botWasActor && senderLogin && authorLogin && senderLogin === authorLogin) return;
+  if (
+    !merged &&
+    !botWasActor &&
+    senderLogin &&
+    authorLogin &&
+    senderLogin === authorLogin
+  )
+    return;
 
   const decision = merged ? "merged" : "closed";
   const targetId = reviewAuditTargetId(repoFullName, pr.number);
 
-  await appendReviewAudit(env, { project: repoFullName.slice(0, 200), targetId, eventType: "pr_outcome", decision });
+  await appendReviewAudit(env, {
+    project: repoFullName.slice(0, 200),
+    targetId,
+    eventType: "pr_outcome",
+    decision,
+  });
   await recordAuditEvent(env, {
     eventType: "pr_outcome",
     actor: payload.sender?.login ?? null,
@@ -189,7 +284,30 @@ export async function recordPrOutcome(env: Env, eventName: string, payload: GitH
     outcome: "completed",
     detail: decision,
     metadata: { repoFullName, pullNumber: pr.number, merged, botWasActor },
-  }).catch((error) => console.warn(JSON.stringify({ ev: "pr_outcome_audit_error", message: errorMessage(error).slice(0, 160) })));
+  }).catch((error) =>
+    console.warn(
+      JSON.stringify({
+        ev: "pr_outcome_audit_error",
+        message: errorMessage(error).slice(0, 160),
+      }),
+    ),
+  );
+
+  // Per-repo Discord notification on the FINAL disposition (self-host; no-op unless a webhook is configured).
+  // Reason = the AI's recorded gate verdict for this PR, falling back to the plain disposition.
+  const fallbackReason = merged
+    ? "Pull request merged into the base branch."
+    : botWasActor
+      ? "Closed by Gittensory after review."
+      : "Pull request closed without merging.";
+  await notifyDiscordReview({
+    repoFullName,
+    prNumber: pr.number,
+    author: pr.user?.login ?? "unknown",
+    outcome: decision,
+    reason: await resolveDispositionReason(env, targetId, fallbackReason),
+    url: `https://github.com/${repoFullName}/pull/${pr.number}`,
+  });
 }
 
 // ── 2) reversals — a human undid a bot action ────────────────────────────────────────────────────────────────
@@ -198,18 +316,20 @@ export async function recordPrOutcome(env: Env, eventName: string, payload: GitH
  *  eventType `agent.action.<class>`, written by buildAgentActionAudit) — the most-recent SUCCESSFUL action for
  *  this target. A reopen of a bot-CLOSED PR is the high-value "human disagreed with the close" reversal signal.
  *  Fail-safe: a read error → false (record nothing rather than a false reversal). */
-async function lastBotActionWasClose(env: Env, targetKey: string): Promise<boolean> {
+async function lastBotActionWasClose(
+  env: Env,
+  targetKey: string,
+): Promise<boolean> {
   try {
-    const row = await env.DB
-      .prepare(
-        // The executor records performed and dry-run actions as outcome 'completed', with the real mode only in
-        // metadata. Exclude dry-run shadows so a "would close" cannot masquerade as an actual bot close.
-        // 'success' is only a legacy value. (#audit-reversal-reopened)
-        `SELECT event_type FROM audit_events
+    const row = await env.DB.prepare(
+      // The executor records performed and dry-run actions as outcome 'completed', with the real mode only in
+      // metadata. Exclude dry-run shadows so a "would close" cannot masquerade as an actual bot close.
+      // 'success' is only a legacy value. (#audit-reversal-reopened)
+      `SELECT event_type FROM audit_events
          WHERE target_key = ? AND event_type LIKE 'agent.action.%' AND outcome IN ('success', 'completed')
            AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
          ORDER BY created_at DESC LIMIT 1`,
-      )
+    )
       .bind(targetKey)
       .first<{ event_type: string }>();
     return row?.event_type === "agent.action.close";
@@ -224,8 +344,9 @@ async function lastBotActionWasClose(env: Env, targetKey: string): Promise<boole
  *  Fail-safe: a read error → false (record nothing rather than a false reversal). (#audit-3.2) */
 async function wasMergeRecorded(env: Env, targetId: string): Promise<boolean> {
   try {
-    const row = await env.DB
-      .prepare(`SELECT 1 AS hit FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' AND decision = 'merged' LIMIT 1`)
+    const row = await env.DB.prepare(
+      `SELECT 1 AS hit FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' AND decision = 'merged' LIMIT 1`,
+    )
       .bind(targetId)
       .first<{ hit: number }>();
     return Boolean(row);
@@ -245,7 +366,11 @@ async function wasMergeRecorded(env: Env, targetId: string): Promise<boolean> {
  * Writes to BOTH review_audit (what ops.ts joins for reversalRate/calibration) and audit_events (the general
  * ledger). Best-effort + independent of the review path. A non-reversal event records nothing.
  */
-export async function recordReversalSignals(env: Env, eventName: string, payload: GitHubWebhookPayload): Promise<void> {
+export async function recordReversalSignals(
+  env: Env,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<void> {
   if (eventName !== "pull_request") return;
   const pr = payload.pull_request;
   const repoFullName = payload.repository?.full_name;
@@ -256,12 +381,18 @@ export async function recordReversalSignals(env: Env, eventName: string, payload
   if (payload.action === "reopened") {
     const ownerLogin = (repoFullName.split("/")[0] || "").toLowerCase();
     const senderLogin = (payload.sender?.login || "").toLowerCase();
-    const senderIsOwner = !!ownerLogin && !!senderLogin && ownerLogin === senderLogin;
+    const senderIsOwner =
+      !!ownerLogin && !!senderLogin && ownerLogin === senderLogin;
     const senderIsBot = payload.sender?.type === "Bot";
     if (senderIsBot || senderIsOwner) return; // administrative / bot reopen — not a contributor dispute
     const targetId = reviewAuditTargetId(repoFullName, pr.number);
     if (!(await lastBotActionWasClose(env, targetId))) return; // only a bot-CLOSED PR reopening is a reversal
-    await appendReviewAudit(env, { project, targetId, eventType: "reversal_reopened", summary: `Bot-closed PR #${pr.number} reopened by a contributor.` });
+    await appendReviewAudit(env, {
+      project,
+      targetId,
+      eventType: "reversal_reopened",
+      summary: `Bot-closed PR #${pr.number} reopened by a contributor.`,
+    });
     await recordAuditEvent(env, {
       eventType: "reversal_reopened",
       actor: payload.sender?.login ?? null,
@@ -285,14 +416,23 @@ export async function recordReversalSignals(env: Env, eventName: string, payload
     // The reverted PR (#N) had a recorded pr_outcome=merged; the reversal_reverted row marks that merge as later
     // undone so reversalRate/calibration reflect it. (Auto-revert — opening a revert PR — is a separate, larger
     // feature and intentionally NOT wired here; this records the human-driven revert signal.)
-    await appendReviewAudit(env, { project, targetId: revertedTargetKey, eventType: "reversal_reverted", summary: `Merged PR #${reverted} was reverted by #${pr.number}.` });
+    await appendReviewAudit(env, {
+      project,
+      targetId: revertedTargetKey,
+      eventType: "reversal_reverted",
+      summary: `Merged PR #${reverted} was reverted by #${pr.number}.`,
+    });
     await recordAuditEvent(env, {
       eventType: "reversal_reverted",
       actor: payload.sender?.login ?? null,
       targetKey: revertedTargetKey,
       outcome: "completed",
       detail: `Merged PR #${reverted} was reverted by #${pr.number}.`,
-      metadata: { repoFullName, revertedPullNumber: reverted, revertPullNumber: pr.number },
+      metadata: {
+        repoFullName,
+        revertedPullNumber: reverted,
+        revertPullNumber: pr.number,
+      },
     }).catch(() => undefined);
   }
 }
@@ -319,32 +459,71 @@ const BREAKER_EVAL_WINDOW_DAYS = 90;
 export async function runSelfTuneBreaker(env: Env): Promise<void> {
   try {
     const nowMs = Date.now();
-    const report: GateEvalReport = await computeGateEval(env, { days: BREAKER_EVAL_WINDOW_DAYS, nowMs });
+    const report: GateEvalReport = await computeGateEval(env, {
+      days: BREAKER_EVAL_WINDOW_DAYS,
+      nowMs,
+    });
     const flags = createFlagStore(env);
     const engaged = await applyAutoTune(flags, report);
     for (const action of engaged) {
-      console.warn(JSON.stringify({ ev: "breaker_engaged", project: action.project, mergePrecision: action.mergePrecision, decided: action.decided, floor: AUTOTUNE_MERGE_PRECISION_FLOOR }));
+      console.warn(
+        JSON.stringify({
+          ev: "breaker_engaged",
+          project: action.project,
+          mergePrecision: action.mergePrecision,
+          decided: action.decided,
+          floor: AUTOTUNE_MERGE_PRECISION_FLOOR,
+        }),
+      );
     }
     // CLOSE-side breaker: engage closehold for any repo whose close precision dropped below the floor.
     const closeEngaged = await applyCloseAutoTune(flags, report);
     for (const action of closeEngaged) {
-      console.warn(JSON.stringify({ ev: "close_breaker_engaged", project: action.project, closePrecision: action.closePrecision, decided: action.decided, floor: AUTOTUNE_CLOSE_PRECISION_FLOOR }));
+      console.warn(
+        JSON.stringify({
+          ev: "close_breaker_engaged",
+          project: action.project,
+          closePrecision: action.closePrecision,
+          decided: action.decided,
+          floor: AUTOTUNE_CLOSE_PRECISION_FLOOR,
+        }),
+      );
     }
     // OBSERVABILITY: a single summary line of the engaged close-hold backlog so a human can see, at a glance,
     // how many (and which) repos are currently holding would-closes for review. Only emitted when ≥1 engaged.
     if (closeEngaged.length > 0) {
-      console.warn(JSON.stringify({ ev: "closehold_backlog", count: closeEngaged.length, projects: closeEngaged.map((a) => a.project) }));
+      console.warn(
+        JSON.stringify({
+          ev: "closehold_backlog",
+          count: closeEngaged.length,
+          projects: closeEngaged.map((a) => a.project),
+        }),
+      );
     }
     // Auto-clear any auto-engaged breaker (merge AND close) that has cooled down + recovered (one per repo in the report).
     for (const row of report.rows) {
       if (await maybeAutoClearHoldOnly(flags, report, row.project, nowMs)) {
-        console.log(JSON.stringify({ ev: "breaker_auto_cleared", project: row.project }));
+        console.log(
+          JSON.stringify({ ev: "breaker_auto_cleared", project: row.project }),
+        );
       }
-      if (await maybeAutoClearCloseHoldOnly(flags, report, row.project, nowMs)) {
-        console.log(JSON.stringify({ ev: "close_breaker_auto_cleared", project: row.project }));
+      if (
+        await maybeAutoClearCloseHoldOnly(flags, report, row.project, nowMs)
+      ) {
+        console.log(
+          JSON.stringify({
+            ev: "close_breaker_auto_cleared",
+            project: row.project,
+          }),
+        );
       }
     }
   } catch (error) {
-    console.warn(JSON.stringify({ ev: "breaker_tick_error", message: errorMessage(error).slice(0, 200) }));
+    console.warn(
+      JSON.stringify({
+        ev: "breaker_tick_error",
+        message: errorMessage(error).slice(0, 200),
+      }),
+    );
   }
 }

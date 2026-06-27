@@ -3,6 +3,7 @@ import {
   buildFocusManifestGuidance,
   compileFocusManifestPolicy,
   deriveContributionLanes,
+  featuresConfigToJson,
   gateConfigToJson,
   isFocusManifestPublicSafe,
   matchesManifestPath,
@@ -194,6 +195,15 @@ describe("matchesManifestPath", () => {
     expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
   });
 
+  it("keeps **/ on path-segment boundaries instead of broad suffix matching (#review-audit)", () => {
+    expect(matchesManifestPath("safe.ts", "**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("dir/safe.ts", "**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("unsafe.ts", "**/safe.ts")).toBe(false);
+    expect(matchesManifestPath("src/safe.ts", "src/**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("src/dir/safe.ts", "src/**/safe.ts")).toBe(true);
+    expect(matchesManifestPath("src/unsafe.ts", "src/**/safe.ts")).toBe(false);
+  });
+
   it("multi-wildcard matching is correct (ordered substrings, suffix cannot overlap)", () => {
     expect(matchesManifestPath("xayybzzc", "*a*b*c")).toBe(true);
     expect(matchesManifestPath("aXbXc", "a*b*c")).toBe(true);
@@ -211,6 +221,15 @@ describe("matchesManifestPath", () => {
     const elapsed = performance.now() - start;
     expect(result).toBe(false);
     expect(elapsed).toBeLessThan(100); // the old per-star regex did not return within 30s on this input
+  });
+
+  it("bounds repeated **/ expansion while retaining linear matching (#review-audit)", () => {
+    const globstarRun = "**/".repeat(20) + "safe.ts";
+    const start = performance.now();
+    const result = matchesManifestPath("a/b/c/safe.ts", globstarRun);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsed).toBeLessThan(100);
   });
 });
 
@@ -457,9 +476,10 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -745,7 +765,7 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -758,6 +778,18 @@ describe("parseFocusManifest gate config", () => {
     expect(bad.gate.mergeReadiness).toBeNull();
     expect(bad.gate.firstTimeContributorGrace).toBeNull();
     expect(bad.gate.present).toBe(false);
+  });
+
+  it("parses gate.selfAuthoredLinkedIssue + settings.selfAuthoredLinkedIssueGateMode, round-trips + resolves them (the gate alias wins)", () => {
+    const m = parseFocusManifest({ gate: { selfAuthoredLinkedIssue: "block" }, settings: { selfAuthoredLinkedIssueGateMode: "advisory" } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.selfAuthoredLinkedIssue).toBe("block");
+    expect(m.settings.selfAuthoredLinkedIssueGateMode).toBe("advisory");
+    expect(gateConfigToJson(m.gate)).toMatchObject({ selfAuthoredLinkedIssue: "block" });
+    const eff = resolveEffectiveSettings({ selfAuthoredLinkedIssueGateMode: "off" } as RepositorySettings, m);
+    expect(eff.selfAuthoredLinkedIssueGateMode).toBe("block");
+    const bad = parseFocusManifest({ gate: { selfAuthoredLinkedIssue: "sometimes" } });
+    expect(bad.gate.selfAuthoredLinkedIssue).toBeNull();
   });
 
   it("parses gate.manifestPolicy, round-trips it through gateConfigToJson, and warns + nulls on a bad value (#555)", () => {
@@ -881,6 +913,47 @@ describe("parseFocusManifest gate config", () => {
     expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate);
     expect(parseFocusManifest({ gate: { aiReview: ["nope"] } }).warnings.some((w) => /gate\.aiReview" must be a mapping/.test(w))).toBe(true);
     expect(parseFocusManifest({ gate: { aiReview: { mode: "loud" } } }).warnings.some((w) => /gate\.aiReview\.mode/.test(w))).toBe(true);
+  });
+
+  it("parses gate.aiReview.allAuthors, makes the gate present, round-trips it, and resolves it into effective settings", () => {
+    // allAuthors alone makes the gate present (so an operator can set ONLY this), serializes back under
+    // gate.aiReview.allAuthors, and the gate alias projects it onto effective settings.
+    const m = parseFocusManifest({ gate: { aiReview: { allAuthors: true } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewAllAuthors).toBe(true);
+    expect((gateConfigToJson(m.gate) as { aiReview: { allAuthors: boolean } }).aiReview.allAuthors).toBe(true);
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    expect(parseFocusManifest({ gate: { aiReview: { allAuthors: "yes" } } }).warnings.some((w) => /gate\.aiReview\.allAuthors/.test(w))).toBe(true);
+    const eff = resolveEffectiveSettings({ aiReviewAllAuthors: false , closeOwnerAuthors: false} as unknown as RepositorySettings, m);
+    expect(eff.aiReviewAllAuthors).toBe(true);
+    // Absent ⇒ null ⇒ the gate alias leaves the DB value untouched.
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewAllAuthors).toBeNull();
+    expect(resolveEffectiveSettings({ aiReviewAllAuthors: true , closeOwnerAuthors: false} as unknown as RepositorySettings, noFlag).aiReviewAllAuthors).toBe(true);
+  });
+
+  it("parses the features: block (per-repo converged-feature toggles), round-trips it, and makes the manifest present", () => {
+    const m = parseFocusManifest({ features: { rag: true, reputation: false, unifiedComment: true } });
+    expect(m.present).toBe(true);
+    expect(m.features.present).toBe(true);
+    expect(m.features.rag).toBe(true);
+    expect(m.features.reputation).toBe(false);
+    expect(m.features.unifiedComment).toBe(true);
+    expect(m.features.safety).toBeNull(); // unset stays null (⇒ allowlist default at resolve time)
+    // Round-trips through featuresConfigToJson → parseFocusManifest unchanged.
+    expect(parseFocusManifest({ features: featuresConfigToJson(m.features) }).features).toEqual(m.features);
+    // A non-boolean value warns and is dropped (stays null); a non-mapping warns.
+    expect(parseFocusManifest({ features: { rag: "yes" } }).warnings.some((w) => /features\.rag/.test(w))).toBe(true);
+    expect(parseFocusManifest({ features: ["nope"] }).warnings.some((w) => /"features" must be a mapping/.test(w))).toBe(true);
+    // An empty features block leaves the manifest absent (no recognized fields).
+    expect(parseFocusManifest({ features: {} }).features.present).toBe(false);
+    expect(featuresConfigToJson(parseFocusManifest({ features: {} }).features)).toBeNull();
+  });
+
+  it("parses aiReviewAllAuthors from the settings: block (generic override)", () => {
+    const parsed = parseFocusManifest({ settings: { aiReviewAllAuthors: true , closeOwnerAuthors: false} });
+    expect(parsed.settings.aiReviewAllAuthors).toBe(true);
+    expect(resolveEffectiveSettings({ aiReviewAllAuthors: false , closeOwnerAuthors: false} as unknown as RepositorySettings, parsed).aiReviewAllAuthors).toBe(true);
   });
 
   it("parses gate.aiReview provider + model (config-as-code) and rejects an unknown provider", () => {
@@ -1169,10 +1242,30 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
-    const manifest = parseFocusManifest({ review: { profile: "chill", path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
-    // A null manifest (load failure) yields the byte-identical defaults.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, pathInstructions: [], excludePaths: [] });
+    const manifest = parseFocusManifest({ review: { profile: "chill", inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
+    // A null manifest (load failure) yields the byte-identical defaults; inline comments default OFF.
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, inlineComments: false, pathInstructions: [], excludePaths: [] });
+    // An explicit false / absent toggle both resolve to the strict-boolean false.
+    expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { inline_comments: false } })).inlineComments).toBe(false);
+    expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).inlineComments).toBe(false);
+  });
+
+  it("parses review.inline_comments (default OFF), marks present, round-trips, and warns on a non-boolean (#inline-comments)", () => {
+    expect(parseFocusManifest({ review: { inline_comments: true } }).review.inlineComments).toBe(true);
+    const on = parseFocusManifest({ review: { inline_comments: true } });
+    expect(on.review.present).toBe(true); // an inline-comments-only manifest IS present
+    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review); // survives round-trip
+    // Explicit false is retained (and marks present, since the maintainer set it).
+    const off = parseFocusManifest({ review: { inline_comments: false } });
+    expect(off.review.inlineComments).toBe(false);
+    expect(off.review.present).toBe(true);
+    // Absent ⇒ null (the byte-identical default), config not present.
+    expect(parseFocusManifest({ review: {} }).review.inlineComments).toBeNull();
+    // A non-boolean is ignored with a warning.
+    const bad = parseFocusManifest({ review: { inline_comments: "yes" } });
+    expect(bad.review.inlineComments).toBeNull();
+    expect(bad.warnings.some((w) => /review\.inline_comments.*must be a boolean/.test(w))).toBe(true);
   });
 });
 
@@ -1204,10 +1297,15 @@ describe("review.exclude_paths (#review-exclude-paths)", () => {
 
   it("excludeReviewPaths filters matching files; empty globs return the same array (byte-identical)", () => {
     const files = [{ path: "src/a.ts" }, { path: "pnpm-lock.yaml" }, { path: "dist/bundle.js" }];
-    // `*` collapses to `.*` (crosses slashes), so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
+    // `*` crosses slashes, so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
     expect(excludeReviewPaths(files, ["*.yaml", "dist/**"])).toEqual([{ path: "src/a.ts" }]);
     expect(excludeReviewPaths(files, ["docs/**"])).toEqual(files); // no match → unchanged
     expect(excludeReviewPaths(files, [])).toBe(files); // empty → same reference (no-op)
+  });
+
+  it("does not exclude attacker-named suffix collisions for **/ basename globs (#review-audit)", () => {
+    const files = [{ path: "unsafe.ts" }, { path: "dir/safe.ts" }, { path: "feature.ts" }];
+    expect(excludeReviewPaths(files, ["**/safe.ts"])).toEqual([{ path: "unsafe.ts" }, { path: "feature.ts" }]);
   });
 });
 

@@ -3883,7 +3883,7 @@ export async function maybeAddSecretLeakFinding(
     /* v8 ignore next -- fail-safe: a file-load error never destabilizes the gate. */
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "secret_scan_failed",
         repository: args.repoFullName,
         pullNumber: args.pullNumber,
@@ -4070,6 +4070,9 @@ async function auditGateCheckPermissionMissing(
     detail: warning,
     metadata: { deliveryId, repoFullName },
   });
+  // Surface the install-wide Checks:write gap to Sentry — until the scope is granted the required gate check-run
+  // silently never posts on ANY PR for this install; an operator must SEE this config fault, not just the ledger.
+  console.error(JSON.stringify({ level: "error", event: "gate_check_permission_missing", repository: repoFullName, pullNumber, deliveryId }));
 }
 
 /**
@@ -4899,6 +4902,7 @@ async function maybePublishPrPublicSurface(
           detail: checkRunResult.warning,
           metadata: { deliveryId: webhook.deliveryId, repoFullName },
         });
+        console.error(JSON.stringify({ level: "error", event: "check_run_permission_missing", repository: repoFullName, pullNumber: pr.number, deliveryId: webhook.deliveryId }));
       } else if (checkRunResult?.kind === "published") {
         publishedOutputs.push("check_run");
       }
@@ -5304,6 +5308,16 @@ async function maybePublishPrPublicSurface(
           repoFullName,
           failedOutputs,
         },
+      });
+      // The advisory ran but NOTHING reached the PR (revoked token / perms removed / GitHub 5xx). For an
+      // advisory-only bot this is the worst failure — escalate to Sentry at error level, not just the audit ledger.
+      captureReviewFailure(new Error("PR public-surface publish failed — review produced output but nothing was posted to the PR"), {
+        kind: "publish",
+        owner: repoFullName.split("/")[0],
+        repo: repoFullName,
+        pr: pr.number,
+        head_sha: advisory.headSha,
+        failedOutputs: failedOutputs.map((failure) => failure.output),
       });
     }
     return gateEvaluation;

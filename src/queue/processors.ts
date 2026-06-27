@@ -3495,6 +3495,10 @@ export async function runAiReviewForAdvisory(
     // cached manifest. The CONFIG (not a fetch) is threaded in; the per-PR glob match against `files` happens
     // here (pure), so the AI path makes no extra manifest fetch. Absent/empty ⇒ byte-identical reviewer prompt.
     reviewPathInstructions?: ReviewPathInstruction[] | undefined;
+    // `.gittensory.yml` review.instructions (#review-instructions): a repo-level maintainer brief, resolved by the
+    // caller from the cached manifest, handed to the reviewer on EVERY review (bounded + public-safe at parse time).
+    // Absent/null ⇒ byte-identical reviewer prompt.
+    reviewInstructions?: string | null | undefined;
     // `.gittensory.yml` review.exclude_paths (#review-exclude-paths), resolved by the caller from the cached
     // manifest. Globs whose files are dropped from the AI review (diff + grounding + RAG) — generated/lockfiles
     // the maintainer doesn't want reviewed. Empty ⇒ every file is reviewed (byte-identical). The gate is unaffected.
@@ -3677,6 +3681,7 @@ export async function runAiReviewForAdvisory(
         args.reviewPathInstructions ?? [],
         files.map((file) => file.path),
       ),
+      repoInstructions: args.reviewInstructions ?? null,
     });
     if (result.status !== "ok") return undefined;
     const findings: AdvisoryFinding[] = [];
@@ -4466,6 +4471,7 @@ async function maybePublishPrPublicSurface(
           profile: reviewProfile,
           inlineComments: reviewInlineComments,
           pathInstructions: reviewPathInstructions,
+          instructions: reviewInstructions,
           excludePaths: reviewExcludePaths,
         } = resolveReviewPromptOverrides(
           await loadRepoFocusManifest(env, repoFullName).catch(() => null),
@@ -4485,6 +4491,7 @@ async function maybePublishPrPublicSurface(
           files: await getReviewFiles(),
           reviewProfile,
           reviewPathInstructions,
+          reviewInstructions,
           reviewExcludePaths,
           reviewInlineComments,
         });

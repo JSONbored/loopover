@@ -478,7 +478,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       warnings: [],
     });
@@ -1242,10 +1242,10 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
-    const manifest = parseFocusManifest({ review: { profile: "chill", inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
+    const manifest = parseFocusManifest({ review: { profile: "chill", inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", exclude_paths: ["**/*.lock"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", excludePaths: ["**/*.lock"] });
     // A null manifest (load failure) yields the byte-identical defaults; inline comments default OFF.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, inlineComments: false, pathInstructions: [], excludePaths: [] });
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, inlineComments: false, pathInstructions: [], instructions: null, excludePaths: [] });
     // An explicit false / absent toggle both resolve to the strict-boolean false.
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { inline_comments: false } })).inlineComments).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).inlineComments).toBe(false);

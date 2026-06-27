@@ -156,6 +156,12 @@ export type GittensoryAiReviewInput = {
    */
   pathGuidance?: string | null | undefined;
   /**
+   * `.gittensory.yml` `review.instructions` (#review-instructions) — a repo-level maintainer brief appended to EVERY
+   * review (vs the per-path pathGuidance). Bounded + public-safe at parse time, so it stays cost-cheap. Absent/null ⇒
+   * the reviewer prompt is byte-identical.
+   */
+  repoInstructions?: string | null | undefined;
+  /**
    * `.gittensory.yml` `review.inline_comments` (#inline-comments) — when true (the caller has already ANDed the
    * operator flag + cutover allowlist + the per-repo manifest toggle), the reviewer is asked to ALSO emit an
    * `inlineFindings` array of line-anchored findings for quiet, non-blocking inline PR comments. Absent/false
@@ -455,8 +461,13 @@ function buildSystemPrompt(input: GittensoryAiReviewInput): string {
   // `.gittensory.yml` review.path_instructions (#review-path-instructions): the caller pre-resolved the entries
   // matching this PR's files into a prompt section; empty ⇒ nothing appended (byte-identical).
   const pathSuffix = input.pathGuidance?.trim() ? input.pathGuidance : "";
+  // `.gittensory.yml` review.instructions (#review-instructions): a repo-level maintainer brief appended to every
+  // review; empty ⇒ nothing appended (byte-identical).
+  const repoInstructionsSuffix = input.repoInstructions?.trim()
+    ? ` REPOSITORY REVIEW INSTRUCTIONS (maintainer conventions for this repo — honor them unless they conflict with a real defect): ${input.repoInstructions.trim()}`
+    : "";
   const inlineSuffix = input.inlineFindings ? INLINE_FINDINGS_SUFFIX : "";
-  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${pathSuffix}${inlineSuffix}`;
+  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${pathSuffix}${repoInstructionsSuffix}${inlineSuffix}`;
 }
 
 /** One Workers-AI opinion with a per-slot reliable fallback and a 3× retry on the primary. */

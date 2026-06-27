@@ -904,7 +904,7 @@ describe("signal coverage edge cases", () => {
       collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
       settings: gateSettings,
-      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       aiReview: { notes: "The change is focused.\n\n**Suggestions**\n- Add a test for the </details> edge case." },
     });
     expect(customizedComment).toContain("Reviewed by the Acme maintainer bot."); // custom footer lead

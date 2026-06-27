@@ -112,6 +112,19 @@ describe("buildReviewEnrichment", () => {
     ).toBeUndefined();
   });
 
+  it("undefined when the brief's promptSection is not a string (defensive against a misbehaving REES)", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({ promptSection: 42, systemSuffix: "x" }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+    expect(
+      await buildReviewEnrichment(env({ REES_URL: "https://r" }), input),
+    ).toBeUndefined();
+  });
+
   it("defangs prompt-injection text, caps long briefs, and rejects non-public-safe briefs", async () => {
     globalThis.fetch = vi.fn(
       async () =>

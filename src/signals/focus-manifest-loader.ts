@@ -1,7 +1,7 @@
 import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
-import { gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, reviewConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource } from "./focus-manifest";
+import { featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, reviewConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource } from "./focus-manifest";
 import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
@@ -227,6 +227,7 @@ function manifestToJson(manifest: FocusManifest): Record<string, JsonValue> {
     gate: gateConfigToJson(manifest.gate),
     settings: settingsOverrideToJson(manifest.settings),
     review: reviewConfigToJson(manifest.review),
+    features: featuresConfigToJson(manifest.features),
   };
 }
 

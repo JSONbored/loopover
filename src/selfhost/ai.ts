@@ -50,6 +50,20 @@ export function resolveEffort(configured: string | undefined): string {
   return VALID_EFFORTS.has(level) ? level : "high";
 }
 
+// Per-effort subprocess timeout (ms) for the subscription CLIs. A higher effort legitimately runs longer, so the
+// old fixed 120s cap silently SIGKILLed a large max-effort review mid-generation (the review then degrades to
+// nothing). These scale the ceiling with the effort dial; AI_TIMEOUT_MS overrides them outright.
+const EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 120_000, high: 240_000, xhigh: 360_000, max: 600_000 };
+
+/** Resolve the subscription-CLI subprocess timeout (ms). An explicit `AI_TIMEOUT_MS` wins, clamped to a sane
+ *  30s–30min range so a typo can neither hang a worker nor cut a review off after a few seconds. Absent/invalid ⇒
+ *  it scales with the `AI_EFFORT` dial (resolveEffort always yields a known level, so the map lookup is total). */
+export function resolveCliTimeoutMs(env: Record<string, string | undefined>): number {
+  const raw = Number(env.AI_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(1_800_000, Math.max(30_000, raw));
+  return EFFORT_TIMEOUT_MS[resolveEffort(env.AI_EFFORT)]!;
+}
+
 /** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
 export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: string | undefined; model?: string | undefined; embedModel?: string | undefined }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
@@ -237,6 +251,10 @@ async function defaultSpawn(): Promise<SpawnFn> {
 export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
+      // Claude has no embeddings model (CLI or API), so REJECT an embed request and let the provider chain fall
+      // through to an embed-capable provider (ollama/openai-compatible). Without this throw the chain would treat
+      // claude's empty-prompt text answer as "success" and never reach the embed provider → RAG silently breaks.
+      if (options.text) throw new Error("claude_code_no_embed");
       const token = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
       if (!token) throw new Error("claude_code_no_oauth_token");
       const env = subscriptionCliEnv(parentEnv, { CLAUDE_CODE_OAUTH_TOKEN: token });
@@ -247,7 +265,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       const { stdout, code } = await spawn(
         "claude",
         ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"],
-        { env, input: prompt, timeoutMs: 120_000, cwd: await isolatedCliCwd() },
+        { env, input: prompt, timeoutMs: resolveCliTimeoutMs(parentEnv), cwd: await isolatedCliCwd() },
       );
       if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}`);
       const errStatus = claudeErrorStatus(stdout);
@@ -265,6 +283,8 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
 export function createCodexAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
+      // Codex is chat-only here — reject embed requests so the chain routes them to an embed-capable provider.
+      if (options.text) throw new Error("codex_no_embed");
       const env = subscriptionCliEnv(parentEnv);
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
@@ -278,7 +298,7 @@ export function createCodexAi(parentEnv: Record<string, string | undefined>, spa
       args.push("--", prompt);
       const { stdout, code } = await spawn("codex", args, {
         env,
-        timeoutMs: 120_000,
+        timeoutMs: resolveCliTimeoutMs(parentEnv),
         cwd: await isolatedCliCwd(),
       });
       if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}`);

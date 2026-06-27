@@ -55,11 +55,41 @@ export type RegisterResult =
   | { ok: true; installationId: number }
   | { error: "invalid_enrollment" | "installation_not_eligible" | "invalid_relay_url" | "encryption_unavailable" };
 
-/** Register (or update) the container's relay target for a valid enrollment. Validates the secret (→ the bound,
- *  registered, non-suspended install — same gate as the token broker), SSRF-validates the relay URL, then stores
- *  the URL + the enrollment secret encrypted at rest (for the forward-time HMAC). The container presents its OWN
- *  plaintext enrollment secret as the Bearer, so this is self-service + bound to that install. */
-export async function registerOrbRelay(env: Env, secret: string, relayUrl: string): Promise<RegisterResult> {
+export const MAX_ORB_RELAY_REGISTER_BODY_BYTES = 4096;
+
+function parseContentLength(header: string | null | undefined): number | null {
+  if (typeof header !== "string") return null;
+  const n = Number(header);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/** Read the relay-registration JSON with a small hard ceiling; returns null when the sender exceeds it. */
+export async function readOrbRelayRegisterBody(request: Request, contentLengthHeader: string | null | undefined): Promise<string | null> {
+  const declared = parseContentLength(contentLengthHeader);
+  if (declared !== null && declared > MAX_ORB_RELAY_REGISTER_BODY_BYTES) return null;
+
+  const stream = request.body;
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_ORB_RELAY_REGISTER_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
+}
+
+export type RelayEnrollment = { enrollId: string; installationId: number };
+
+export async function validateOrbRelayEnrollment(env: Env, secret: string): Promise<RelayEnrollment | { error: "invalid_enrollment" | "installation_not_eligible" }> {
   const row = await env.DB
     .prepare("SELECT enroll_id, installation_id, state, revoked_at FROM orb_enrollments WHERE secret_hash = ?")
     .bind(await hashToken(secret))
@@ -70,6 +100,10 @@ export async function registerOrbRelay(env: Env, secret: string, relayUrl: strin
     .bind(row.installation_id)
     .first<{ registered: number; suspended_at: string | null; removed_at: string | null }>();
   if (!install || install.registered !== 1 || install.suspended_at !== null || install.removed_at !== null) return { error: "installation_not_eligible" };
+  return { enrollId: row.enroll_id, installationId: row.installation_id };
+}
+
+export async function registerValidatedOrbRelay(env: Env, enrollment: RelayEnrollment, secret: string, relayUrl: string): Promise<RegisterResult> {
   // SSRF guard: the Orb will POST events to this URL — it must be a public https endpoint (no loopback / private /
   // link-local host), so a registered relay URL can never coerce the Orb into hitting an internal service.
   if (!isSafeHttpUrl(relayUrl)) return { error: "invalid_relay_url" };
@@ -77,9 +111,19 @@ export async function registerOrbRelay(env: Env, secret: string, relayUrl: strin
   const enc = await encryptSecret(secret, env.TOKEN_ENCRYPTION_SECRET);
   await env.DB
     .prepare("UPDATE orb_enrollments SET relay_url = ?, relay_secret_enc = ?, relay_secret_iv = ?, relay_secret_salt = ?, relay_registered_at = CURRENT_TIMESTAMP WHERE enroll_id = ?")
-    .bind(relayUrl, enc.ciphertext, enc.iv, enc.salt, row.enroll_id)
+    .bind(relayUrl, enc.ciphertext, enc.iv, enc.salt, enrollment.enrollId)
     .run();
-  return { ok: true, installationId: row.installation_id };
+  return { ok: true, installationId: enrollment.installationId };
+}
+
+/** Register (or update) the container's relay target for a valid enrollment. Validates the secret (→ the bound,
+ *  registered, non-suspended install — same gate as the token broker), SSRF-validates the relay URL, then stores
+ *  the URL + the enrollment secret encrypted at rest (for the forward-time HMAC). The container presents its OWN
+ *  plaintext enrollment secret as the Bearer, so this is self-service + bound to that install. */
+export async function registerOrbRelay(env: Env, secret: string, relayUrl: string): Promise<RegisterResult> {
+  const enrollment = await validateOrbRelayEnrollment(env, secret);
+  if ("error" in enrollment) return enrollment;
+  return registerValidatedOrbRelay(env, enrollment, secret, relayUrl);
 }
 
 const RELAY_RETRY_MAX_ATTEMPTS = 5;

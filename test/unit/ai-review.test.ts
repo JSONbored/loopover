@@ -1217,6 +1217,36 @@ describe("pure helpers", () => {
       ]);
   });
 
+  it("runGittensoryAiReview drops unexpected inline findings when the caller did not ask for them (#inline-comments)", async () => {
+    const json = JSON.stringify({
+      assessment: "Looks fine.",
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      inlineFindings: [
+        {
+          path: "src/a.ts",
+          line: 3,
+          severity: "nit",
+          body: "Guard the empty case.",
+        },
+      ],
+    });
+    const run = vi.fn(async () => ({ response: json }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      inlineFindings: false,
+    });
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") expect(result.inlineFindings).toEqual([]);
+  });
+
   it("composeAdvisoryNotes renders only the sections that have public-safe content", () => {
     const review = (
       over: Partial<{

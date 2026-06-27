@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveEffort, resolveModel, resolveProviderNames, routeProviders, subscriptionCliEnv } from "../../src/selfhost/ai";
+import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveCliTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, routeProviders, subscriptionCliEnv } from "../../src/selfhost/ai";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -27,6 +27,26 @@ describe("resolveEffort (#selfhost-effort — Claude Code intelligence dial, def
     expect(resolveEffort(undefined)).toBe("high"); // ?? right side
     expect(resolveEffort("")).toBe("high"); // present but not in the valid set
     expect(resolveEffort("ultra")).toBe("high"); // unrecognized → safe default
+  });
+});
+
+describe("resolveCliTimeoutMs (#selfhost — subprocess timeout scales with effort, AI_TIMEOUT_MS overrides)", () => {
+  it("scales the default timeout with the AI_EFFORT dial (max needs far more than the old fixed 120s)", () => {
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "low" })).toBe(120_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "medium" })).toBe(120_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "high" })).toBe(240_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "xhigh" })).toBe(360_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "max" })).toBe(600_000);
+    expect(resolveCliTimeoutMs({})).toBe(240_000); // unset effort → resolveEffort defaults to high
+  });
+  it("honors an explicit AI_TIMEOUT_MS, clamped to a sane 30s–30min range", () => {
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "300000", AI_EFFORT: "low" })).toBe(300_000); // in-range value wins over the effort scale
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "9999999" })).toBe(1_800_000); // clamped down to the 30min ceiling
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "1000" })).toBe(30_000); // clamped up to the 30s floor
+  });
+  it("falls back to the effort scale on a non-positive or non-numeric AI_TIMEOUT_MS", () => {
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "0", AI_EFFORT: "max" })).toBe(600_000); // 0 is not > 0 → effort path
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "abc", AI_EFFORT: "high" })).toBe(240_000); // NaN → effort path
   });
 });
 
@@ -327,36 +347,57 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("t");
   });
 
-  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; AI_MODEL/AI_EFFORT override", async () => {
+  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; AI_MODEL/AI_EFFORT override; timeout scales with effort", async () => {
     let seen: string[] = [];
-    const cap: StubSpawn = async (_c, a) => {
+    let timeout = 0;
+    const cap: StubSpawn = async (_c, a, o) => {
       seen = a;
+      timeout = o.timeoutMs;
       return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
     };
     // empty model id (the dual-router default) + no AI_MODEL → pinned claude-sonnet-4-6; no AI_EFFORT → high
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
     expect(seen[seen.indexOf("--effort") + 1]).toBe("high");
-    // operator overrides flow through to the argv
-    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", AI_MODEL: "claude-opus-4-8", AI_EFFORT: "low" }, cap).run("", { prompt: "x" });
+    expect(timeout).toBe(240_000); // high → 240s (not the old fixed 120s)
+    // operator overrides flow through to the argv + the timeout scale
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", AI_MODEL: "claude-opus-4-8", AI_EFFORT: "max" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
-    expect(seen[seen.indexOf("--effort") + 1]).toBe("low");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("max");
+    expect(timeout).toBe(600_000); // max → 600s, so a large max-effort review isn't SIGKILLed at 120s
+  });
+
+  it("chat-only CLIs reject embeds so the chain routes embeddings to an embed-capable provider (Claude review + ollama embed)", async () => {
+    const reviewOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "the review" }), code: 0 });
+    // A stand-in embed-capable provider (e.g. ollama): returns `data` for an embed request, `response` for chat.
+    const embedder = { name: "ollama", ai: { run: async (_m: string, o: { text?: string[] }) => (o.text ? { data: o.text.map(() => [0.1, 0.2]) } : { response: "ollama chat" }) } };
+    const claudeChain = createChainAi([{ name: "claude-code", ai: createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, reviewOk) }, embedder]);
+    // A CHAT/review request is served by claude-code (the frontier reviewer), never the embedder.
+    expect((await claudeChain.run("m", { prompt: "review this" })).response).toBe("the review");
+    // An EMBED request makes claude-code throw → the chain falls through to ollama, which returns vectors.
+    expect((await claudeChain.run("bge-m3", { text: ["a", "b"] })).data?.length).toBe(2);
+    // Same for codex as the frontier reviewer.
+    const codexOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 });
+    const codexChain = createChainAi([{ name: "codex", ai: createCodexAi({}, codexOk) }, embedder]);
+    expect((await codexChain.run("bge-m3", { text: ["a"] })).data?.length).toBe(1);
   });
 
   it("Codex: 0.142+ exec flags (no --ask-for-approval, has --skip-git-repo-check); --model only when configured", async () => {
     let seen: string[] = [];
     let capturedEnv: Record<string, string | undefined> = {};
     let capturedCwd = "";
+    let timeout = 0;
     const ok: StubSpawn = async (_cmd, args, opts) => {
       seen = args;
       capturedEnv = opts.env;
       capturedCwd = opts.cwd ?? "";
+      timeout = opts.timeoutMs;
       return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 };
     };
     // no configured model + the dual-router's empty model id → OMIT --model (codex picks the account default;
     // forcing e.g. gpt-5 fails on a ChatGPT-account login). And the removed --ask-for-approval must never appear.
     expect(
-      (await createCodexAi({ PATH: "/bin", CODEX_HOME: "/tmp/codex", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill" }, ok).run("", {
+      (await createCodexAi({ PATH: "/bin", CODEX_HOME: "/tmp/codex", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill", AI_TIMEOUT_MS: "300000" }, ok).run("", {
         prompt: "x",
       })).response,
     ).toBe("codex review");
@@ -364,6 +405,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(seen).not.toContain("--ask-for-approval");
     expect(capturedEnv).toEqual({ CODEX_HOME: "/tmp/codex", PATH: "/bin" });
     expect(capturedCwd).toContain("gittensory-ai-");
+    expect(timeout).toBe(300_000); // codex honors the same AI_TIMEOUT_MS override as Claude Code
     // an explicit model (AI_MODEL, or a `codex:<model>` reviewer id) IS passed through but not inherited as env.
     await createCodexAi({ AI_MODEL: "o4-mini" }, ok).run("", { prompt: "x" });
     expect(seen.join(" ")).toContain("--model o4-mini");

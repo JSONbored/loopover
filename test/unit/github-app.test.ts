@@ -1359,7 +1359,7 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     expect(store.has(321)).toBe(true); // written to the external store, not the in-isolate Map
   });
 
-  it("isCacheableGithubUrl: caches GitHub GETs but not token-mint / rate-limit / non-GitHub URLs", () => {
+  it("isCacheableGithubUrl: caches safe GitHub GETs but not sensitive endpoints", () => {
     expect(
       isCacheableGithubUrl("https://api.github.com/repos/o/r/pulls/1"),
     ).toBe(true);
@@ -1371,7 +1371,51 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     expect(isCacheableGithubUrl("https://api.github.com/rate_limit")).toBe(
       false,
     );
+    expect(
+      isCacheableGithubUrl(
+        "https://api.github.com/repos/o/r/collaborators/maintainer/permission",
+      ),
+    ).toBe(false);
+    expect(
+      isCacheableGithubUrl(
+        "https://api.github.com/repos/o/r/collaborators/maintainer/permission?ref=live",
+      ),
+    ).toBe(false);
     expect(isCacheableGithubUrl("https://example.com/x")).toBe(false);
+  });
+
+  it("does not serve repository collaborator permissions from the shared response cache", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const store = new Map<
+      string,
+      { status: number; body: string; contentType: string }
+    >();
+    setGitHubResponseCache({
+      get: async (u) => store.get(u) ?? null,
+      set: async (u, v) => void store.set(u, v),
+    });
+    let permissionFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens"))
+        return Response.json({ token: "installation-token" });
+      if (url.endsWith("/repos/o/r/collaborators/maintainer/permission")) {
+        permissionFetches += 1;
+        return Response.json({ permission: "write" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(
+      getRepositoryCollaboratorPermission(env, 123, "o/r", "maintainer"),
+    ).resolves.toBe("write");
+    await expect(
+      getRepositoryCollaboratorPermission(env, 123, "o/r", "maintainer"),
+    ).resolves.toBe("write");
+
+    expect(permissionFetches).toBe(2);
+    expect(store.size).toBe(0);
   });
 
   it("serves a cached GitHub GET on the second call and skips the network", async () => {

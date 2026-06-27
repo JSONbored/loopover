@@ -289,17 +289,12 @@ services:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-      # The app's SQLite DB, for the maintainer dashboards (PR/review tables via the frser-sqlite-datasource).
-      # Mounted read-WRITE — not :ro — on purpose: SQLite WAL mode needs to write the -shm index to read live
-      # committed rows; a read-only mount would fail to open or miss recent writes. The datasource only ever
-      # runs SELECTs (provisioned dashboards, editable:false), so the app DB is never mutated from here.
-      - gittensory-data:/appdb
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      # Maintainer dashboards read the app DB through this SQLite plugin (table/stat panels); the GitHub
-      # data source (official, signed) queries the live GitHub API for the accurate upstream PR/issue census.
-      GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
+      # Only install the signed GitHub datasource plugin. Do not mount or query the live app SQLite
+      # database from Grafana; observability must not bypass application authorization.
+      GF_INSTALL_PLUGINS: grafana-github-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
 

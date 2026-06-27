@@ -83,7 +83,7 @@ async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token:
     }
     return entries;
   } catch (error) {
-    console.log(JSON.stringify({ ev: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
+    console.error(JSON.stringify({ level: "error", event: "rag_index_tree_error", ev: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
     return null;
   }
 }
@@ -178,7 +178,7 @@ async function listStoredChunkPaths(infra: ReturnType<typeof createReviewAdapter
       .all<{ path: string }>();
     return (rows.results ?? []).map((row) => row.path).filter((path) => typeof path === "string" && path.length > 0);
   } catch (error) {
-    console.log(JSON.stringify({ ev: "rag_list_paths_error", project, repo, message: String(error).slice(0, 200) }));
+    console.error(JSON.stringify({ level: "error", event: "rag_list_paths_error", ev: "rag_list_paths_error", project, repo, message: String(error).slice(0, 200) }));
     return [];
   }
 }

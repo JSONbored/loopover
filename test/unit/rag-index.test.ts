@@ -173,18 +173,23 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     expect(vec.upserted.length).toBe(0);
   });
 
-  it("a tree fetch that THROWS degrades to nothing indexed (fetchRepoTree catch arm)", async () => {
+  it("a tree fetch that THROWS degrades to nothing indexed (fetchRepoTree catch arm) + surfaces it at ERROR for Sentry (#5)", async () => {
     const { env, vec } = indexEnv();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       if (input.toString().includes("/git/trees/")) throw new Error("network down");
       return new Response("missing", { status: 404 });
     });
     await expect(indexRepo(env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
     expect(vec.upserted.length).toBe(0);
+    // A broken RAG index-population (tree fetch) now surfaces at level:error → captured by the central Sentry forwarder.
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("rag_index_tree_error") && String(c[0]).includes('"level":"error"'))).toBe(true);
+    errSpy.mockRestore();
   });
 
-  it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes)", async () => {
+  it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes) + surfaces it at ERROR for Sentry (#5)", async () => {
     const { env } = indexEnv();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     // Make ONLY the listStoredChunkPaths SELECT throw; everything else uses the real test D1.
     const realPrepare = env.DB.prepare.bind(env.DB);
     env.DB.prepare = ((query: string) =>
@@ -198,6 +203,9 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     // The list failed → [] → nothing pruned, but the current file still indexes (fail-safe).
     expect(result.files).toBe(1);
     expect(await pathsFor(env, PROJECT, "gittensory")).toContain("src/current.ts");
+    // A broken stored-paths read now surfaces at level:error → captured by the central Sentry forwarder.
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("rag_list_paths_error") && String(c[0]).includes('"level":"error"'))).toBe(true);
+    errSpy.mockRestore();
   });
 
   it("listStoredChunkPaths drops blank paths and tolerates an absent result set (defensive branches)", async () => {

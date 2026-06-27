@@ -132,7 +132,6 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
 // credentials out of prompt-injectable subprocesses while preserving CLI auth/home/proxy/cert settings. The CLI
 // runs read-only / no extra tools, and non-zero exit / empty output / error-envelope THROWS so the caller degrades.
 const SUBSCRIPTION_CLI_ENV_ALLOWLIST = [
-  "CODEX_HOME",
   "HOME",
   "HTTPS_PROXY",
   "HTTP_PROXY",
@@ -164,6 +163,21 @@ export function subscriptionCliEnv(
   for (const [key, value] of Object.entries(extra)) {
     if (value !== undefined) child[key] = value;
   }
+  return child;
+}
+
+function assertCodexCredentialIsolation(parent: Record<string, string | undefined>): void {
+  // `codex exec` receives attacker-controlled PR title/body/diff text. Its read-only sandbox prevents writes, but not
+  // reads, so a self-hosted OAuth home mounted into the same filesystem can be prompt-injected into public output.
+  // Fail closed until Codex exposes a brokered credential mode that does not put auth.json in the review sandbox.
+  if (parent.CODEX_HOME || parent.GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") {
+    throw new Error("codex_credential_isolation_required");
+  }
+}
+
+function codexCliEnv(parent: Record<string, string | undefined>): Record<string, string | undefined> {
+  const child = subscriptionCliEnv(parent);
+  delete child.CODEX_HOME;
   return child;
 }
 
@@ -305,15 +319,15 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
   };
 }
 
-/** Codex subscription (`codex exec`, auth from $CODEX_HOME/auth.json, default ~/.codex). codex needs a WRITABLE
- *  home for its app-server state, so a brokered self-host points CODEX_HOME at a writable dir. Gated/unverified —
- *  fail-safe. */
+/** Codex subscription (`codex exec`). Fail closed by default: Codex OAuth homes are readable by prompt-influenced
+ *  review sandboxes unless an operator explicitly opts into that risk for an isolated deployment. */
 export function createCodexAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
       // Codex is chat-only here — reject embed requests so the chain routes them to an embed-capable provider.
       if (options.text) throw new Error("codex_no_embed");
-      const env = subscriptionCliEnv(parentEnv);
+      assertCodexCredentialIsolation(parentEnv);
+      const env = codexCliEnv(parentEnv);
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
       // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).

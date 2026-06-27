@@ -86,6 +86,38 @@ export function captureReviewFailure(
   });
 }
 
+/** Forward a structured `console.log` line to Sentry when it is an ERROR-level log. The engine logs operational
+ *  failures (orb_broker_unavailable, gate-check errors, relay drops, …) as `console.log(JSON.stringify({ level:
+ *  "error", event, … }))` — so wrapping console.log with this surfaces EVERY such error as a Sentry issue with NO
+ *  per-site wiring. No-op when Sentry is off, the line isn't a JSON object string, or its level isn't error/fatal —
+ *  routine logs (audit/info/no-level: job_complete, regate_sweep_throttled, …) are intentionally skipped. */
+export function forwardStructuredLogToSentry(line: unknown): void {
+  if (!active || !Sentry) return;
+  if (typeof line !== "string" || line.charCodeAt(0) !== 123 /* "{" */) return;
+  let obj: Record<string, unknown>;
+  try {
+    // A "{"-prefixed string that parses is always an object (else JSON.parse throws → caught below).
+    obj = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return; // not JSON — an ordinary log line
+  }
+  const level = obj.level;
+  if (level !== "error" && level !== "fatal") return;
+  const severity = level === "fatal" ? "fatal" : "error";
+  const title =
+    typeof obj.event === "string"
+      ? obj.event
+      : typeof obj.message === "string"
+        ? obj.message
+        : "error";
+  Sentry.withScope((scope) => {
+    scope.setLevel(severity);
+    scope.setContext("log", obj);
+    if (typeof obj.event === "string") scope.setTag("event", obj.event);
+    Sentry!.captureMessage(title, severity);
+  });
+}
+
 /** Flush buffered events before exit. No-op when off. */
 export async function flushSentry(timeoutMs = 2000): Promise<void> {
   if (!active || !Sentry) return;

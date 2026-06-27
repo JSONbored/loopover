@@ -51,7 +51,12 @@ import {
   makeLocalManifestReader,
   makeLocalReviewContextReader,
 } from "./selfhost/private-config";
-import { captureError, flushSentry, initSentry } from "./selfhost/sentry";
+import {
+  captureError,
+  flushSentry,
+  forwardStructuredLogToSentry,
+  initSentry,
+} from "./selfhost/sentry";
 import {
   setLocalManifestReader,
   setLocalReviewContextReader,
@@ -256,6 +261,22 @@ async function main(): Promise<void> {
       captureError(reason, { kind: "unhandledRejection" });
       console.error(reason);
     });
+    // Central error forwarding (#1468): the engine logs operational failures (orb_broker_unavailable, gate-check
+    // errors, relay drops, …) as structured `console.log` lines with level:"error". Wrap console.log so every such
+    // line surfaces as a Sentry issue WITHOUT per-site wiring; routine logs are skipped inside the forwarder. The
+    // re-entrancy guard prevents a loop if the Sentry path itself ever logs.
+    const baseConsoleLog = console.log.bind(console);
+    let forwardingToSentry = false;
+    console.log = (...args: unknown[]): void => {
+      baseConsoleLog(...args);
+      if (forwardingToSentry) return;
+      forwardingToSentry = true;
+      try {
+        forwardStructuredLogToSentry(args[0]);
+      } finally {
+        forwardingToSentry = false;
+      }
+    };
   }
   const startedAt = Date.now();
 

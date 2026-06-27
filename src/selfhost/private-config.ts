@@ -16,11 +16,18 @@
 // per-repo file fully REPLACES the global fallback — "fallback" means "used only when no per-repo file exists",
 // not a deep merge). The slug is lowercased (GitHub repo full-names are case-insensitive; #1390 already lowercased).
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { RepoFocusManifestFetcher } from "../signals/focus-manifest-loader";
 
 /** The bare config filenames tried inside a per-repo folder and at the dir root (global fallback), in priority order. */
 const CONFIG_BASENAMES = [".gittensory.yml", ".gittensory.yaml", ".gittensory.json"] as const;
+const GITHUB_OWNER_SEGMENT = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+const GITHUB_REPO_SEGMENT = /^[a-z0-9._-]+$/;
+
+function isSafeRepoSegment(segment: string): boolean {
+  return segment !== "." && segment !== ".." && GITHUB_REPO_SEGMENT.test(segment);
+}
+
 /** Global-fallback candidates (relative to GITTENSORY_REPO_CONFIG_DIR): the dir-root `.gittensory.{yml,yaml,json}`
  *  applied to any repo without its own per-repo file. */
 export const GLOBAL_CONFIG_CANDIDATES: string[] = [...CONFIG_BASENAMES];
@@ -31,9 +38,10 @@ export const GLOBAL_CONFIG_CANDIDATES: string[] = [...CONFIG_BASENAMES];
  *  the lowercased repo name. An invalid repo full name (no single interior slash) yields no candidates. */
 export function localConfigCandidates(repoFullName: string): string[] {
   const slash = repoFullName.indexOf("/");
-  if (slash <= 0 || slash === repoFullName.length - 1) return [];
+  if (slash <= 0 || slash === repoFullName.length - 1 || slash !== repoFullName.lastIndexOf("/")) return [];
   const owner = repoFullName.slice(0, slash).toLowerCase();
   const repo = repoFullName.slice(slash + 1).toLowerCase();
+  if (!GITHUB_OWNER_SEGMENT.test(owner) || !isSafeRepoSegment(repo)) return [];
   const slug = `${owner}__${repo}`;
   return [
     // 1. owner-qualified folder — `{owner}__{repo}/.gittensory.{yml,yaml,json}`
@@ -52,14 +60,15 @@ export function localConfigCandidates(repoFullName: string): string[] {
  *  candidates and is NOT served the global fallback (it is never a real webhook repo). A read error on one
  *  candidate is swallowed so the next candidate is tried. */
 export function makeLocalManifestReader(dir: string | undefined): RepoFocusManifestFetcher | null {
-  const base = (dir ?? "").trim();
-  if (!base) return null;
+  const trimmed = (dir ?? "").trim();
+  if (!trimmed) return null;
+  const base = resolve(trimmed);
   return async (repoFullName: string): Promise<string | null> => {
     const perRepo = localConfigCandidates(repoFullName);
     if (perRepo.length === 0) return null; // invalid repo name → no per-repo file AND no global fallback
     for (const candidate of [...perRepo, ...GLOBAL_CONFIG_CANDIDATES]) {
       try {
-        return await readFile(join(base, candidate), "utf8");
+        return await readFile(resolve(base, candidate), "utf8");
       } catch {
         // ENOENT / unreadable → try the next candidate
       }

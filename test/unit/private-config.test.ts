@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GLOBAL_CONFIG_CANDIDATES, localConfigCandidates, makeLocalManifestReader } from "../../src/selfhost/private-config";
 
@@ -25,6 +25,12 @@ describe("localConfigCandidates (container-private config paths)", () => {
     expect(localConfigCandidates("no-slash")).toEqual([]); // slash < 0 → slash <= 0
     expect(localConfigCandidates("/leading")).toEqual([]); // slash at 0 → slash <= 0
     expect(localConfigCandidates("trailing/")).toEqual([]); // slash at len-1
+    expect(localConfigCandidates("owner/repo/extra")).toEqual([]); // more than one slash
+    expect(localConfigCandidates("owner/..")).toEqual([]);
+    expect(localConfigCandidates("owner/.")).toEqual([]);
+    expect(localConfigCandidates("owner/repo name")).toEqual([]);
+    expect(localConfigCandidates("bad_owner/repo")).toEqual([]);
+    expect(localConfigCandidates("-owner/repo")).toEqual([]);
   });
   it("exposes the dir-root global-fallback candidates", () => {
     expect(GLOBAL_CONFIG_CANDIDATES).toEqual([".gittensory.yml", ".gittensory.yaml", ".gittensory.json"]);
@@ -89,5 +95,12 @@ describe("makeLocalManifestReader (GITTENSORY_REPO_CONFIG_DIR)", () => {
     writeFileSync(join(dir, ".gittensory.yml"), "gate:\n  enabled: false\n"); // global present
     const reader = makeLocalManifestReader(dir);
     expect(await reader!("no-slash")).toBeNull(); // perRepo.length === 0 early return
+  });
+
+  it("rejects traversal repo names instead of reading outside the private config directory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dirname(dir), ".gittensory.yml"), "gate:\n  enabled: true\n");
+    const reader = makeLocalManifestReader(dir);
+    expect(await reader!("owner/..")).toBeNull();
   });
 });

@@ -1,11 +1,23 @@
 import type { Advisory, GitHubWebhookPayload } from "../types";
-import { fetchBrokeredInstallationToken, isOrbBrokerMode } from "../orb/broker-client";
+import {
+  fetchBrokeredInstallationToken,
+  isOrbBrokerMode,
+} from "../orb/broker-client";
 import { makeInstallationOctokit } from "./client";
 import { maintainerControlPanelUrl } from "./footer";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { signRs256Jwt } from "../utils/crypto";
 import { errorMessage } from "../utils/json";
-import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type CheckRunAnnotationContext, type CheckRunOutput, type GateCheckConclusion, type GateCheckEvaluation, type GateCheckPolicy } from "../rules/advisory";
+import {
+  evaluateGateCheck,
+  formatCheckRunOutput,
+  formatGateCheckOutput,
+  type CheckRunAnnotationContext,
+  type CheckRunOutput,
+  type GateCheckConclusion,
+  type GateCheckEvaluation,
+  type GateCheckPolicy,
+} from "../rules/advisory";
 
 type CheckRunResponse = {
   id: number;
@@ -27,7 +39,10 @@ export type CheckRunOutcome =
 export const GITTENSORY_CONTEXT_CHECK_NAME = "Gittensory Context";
 export const GITTENSORY_GATE_CHECK_NAME = "Gittensory Gate";
 
-type GitHubCheckConclusion = Advisory["conclusion"] | GateCheckConclusion | "skipped";
+type GitHubCheckConclusion =
+  | Advisory["conclusion"]
+  | GateCheckConclusion
+  | "skipped";
 type GitHubCheckStatus = "queued" | "in_progress" | "completed";
 
 /** Hard cap on a single GitHub API request. Without it a slow/half-open GitHub connection can hang the
@@ -36,9 +51,70 @@ type GitHubCheckStatus = "queued" | "in_progress" | "completed";
  *  finalize. Applied to every raw fetch here and to the Octokit instances (via a timeout-injecting fetch). */
 const GITHUB_FETCH_TIMEOUT_MS = 12_000;
 
-function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  if (init?.signal) return fetch(input, init);
-  return fetch(input, { ...(init ?? {}), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
+/** A short-TTL cache for safe GitHub GET responses (e.g. Redis on the self-host). Stores only status/body/
+ *  content-type — never rate-limit or encoding headers. Set on the self-host; the Worker leaves it null. */
+export interface CachedGitHubResponse {
+  status: number;
+  body: string;
+  contentType: string;
+}
+export interface GitHubResponseCache {
+  get(url: string): Promise<CachedGitHubResponse | null>;
+  set(url: string, value: CachedGitHubResponse): Promise<void>;
+}
+let responseCache: GitHubResponseCache | null = null;
+export function setGitHubResponseCache(
+  cache: GitHubResponseCache | null,
+): void {
+  responseCache = cache;
+}
+
+/** Only cache safe GETs to the GitHub REST API. Never cache token-minting, rate-limit, or
+ * authorization/permission endpoints whose response must reflect the live caller context. Exported for tests. */
+export function isCacheableGithubUrl(url: string): boolean {
+  if (!url.startsWith("https://api.github.com/")) return false;
+  if (url.includes("/access_tokens") || url.includes("/rate_limit"))
+    return false;
+  return !/\/repos\/[^/]+\/[^/]+\/collaborators\/[^/]+\/permission(?:$|[?#])/.test(
+    url,
+  );
+}
+
+async function timeoutFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const url = String(input); // timeoutFetch is only ever called with string URLs (app template strings + octokit)
+  const useCache =
+    responseCache !== null && method === "GET" && isCacheableGithubUrl(url);
+  if (useCache) {
+    const hit = await responseCache!.get(url).catch(() => null); // a cache read must never break the fetch
+    if (hit)
+      return new Response(hit.body, {
+        status: hit.status,
+        headers: { "content-type": hit.contentType },
+      });
+  }
+  const response = init?.signal
+    ? await fetch(input, init)
+    : await fetch(input, {
+        ...(init ?? {}),
+        signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      });
+  if (useCache && response.status === 200) {
+    try {
+      const body = await response.clone().text(); // clone leaves the returned response readable
+      await responseCache!.set(url, {
+        status: 200,
+        body,
+        contentType: response.headers.get("content-type") ?? "application/json",
+      });
+    } catch {
+      /* caching is best-effort */
+    }
+  }
+  return response;
 }
 
 // In-isolate installation-token cache. GitHub installation tokens are valid ~1h; minting a fresh one on EVERY
@@ -47,12 +123,52 @@ function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
 // errored → dead-lettered → missed syncs → stale head SHAs). Caching to ~1 mint/hour/installation removes that
 // multiplier. The module-level Map persists across requests handled by the same Worker isolate; a 2-minute
 // safety margin avoids handing out a token that expires mid-request.
-const installationTokenCache = new Map<number, { token: string; expiresAtMs: number }>();
+const installationTokenCache = new Map<
+  number,
+  { token: string; expiresAtMs: number }
+>();
 const TOKEN_SAFETY_MARGIN_MS = 120_000;
 
-export async function createInstallationToken(env: Env, installationId: number): Promise<string> {
-  const cached = installationTokenCache.get(installationId);
-  if (cached && cached.expiresAtMs - TOKEN_SAFETY_MARGIN_MS > Date.now()) return cached.token;
+/** A shared installation-token store (e.g. Redis on the self-host) so a multi-replica deployment mints ~1
+ *  token/hour/installation across the FLEET, not per-replica. Set on the self-host; the Worker leaves it null
+ *  and falls back to the in-isolate Map (unchanged behavior). */
+export interface InstallationTokenStore {
+  get(
+    installationId: number,
+  ): Promise<{ token: string; expiresAtMs: number } | null>;
+  set(
+    installationId: number,
+    value: { token: string; expiresAtMs: number },
+  ): Promise<void>;
+}
+let externalTokenStore: InstallationTokenStore | null = null;
+export function setInstallationTokenStore(
+  store: InstallationTokenStore | null,
+): void {
+  externalTokenStore = store;
+}
+async function readCachedToken(
+  installationId: number,
+): Promise<{ token: string; expiresAtMs: number } | null> {
+  return externalTokenStore
+    ? externalTokenStore.get(installationId)
+    : (installationTokenCache.get(installationId) ?? null);
+}
+async function writeCachedToken(
+  installationId: number,
+  value: { token: string; expiresAtMs: number },
+): Promise<void> {
+  if (externalTokenStore) await externalTokenStore.set(installationId, value);
+  else installationTokenCache.set(installationId, value);
+}
+
+export async function createInstallationToken(
+  env: Env,
+  installationId: number,
+): Promise<string> {
+  const cached = await readCachedToken(installationId);
+  if (cached && cached.expiresAtMs - TOKEN_SAFETY_MARGIN_MS > Date.now())
+    return cached.token;
   // Self-host broker mode: a brokered self-host holds no App private key, so source the installation token from
   // the central Orb (enrollment secret → short-lived token) instead of minting locally. Cloud sets no enrollment
   // secret, so this branch is inert there → byte-identical. The token caches the same way (the install id is the
@@ -60,7 +176,10 @@ export async function createInstallationToken(env: Env, installationId: number):
   if (isOrbBrokerMode(env)) {
     try {
       const brokered = await fetchBrokeredInstallationToken(env);
-      installationTokenCache.set(installationId, { token: brokered.token, expiresAtMs: brokered.expiresAtMs });
+      await writeCachedToken(installationId, {
+        token: brokered.token,
+        expiresAtMs: brokered.expiresAtMs,
+      });
       return brokered.token;
     } catch (error) {
       // Stale-token grace (#2): a brokered self-host holds no App key, so without this a single Orb mint failure
@@ -69,26 +188,54 @@ export async function createInstallationToken(env: Env, installationId: number):
       // an actually-expired token is never served). Otherwise emit an alertable structured log and rethrow so the
       // queue's retry/DLQ handles a genuine outage.
       if (cached && cached.expiresAtMs > Date.now()) {
-        console.warn(JSON.stringify({ level: "warn", event: "orb_broker_degraded_serving_cached_token", installationId, expiresInMs: cached.expiresAtMs - Date.now(), error: errorMessage(error) }));
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "orb_broker_degraded_serving_cached_token",
+            installationId,
+            expiresInMs: cached.expiresAtMs - Date.now(),
+            error: errorMessage(error),
+          }),
+        );
         return cached.token;
       }
-      console.error(JSON.stringify({ level: "error", event: "orb_broker_unavailable", installationId, error: errorMessage(error) }));
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "orb_broker_unavailable",
+          installationId,
+          error: errorMessage(error),
+        }),
+      );
       throw error;
     }
   }
   const jwt = await createAppJwt(env);
-  const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
-    method: "POST",
-    headers: githubHeaders(`Bearer ${jwt}`),
-  });
+  const response = await timeoutFetch(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: githubHeaders(`Bearer ${jwt}`),
+    },
+  );
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Failed to create GitHub installation token (${response.status}): ${body.slice(0, 200)}`);
+    throw new Error(
+      `Failed to create GitHub installation token (${response.status}): ${body.slice(0, 200)}`,
+    );
   }
-  const payload = (await response.json()) as { token?: string; expires_at?: string };
-  if (!payload.token) throw new Error("GitHub installation token response did not include a token.");
-  const expiresAtMs = payload.expires_at ? Date.parse(payload.expires_at) : Date.now() + 50 * 60_000;
-  installationTokenCache.set(installationId, { token: payload.token, expiresAtMs });
+  const payload = (await response.json()) as {
+    token?: string;
+    expires_at?: string;
+  };
+  if (!payload.token)
+    throw new Error(
+      "GitHub installation token response did not include a token.",
+    );
+  const expiresAtMs = payload.expires_at
+    ? Date.parse(payload.expires_at)
+    : Date.now() + 50 * 60_000;
+  await writeCachedToken(installationId, { token: payload.token, expiresAtMs });
   return payload.token;
 }
 
@@ -101,8 +248,16 @@ export async function createInstallationToken(env: Env, installationId: number):
  * drop a legitimate delivery whose app_id is null/unknown. Signature verification (per-App webhook secret) is the
  * PRIMARY isolation; this is defense-in-depth for a shared-endpoint/secret misconfiguration. PURE.
  */
-export function isForeignAppInstallation(ownAppId: string | undefined, installationAppId: number | null | undefined): boolean {
-  if (!ownAppId || installationAppId === null || installationAppId === undefined) return false;
+export function isForeignAppInstallation(
+  ownAppId: string | undefined,
+  installationAppId: number | null | undefined,
+): boolean {
+  if (
+    !ownAppId ||
+    installationAppId === null ||
+    installationAppId === undefined
+  )
+    return false;
   const own = Number.parseInt(ownAppId, 10);
   if (!Number.isFinite(own)) return false;
   return own !== installationAppId;
@@ -112,23 +267,43 @@ export function isForeignAppInstallation(ownAppId: string | undefined, installat
  *  otherwise leaks a cached token across test cases that share an installation id). */
 export function clearInstallationTokenCacheForTest(): void {
   installationTokenCache.clear();
+  externalTokenStore = null;
+  responseCache = null;
 }
 
-export async function getAppInstallation(env: Env, installationId: number): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
+export async function getAppInstallation(
+  env: Env,
+  installationId: number,
+): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
   const jwt = await createAppJwt(env);
-  const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}`, {
-    headers: githubHeaders(`Bearer ${jwt}`),
-  });
+  const response = await timeoutFetch(
+    `https://api.github.com/app/installations/${installationId}`,
+    {
+      headers: githubHeaders(`Bearer ${jwt}`),
+    },
+  );
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Failed to fetch GitHub App installation (${response.status}): ${body.slice(0, 200)}`);
+    throw new Error(
+      `Failed to fetch GitHub App installation (${response.status}): ${body.slice(0, 200)}`,
+    );
   }
-  const payload = (await response.json()) as NonNullable<GitHubWebhookPayload["installation"]>;
-  if (!payload.id) throw new Error("GitHub installation response did not include an id.");
+  const payload = (await response.json()) as NonNullable<
+    GitHubWebhookPayload["installation"]
+  >;
+  if (!payload.id)
+    throw new Error("GitHub installation response did not include an id.");
   return payload;
 }
 
-export type GitHubRepositoryCollaboratorPermission = "admin" | "maintain" | "write" | "triage" | "read" | "none" | string;
+export type GitHubRepositoryCollaboratorPermission =
+  | "admin"
+  | "maintain"
+  | "write"
+  | "triage"
+  | "read"
+  | "none"
+  | string;
 
 export async function getRepositoryCollaboratorPermission(
   env: Env,
@@ -146,9 +321,13 @@ export async function getRepositoryCollaboratorPermission(
   if (response.status === 404) return null;
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Failed to fetch GitHub collaborator permission (${response.status}): ${body.slice(0, 200)}`);
+    throw new Error(
+      `Failed to fetch GitHub collaborator permission (${response.status}): ${body.slice(0, 200)}`,
+    );
   }
-  const payload = (await response.json()) as { permission?: GitHubRepositoryCollaboratorPermission };
+  const payload = (await response.json()) as {
+    permission?: GitHubRepositoryCollaboratorPermission;
+  };
   return payload.permission ?? null;
 }
 
@@ -176,12 +355,18 @@ export async function createOrUpdateCheckRun(
   annotationContext?: CheckRunAnnotationContext,
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
-  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
-    name: GITTENSORY_CONTEXT_CHECK_NAME,
-    conclusion: advisory.conclusion,
-    output: formatCheckRunOutput(advisory, detailLevel, annotationContext),
-    mode,
-  });
+  return createOrUpdateNamedCheckRun(
+    env,
+    installationId,
+    repoFullName,
+    advisory,
+    {
+      name: GITTENSORY_CONTEXT_CHECK_NAME,
+      conclusion: advisory.conclusion,
+      output: formatCheckRunOutput(advisory, detailLevel, annotationContext),
+      mode,
+    },
+  );
 }
 
 export async function createOrUpdateGateCheckRun(
@@ -190,7 +375,10 @@ export async function createOrUpdateGateCheckRun(
   repoFullName: string,
   advisory: Advisory,
   policy: GateCheckPolicy = {},
-  options: { checkRunId?: number | undefined; gate?: GateCheckEvaluation | undefined } = {},
+  options: {
+    checkRunId?: number | undefined;
+    gate?: GateCheckEvaluation | undefined;
+  } = {},
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
   // Prefer the AUTHORITATIVE pre-computed evaluation when the caller has one (#5 / audit): the surface/content
@@ -198,14 +386,20 @@ export async function createOrUpdateGateCheckRun(
   // and re-deriving here via evaluateGateCheck would discard that override — publishing a GREEN check while the
   // PR is actually auto-closed/held. Callers without a surface lane omit `gate` and re-derive as before (identical).
   const gate = options.gate ?? evaluateGateCheck(advisory, policy);
-  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
-    name: GITTENSORY_GATE_CHECK_NAME,
-    status: "completed",
-    conclusion: gate.conclusion,
-    output: formatGateCheckOutput(gate),
-    checkRunId: options.checkRunId,
-    mode,
-  });
+  return createOrUpdateNamedCheckRun(
+    env,
+    installationId,
+    repoFullName,
+    advisory,
+    {
+      name: GITTENSORY_GATE_CHECK_NAME,
+      status: "completed",
+      conclusion: gate.conclusion,
+      output: formatGateCheckOutput(gate),
+      checkRunId: options.checkRunId,
+      mode,
+    },
+  );
 }
 
 export async function createOrUpdatePendingGateCheckRun(
@@ -215,16 +409,23 @@ export async function createOrUpdatePendingGateCheckRun(
   advisory: Advisory,
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
-  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
-    name: GITTENSORY_GATE_CHECK_NAME,
-    status: "in_progress",
-    output: {
-      title: "Gittensory Gate is evaluating",
-      summary: "Gittensory is running deterministic public PR hygiene checks.",
-      text: "The Gate blocks every author on the repo's configured hard blockers (duplicate PRs by default); on everything else, and while state is still syncing, it stays advisory.",
+  return createOrUpdateNamedCheckRun(
+    env,
+    installationId,
+    repoFullName,
+    advisory,
+    {
+      name: GITTENSORY_GATE_CHECK_NAME,
+      status: "in_progress",
+      output: {
+        title: "Gittensory Gate is evaluating",
+        summary:
+          "Gittensory is running deterministic public PR hygiene checks.",
+        text: "The Gate blocks every author on the repo's configured hard blockers (duplicate PRs by default); on everything else, and while state is still syncing, it stays advisory.",
+      },
+      mode,
     },
-    mode,
-  });
+  );
 }
 
 export async function createOrUpdateSkippedGateCheckRun(
@@ -235,17 +436,23 @@ export async function createOrUpdateSkippedGateCheckRun(
   reason = "PR closed before full evaluation.",
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
-  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
-    name: GITTENSORY_GATE_CHECK_NAME,
-    status: "completed",
-    conclusion: "skipped",
-    output: {
-      title: "Gittensory Gate skipped",
-      summary: reason,
-      text: "Gittensory does not post late first comments on closed or merged pull requests.",
+  return createOrUpdateNamedCheckRun(
+    env,
+    installationId,
+    repoFullName,
+    advisory,
+    {
+      name: GITTENSORY_GATE_CHECK_NAME,
+      status: "completed",
+      conclusion: "skipped",
+      output: {
+        title: "Gittensory Gate skipped",
+        summary: reason,
+        text: "Gittensory does not post late first comments on closed or merged pull requests.",
+      },
+      mode,
     },
-    mode,
-  });
+  );
 }
 
 /**
@@ -263,18 +470,25 @@ export async function createOrUpdateErroredGateCheckRun(
   options: { checkRunId?: number | undefined } = {},
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
-  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
-    name: GITTENSORY_GATE_CHECK_NAME,
-    status: "completed",
-    conclusion: "neutral",
-    output: {
-      title: "Gittensory Gate — could not finish evaluating",
-      summary: "A transient error interrupted gate evaluation. This does NOT block the PR and re-runs automatically on the next push.",
-      text: "Gittensory finalizes the Gate to a neutral, non-blocking state when evaluation is interrupted, so the check never hangs in_progress. Push a new commit or use the 'Re-run Gittensory review' checkbox to re-evaluate.",
+  return createOrUpdateNamedCheckRun(
+    env,
+    installationId,
+    repoFullName,
+    advisory,
+    {
+      name: GITTENSORY_GATE_CHECK_NAME,
+      status: "completed",
+      conclusion: "neutral",
+      output: {
+        title: "Gittensory Gate — could not finish evaluating",
+        summary:
+          "A transient error interrupted gate evaluation. This does NOT block the PR and re-runs automatically on the next push.",
+        text: "Gittensory finalizes the Gate to a neutral, non-blocking state when evaluation is interrupted, so the check never hangs in_progress. Push a new commit or use the 'Re-run Gittensory review' checkbox to re-evaluate.",
+      },
+      checkRunId: options.checkRunId,
+      mode,
     },
-    checkRunId: options.checkRunId,
-    mode,
-  });
+  );
 }
 
 /**
@@ -291,18 +505,25 @@ export async function createOrUpdateOverriddenGateCheckRun(
   options: { actor: string; reason: string; checkRunId?: number | undefined },
   mode: AgentActionMode = "live",
 ): Promise<CheckRunOutcome | null> {
-  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
-    name: GITTENSORY_GATE_CHECK_NAME,
-    status: "completed",
-    conclusion: "neutral",
-    output: {
-      title: `Gittensory Gate — overridden by @${options.actor}`,
-      summary: "A maintainer set the Gate to neutral for THIS commit only. This does NOT permanently bypass the Gate; a new push re-evaluates it.",
-      text: `Overridden by @${options.actor}: ${options.reason}`,
+  return createOrUpdateNamedCheckRun(
+    env,
+    installationId,
+    repoFullName,
+    advisory,
+    {
+      name: GITTENSORY_GATE_CHECK_NAME,
+      status: "completed",
+      conclusion: "neutral",
+      output: {
+        title: `Gittensory Gate — overridden by @${options.actor}`,
+        summary:
+          "A maintainer set the Gate to neutral for THIS commit only. This does NOT permanently bypass the Gate; a new push re-evaluates it.",
+        text: `Overridden by @${options.actor}: ${options.reason}`,
+      },
+      checkRunId: options.checkRunId,
+      mode,
     },
-    checkRunId: options.checkRunId,
-    mode,
-  });
+  );
 }
 
 async function createOrUpdateNamedCheckRun(
@@ -321,7 +542,8 @@ async function createOrUpdateNamedCheckRun(
 ): Promise<CheckRunOutcome | null> {
   if (!advisory.headSha) return null;
   const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
+  if (!owner || !repo)
+    throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   const token = await createInstallationToken(env, installationId);
   // makeInstallationOctokit injects the shared per-request timeout (a stalled PATCH can never orphan the
@@ -334,62 +556,76 @@ async function createOrUpdateNamedCheckRun(
 
   try {
     if (check.checkRunId) {
-      const response = await octokit.request("PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
-        owner,
-        repo,
-        check_run_id: check.checkRunId,
-        name: check.name,
-        /* v8 ignore next 2 -- Exported check helpers always provide status/conclusion for known-id finalization. */
-        status: check.status ?? "completed",
-        ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-        output: outputForCheckRunUpdate(check.output),
-        ...detailsUrlBody,
-      });
+      const response = await octokit.request(
+        "PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}",
+        {
+          owner,
+          repo,
+          check_run_id: check.checkRunId,
+          name: check.name,
+          /* v8 ignore next 2 -- Exported check helpers always provide status/conclusion for known-id finalization. */
+          status: check.status ?? "completed",
+          ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+          output: outputForCheckRunUpdate(check.output),
+          ...detailsUrlBody,
+        },
+      );
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
     }
 
-    const existing = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
-      owner,
-      repo,
-      ref: advisory.headSha,
-      check_name: check.name,
-      filter: "latest",
-      per_page: 1,
-    });
-    const existingCheckRun = (existing.data as CheckRunListResponse).check_runs?.[0];
+    const existing = await octokit.request(
+      "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+      {
+        owner,
+        repo,
+        ref: advisory.headSha,
+        check_name: check.name,
+        filter: "latest",
+        per_page: 1,
+      },
+    );
+    const existingCheckRun = (existing.data as CheckRunListResponse)
+      .check_runs?.[0];
     if (existingCheckRun) {
-      const response = await octokit.request("PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
-        owner,
-        repo,
-        check_run_id: existingCheckRun.id,
-        name: check.name,
-        status: check.status ?? "completed",
-        ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-        output: outputForCheckRunUpdate(check.output),
-        ...detailsUrlBody,
-      });
+      const response = await octokit.request(
+        "PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}",
+        {
+          owner,
+          repo,
+          check_run_id: existingCheckRun.id,
+          name: check.name,
+          status: check.status ?? "completed",
+          ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+          output: outputForCheckRunUpdate(check.output),
+          ...detailsUrlBody,
+        },
+      );
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
     }
 
-    const response = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
-      owner,
-      repo,
-      name: check.name,
-      head_sha: advisory.headSha,
-      status: check.status ?? "completed",
-      ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-      output: check.output,
-      ...detailsUrlBody,
-    });
+    const response = await octokit.request(
+      "POST /repos/{owner}/{repo}/check-runs",
+      {
+        owner,
+        repo,
+        name: check.name,
+        head_sha: advisory.headSha,
+        status: check.status ?? "completed",
+        ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+        output: check.output,
+        ...detailsUrlBody,
+      },
+    );
     const data = response.data as CheckRunResponse;
     return publishedOutcome(data);
   } catch (error) {
     if (isCheckRunPermissionError(error)) {
       return {
         kind: "permission_missing",
-        warning: "GitHub App Checks: write permission is missing. Enable it in the GitHub App settings and re-approve the installation.",
+        warning:
+          "GitHub App Checks: write permission is missing. Enable it in the GitHub App settings and re-approve the installation.",
       };
     }
     throw error;
@@ -403,7 +639,10 @@ function outputForCheckRunUpdate(output: CheckRunOutput): CheckRunOutput {
 }
 
 function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {
-  const outcome: { kind: "published"; id: number; html_url?: string } = { kind: "published", id: data.id };
+  const outcome: { kind: "published"; id: number; html_url?: string } = {
+    kind: "published",
+    id: data.id,
+  };
   if (data.html_url) outcome.html_url = data.html_url;
   return outcome;
 }
@@ -413,10 +652,17 @@ function isCheckRunPermissionError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const e = error as { status?: number; message?: string };
   if (e.status === 403) return true;
-  return typeof e.message === "string" && /resource not accessible by integration|not have permission/i.test(e.message);
+  return (
+    typeof e.message === "string" &&
+    /resource not accessible by integration|not have permission/i.test(
+      e.message,
+    )
+  );
 }
 
-export function getInstallationId(payload: GitHubWebhookPayload): number | null {
+export function getInstallationId(
+  payload: GitHubWebhookPayload,
+): number | null {
   return payload.installation?.id ?? null;
 }
 

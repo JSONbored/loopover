@@ -59,6 +59,7 @@ import {
 } from "./schema";
 import type {
   Advisory,
+  AdvisoryFinding,
   AgentActionRecord,
   AgentActionStatus,
   AgentActionType,
@@ -431,6 +432,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       aiReviewByok: false,
       aiReviewProvider: null,
       aiReviewModel: null,
+      aiReviewAllAuthors: false,
+      closeOwnerAuthors: false,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       blacklistLabel: "slop",
@@ -473,6 +476,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     aiReviewByok: row.aiReviewByok,
     aiReviewProvider: normalizeAiReviewProvider(row.aiReviewProvider),
     aiReviewModel: row.aiReviewModel ?? null,
+    aiReviewAllAuthors: row.aiReviewAllAuthors,
+    closeOwnerAuthors: row.closeOwnerAuthors,
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
     blacklistLabel: row.blacklistLabel,
@@ -519,6 +524,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     aiReviewByok: settings.aiReviewByok ?? false,
     aiReviewProvider: normalizeAiReviewProvider(settings.aiReviewProvider),
     aiReviewModel: typeof settings.aiReviewModel === "string" && settings.aiReviewModel.trim() ? settings.aiReviewModel.trim() : null,
+    aiReviewAllAuthors: settings.aiReviewAllAuthors ?? false,
+    closeOwnerAuthors: settings.closeOwnerAuthors ?? false,
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     blacklistLabel: settings.blacklistLabel ?? "slop",
@@ -563,6 +570,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       aiReviewByok: resolved.aiReviewByok,
       aiReviewProvider: resolved.aiReviewProvider,
       aiReviewModel: resolved.aiReviewModel,
+      aiReviewAllAuthors: resolved.aiReviewAllAuthors,
+      closeOwnerAuthors: resolved.closeOwnerAuthors,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
       blacklistLabel: resolved.blacklistLabel,
@@ -608,6 +617,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         aiReviewByok: resolved.aiReviewByok,
         aiReviewProvider: resolved.aiReviewProvider,
         aiReviewModel: resolved.aiReviewModel,
+        aiReviewAllAuthors: resolved.aiReviewAllAuthors,
+        closeOwnerAuthors: resolved.closeOwnerAuthors,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
         blacklistLabel: resolved.blacklistLabel,
@@ -3207,14 +3218,14 @@ export async function getCachedAiReview(
   pullNumber: number,
   headSha: string | null | undefined,
   mode: string,
-): Promise<{ notes: string; reviewerCount: number } | null> {
+): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[] } | null> {
   if (!headSha) return null;
   const row = await env.DB
-    .prepare("SELECT notes, reviewer_count AS reviewerCount, ai_review_mode AS mode FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ?")
+    .prepare("SELECT notes, reviewer_count AS reviewerCount, ai_review_mode AS mode, findings_json AS findingsJson FROM ai_review_cache WHERE repo_full_name = ? AND pull_number = ? AND head_sha = ?")
     .bind(repoFullName, pullNumber, headSha)
-    .first<{ notes: string; reviewerCount: number; mode: string }>();
+    .first<{ notes: string; reviewerCount: number; mode: string; findingsJson: string | null }>();
   if (!row || row.mode !== mode) return null;
-  return { notes: row.notes, reviewerCount: row.reviewerCount };
+  return { notes: row.notes, reviewerCount: row.reviewerCount, findings: parseJson<AdvisoryFinding[]>(row.findingsJson, []) };
 }
 
 /** Upsert the AI review for (repo, pull, head SHA). A nullish head SHA is a no-op. */
@@ -3224,17 +3235,17 @@ export async function putCachedAiReview(
   pullNumber: number,
   headSha: string | null | undefined,
   mode: string,
-  review: { notes: string; reviewerCount: number },
+  review: { notes: string; reviewerCount: number; findings?: AdvisoryFinding[] },
 ): Promise<void> {
   if (!headSha) return;
   await env.DB
     .prepare(
-      `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo_full_name, pull_number, head_sha) DO UPDATE SET
-         ai_review_mode = excluded.ai_review_mode, notes = excluded.notes, reviewer_count = excluded.reviewer_count, created_at = CURRENT_TIMESTAMP`,
+         ai_review_mode = excluded.ai_review_mode, notes = excluded.notes, reviewer_count = excluded.reviewer_count, findings_json = excluded.findings_json, created_at = CURRENT_TIMESTAMP`,
     )
-    .bind(repoFullName, pullNumber, headSha, mode, review.notes, review.reviewerCount)
+    .bind(repoFullName, pullNumber, headSha, mode, review.notes, review.reviewerCount, jsonString(review.findings ?? []))
     .run();
 }
 

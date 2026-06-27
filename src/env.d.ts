@@ -4,6 +4,11 @@ declare global {
     JOBS: Queue;
     RATE_LIMITER?: DurableObjectNamespace;
     AI?: Ai;
+    /** Self-host (RAG): a DEDICATED embedding provider, kept SEPARATE from the review chat chain so the reviewer
+     *  stays frontier-only (claude-code/codex) while embeddings — which those CLIs cannot produce — route to a
+     *  local/openai-compatible endpoint (ollama). Built at boot from AI_EMBED_BASE_URL/AI_EMBED_MODEL. Absent ⇒
+     *  `createReviewAdapters` falls back to `env.AI` (byte-identical to before). */
+    AI_EMBED?: Ai;
     /** Convergence (infra): Vectorize index for codebase RAG retrieval (Layer C). Optional — the review is
      *  fully fail-safe without it (absent ⇒ no RAG, review proceeds with no retrieved context). The index is
      *  created with bge-m3's 1024 dimensions. Unused until the per-module RAG wiring chunk; an unbound deploy

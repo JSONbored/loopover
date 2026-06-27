@@ -66,6 +66,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
   aiReviewProvider: text("ai_review_provider"),
   aiReviewModel: text("ai_review_model"),
+  aiReviewAllAuthors: integer("ai_review_all_authors", { mode: "boolean" }).notNull().default(false),
+  closeOwnerAuthors: integer("close_owner_authors", { mode: "boolean" }).notNull().default(false),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),
   // Label applied to a blacklisted contributor's PR/issue (#1425); configurable so the disposition works

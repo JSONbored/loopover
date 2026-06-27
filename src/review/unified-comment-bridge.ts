@@ -122,11 +122,47 @@ export function panelRowsToSignalRows(rows: PublicPrPanelSignalRow[]): UnifiedSi
   });
 }
 
-/** Build the single AI reviewer note from gittensory's AI output: the composed advisory write-up becomes
- *  the assessment; a consensus defect (recovered from the advisory findings) becomes a blocker; the gate's
- *  non-blocking warnings become nits. Returns `[]` when there is nothing reviewer-side to surface (no AI
- *  notes, no consensus defect) so the renderer hides the reviewer chip. The gate `decision` (passed
- *  separately) stays authoritative over `recommendation` — this is advisory framing only. */
+/** Split the composed AI advisory notes (#focused-reviews) into the prominent body (the assessment prose + any
+ *  `**Blockers**` section — real problems stay headline) and the trailing `**Nits (N)**` bullet lines, so the renderer
+ *  can DEMOTE nits into the collapsible Nits section instead of the headline assessment (nits are never blockers).
+ *  When there is no Nits section the whole blob is the body and `nits` is empty (byte-identical to before). */
+export function splitAiReviewNits(notes: string): { main: string; nits: string[] } {
+  const marker = notes.indexOf("**Nits (");
+  if (marker === -1) return { main: notes.trim(), nits: [] };
+  const nits = notes
+    .slice(marker)
+    .split("\n")
+    .slice(1) // drop the "**Nits (N)**" header line itself
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .filter(Boolean);
+  return { main: notes.slice(0, marker).trim(), nits };
+}
+
+/** Self-host environmental + process findings that are already represented in the signal table and are NOT code
+ *  observations — keep them OUT of the Nits list so the nit count reflects real code review, not boilerplate that
+ *  padded nearly every review (#review-accuracy). */
+const BOILERPLATE_NIT_CODES = new Set([
+  "repo_not_registered",
+  "repo_not_seen",
+  "pr_not_cached",
+  "pre_merge_check_unresolved",
+  "missing_linked_issue",
+  "no_linked_issue_without_rationale",
+]);
+const BOILERPLATE_NIT_TITLE =
+  /local gittensory cache|registration is not available|config was not parsed|not registered/i;
+export function isBoilerplateNit(finding: AdvisoryFinding): boolean {
+  return (
+    BOILERPLATE_NIT_CODES.has(finding.code) ||
+    BOILERPLATE_NIT_TITLE.test(finding.title)
+  );
+}
+
+/** Build the single AI reviewer note from gittensory's AI output: the composed advisory write-up (minus its nits)
+ *  becomes the assessment; a consensus defect (recovered from the advisory findings) becomes a blocker; the AI's own
+ *  nits AND the gate's non-blocking warnings become the collapsible nits. Returns `[]` when there is nothing
+ *  reviewer-side to surface (no AI notes, no consensus defect) so the renderer hides the reviewer chip. The gate
+ *  `decision` (passed separately) stays authoritative over `recommendation` — this is advisory framing only. */
 export function buildDualReviewNotes(args: {
   aiReview?: { notes: string } | undefined;
   consensusDefect?: { title: string; detail: string } | undefined;
@@ -141,7 +177,9 @@ export function buildDualReviewNotes(args: {
   verdict: Verdict;
   reviewerModel?: string;
 }): DualReviewNote[] {
-  const assessment = args.aiReview?.notes?.trim() ?? "";
+  const { main: assessment, nits: aiNitLines } = splitAiReviewNits(
+    args.aiReview?.notes?.trim() ?? "",
+  );
   const consensusBlocker = args.consensusDefect ? [`${args.consensusDefect.title}${args.consensusDefect.detail ? `: ${args.consensusDefect.detail}` : ""}`.trim()] : [];
   // FIX D1: fold the gate's own hard blockers into the reviewer blockers (so a non-AI gate failure populates
   // "Why this is blocked"). Exclude `ai_consensus_defect` (already surfaced via consensusDefect → appears once)
@@ -157,11 +195,19 @@ export function buildDualReviewNotes(args: {
   // raw warning findings). Scrub each with the private-term boundary and DROP any that still leaks. See
   // PRIVATE_FORBIDDEN_TERMS above. (The consensus-defect blocker is already public-safe via toPublicSafe; the
   // gate blockers above go through the SAME scrub as Nits.)
-  const nits = (args.warnings ?? [])
+  const gateNits = (args.warnings ?? [])
+    .filter((warning) => !isBoilerplateNit(warning))
     .map((warning) => `${warning.title}${warning.action ? ` — ${warning.action}` : ""}`.trim())
     .filter(Boolean)
     .map((line) => publicSafeNit(line))
     .filter((line): line is string => line !== null);
+  // The AI review's own nits (#focused-reviews) are non-blocking — fold them into the SAME collapsible Nits section as
+  // the gate warnings, ahead of them, rather than leaving them in the prominent assessment blob. Already public-safe
+  // via composeAdvisoryNotes → toPublicSafe; re-scrubbed here for defense-in-depth, consistent with the gate nits.
+  const aiNits = aiNitLines
+    .map((line) => publicSafeNit(line))
+    .filter((line): line is string => line !== null);
+  const nits = [...aiNits, ...gateNits];
   if (!assessment && blockers.length === 0 && nits.length === 0) return [];
   const notes: ReviewNotes = {
     assessment,

@@ -142,6 +142,9 @@ export function renderBrief(
           ? `${safeCodeSpan(`@param ${item.param}`)} in JSDoc does not match any parameter of ${fn} — remove or rename`
           : `${fn} has parameter ${safeCodeSpan(item.param)} with no @param in the JSDoc — add it`;
       lines.push(`- ${loc} — ${msg}`);
+    }
+  }
+
   const codeownersViolations = findings.codeowners ?? [];
   if (codeownersViolations.length) {
     const allOwners = new Set(codeownersViolations.flatMap((f) => f.owners));

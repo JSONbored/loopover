@@ -33,7 +33,12 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
   const signalBundle = compactAgentSignalBundle(bundle, visibility);
   const prompt = buildPrompt(signalBundle, visibility);
   const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
-  const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
+  // Resolve the SHARED daily neuron budget exactly like ai-review.ts / ai-slop.ts (#1369): all three
+  // Workers-AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
+  // 1M ceiling here starved summaries into quota_exceeded once shared usage crossed 10k — well under the
+  // real 10M shared budget — and capped a configured budget at 1M. Default HIGH (10M) and clamp to 10M.
+  const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
+  const budget = clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(rawNeuronBudget) ? rawNeuronBudget : 10_000_000, 0, 10_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
 
@@ -274,7 +279,12 @@ export async function rewriteSignalBundleWithAi(env: Env, req: AiRewriteRequest)
   const maxOutputTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 64, 512);
   const prompt = buildBundlePrompt(req.bundle, req.visibility);
   const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
-  const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
+  // Resolve the SHARED daily neuron budget exactly like ai-review.ts / ai-slop.ts (#1369): all three
+  // Workers-AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
+  // 1M ceiling here starved summaries into quota_exceeded once shared usage crossed 10k — well under the
+  // real 10M shared budget — and capped a configured budget at 1M. Default HIGH (10M) and clamp to 10M.
+  const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
+  const budget = clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(rawNeuronBudget) ? rawNeuronBudget : 10_000_000, 0, 10_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
 

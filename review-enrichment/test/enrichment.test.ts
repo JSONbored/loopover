@@ -29,6 +29,17 @@ import {
   matchesPypiVersion,
   scanProvenance,
 } from "../dist/analyzers/provenance.js";
+  findOwners,
+  parseCodeowners,
+  patternToRegex,
+  scanCodeowners,
+} from "../dist/analyzers/codeowners.js";
+import {
+  codeOnly,
+  detectSecretLog,
+  scanPatchForSecretLog,
+  scanSecretLog,
+} from "../dist/analyzers/secret-log.js";
 
 const NOW = new Date("2026-06-26").getTime();
 const eolFetch =
@@ -683,6 +694,26 @@ test("scanRedos: scans every changed file's added lines, caps to its budget", as
   assert.equal(findings[0].file, "src/a.ts");
 });
 
+test("scanPatchForRedos: stops scanning once the finding budget is exhausted", () => {
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    "+const first = /(a+)+$/;",
+    "+const second = /(b+)+$/;",
+    "+const third = /(c+)+$/;",
+    "+const fourth = /(d+)+$/;",
+  ].join("\n");
+
+  const findings = scanPatchForRedos("src/x.ts", patch, { maxFindings: 2 });
+
+  assert.deepEqual(
+    findings.map(({ line, pattern }) => ({ line, pattern })),
+    [
+      { line: 1, pattern: "(a+)+$" },
+      { line: 2, pattern: "(b+)+$" },
+    ],
+  );
+});
+
 test("renderBrief: renders the ReDoS block, code-spanning + sanitizing the pattern", () => {
   const r = renderBrief({
     redos: [
@@ -797,6 +828,70 @@ test("buildBrief: timeout aborts dependency scan so OSV work stops", async () =>
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("findOwners: uses linear CODEOWNERS glob matching for adversarial wildcard patterns", () => {
+  const rules = parseCodeowners(`${"**".repeat(30)}Z @team/security`);
+  const start = performance.now();
+
+  assert.deepEqual(findOwners(rules, "a".repeat(400)), []);
+
+  assert.ok(
+    performance.now() - start < 100,
+    "adversarial non-match stays bounded",
+  );
+});
+
+test("parseCodeowners: caps repository-controlled size, rule count, and pattern length", () => {
+  const oversizedPattern = `${"a".repeat(513)} @too/long`;
+  const manyRules = Array.from(
+    { length: 1005 },
+    (_, index) => `file-${index} @owner/${index}`,
+  );
+  const rules = parseCodeowners([oversizedPattern, ...manyRules].join("\n"));
+
+  assert.equal(rules.length, 1000);
+  assert.deepEqual(findOwners(rules, "file-0"), ["@owner/0"]);
+  assert.deepEqual(findOwners(rules, "file-1001"), []);
+});
+
+test("findOwners: preserves CODEOWNERS anchoring and last-match-wins semantics", () => {
+  const rules = parseCodeowners([
+    "*.ts @global/ts",
+    "/src/*.ts @root/src",
+    "docs/ @docs/team",
+    "src/special.ts @last/match",
+  ].join("\n"));
+
+  assert.deepEqual(findOwners(rules, "nested/file.ts"), ["@global/ts"]);
+  assert.deepEqual(findOwners(rules, "src/file.ts"), ["@root/src"]);
+  assert.deepEqual(findOwners(rules, "nested/src/file.ts"), ["@global/ts"]);
+  assert.deepEqual(findOwners(rules, "docs/guide/intro.md"), ["@docs/team"]);
+  assert.deepEqual(findOwners(rules, "src/special.ts"), ["@last/match"]);
+});
+
+test("scanCodeowners: reports files not owned by the PR author", async () => {
+  const findings = await scanCodeowners(
+    {
+      repoFullName: "owner/repo",
+      prNumber: 1,
+      githubToken: "token",
+      author: "alice",
+      files: [{ path: "src/app.ts" }, { path: "README.md" }],
+    },
+    async () => ({
+      ok: true,
+      text: async () => "src/** @team/reviewers\nREADME.md @alice",
+    }),
+  );
+
+  assert.deepEqual(findings, [
+    { file: "src/app.ts", owners: ["@team/reviewers"] },
+  ]);
+});
+
+test("patternToRegex: collapses adjacent wildcards in compatibility regex output", () => {
+  assert.equal(patternToRegex("******Z").source, "(^|\\/)\.\*Z$");
 });
 
 test("extractVersionPins: Dockerfile FROM + .nvmrc + go.mod; latest skipped", () => {
@@ -1467,6 +1562,156 @@ test("buildBrief: provenance analyzer runs, flags binary file and missing npm at
       return { ok: false, status: 404, json: async () => ({}) };
     return { ok: true, json: async () => ({}) };
   };
+test("codeOnly: blanks string messages, keeps ${...} interpolation bodies", () => {
+  assert.equal(codeOnly('"a secret here"'), " ");
+  assert.equal(codeOnly("'plain'"), " ");
+  assert.ok(codeOnly("`x=${apiKey}`").includes("apiKey"));
+  assert.ok(!codeOnly("`logging the password now`").includes("password"));
+  assert.equal(
+    codeOnly("req.headers.authorization"),
+    "req.headers.authorization",
+  );
+});
+
+test("detectSecretLog: flags sensitive data into a sink as CODE, not string messages", () => {
+  assert.equal(
+    detectSecretLog("console.log(req.headers.authorization);")?.category,
+    "secret",
+  );
+  assert.equal(
+    detectSecretLog("logger.info(`token=${apiKey}`);")?.category,
+    "secret",
+  );
+  assert.equal(detectSecretLog("log.error(user.password);")?.category, "secret");
+  assert.equal(detectSecretLog("console.debug(account.ssn);")?.category, "pii");
+  assert.equal(detectSecretLog("console.log(req);")?.category, "request-object");
+  assert.equal(
+    detectSecretLog("process.stdout.write(session.cookie);")?.sink,
+    "process.stdout.write",
+  );
+  // NOT flagged — sensitive word only in a string message, no sink, or a benign interpolation:
+  assert.equal(
+    detectSecretLog('console.log("password reset email sent");'),
+    null,
+  );
+  assert.equal(detectSecretLog('logger.info("request received");'), null);
+  assert.equal(detectSecretLog("const token = readToken();"), null);
+  assert.equal(detectSecretLog("logger.info(`user ${id} signed in`);"), null);
+  assert.equal(detectSecretLog("console.error(error);"), null);
+  // innocuous request scalars are NOT dumps:
+  assert.equal(detectSecretLog("console.log(req.method, req.url);"), null);
+  assert.equal(detectSecretLog("console.log(req.path);"), null);
+  // but a whole request or a sensitive sub-object IS:
+  assert.equal(
+    detectSecretLog("console.log(req.body);")?.category,
+    "request-object",
+  );
+});
+
+test("scanPatchForSecretLog: line-cited via hunk header; ignores context + safe lines", () => {
+  const patch = [
+    "@@ -1,1 +1,4 @@",
+    " const ok = true;",
+    "+console.log(req.headers.authorization);",
+    '+console.log("user signed in");',
+    "+logger.info(`ssn=${user.ssn}`);",
+  ].join("\n");
+  const findings = scanPatchForSecretLog("src/a.ts", patch);
+  assert.deepEqual(
+    findings.map(({ file, line, category }) => ({ file, line, category })),
+    [
+      { file: "src/a.ts", line: 2, category: "secret" },
+      { file: "src/a.ts", line: 4, category: "pii" },
+    ],
+  );
+  assert.equal(findings[0].sink, "console.log");
+});
+
+test("scanSecretLog: scans every changed file's added lines, caps to its budget", async () => {
+  const findings = await scanSecretLog({
+    repoFullName: "o/r",
+    prNumber: 1,
+    files: [
+      { path: "a.ts", patch: "@@ -1,0 +1,1 @@\n+console.log(user.password);" },
+      { path: "b.ts", patch: "@@ -1,0 +1,1 @@\n+console.log('hello world');" },
+      { path: "c.md", patch: undefined },
+    ],
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, "a.ts");
+});
+
+test("scanPatchForSecretLog: stops scanning once the finding budget is exhausted", () => {
+  // Fixture patch lines are intentionally scanner-triggering inputs.
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    "+console.log(user.password);",
+    "+console.log(user.apiKey);",
+    "+console.log(user.secret);",
+    "+console.log(user.accessToken);",
+  ].join("\n");
+
+  const findings = scanPatchForSecretLog("src/a.ts", patch, {
+    maxFindings: 2,
+  });
+
+  assert.deepEqual(
+    findings.map(({ line, category }) => ({ line, category })),
+    [
+      { line: 1, category: "secret" },
+      { line: 2, category: "secret" },
+    ],
+  );
+});
+
+test("scanPatchForSecretLog: returns no findings when the budget is exhausted", () => {
+  const findings = scanPatchForSecretLog(
+    "src/a.ts",
+    "@@ -1,0 +1,1 @@\n+console.log(user.password);",
+    { maxFindings: 0 },
+  );
+
+  assert.deepEqual(findings, []);
+});
+
+test("scanSecretLog: forwards abort signals to the per-file scanner", async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () =>
+      scanSecretLog(
+        {
+          repoFullName: "o/r",
+          prNumber: 1,
+          files: [
+            {
+              path: "a.ts",
+              patch: "@@ -1,0 +1,1 @@\n+console.log(user.password);",
+            },
+          ],
+        },
+        controller.signal,
+      ),
+    /analyzer_aborted/,
+  );
+});
+
+test("renderBrief: renders the secret-log block, code-spanning + sanitizing", () => {
+  const r = renderBrief({
+    secretLog: [
+      { file: "src/a.ts", line: 9, sink: "console.log", category: "secret" },
+    ],
+  });
+  assert.match(r.promptSection, /Secrets \/ PII reaching a log/);
+  assert.match(r.promptSection, /`src\/a\.ts:9`/);
+  assert.match(r.promptSection, /`console\.log`/);
+  assert.match(r.promptSection, /a secret\/credential/);
+});
+
+test("buildBrief: secret-log analyzer runs (pure, no network)", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
   try {
     const brief = await buildBrief({
       repoFullName: "o/r",
@@ -1500,6 +1745,15 @@ test("buildBrief: provenance analyzer throw → degraded + partial", async () =>
     // Because hasNpmAttestation catches fetch errors (fail-safe), the analyzer succeeds.
     assert.equal(brief.analyzerStatus.provenance, "ok");
     assert.equal(brief.partial, false);
+        {
+          path: "src/a.ts",
+          patch: "@@ -1,0 +1,1 @@\n+console.log(req.headers.authorization);",
+        },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.secretLog, "ok");
+    assert.equal(brief.findings.secretLog.length, 1);
+    assert.match(brief.promptSection, /Secrets \/ PII reaching a log/);
   } finally {
     globalThis.fetch = realFetch;
   }

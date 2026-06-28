@@ -82,6 +82,7 @@ describe("explainScoreBreakdown", () => {
         "credibilityMultiplier",
         "reviewPenaltyMultiplier",
         "openPrMultiplier",
+        "openIssueMultiplier",
       ]),
     );
     for (const component of breakdown.components) {
@@ -91,6 +92,31 @@ describe("explainScoreBreakdown", () => {
     }
     expect(breakdown.highestLeverageLever.component).toBeTruthy();
     expect(breakdown.highestLeverageLever.lever).toMatch(/merge|close|credibility|open PR|linked issue|density|review/i);
+    expect(JSON.stringify(breakdown)).not.toMatch(FORBIDDEN);
+    // No open issues → within the allowance → full band on the open-issue gate.
+    expect(breakdown.components.find((entry) => entry.component === "openIssueMultiplier")).toMatchObject({ band: "full" });
+  });
+
+  it("explains an over-threshold open-issue count as a blocked open-issue spam gate", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 40,
+        totalTokenScore: 60,
+        sourceLines: 80,
+        openIssueCount: 50,
+        linkedIssueMode: "standard",
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    const openIssue = breakdown.components.find((entry) => entry.component === "openIssueMultiplier");
+    expect(openIssue).toMatchObject({ band: "blocked" });
+    expect(openIssue?.summary).toMatch(/exceeds the current allowance/i);
+    expect(openIssue?.lever).toMatch(/close or resolve/i);
     expect(JSON.stringify(breakdown)).not.toMatch(FORBIDDEN);
   });
 

@@ -353,6 +353,7 @@ export type IssueSlopAssessmentInput = {
 export const ISSUE_SLOP_WEIGHTS = {
   unfilledTemplate: 50,
   emptyBody: 40,
+  titleRestatement: 35,
 } as const;
 
 export const ISSUE_SLOP_RUBRIC_MARKDOWN = [
@@ -366,6 +367,7 @@ export const ISSUE_SLOP_RUBRIC_MARKDOWN = [
   "Advisory-only (issues never block). Current deterministic signals:",
   "- empty issue body",
   "- issue template opened but left unfilled",
+  "- issue body only restates the title (no added detail)",
 ].join("\n");
 
 export function buildIssueSlopAssessment(input: IssueSlopAssessmentInput): SlopAssessment {
@@ -374,11 +376,17 @@ export function buildIssueSlopAssessment(input: IssueSlopAssessmentInput): SlopA
   // An empty body and an unfilled template are mutually exclusive (the latter needs a non-empty body), so
   // only probe for the template when there IS a body to inspect.
   const unfilledTemplateFinding = emptyBodyFinding ? null : buildUnfilledIssueTemplateFinding(input);
+  // The title-restatement signal needs a body with REAL prose (so it survives the unfilled-template strip),
+  // so it can only fire once the two emptier signals are ruled out — the three are mutually exclusive.
+  const titleRestatementFinding = emptyBodyFinding || unfilledTemplateFinding ? null : buildTitleRestatementIssueFinding(input);
   if (unfilledTemplateFinding) findings.push(unfilledTemplateFinding);
   if (emptyBodyFinding) findings.push(emptyBodyFinding);
+  if (titleRestatementFinding) findings.push(titleRestatementFinding);
 
   const slopRisk = clamp(
-    (emptyBodyFinding ? ISSUE_SLOP_WEIGHTS.emptyBody : 0) + (unfilledTemplateFinding ? ISSUE_SLOP_WEIGHTS.unfilledTemplate : 0),
+    (emptyBodyFinding ? ISSUE_SLOP_WEIGHTS.emptyBody : 0) +
+      (unfilledTemplateFinding ? ISSUE_SLOP_WEIGHTS.unfilledTemplate : 0) +
+      (titleRestatementFinding ? ISSUE_SLOP_WEIGHTS.titleRestatement : 0),
     0,
     100,
   );
@@ -421,6 +429,38 @@ export function buildUnfilledIssueTemplateFinding(input: IssueSlopAssessmentInpu
     severity: "warning",
     detail,
     action: "Fill in the template sections with the actual problem details.",
+    publicText: detail,
+  };
+}
+
+// Normalize for restatement comparison: lowercase, then collapse every run of non-alphanumeric characters
+// (punctuation, markdown, whitespace, emoji) to a single space. This makes "Login is BROKEN!" and
+// "login is broken" compare equal, so reformatting/punctuation alone cannot dodge the signal.
+function normalizeIssueText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+// Fires when a non-empty body adds NOTHING beyond the title — it normalizes to exactly the title (a verbatim
+// restatement or the title pasted back as the "description"). High-precision and conservative: the body must
+// reduce to the title with zero extra words, so any genuine added detail (steps, location, expected vs actual)
+// clears it. Distinct from the unfilled-template signal, whose body has no real word at all. (#533)
+export function buildTitleRestatementIssueFinding(input: IssueSlopAssessmentInput): SignalFinding | null {
+  const title = normalizeIssueText(input.title ?? "");
+  const body = normalizeIssueText(input.body ?? "");
+  // Need both a real title and a real body to compare; an empty side is another signal's concern.
+  if (title.length === 0 || body.length === 0) return null;
+  if (body !== title) return null;
+  // Static, public-safe text (no interpolation) — no sanitizer guard needed.
+  const detail = "The issue body only restates the title and adds no further detail.";
+  return {
+    code: "title_only_restatement",
+    title: "Issue body only restates the title",
+    severity: "warning",
+    detail,
+    action: "Add detail beyond the title: what is wrong, where it happens, and why it matters.",
     publicText: detail,
   };
 }

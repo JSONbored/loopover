@@ -18,6 +18,19 @@ const counters = new Map<string, number>();
 const gauges = new Map<string, GaugeSample>();
 const histograms = new Map<string, HistogramState>();
 
+// These public counters are scraped without auth; redact repo labels at the counter call-site.
+const PRIVATE_REPO_LABEL_METRICS = new Set([
+  "gittensory_gate_decisions_total",
+  "gittensory_reviews_published_total",
+]);
+
+function publicLabelsForMetric(name: string, labels?: Labels): Labels | undefined {
+  if (!labels || !PRIVATE_REPO_LABEL_METRICS.has(name) || !("repo" in labels)) return labels;
+  const publicLabels = { ...labels };
+  delete publicLabels.repo;
+  return Object.keys(publicLabels).length > 0 ? publicLabels : undefined;
+}
+
 // Request-latency buckets in seconds (Prometheus convention). Covers sub-ms health checks through
 // multi-second webhook processing. Callers may pass their own buckets to observe().
 export const DEFAULT_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
@@ -33,7 +46,7 @@ function seriesKey(name: string, labels?: Labels): string {
 
 /** Increment a monotonic counter (created on first use). */
 export function incr(name: string, labels?: Labels, by = 1): void {
-  const k = seriesKey(name, labels);
+  const k = seriesKey(name, publicLabelsForMetric(name, labels));
   counters.set(k, (counters.get(k) ?? 0) + by);
 }
 

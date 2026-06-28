@@ -266,6 +266,7 @@ import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { screenshotsAllowed } from "../review/visual-wire";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, type CaptureRoute } from "../review/visual/capture";
+import { incr } from "../selfhost/metrics";
 import {
   renderReviewingPlaceholder,
   shouldPostReviewingPlaceholder,
@@ -1146,7 +1147,10 @@ async function regatePullRequest(
     // Run the AI review on the sweep for BOTH advisory and block modes (#sweep-all-modes) — only skip when AI is
     // OFF. The #1462 per-(repo,pr,headSha,mode) cache bounds the cost: an unchanged PR re-gates from cache with no
     // re-spend, so an advisory PR gets a posted review without burning a token every sweep tick.
-    { skipAiReview: settings.aiReviewMode === "off" },
+    {
+      skipAiReview: settings.aiReviewMode === "off",
+      skipWhenSurfaceCurrent: true,
+    },
   ).catch((error) => {
     console.error(
       JSON.stringify({
@@ -1476,7 +1480,7 @@ async function reReviewStoredPullRequest(
   repoFullName: string,
   prNumber: number,
   previewPollAttempt?: number,
-  options: { skipAiReview?: boolean } = {},
+  options: { skipAiReview?: boolean; skipWhenSurfaceCurrent?: boolean } = {},
 ): Promise<void> {
   const [repo, settings] = await Promise.all([
     getRepository(env, repoFullName),
@@ -1509,13 +1513,13 @@ async function reReviewStoredPullRequest(
     /* v8 ignore next -- the row was just upserted above, so the re-read always returns it; `?? pr` is belt-and-suspenders fail-open. */
     pr = (await getPullRequest(env, repoFullName, prNumber)) ?? pr;
   }
-  // Over-publish dedup (#4): the resync above made pr.headSha the LIVE head. If the public surface was already
-  // published at this exact head, the verdict + comment are already current — skip the re-review + re-publish so the
-  // sweep stops re-publishing every open PR every ~2-min cycle. A never-published PR (NULL marker) or a drifted head
-  // (push/rebase/force-push → marker !== live head) falls THROUGH and re-reviews at the new head; the AI cache is
-  // head_sha-keyed too, so a rebase misses it and gets a fresh review. (Webhook synchronize/opened paths review
-  // directly and always re-stamp — this guard only gates the scheduled sweep.)
-  if (pr.lastPublishedSurfaceSha && pr.lastPublishedSurfaceSha === pr.headSha) {
+  // Over-publish dedup (#4): only scheduled sweeps opt into the head-only shortcut. Event-driven
+  // re-reviews (CI completion, deployment/preview refreshes) must re-evaluate dynamic same-head state.
+  if (
+    options.skipWhenSurfaceCurrent &&
+    pr.lastPublishedSurfaceSha &&
+    pr.lastPublishedSurfaceSha === pr.headSha
+  ) {
     console.log(JSON.stringify({ level: "info", event: "rereview_skipped_surface_current", deliveryId, repository: repoFullName, pullNumber: prNumber, headSha: pr.headSha }));
     return;
   }
@@ -4072,7 +4076,7 @@ async function auditGateCheckPermissionMissing(
   });
   // Surface the install-wide Checks:write gap to Sentry — until the scope is granted the required gate check-run
   // silently never posts on ANY PR for this install; an operator must SEE this config fault, not just the ledger.
-  console.error(JSON.stringify({ level: "error", event: "gate_check_permission_missing", repository: repoFullName, pullNumber, deliveryId }));
+  console.error(JSON.stringify({ level: "error", event: "gate_check_permission_missing", message: warning, repository: repoFullName, pullNumber, deliveryId }));
 }
 
 /**
@@ -4902,7 +4906,7 @@ async function maybePublishPrPublicSurface(
           detail: checkRunResult.warning,
           metadata: { deliveryId: webhook.deliveryId, repoFullName },
         });
-        console.error(JSON.stringify({ level: "error", event: "check_run_permission_missing", repository: repoFullName, pullNumber: pr.number, deliveryId: webhook.deliveryId }));
+        console.error(JSON.stringify({ level: "error", event: "check_run_permission_missing", message: checkRunResult.warning, repository: repoFullName, pullNumber: pr.number, deliveryId: webhook.deliveryId }));
       } else if (checkRunResult?.kind === "published") {
         publishedOutputs.push("check_run");
       }
@@ -5038,6 +5042,12 @@ async function maybePublishPrPublicSurface(
         ciState,
         aiCiRefutationActive(env, repoFullName),
       );
+      // Observability (#reviews-dashboard): record the would-be gate verdict so the Grafana panel shows the
+      // merge/close/hold mix — the "are we rubber-stamping?" signal — even in advisory/dryRun (this is the rendered verdict).
+      incr("gittensory_gate_decisions_total", {
+        repo: repoFullName,
+        conclusion: commentGate.conclusion,
+      });
       // Guarded-hold (#guarded-hold-comment): a clean+green PR whose diff touches a hard-guardrail path is HELD
       // for owner review by the disposition (planAgentMaintenanceActions), never auto-merged — so the comment
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
@@ -5189,6 +5199,7 @@ async function maybePublishPrPublicSurface(
         { mode },
       );
       publishedOutputs.push("comment");
+      incr("gittensory_reviews_published_total", { repo: repoFullName });
     } catch (error) {
       const message = errorMessage(error);
       failedOutputs.push({ output: "comment", error: message });

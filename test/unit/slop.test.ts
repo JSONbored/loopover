@@ -10,6 +10,7 @@ import {
   buildNoLinkedIssueRationaleFinding,
   buildNonSubstantivePaddingFinding,
   buildSlopAssessment,
+  buildTitleRestatementIssueFinding,
   buildTrivialWhitespaceChurnFinding,
   buildUnfilledIssueTemplateFinding,
   type SlopAssessmentInput,
@@ -497,6 +498,39 @@ describe("buildIssueSlopAssessment (#533 issue-side triage)", () => {
     expect(buildUnfilledIssueTemplateFinding({ body: "### Description\n<!-- describe -->\n.\n" })).toMatchObject({ code: "unfilled_issue_template" });
     // A genuine (even terse) description survives — a real 3+ letter word is present.
     expect(buildUnfilledIssueTemplateFinding({ body: "### Description\nThe build fails on save.\n" })).toBeNull();
+  });
+
+  it("flags a body that only restates the title, ignoring case and punctuation (#533)", () => {
+    const result = buildIssueSlopAssessment({ title: "Login is broken", body: "login is broken!!!" });
+    expect(result.findings.map((f) => f.code)).toEqual(["title_only_restatement"]);
+    expect(result.slopRisk).toBe(ISSUE_SLOP_WEIGHTS.titleRestatement);
+    expect(result.band).toBe("elevated");
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does NOT flag a body that adds any detail beyond the title", () => {
+    // The body repeats the title but adds real detail → not a bare restatement.
+    expect(buildIssueSlopAssessment({ title: "Login is broken", body: "Login is broken when the session token has expired." }).findings).toEqual([]);
+  });
+
+  it("title-restatement is mutually exclusive with the emptier signals", () => {
+    // Empty body → empty_issue_body only (never restatement, which needs a real body).
+    expect(buildIssueSlopAssessment({ title: "Login is broken", body: "" }).findings.map((f) => f.code)).toEqual(["empty_issue_body"]);
+    // Unfilled template → unfilled_issue_template only (no real word to match the title).
+    expect(buildIssueSlopAssessment({ title: "Login is broken", body: "<!-- nothing -->" }).findings.map((f) => f.code)).toEqual([
+      "unfilled_issue_template",
+    ]);
+  });
+
+  it("title-restatement builder guards a missing title or body when called directly", () => {
+    // Both sides must normalize to real text; an empty/omitted title or body yields no finding.
+    expect(buildTitleRestatementIssueFinding({ title: "", body: "anything" })).toBeNull();
+    expect(buildTitleRestatementIssueFinding({ body: "no title here" })).toBeNull();
+    expect(buildTitleRestatementIssueFinding({ title: "Only a title" })).toBeNull();
+    // A title that is pure punctuation normalizes to empty → no finding even against a matching body.
+    expect(buildTitleRestatementIssueFinding({ title: "!!!", body: "???" })).toBeNull();
+    // A genuine restatement fires.
+    expect(buildTitleRestatementIssueFinding({ title: "Build fails", body: "Build fails." })).toMatchObject({ code: "title_only_restatement" });
   });
 });
 

@@ -3,6 +3,7 @@ import { sanitizePublicComment } from "../github/commands";
 import {
   classifyOpenPullRequest,
   detectPendingPrScenario,
+  DRAFT_TITLE_PATTERN,
   loadContributorRepoOpenPrSignals,
   type ClassifiedOpenPullRequest,
   type PendingPrScenarioDetection,
@@ -58,7 +59,10 @@ export async function buildContributorOpenPrMonitor(env: Env, login: string): Pr
   const pendingScenarios: ContributorOpenPrMonitor["pendingScenarios"] = [];
   const packets: ContributorOpenPrNextStepPacket[] = [];
 
-  for (const [repoFullName, repoOpen] of byRepo.entries()) {
+  for (const repoOpen of byRepo.values()) {
+    // The bucket is keyed case-insensitively (see groupByRepo); use a PR's original repoFullName casing for
+    // the case-sensitive DB lookups below so the per-repo open-PR set stays whole and queries still resolve.
+    const repoFullName = repoOpen[0]!.repoFullName;
     const repo = repositories.find((entry) => entry.fullName.toLowerCase() === repoFullName.toLowerCase()) ?? null;
     const roleContext = buildRoleContext({
       login,
@@ -215,9 +219,13 @@ function buildMonitorGuidance(packets: ContributorOpenPrNextStepPacket[], cleanu
 function groupByRepo(pullRequests: PullRequestRecord[]): Map<string, PullRequestRecord[]> {
   const map = new Map<string, PullRequestRecord[]>();
   for (const pr of pullRequests) {
-    const bucket = map.get(pr.repoFullName) ?? [];
+    // Key case-insensitively (GitHub repo names are case-insensitive), matching the registered-repo and
+    // repo-lookup handling elsewhere in buildContributorOpenPrMonitor — otherwise case-variant repoFullName
+    // values for one repo split into separate groups, under-counting open PRs and missing cross-case duplicates.
+    const key = pr.repoFullName.toLowerCase();
+    const bucket = map.get(key) ?? [];
     bucket.push(pr);
-    map.set(pr.repoFullName, bucket);
+    map.set(key, bucket);
   }
   return map;
 }
@@ -243,7 +251,7 @@ function duplicatePronePullNumbers(openPullRequests: PullRequestRecord[]): Set<n
 function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
-    .replace(/^\[?\s*draft\s*\]?\s*/i, "")
+    .replace(DRAFT_TITLE_PATTERN, "")
     .replace(/^wip:\s*/i, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();

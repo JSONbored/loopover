@@ -177,6 +177,24 @@ export function renderBrief(
     }
   }
 
+  const secretLogs = findings.secretLog ?? [];
+  if (secretLogs.length) {
+    lines.push(
+      "### Secrets / PII reaching a log or stdout sink (redact before merging)",
+    );
+    for (const item of secretLogs) {
+      const what =
+        item.category === "secret"
+          ? "a secret/credential"
+          : item.category === "pii"
+            ? "PII"
+            : "a full request/session object";
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} — ${safeCodeSpan(item.sink)} writes ${what} to a log/stdout sink; redact or remove`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

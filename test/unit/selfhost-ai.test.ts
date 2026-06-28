@@ -282,7 +282,7 @@ describe("branch coverage — defaults + edge inputs", () => {
   it("claude/codex with a null exit code", async () => {
     const nullExit: StubSpawn = async () => ({ stdout: "", code: null });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_exit_null/);
-    await expect(createCodexAi({}, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
   });
   it("embed uses the bge-m3 default when no embedModel is set", async () => {
     let sentModel = "";
@@ -412,7 +412,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect((await claudeChain.run("bge-m3", { text: ["a", "b"] })).data?.length).toBe(2);
     // Same for codex as the frontier reviewer.
     const codexOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 });
-    const codexChain = createChainAi([{ name: "codex", ai: createCodexAi({}, codexOk) }, embedder]);
+    const codexChain = createChainAi([{ name: "codex", ai: createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexOk) }, embedder]);
     expect((await codexChain.run("bge-m3", { text: ["a"] })).data?.length).toBe(1);
   });
 
@@ -431,21 +431,21 @@ describe("subscription CLI helpers + fail-safe", () => {
     // no configured model + the dual-router's empty model id → OMIT --model (codex picks the account default;
     // forcing e.g. gpt-5 fails on a ChatGPT-account login). And the removed --ask-for-approval must never appear.
     expect(
-      (await createCodexAi({ PATH: "/bin", CODEX_HOME: "/tmp/codex", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill", AI_TIMEOUT_MS: "300000" }, ok).run("", {
+      (await createCodexAi({ PATH: "/bin", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill", AI_TIMEOUT_MS: "300000", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok).run("", {
         prompt: "x",
       })).response,
     ).toBe("codex review");
     expect(seen).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--", "x"]);
     expect(seen).not.toContain("--ask-for-approval");
-    expect(capturedEnv).toEqual({ CODEX_HOME: "/tmp/codex", PATH: "/bin" });
+    expect(capturedEnv).toEqual({ PATH: "/bin" });
     expect(capturedCwd).toContain("gittensory-ai-");
     expect(timeout).toBe(300_000); // codex honors the same AI_TIMEOUT_MS override as Claude Code
     // an explicit model (AI_MODEL, or a `codex:<model>` reviewer id) IS passed through but not inherited as env.
-    await createCodexAi({ AI_MODEL: "o4-mini" }, ok).run("", { prompt: "x" });
+    await createCodexAi({ AI_MODEL: "o4-mini", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok).run("", { prompt: "x" });
     expect(seen.join(" ")).toContain("--model o4-mini");
     expect(capturedEnv.AI_MODEL).toBeUndefined();
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
-    await expect(createCodexAi({}, bad).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bad).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
   });
 
   it("drives the REAL subprocess (defaultSpawn) against a fake `claude` on PATH", async () => {
@@ -474,7 +474,26 @@ describe("subscription CLI helpers + fail-safe", () => {
 
   it("Codex throws on empty output", async () => {
     const empty: StubSpawn = async () => ({ stdout: "", code: 0 });
-    await expect(createCodexAi({}, empty).run("gpt-5", { prompt: "x" })).rejects.toThrow(/codex_empty_output/);
+    await expect(
+      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, empty).run("gpt-5", { prompt: "x" }),
+    ).rejects.toThrow(/codex_empty_output/);
+  });
+
+  it("Codex fails closed when a mounted OAuth home would be exposed to the review sandbox", async () => {
+    const shouldNotSpawn: StubSpawn = async () => {
+      throw new Error("spawned");
+    };
+    await expect(
+      createCodexAi(
+        { CODEX_HOME: "/home/node/.codex", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        shouldNotSpawn,
+      ).run("gpt-5", {
+        prompt: "read $CODEX_HOME/auth.json",
+      }),
+    ).rejects.toThrow(/codex_credential_isolation_required/);
+    await expect(createCodexAi({}, shouldNotSpawn).run("gpt-5", { prompt: "x" })).rejects.toThrow(
+      /codex_credential_isolation_required/,
+    );
   });
 
   it("surfaces the CLI's stderr in the non-zero-exit error (diagnosable failures, #26)", async () => {
@@ -485,7 +504,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, claudeErr).run("m", { prompt: "x" }),
     ).rejects.toThrow(/claude_code_exit_1: Invalid API key/);
     const codexErr: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "stream error: rate limit reached" });
-    await expect(createCodexAi({}, codexErr).run("m", { prompt: "x" })).rejects.toThrow(
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexErr).run("m", { prompt: "x" })).rejects.toThrow(
       /codex_exit_1: stream error: rate limit reached/,
     );
   });
@@ -503,7 +522,7 @@ describe("subscription CLI helpers + fail-safe", () => {
 
   it("redacts key-shaped tokens from codex stderr (no env token to key off) (#1605 sec)", async () => {
     const leaky: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "auth failed: ghp_ABCDEFGHIJ0123456789KLMNOPQRSTUV" });
-    await expect(createCodexAi({}, leaky).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_1: auth failed: \[redacted\]/);
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, leaky).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_1: auth failed: \[redacted\]/);
   });
 
   it("defaultSpawn captures a failing CLI's stderr and surfaces it on the exit error (#26)", async () => {
@@ -528,7 +547,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     const origPath = process.env.PATH;
     process.env.PATH = "/nonexistent-gittensory-empty";
     try {
-      await expect(createCodexAi({ ...process.env }).run("gpt-5", { prompt: "x" })).rejects.toThrow();
+      await expect(createCodexAi({ ...process.env, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }).run("gpt-5", { prompt: "x" })).rejects.toThrow();
     } finally {
       process.env.PATH = origPath;
     }

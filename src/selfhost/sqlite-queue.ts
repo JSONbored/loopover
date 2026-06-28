@@ -18,9 +18,20 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
   attempts INTEGER NOT NULL DEFAULT 0,
   run_after INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  last_error TEXT
-);
-CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after);`;
+  last_error TEXT,
+  priority INTEGER NOT NULL DEFAULT 0
+);`;
+const CLAIM_INDEX_DDL = `
+DROP INDEX IF EXISTS ${TABLE}_claim;
+CREATE INDEX ${TABLE}_claim ON ${TABLE}(status, run_after, priority);`;
+
+// Webhook-driven work (a fresh PR → its review) jumps ahead of heavy background jobs (rag-index ~4min, the regate
+// sweep) so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Additive: every
+// other job stays priority 0 (today's FIFO order), so only github-webhook moves. (#review-latency)
+const HIGH_PRIORITY_TYPES = new Set(["github-webhook"]);
+function jobPriority(payload: string): number {
+  return HIGH_PRIORITY_TYPES.has(extractPayloadType(payload) ?? "") ? 10 : 0;
+}
 
 export interface DurableQueue {
   binding: Queue;
@@ -62,6 +73,16 @@ export function createSqliteQueue(
     Math.max(1, Number(process.env.QUEUE_CONCURRENCY ?? "4"));
 
   driver.exec(DDL);
+  // Idempotent add for queues created before the priority column existed (#review-latency): the CREATE is skipped
+  // for a pre-existing table, so ALTER must run before any index references the new column.
+  try {
+    driver.exec(
+      `ALTER TABLE ${TABLE} ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`,
+    );
+  } catch {
+    /* column already present */
+  }
+  driver.exec(CLAIM_INDEX_DDL);
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = driver.query(
     `UPDATE ${TABLE} SET status='pending' WHERE status='processing'`,
@@ -78,9 +99,10 @@ export function createSqliteQueue(
 
   function enqueue(message: JobMessage, delaySeconds: number): void {
     const now = Date.now();
+    const payload = JSON.stringify(message);
     driver.query(
-      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, ?, ?)`,
-      [JSON.stringify(message), now + delaySeconds * 1000, now],
+      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, ?, ?, ?)`,
+      [payload, now + delaySeconds * 1000, now, jobPriority(payload)],
     );
     incr("gittensory_jobs_enqueued_total");
     void pump();
@@ -88,7 +110,7 @@ export function createSqliteQueue(
 
   function claimNext(): JobRow | null {
     const { rows } = driver.query(
-      `SELECT id, payload, attempts FROM ${TABLE} WHERE status='pending' AND run_after<=? ORDER BY id LIMIT 1`,
+      `SELECT id, payload, attempts FROM ${TABLE} WHERE status='pending' AND run_after<=? ORDER BY priority DESC, id LIMIT 1`,
       [Date.now()],
     );
     const row = rows[0] as JobRow | undefined;

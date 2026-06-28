@@ -25,6 +25,7 @@
 
 import { recordAuditEvent } from "../db/repositories";
 import { notifyDiscordReview } from "../selfhost/discord-notify";
+import { incr } from "../selfhost/metrics";
 import type { GitHubWebhookPayload } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 import {
@@ -269,6 +270,9 @@ export async function recordPrOutcome(
     return;
 
   const decision = merged ? "merged" : "closed";
+  // Observability (#reviews-dashboard): realized human outcome (merged vs closed) for the Grafana panel + as the
+  // ground truth to compare against the engine's gate verdicts.
+  incr("gittensory_pr_outcomes_total", { outcome: decision });
   const targetId = reviewAuditTargetId(repoFullName, pr.number);
 
   await appendReviewAudit(env, {

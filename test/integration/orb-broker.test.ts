@@ -17,8 +17,19 @@ const seedInstall = (e: Env, id: number, cols: Record<string, string | number | 
 const brokerEnv = async (over: Partial<Env> = {}): Promise<Env> =>
   createTestEnv({ ORB_BROKER_ENABLED: "true", ORB_GITHUB_APP_ID: "4139483", ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem(), INTERNAL_JOB_TOKEN: "dev-internal-token", ...over });
 const tokenFetch = (token = "ghs_broker", expires = "2026-06-25T08:00:00Z") => vi.stubGlobal("fetch", async () => Response.json({ token, expires_at: expires }));
+const countingTokenFetch = (expires = "2026-06-25T08:00:00Z") => {
+  let calls = 0;
+  vi.stubGlobal("fetch", async () => {
+    calls += 1;
+    return Response.json({ token: `ghs_minted_${calls}`, expires_at: expires });
+  });
+  return () => calls;
+};
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("isOrbBrokerEnabled", () => {
   it("is off by default, on for a truthy flag", () => {
@@ -50,6 +61,81 @@ describe("brokerOrbToken", () => {
     tokenFetch("ghs_minted", "2026-06-25T08:00:00Z");
     expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted", installationId: 300, expiresAt: "2026-06-25T08:00:00Z" });
     expect((await db(e).prepare("SELECT last_token_at FROM orb_enrollments WHERE installation_id=300").first<{ last_token_at: string | null }>())?.last_token_at).not.toBeNull();
+  });
+
+  it("caches a freshly minted token and serves repeated exchanges without reminting", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret" });
+    await seedInstall(e, 303, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 303)) as { secret: string };
+    const fetchCalls = countingTokenFetch("2026-06-25T08:00:00Z");
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 303, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 303, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(fetchCalls()).toBe(1);
+    const row = await db(e).prepare("SELECT cached_token_json FROM orb_enrollments WHERE installation_id=303").first<{ cached_token_json: string }>();
+    expect(row?.cached_token_json).toContain("ciphertext");
+    expect(row?.cached_token_json).not.toContain("ghs_minted_1");
+  });
+
+  it("remints when the encrypted cache is absent, expired, or unreadable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret" });
+    await seedInstall(e, 304, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 304)) as { secret: string };
+    const fetchCalls = countingTokenFetch("2026-06-25T08:00:00Z");
+
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_1" });
+    await db(e).prepare("UPDATE orb_enrollments SET cached_token_json = ? WHERE installation_id = 304").bind(JSON.stringify({ ciphertext: "bad", iv: "bad", salt: null, expiresAt: "2026-06-25T08:00:00Z" })).run();
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_2" });
+    await db(e).prepare("UPDATE orb_enrollments SET cached_token_json = ? WHERE installation_id = 304").bind(JSON.stringify({ ciphertext: "bad", iv: "bad", salt: null, expiresAt: "2026-06-25T07:05:00Z" })).run();
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_3" });
+    expect(fetchCalls()).toBe(3);
+  });
+
+  it("still returns a minted token when writing the encrypted cache fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret" });
+    await seedInstall(e, 305, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 305)) as { secret: string };
+    tokenFetch("ghs_cache_write_failed", "2026-06-25T08:00:00Z");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const originalPrepare = db(e).prepare.bind(db(e));
+    vi.spyOn(db(e), "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("SET cached_token_json = ?")) {
+        throw new Error("cache write unavailable");
+      }
+      return originalPrepare(sql);
+    });
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_cache_write_failed", installationId: 305, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("orb_token_cache_write_failed"));
+  });
+
+  it("still returns a cached token when touching last_token_at fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-cache-test-secret" });
+    await seedInstall(e, 306, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 306)) as { secret: string };
+    const fetchCalls = countingTokenFetch("2026-06-25T08:00:00Z");
+
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_1" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const originalPrepare = db(e).prepare.bind(db(e));
+    vi.spyOn(db(e), "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("SET last_token_at = CURRENT_TIMESTAMP")) {
+        throw new Error("timestamp write unavailable");
+      }
+      return originalPrepare(sql);
+    });
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_minted_1", installationId: 306, expiresAt: "2026-06-25T08:00:00Z" });
+    expect(fetchCalls()).toBe(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("orb_token_last_touch_failed"));
   });
 
   it("rejects an unknown or revoked enrollment", async () => {

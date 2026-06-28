@@ -463,6 +463,7 @@ describe("GitHub check runs", () => {
       generatedAt: "2026-05-22T00:00:00.000Z",
     };
 
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await createOrUpdateCheckRun(
       env,
       123,
@@ -474,6 +475,20 @@ describe("GitHub check runs", () => {
     expect((result as { kind: string; warning: string }).warning).toMatch(
       /Checks: write/i,
     );
+    // The ACTUAL 403 is logged (check_run_post_denied) with repo + status + GitHub's message, so a denied
+    // gate-check is diagnosable in Sentry instead of an opaque "permission missing". (#review-403-context)
+    expect(
+      errSpy.mock.calls.some((c) => {
+        const line = String(c[0]);
+        return (
+          line.includes("check_run_post_denied") &&
+          line.includes('"status":403') &&
+          line.includes("JSONbored/gittensory") &&
+          line.includes("Resource not accessible")
+        );
+      }),
+    ).toBe(true);
+    errSpy.mockRestore();
   });
 
   it("creates a failing opt-in Gittensory Gate check for merge blockers", async () => {

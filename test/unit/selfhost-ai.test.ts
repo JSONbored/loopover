@@ -235,6 +235,17 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
     await ai?.run("openai-compatible", { prompt: "x" }); // the single-provider reviewer-plan address IS the provider name
     expect(sentModel).toBe("llama3.1"); // resolveModel(undefined, "", "llama3.1") — NOT the literal "openai-compatible"
   });
+
+  it("AI_PROVIDER=openai defaults to an OpenAI model when OPENAI_AI_MODEL is unset", async () => {
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = (JSON.parse(init.body) as { model: string }).model;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    const ai = createSelfHostAi({ AI_PROVIDER: "openai", OPENAI_API_KEY: "sk-test" });
+    await ai?.run("openai", { prompt: "x" });
+    expect(sentModel).toBe("gpt-5.5");
+  });
 });
 
 describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () => {

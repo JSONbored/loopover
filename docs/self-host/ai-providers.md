@@ -31,7 +31,7 @@ combined per `AI_COMBINE` (`single`/`consensus`/`synthesis`).
 | `CODEX_AI_TIMEOUT_MS`        | scales with `CODEX_AI_EFFORT`  | Unset -> low/med 120s, high 240s, xhigh 360s. Override clamped 30s-30min.             |
 | `OLLAMA_AI_MODEL`            | `llama3.1`                     | Used only by `AI_PROVIDER=ollama`.                                                    |
 | `OPENAI_COMPATIBLE_AI_MODEL` | `llama3.1`                     | Used only by `AI_PROVIDER=openai-compatible`.                                         |
-| `OPENAI_AI_MODEL`            | `llama3.1`                     | Used only by `AI_PROVIDER=openai`; set to a real OpenAI model for API-backed reviews. |
+| `OPENAI_AI_MODEL`            | `gpt-5.5`                      | Used only by `AI_PROVIDER=openai`; override for a different OpenAI model.             |
 | `ANTHROPIC_AI_MODEL`         | `claude-sonnet-4-6`            | Used only by `AI_PROVIDER=anthropic`.                                                 |
 
 ## Codex subscription reviewer

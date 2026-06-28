@@ -59,6 +59,16 @@ function configuredOpenAiCompatibleModel(name: string, env: Record<string, strin
   return firstConfigured(env.OPENAI_COMPATIBLE_AI_MODEL);
 }
 
+const DEFAULT_OLLAMA_CHAT_MODEL = "llama3.1";
+const DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL = "llama3.1";
+const DEFAULT_OPENAI_CHAT_MODEL = "gpt-5.5";
+
+function defaultOpenAiCompatibleModel(name: string): string {
+  if (name === "openai") return DEFAULT_OPENAI_CHAT_MODEL;
+  if (name === "ollama") return DEFAULT_OLLAMA_CHAT_MODEL;
+  return DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL;
+}
+
 const VALID_CLAUDE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const VALID_CODEX_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 /** Map `CLAUDE_AI_EFFORT` to a `claude --effort` level. Defaults to "high" — the engine wants a substantive
@@ -99,7 +109,13 @@ export function resolveCodexCliTimeoutMs(env: Record<string, string | undefined>
 }
 
 /** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
-export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: string | undefined; model?: string | undefined; embedModel?: string | undefined }): SelfHostAi {
+export function createOpenAiCompatibleAi(opts: {
+  baseUrl: string;
+  apiKey?: string | undefined;
+  model?: string | undefined;
+  defaultModel?: string | undefined;
+  embedModel?: string | undefined;
+}): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
   const headers = (): Record<string, string> => ({ "content-type": "application/json", ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}) });
   return {
@@ -120,7 +136,12 @@ export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: strin
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ model: resolveModel(opts.model, model, "llama3.1"), messages: toMessages(options), max_tokens: options.max_tokens, temperature: options.temperature }),
+        body: JSON.stringify({
+          model: resolveModel(opts.model, model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL),
+          messages: toMessages(options),
+          max_tokens: options.max_tokens,
+          temperature: options.temperature,
+        }),
         signal: AbortSignal.timeout(120_000),
       });
       if (!res.ok) throw new Error(`ai_http_${res.status}`);
@@ -576,6 +597,7 @@ export function buildProvider(name: string, env: Record<string, string | undefin
               : (env.OPENAI_COMPATIBLE_AI_BASE_URL ?? "http://localhost:11434/v1"),
         apiKey: name === "ollama" ? env.OLLAMA_AI_API_KEY : name === "openai" ? env.OPENAI_API_KEY : env.OPENAI_COMPATIBLE_AI_API_KEY,
         model: configuredOpenAiCompatibleModel(name, env),
+        defaultModel: defaultOpenAiCompatibleModel(name),
         embedModel: env.AI_EMBED_MODEL,
       });
     case "anthropic": {

@@ -1114,7 +1114,7 @@ describe("queue processors", () => {
     expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
   });
 
-  it("does not post the 🟪 reviewing placeholder when public AI comments are disabled (regression)", async () => {
+  it("posts the 🟪 reviewing placeholder for non-AI comment refreshes, then overwrites it with the verdict", async () => {
     let aiCalls = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -1158,9 +1158,82 @@ describe("queue processors", () => {
     });
 
     expect(aiCalls).toBe(0);
-    expect(commentBodies.length).toBe(1);
-    expect(commentBodies[0]).not.toContain("is reviewing");
-    expect(commentBodies[0]).not.toContain("🟪");
+    expect(commentBodies.length).toBeGreaterThanOrEqual(2);
+    expect(commentBodies[0]).toContain("is reviewing");
+    expect(commentBodies[0]).toContain("🟪");
+    expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
+  });
+
+  it("keeps the PR comment in 🟪 reviewing state and retries when the final comment update is rate-limited", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "false",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "off",
+      aiReviewMode: "advisory",
+    });
+    const postedBodies: string[] = [];
+    let finalCommentAttempted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/9/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/9")) return Response.json({ number: 9, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a9" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a9/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a9/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/9/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/9/comments") && method === "POST") {
+        const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        if (postedBodies.length === 0) {
+          postedBodies.push(body);
+          return Response.json({ id: 1 }, { status: 201 });
+        }
+        finalCommentAttempted = true;
+        return new Response(JSON.stringify({ message: "API rate limit exceeded" }), {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0" },
+        });
+      }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "reviewing-placeholder-comment-ratelimit",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 9, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a9" }, labels: [], body: "Closes #1" },
+        },
+      }),
+    ).rejects.toThrow(/rate limit/i);
+
+    expect(finalCommentAttempted).toBe(true);
+    expect(postedBodies).toHaveLength(1);
+    expect(postedBodies[0]).toContain("is reviewing");
+    expect(postedBodies[0]).toContain("🟪");
   });
 
   it("agent re-gate sweep re-reviews each stale open PR (installation id) and swallows a failing re-review", async () => {
@@ -3116,7 +3189,7 @@ describe("queue processors", () => {
     expect(audit?.outcome).toBe("error");
   });
 
-  it("finalizes the Gate to neutral when the completion call returns a transient 403 (not left in_progress)", async () => {
+  it("propagates a rate-limited Gate completion so the queue retries and the pending Gate stays reviewing", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -3147,33 +3220,30 @@ describe("queue processors", () => {
       if (url.includes("/check-runs/971") && method === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
         patchBodies.push(body);
-        // First PATCH = the gate completion; a transient 403 (e.g. secondary rate limit) is classified as
-        // permission_missing and does NOT throw — the fix must still finalize the already-posted pending check.
+        // First PATCH = the gate completion. A rate-limit 403 must propagate to the queue instead of being
+        // swallowed as nonfatal; the pending check remains in_progress while the queue backs off and retries.
         if (patchBodies.length === 1) return new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit" }), { status: 403 });
         return Response.json({ id: 971 });
       }
       return new Response("not found", { status: 404 });
     });
 
-    await processJob(env, {
-      type: "github-webhook",
-      deliveryId: "gate-finalize-on-403",
-      eventName: "pull_request",
-      payload: {
-        action: "opened",
-        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
-        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
-        pull_request: { number: 81, title: "Some change", state: "open", user: { login: "contributor" }, head: { sha: "forbidden403" }, labels: [], body: "No issue link." },
-      },
-    });
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "gate-finalize-on-403",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 81, title: "Some change", state: "open", user: { login: "contributor" }, head: { sha: "forbidden403" }, labels: [], body: "No issue link." },
+        },
+      }),
+    ).rejects.toThrow(/rate limit/i);
 
-    // The completion PATCH 403'd (permission_missing, no throw), so the fix finalized the SAME check (id 971)
-    // to a neutral, non-blocking terminal state instead of orphaning it in_progress.
-    expect(patchBodies.length).toBe(2);
-    const finalize = patchBodies[1];
-    expect(finalize?.status).toBe("completed");
-    expect(finalize?.conclusion).toBe("neutral");
-    expect(finalize?.output?.title).toBe("Gittensory Gate — could not finish evaluating");
+    expect(patchBodies).toHaveLength(1);
+    expect(patchBodies[0]?.status).toBe("completed");
   });
 
   it("disables the gate from .gittensory.yml (gate.enabled: false) even when repo settings enable it", async () => {
@@ -3481,7 +3551,8 @@ describe("queue processors", () => {
     });
 
     // token: 1 — the installation token is now cached + reused within the request (was 2: main + permission check).
-    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1, checkRuns: 0 });
+    // commentGets/commentPatches: 2 — first the purple reviewing placeholder, then the final refreshed panel.
+    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 2, commentPatches: 2, checkRuns: 0 });
     expect(patchedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
     expect(patchedBody).toContain("Readiness score:");
     expect(patchedBody).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review");
@@ -3719,7 +3790,7 @@ describe("queue processors", () => {
     // The confirmed-miner detection WAS fetched (the #824 helper's miner-detection path) and the panel retriggered.
     expect(calls.minerList).toBeGreaterThanOrEqual(1);
     expect(calls.permission).toBe(1);
-    expect(calls.commentPatches).toBe(1);
+    expect(calls.commentPatches).toBe(2);
     const audit = await env.DB.prepare("select actor, outcome from audit_events where event_type = ? and target_key = ?")
       .bind("github_app.pr_panel_retriggered", "JSONbored/gittensory#48")
       .first<{ actor: string; outcome: string }>();
@@ -3866,7 +3937,8 @@ describe("queue processors", () => {
     });
 
     // token: 1 — the installation token is now cached + reused within the request (was 2: main + permission check).
-    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1 });
+    // commentGets/commentPatches: 2 — first the purple reviewing placeholder, then the final refreshed panel.
+    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 2, commentPatches: 2 });
   });
 
   it("skips PR panel reruns when the editing actor and PR author are unavailable", async () => {
@@ -4451,7 +4523,7 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls.comments).toBe(1);
+    expect(calls.comments).toBe(2);
     // Still leads with the panel marker → the upsert updates the SAME sticky comment in place (no duplicate).
     expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
     // The UNIFIED shape, which the legacy body never emits: a full-comment GitHub alert wrapper…
@@ -5333,7 +5405,7 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ minerList: 2, comments: 1 });
+    expect(calls).toEqual({ minerList: 2, comments: 2 });
   });
 
   it("fails closed when official miner detection is unavailable", async () => {

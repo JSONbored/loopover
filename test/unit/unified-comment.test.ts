@@ -437,23 +437,23 @@ describe("renderReviewingPlaceholder", () => {
 });
 
 describe("shouldPostReviewingPlaceholder", () => {
-  it("returns true when AI will run, mode is live, and a comment will be posted", () => {
-    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "live", willComment: true })).toBe(true);
+  it("returns true when a live review refresh will post a comment", () => {
+    expect(shouldPostReviewingPlaceholder({ reviewWillRun: true, mode: "live", willComment: true })).toBe(true);
   });
 
-  it("returns false when AI review will not run", () => {
-    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: false, mode: "live", willComment: true })).toBe(false);
+  it("returns false when no review refresh is running", () => {
+    expect(shouldPostReviewingPlaceholder({ reviewWillRun: false, mode: "live", willComment: true })).toBe(false);
   });
 
   it("returns false in dry-run mode — placeholder must never write to GitHub in non-live mode", () => {
-    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "dry_run", willComment: true })).toBe(false);
+    expect(shouldPostReviewingPlaceholder({ reviewWillRun: true, mode: "dry_run", willComment: true })).toBe(false);
   });
 
   it("returns false in paused mode", () => {
-    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "paused", willComment: true })).toBe(false);
+    expect(shouldPostReviewingPlaceholder({ reviewWillRun: true, mode: "paused", willComment: true })).toBe(false);
   });
 
   it("returns false when no comment will be posted — avoids a permanent orphaned purple comment", () => {
-    expect(shouldPostReviewingPlaceholder({ aiReviewWillRun: true, mode: "live", willComment: false })).toBe(false);
+    expect(shouldPostReviewingPlaceholder({ reviewWillRun: true, mode: "live", willComment: false })).toBe(false);
   });
 });

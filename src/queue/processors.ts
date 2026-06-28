@@ -103,6 +103,7 @@ import {
   createOrUpdateSkippedGateCheckRun,
   getInstallationId,
   getRepositoryCollaboratorPermission,
+  isGitHubRateLimitedError,
   isForeignAppInstallation,
 } from "../github/app";
 import {
@@ -1153,6 +1154,7 @@ async function regatePullRequest(
       skipAiReview: settings.aiReviewMode === "off",
     },
   ).catch((error) => {
+    if (isGitHubRateLimitedError(error)) throw error;
     console.error(
       JSON.stringify({
         level: "warn",
@@ -1581,6 +1583,7 @@ async function reReviewStoredPullRequest(
       ...(options.skipAiReview ? { skipAiReview: true } : {}),
     },
   ).catch((error) => {
+    if (isGitHubRateLimitedError(error)) throw error;
     console.error(
       JSON.stringify({
         level: "warn",
@@ -3049,6 +3052,7 @@ async function processGitHubWebhook(
               action: payload.action,
             },
           ).catch((error) => {
+            if (isGitHubRateLimitedError(error)) throw error;
             console.error(
               JSON.stringify({
                 level: "warn",
@@ -4527,12 +4531,12 @@ async function maybePublishPrPublicSurface(
         confirmedContributor,
         skipAiReview: webhook.skipAiReview,
       }));
-    // Post a transient "🟪 reviewing…" placeholder BEFORE the AI runs so contributors see the bot
-    // is actively working rather than silent. In-place upsert: once the final verdict is ready it
-    // overwrites this comment. Best-effort — a failed post never aborts the review. (#reviewing-placeholder)
+    // Post a transient "🟪 reviewing…" placeholder BEFORE the review refresh runs so contributors never see a
+    // stale green/yellow/red verdict while the current head is being recomputed. In-place upsert: once the final
+    // verdict is ready it overwrites this comment. Best-effort — a failed post never aborts the review.
     if (
       shouldPostReviewingPlaceholder({
-        aiReviewWillRun,
+        reviewWillRun: true,
         mode,
         willComment: decision.willComment,
       })
@@ -4754,11 +4758,10 @@ async function maybePublishPrPublicSurface(
             webhook.deliveryId,
             gateCheckResult.warning,
           );
-          // A 403 on the COMPLETION call is classified as permission_missing and does NOT throw, so the catch
-          // below never runs and the pending in_progress check would be orphaned. But the pending check already
-          // posted (pendingGateCheckRunId is set), proving the App had Checks:write — so a 403 here is almost
-          // always a transient secondary-rate-limit, not a real revocation. Finalize the pending check to
-          // neutral (mirrors the catch); if it were a genuine revocation this PATCH also 403s and is swallowed.
+          // A permission_missing completion result does NOT throw, so the catch below never runs and the pending
+          // in_progress check would be orphaned. But the pending check already posted (pendingGateCheckRunId is
+          // set), proving the App could write checks for this head at least once. Finalize the pending check to
+          // neutral (mirrors the catch); if access was truly revoked this PATCH also fails and is swallowed.
           if (pendingGateCheckRunId !== undefined && !gateFinalized) {
             await createOrUpdateErroredGateCheckRun(
               env,
@@ -4772,6 +4775,7 @@ async function maybePublishPrPublicSurface(
           }
         }
       } catch (checkError) {
+        if (isGitHubRateLimitedError(checkError)) throw checkError;
         // CRITICAL: a check-run API failure (e.g. a 422 from an over-long output.title) must NEVER abort the
         // review. The outer catch re-throws → the comment, the audit row, and the auto-action (merge/close)
         // would all be skipped and the review dead-lettered. That is exactly why red-CI PRs (whose gate title
@@ -4799,6 +4803,7 @@ async function maybePublishPrPublicSurface(
       }
     }
   } catch (error) {
+    if (isGitHubRateLimitedError(error)) throw error;
     // The pending Gate check was posted but evaluation could not finish. Finalize it to a neutral
     // (non-blocking) terminal state so it never hangs in_progress; it re-runs on the next push. Only when
     // the gate was enabled, a pending check id exists, and a real conclusion was not already published.
@@ -4914,6 +4919,7 @@ async function maybePublishPrPublicSurface(
         webhook.deliveryId,
         message,
       );
+      if (isGitHubRateLimitedError(error)) throw error;
     }
   }
 
@@ -5204,6 +5210,7 @@ async function maybePublishPrPublicSurface(
         webhook.deliveryId,
         message,
       );
+      if (isGitHubRateLimitedError(error)) throw error;
     }
     // Quiet inline review comments (#inline-comments): layer the AI's line-anchored findings on top of the
     // summary just posted, as a NON-BLOCKING COMMENT review. A no-op (no extra work) unless this is a fresh
@@ -5246,6 +5253,7 @@ async function maybePublishPrPublicSurface(
         webhook.deliveryId,
         message,
       );
+      if (isGitHubRateLimitedError(error)) throw error;
     }
     // Per-PR TYPE label (reviewbot auto-label parity): exactly ONE of gittensor:bug/feature/priority by the PR
     // title + changed paths. Review-time + neutral, BEST-EFFORT + independent of the context label above so a

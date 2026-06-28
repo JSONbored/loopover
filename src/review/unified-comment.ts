@@ -537,6 +537,6 @@ export function renderReviewingPlaceholder(ctx: { brand?: string } = {}): string
 
 /** Returns true when the reviewing placeholder should be posted before the AI review runs.
  *  Pure helper so both branches are testable without async setup. */
-export function shouldPostReviewingPlaceholder(args: { aiReviewWillRun: boolean; mode: string; willComment: boolean }): boolean {
-  return args.aiReviewWillRun && args.mode === "live" && args.willComment;
+export function shouldPostReviewingPlaceholder(args: { reviewWillRun: boolean; mode: string; willComment: boolean }): boolean {
+  return args.reviewWillRun && args.mode === "live" && args.willComment;
 }

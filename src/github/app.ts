@@ -839,6 +839,23 @@ function isRateLimitedError(error: {
   );
 }
 
+export function isGitHubRateLimitedError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as {
+    status?: number;
+    message?: string;
+    response?: { headers?: Record<string, unknown> };
+  };
+  if (isRateLimitedError(e)) return true;
+  return (
+    e.status === undefined &&
+    typeof e.message === "string" &&
+    /secondary rate limit|\babuse\b|api rate limit exceeded|rate limit/i.test(
+      e.message,
+    )
+  );
+}
+
 /** Exported for tests. */
 export function isCheckRunPermissionError(error: unknown): boolean {
   /* v8 ignore next -- Octokit wraps thrown fetch values in HttpError objects before this helper sees them. */

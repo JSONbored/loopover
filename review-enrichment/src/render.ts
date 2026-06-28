@@ -161,6 +161,9 @@ export function renderBrief(
           `- ${safeCodeSpan(f.file!)} — vendored or minified code without upstream source reference`,
         );
       }
+    }
+  }
+
   const codeownersViolations = findings.codeowners ?? [];
   if (codeownersViolations.length) {
     const allOwners = new Set(codeownersViolations.flatMap((f) => f.owners));

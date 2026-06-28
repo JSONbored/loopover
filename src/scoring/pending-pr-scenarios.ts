@@ -37,6 +37,10 @@ export type ContributorRepoOpenPrSignals = {
 
 const STALE_DAYS = 14;
 
+// Real draft markers only — "[draft]", "Draft:", "Draft -"; the delimiter keeps "Drafting" and
+// "draft-js" from matching. Trailing \s* lets the same pattern also strip the marker for dedup keys.
+export const DRAFT_TITLE_PATTERN = /^(?:\[\s*draft\s*\]|draft(?:\s*:|\s+-))\s*/i;
+
 export async function loadContributorRepoOpenPrSignalRecords(
   env: Env,
   repoFullName: string,
@@ -221,8 +225,7 @@ export function applyPendingPrDetectionToScoreInput(
 
 function isDraftPullRequest(pr: PullRequestRecord): boolean {
   if (pr.isDraft) return true;
-  const title = pr.title.trim();
-  if (/^\[?\s*draft\s*\]?/i.test(title) || /^draft:/i.test(title)) return true;
+  if (DRAFT_TITLE_PATTERN.test(pr.title.trim())) return true;
   return pr.labels.some((label) => label.toLowerCase() === "draft" || label.toLowerCase() === "wip");
 }
 

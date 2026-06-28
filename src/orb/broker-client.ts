@@ -83,13 +83,13 @@ export async function fetchBrokeredInstallationToken(
 export async function registerOrbRelayTarget(
   env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined; PUBLIC_API_ORIGIN?: string | undefined; ORB_RELAY_MODE?: string | undefined },
   fetchImpl: typeof fetch = fetch,
-): Promise<"registered" | "skipped" | "failed"> {
-  if (!isOrbBrokerMode(env)) return "skipped";
+): Promise<{ status: "registered" | "skipped" | "failed"; reason?: string }> {
+  if (!isOrbBrokerMode(env)) return { status: "skipped" };
   // Pull mode (#secure-relay): the engine DRAINS events outbound from the Orb, so NO inbound endpoint is exposed —
   // the right fit for a NAT/tailnet self-host (a public push URL would otherwise be unreachable). Push mode needs a
   // public relay URL the Orb can reach.
   const mode = env.ORB_RELAY_MODE === "pull" ? "pull" : "push";
-  if (mode === "push" && !env.PUBLIC_API_ORIGIN) return "skipped";
+  if (mode === "push" && !env.PUBLIC_API_ORIGIN) return { status: "skipped" };
   const relayUrl = mode === "push" ? `${env.PUBLIC_API_ORIGIN!.replace(/\/+$/, "")}/v1/orb/relay` : "";
   try {
     const base = orbBrokerBaseUrl(env);
@@ -99,9 +99,15 @@ export async function registerOrbRelayTarget(
       body: JSON.stringify({ relayUrl, mode }),
       signal: AbortSignal.timeout(10_000),
     });
-    return res.ok ? "registered" : "failed";
-  } catch {
-    return "failed";
+    // Carry WHY it failed (HTTP status) so the caller's log — and Sentry — show a real reason, not "(no message)".
+    return res.ok
+      ? { status: "registered" }
+      : { status: "failed", reason: `http_${res.status}` };
+  } catch (error) {
+    return {
+      status: "failed",
+      reason: error instanceof Error ? error.message : "fetch_threw",
+    };
   }
 }
 

@@ -157,7 +157,13 @@ export function buildPredictedGateVerdict(args: {
 
   // Linked-issue finding is surfaced when the repo's public policy treats it as anything but `off`, so the
   // gate can evaluate it; evaluateGateCheck decides whether it actually blocks (block) or stays advisory.
-  const requireLinkedIssue = gate.linkedIssue !== null && gate.linkedIssue !== "off";
+  // The composite mergeReadiness gate forces the linked-issue sub-gate on (applyMergeReadinessGate), and the
+  // live path collects linked-issue evidence whenever merge-readiness is enabled (shouldCollectLinkedIssueEvidence,
+  // queue/processors.ts), so the predictor must surface the finding under mergeReadiness too — otherwise a
+  // `mergeReadiness:block` repo with linkedIssue unset predicts a false success while the live gate one-shot
+  // closes the PR on the missing-linked-issue blocker. (#merge-readiness-parity)
+  const requireLinkedIssue =
+    (gate.linkedIssue !== null && gate.linkedIssue !== "off") || (gate.mergeReadiness !== null && gate.mergeReadiness !== "off");
   // `duplicateWinnerEnabled` is INTENTIONALLY omitted (#dup-winner): the prospective PR is synthetic #0, but a
   // real new PR opened into an existing duplicate cluster gets the HIGHEST number ⇒ it is always a duplicate
   // LOSER, never the winner. So the predictor must keep showing the duplicate finding (the honest pre-submit
@@ -169,7 +175,10 @@ export function buildPredictedGateVerdict(args: {
   // from the snapshot, never a live fetch. (#self-authored-parity)
   const issueAuthorByNumber = new Map(issues.filter((issue) => issue.repoFullName === input.repoFullName).map((issue) => [issue.number, issue.authorLogin ?? null]));
   const linkedIssueAuthorLogins = syntheticPr.linkedIssues.map((issueNumber) => issueAuthorByNumber.get(issueNumber) ?? null);
-  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue, linkedIssueAuthorLogins });
+  // Mirror the live gate (listOtherOpenPullRequests): a closed/merged PR sharing a linked issue must not fire
+  // duplicate_pr_risk. authorHistory below still needs every state for its grace counts.
+  const openSiblings = pullRequests.filter((otherPr) => otherPr.state === "open");
+  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: openSiblings, requireLinkedIssue, linkedIssueAuthorLogins });
 
   // Deterministic pre-merge checks parity (#11/#18): the LIVE gate enforces the repo's `review.pre_merge_checks`
   // (from the SAME public .gittensory.yml the predictor already reads). With the PR's changed paths supplied,

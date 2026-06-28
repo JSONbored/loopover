@@ -29,6 +29,7 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "npm-shrinkwrap.json",
   "yarn.lock",
   "pnpm-lock.yaml",
+  "bun.lock",
   "bun.lockb",
   "cargo.lock",
   "poetry.lock",
@@ -39,6 +40,9 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "uv.lock",
   "packages.lock.json",
   "flake.lock",
+  "deno.lock",
+  "pubspec.lock",
+  "podfile.lock",
 ]);
 
 const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([

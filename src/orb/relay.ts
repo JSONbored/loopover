@@ -158,7 +158,7 @@ async function pruneRelayPending(env: Env): Promise<number> {
   // Make pull-mode loss VISIBLE too (parity with the push-path drop): a pruned row is a webhook a long-down tailnet
   // container never drained — emit an alertable error-level log (distinct event name) so it leaves a Sentry trace.
   if (pruned.meta.changes > 0) {
-    console.error(JSON.stringify({ level: "error", event: "orb_relay_pending_dropped", count: pruned.meta.changes }));
+    console.error(JSON.stringify({ level: "error", event: "orb_relay_pending_dropped", message: `${pruned.meta.changes} pull-mode webhook(s) expired undrained after ${RELAY_PENDING_TTL_HOURS}h`, count: pruned.meta.changes }));
   }
   return pruned.meta.changes;
 }
@@ -249,7 +249,7 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
   // retries exhausted) — e.g. a container down for over an hour. Emit an alertable structured log so the loss
   // leaves a trace instead of vanishing silently.
   if (pruned.meta.changes > 0) {
-    console.error(JSON.stringify({ level: "error", event: "orb_relay_events_dropped", count: pruned.meta.changes }));
+    console.error(JSON.stringify({ level: "error", event: "orb_relay_events_dropped", message: `${pruned.meta.changes} relay event(s) dropped after ${RELAY_RETRY_MAX_ATTEMPTS} retries or 1h TTL`, count: pruned.meta.changes }));
   }
   const { results } = await env.DB
     .prepare(

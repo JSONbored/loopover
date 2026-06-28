@@ -302,6 +302,35 @@ describe("pending PR scenario detection", () => {
     expect(withOverlapFlags.reasons.join(" ")).toMatch(/duplicate|test files/i);
   });
 
+  it("does not treat titles that merely start with the letters 'draft' as drafts (regression)", () => {
+    // These all begin with "draft" but carry no real marker, so they must flow through to merge_ready
+    // instead of being dropped — otherwise pendingMergedPrCount is silently understated. The hyphenated
+    // names ("draft-js", "draft-mode") are the cases an unspaced `draft[-:]` boundary would mis-flag.
+    for (const title of ["Drafting a new feature", "Draftsman tool", "Drafted changes", "draft-js upgrade", "Draft-mode rendering rewrite"]) {
+      expect(
+        classifyOpenPullRequest({
+          pr: pr({ number: 60, title }),
+          roleContext: outsideContributorRole,
+          reviews: [approvedReview(60)],
+          checks: [],
+        }).classification,
+      ).toBe("merge_ready");
+    }
+  });
+
+  it("treats only genuine draft markers in the title as drafts", () => {
+    for (const title of ["[draft] spike", "[ draft ] spike", "Draft: spike", "draft : spike", "Draft - spike", "Draft -spike"]) {
+      expect(
+        classifyOpenPullRequest({
+          pr: pr({ number: 61, title }),
+          roleContext: outsideContributorRole,
+          reviews: [approvedReview(61)],
+          checks: [],
+        }).classification,
+      ).toBe("draft");
+    }
+  });
+
   it("recognizes draft heuristics and excludes pull numbers from detection", () => {
     expect(
       classifyOpenPullRequest({

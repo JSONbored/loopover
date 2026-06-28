@@ -1294,7 +1294,10 @@ export async function upsertDigestSubscription(
   const now = nowIso();
   const record: DigestSubscriptionRecord = {
     id: crypto.randomUUID(),
-    login: input.login,
+    // GitHub logins are case-insensitive, so normalize like every sibling subscription path
+    // (notification subscriptions, issue-watch) — otherwise a subscriber stored as "Foo" is missed on a
+    // "foo" lookup and the [login, email] conflict target accumulates case-variant duplicate rows.
+    login: input.login.toLowerCase(),
     email: input.email.toLowerCase(),
     status: input.status ?? "active",
     source: input.source ?? "app",
@@ -1330,7 +1333,7 @@ export async function upsertDigestSubscription(
 
 export async function listDigestSubscriptionsForLogin(env: Env, login: string): Promise<DigestSubscriptionRecord[]> {
   const db = getDb(env.DB);
-  const rows = await db.select().from(digestSubscriptions).where(eq(digestSubscriptions.login, login)).orderBy(desc(digestSubscriptions.updatedAt)).limit(20);
+  const rows = await db.select().from(digestSubscriptions).where(eq(digestSubscriptions.login, login.toLowerCase())).orderBy(desc(digestSubscriptions.updatedAt)).limit(20);
   return rows.map(toDigestSubscriptionRecord);
 }
 
@@ -5277,7 +5280,7 @@ const PRODUCT_USAGE_SENSITIVE_KEY =
   /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
 const PRODUCT_USAGE_SENSITIVE_VALUE =
   /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
-const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
+const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/root|\/var|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
 

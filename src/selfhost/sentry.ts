@@ -91,24 +91,49 @@ export function captureReviewFailure(
 // string|number values are tagged; everything else stays in the full "log" context.
 const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId"] as const;
 
-// Fields already represented in the title/level (or non-scalar) — excluded from the field-summary below so a
-// no-message title isn't padded with redundant or unrenderable values.
-const SENTRY_LOG_META_FIELDS = new Set(["level", "event", "ev", "message", "error", "err", "stack"]);
+/** A SHORT location suffix — " (repo#pr)" — for a no-message error title, so the issue list shows WHERE without
+ *  dumping every scalar field (which made titles unreadably long, e.g. trailing a full deliveryId). The complete
+ *  field set is still indexed as Sentry tags + kept in the "log" context. Empty when the log carries no repo. */
+function logLocation(obj: Record<string, unknown>): string {
+  const repo =
+    typeof obj.repository === "string"
+      ? obj.repository
+      : typeof obj.repo === "string"
+        ? obj.repo
+        : undefined;
+  if (!repo) return "";
+  // The standard pullNumber locates the PR in the title; other pr aliases stay in the tags/context (not the title).
+  const pr = obj.pullNumber;
+  return typeof pr === "number" ? ` (${repo}#${pr})` : ` (${repo})`;
+}
 
-/** Build a one-line `(key=value, …)` summary of a structured log's SCALAR fields. Many engine error logs carry
- *  only an event slug + structured context (no `message`/`error`) — without this they'd land in Sentry as a bare
- *  slug ("gate_check_permission_missing") with no hint of WHERE. This folds the context into the title instead:
- *  `gate_check_permission_missing (repository=owner/repo, pullNumber=42)`. Empty when there's no scalar context
- *  beyond the meta fields; capped so a fat log can't blow up the issue title. */
+/** When a log carries no message/error, summarize its SALIENT scalar fields (project, counts, precisions, …) into the
+ *  Sentry value so a field-only log — e.g. close_breaker_engaged{project,closePrecision,floor} or closehold_backlog
+ *  {count,projects} — shows real data instead of "(no message)". Skips meta + the location keys logLocation already
+ *  used + long blobs (IDs/bodies stay in the indexed tags + the "log" context); caps to a few fields so the title
+ *  stays readable. This is the STRUCTURAL fix for field-only error logs (current + future), not per-log message-adding. */
+const SUMMARY_SKIP_KEYS = new Set([
+  "level",
+  "event",
+  "ts",
+  "time",
+  "timestamp",
+  "msg",
+  "ev",
+  "message",
+  "error",
+  "repo",
+  "repository",
+  "pullNumber",
+  "deliveryId",
+]);
 function summarizeLogFields(obj: Record<string, unknown>): string {
-  const parts: string[] = [];
-  for (const [key, value] of Object.entries(obj)) {
-    if (SENTRY_LOG_META_FIELDS.has(key)) continue;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      parts.push(`${key}=${value}`);
-    }
-  }
-  return parts.length > 0 ? ` (${parts.join(", ").slice(0, 180)})` : "";
+  return Object.entries(obj)
+    .filter(([k, v]) => !SUMMARY_SKIP_KEYS.has(k) && v !== null)
+    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .filter((part) => part.length <= 90) // a long blob (id/body) belongs in the context, not the title
+    .slice(0, 5) // a few salient fields, not a dump
+    .join(", ");
 }
 
 /** Forward a structured console line to Sentry when it is an ERROR-level log. The engine logs operational
@@ -136,22 +161,34 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   // Lead the Sentry title with the real failure detail (message → error), not just the event slug, so an operator
   // sees WHAT broke straight from the issue list instead of having to open the context blob.
   const detail = typeof obj.message === "string" ? obj.message : typeof obj.error === "string" ? obj.error : undefined;
-  // Title preference: "event: detail" (real failure text) → "event (key=value, …)" (context-only logs, so the
-  // issue list is never a bare slug) → detail alone → "error". The forwarder can't invent a sentence, but it can
-  // always surface WHERE from the structured fields.
-  const title = event ? (detail ? `${event}: ${detail}` : `${event}${summarizeLogFields(obj)}`) : (detail ?? "error");
+  // Forward as a synthetic EXCEPTION, NOT captureMessage. captureMessage leaves the exception value empty, which
+  // Sentry's issue UI renders as "(No error message)". An exception gives the issue a real `type: value`:
+  //   name (type)     = the event slug (e.g. check_run_post_denied)
+  //   message (value) = the failure detail (message/error) → else the PR location → else a pointer to the context
+  // So the issue list always shows a legible "event: detail", never a bare slug or "(No error message)". The
+  // fingerprint (by event) still groups recurrences, so the synthetic stack doesn't fragment grouping. (#1468)
+  // value = the real detail (message/error) → else the PR location + a summary of salient fields (so a field-only log
+  // like close_breaker_engaged shows "project=x, closePrecision=0.6, floor=0.8") → else a context pointer.
+  const value =
+    detail ??
+    ([logLocation(obj).trim(), summarizeLogFields(obj)]
+      .filter(Boolean)
+      .join(" ") || "(no message — see the log context)");
+  const errorEvent = new Error(value);
+  errorEvent.name = event ?? "GittensoryLog";
   Sentry.withScope((scope) => {
     scope.setLevel(severity);
     scope.setContext("log", obj);
     if (event) scope.setTag("event", event);
     // Index the dimensions operators filter + group by, so issues are findable without digging into the context.
     for (const key of SENTRY_LOG_TAG_KEYS) {
-      const value = obj[key];
-      if (typeof value === "string" || typeof value === "number") scope.setTag(key, String(value));
+      const tagValue = obj[key];
+      if (typeof tagValue === "string" || typeof tagValue === "number")
+        scope.setTag(key, String(tagValue));
     }
-    // Group recurrences of ONE failure into a single issue (by event, not the variable detail that's in the title).
+    // Group recurrences of ONE failure into a single issue (by event, not the variable detail in the value).
     if (event) scope.setFingerprint(["gittensory-log", event]);
-    Sentry!.captureMessage(title, severity);
+    Sentry!.captureException(errorEvent);
   });
 }
 

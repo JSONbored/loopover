@@ -1,6 +1,6 @@
 {
   "uid": "gittensory-maintainer",
-  "title": "Gittensory \u2014 Reviews & PRs (maintainer)",
+  "title": "Gittensory — Reviews & PRs (maintainer)",
   "tags": [
     "gittensory",
     "maintainer"
@@ -28,7 +28,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## Maintainer review dashboard disabled\n\nThis dashboard no longer queries the live Gittensory SQLite database from Grafana. Direct datasource access would bypass application authorization and expose private application tables. Use the application API or a separately redacted reporting database for maintainer review analytics."
+        "content": "## Maintainer review dashboard disabled\n\nThis dashboard does not query the live Gittensory SQLite database from Grafana. Direct datasource access would bypass application authorization and expose private application tables. Use the application API or a separately redacted reporting database for maintainer review analytics."
       }
     }
   ]

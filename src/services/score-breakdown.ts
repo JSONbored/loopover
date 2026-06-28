@@ -77,6 +77,28 @@ function openPrBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown 
   };
 }
 
+// Sibling of openPrBreakdown for the issue-discovery channel: the open-issue spam gate (#808) zeroes the
+// score once a contributor's concurrent open-issue count exceeds their earned allowance. Explained here so a
+// miner in the issue-discovery lane sees the same actionable breakdown the open-PR gate already provides.
+function openIssueBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { openIssueMultiplier } = preview.scoreEstimate;
+  const { openIssueCount, openIssueThreshold } = preview.gates;
+  const band = bandForMultiplier(openIssueMultiplier);
+  return {
+    component: "openIssueMultiplier",
+    band,
+    summary:
+      openIssueMultiplier >= 1
+        ? `Open issue count (${openIssueCount}) is within the current allowance (${openIssueThreshold}).`
+        : `Open issue count (${openIssueCount}) exceeds the current allowance (${openIssueThreshold}), so the open-issue spam gate blocks scoring.`,
+    lever:
+      openIssueMultiplier >= 1
+        ? "Keep concurrent open issues within the allowance to stay clear of the open-issue spam gate."
+        : "Close or resolve excess open issues to drop back within the open-issue spam threshold.",
+    leverageScore: openIssueMultiplier >= 1 ? 5 : 100,
+  };
+}
+
 function credibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { credibilityMultiplier } = preview.scoreEstimate;
   const { credibilityObserved, credibilityFloor } = preview.gates;
@@ -216,6 +238,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     credibilityBreakdown(preview),
     reviewPenaltyBreakdown(preview),
     openPrBreakdown(preview),
+    openIssueBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

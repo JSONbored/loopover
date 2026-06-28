@@ -11,6 +11,23 @@ const MAX_PATTERN_CHARS = 1000; // ignore absurdly long literals (a hand-written
 const MAX_LINE_CHARS = 2000; // skip extraction on pathologically long lines (defensive)
 const REPORT_CHARS = 80; // truncate the reported pattern so the brief stays readable
 
+type RedosScanLimits = {
+  maxFindings?: number;
+};
+
+function* patchLines(patch: string): Generator<string> {
+  let start = 0;
+  while (start <= patch.length) {
+    const end = patch.indexOf("\n", start);
+    if (end === -1) {
+      yield patch.slice(start);
+      return;
+    }
+    yield patch.slice(start, end);
+    start = end + 1;
+  }
+}
+
 // Extraction runs as a single LINEAR left-to-right scan — deliberately NOT a regex. A regex with the alternation
 // needed here (escapes | char-classes | other chars, all under `+`) has overlapping branches and would itself
 // backtrack catastrophically on adversarial diff input (e.g. many empty `[]` classes with no closing `/`). The
@@ -225,10 +242,16 @@ export function hasCatastrophicBacktracking(pattern: string): boolean {
 }
 
 /** Scan one file patch's added lines for ReDoS-prone regex literals, line-cited via hunk headers. Pure. */
-export function scanPatchForRedos(path: string, patch: string): RedosFinding[] {
+export function scanPatchForRedos(
+  path: string,
+  patch: string,
+  limits: RedosScanLimits = {},
+): RedosFinding[] {
+  const maxFindings = limits.maxFindings ?? MAX_FINDINGS;
+  if (maxFindings <= 0) return [];
   const findings: RedosFinding[] = [];
   let newLine = 0;
-  for (const line of patch.split("\n")) {
+  for (const line of patchLines(patch)) {
     if (line.startsWith("+++") || line.startsWith("---")) continue;
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
@@ -244,6 +267,7 @@ export function scanPatchForRedos(path: string, patch: string): RedosFinding[] {
             kind: "nested-quantifier",
             pattern: source.slice(0, REPORT_CHARS),
           });
+          if (findings.length >= maxFindings) return findings;
         }
       }
       newLine++;
@@ -259,7 +283,9 @@ export async function scanRedos(req: EnrichRequest): Promise<RedosFinding[]> {
   const findings: RedosFinding[] = [];
   for (const file of req.files ?? []) {
     if (!file.patch) continue;
-    for (const finding of scanPatchForRedos(file.path, file.patch)) {
+    for (const finding of scanPatchForRedos(file.path, file.patch, {
+      maxFindings: MAX_FINDINGS - findings.length,
+    })) {
       findings.push(finding);
       if (findings.length >= MAX_FINDINGS) return findings;
     }

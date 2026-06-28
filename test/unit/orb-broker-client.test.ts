@@ -97,13 +97,13 @@ describe("fetchBrokeredInstallationToken", () => {
 
 describe("registerOrbRelayTarget", () => {
   it("skips unless broker mode AND a public origin are configured", async () => {
-    expect(await registerOrbRelayTarget({})).toBe("skipped"); // not broker mode
-    expect(await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s" })).toBe("skipped"); // no PUBLIC_API_ORIGIN
+    expect(await registerOrbRelayTarget({})).toEqual({ status: "skipped" }); // not broker mode
+    expect(await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s" })).toEqual({ status: "skipped" }); // no PUBLIC_API_ORIGIN
   });
 
   it("POSTs the relay URL (origin + /v1/orb/relay) to the broker with the enrollment secret; trailing slashes stripped", async () => {
     const { fetchImpl, calls } = captureFetch(new Response("ok"));
-    expect(await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "orbsec_x", PUBLIC_API_ORIGIN: "https://me.example/", ORB_BROKER_URL: "https://broker.example/" }, fetchImpl)).toBe("registered");
+    expect(await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "orbsec_x", PUBLIC_API_ORIGIN: "https://me.example/", ORB_BROKER_URL: "https://broker.example/" }, fetchImpl)).toEqual({ status: "registered" });
     expect(calls[0]?.url).toBe("https://broker.example/v1/orb/relay/register"); // ORB_BROKER_URL trailing slash stripped
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer orbsec_x");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ relayUrl: "https://me.example/v1/orb/relay", mode: "push" }); // PUBLIC_API_ORIGIN trailing slash stripped
@@ -120,19 +120,19 @@ describe("registerOrbRelayTarget", () => {
       throw new Error("fetch should not be called for an unsafe broker URL");
     }) as typeof fetch;
 
-    await expect(registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example", ORB_BROKER_URL: "http://broker.example" }, fetchImpl)).resolves.toBe("failed");
+    await expect(registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example", ORB_BROKER_URL: "http://broker.example" }, fetchImpl)).resolves.toMatchObject({ status: "failed" });
   });
 
   it("returns failed on a non-ok response or a thrown fetch (never blocks boot)", async () => {
     const cfg = { ORB_ENROLLMENT_SECRET: "s", PUBLIC_API_ORIGIN: "https://me.example" };
-    expect(await registerOrbRelayTarget(cfg, (async () => new Response("no", { status: 403 })) as typeof fetch)).toBe("failed");
-    expect(await registerOrbRelayTarget(cfg, (async () => { throw new Error("down"); }) as typeof fetch)).toBe("failed");
+    expect(await registerOrbRelayTarget(cfg, (async () => new Response("no", { status: 403 })) as typeof fetch)).toEqual({ status: "failed", reason: "http_403" });
+    expect(await registerOrbRelayTarget(cfg, (async () => { throw new Error("down"); }) as typeof fetch)).toEqual({ status: "failed", reason: "down" });
   });
 
   it("pull mode (ORB_RELAY_MODE=pull) registers with NO relay URL and works without a public origin (NAT/tailnet)", async () => {
     const { fetchImpl, calls } = captureFetch(new Response("ok"));
     // No PUBLIC_API_ORIGIN — push would skip, but pull doesn't need an inbound URL.
-    expect(await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", ORB_RELAY_MODE: "pull" }, fetchImpl)).toBe("registered");
+    expect(await registerOrbRelayTarget({ ORB_ENROLLMENT_SECRET: "s", ORB_RELAY_MODE: "pull" }, fetchImpl)).toEqual({ status: "registered" });
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ relayUrl: "", mode: "pull" });
   });
 });

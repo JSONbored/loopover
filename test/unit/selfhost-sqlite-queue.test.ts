@@ -26,6 +26,97 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(q.size()).toBe(0);
   });
 
+  it("tags github-webhook with priority 10, other jobs 0, untyped 0 (#review-latency)", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    // delaySeconds keeps them pending (not claimed) so we can read the stored priority.
+    await q.binding.send(msg("github-webhook"), { delaySeconds: 60 });
+    await q.binding.send(msg("rag-index-repo"), { delaySeconds: 60 });
+    await q.binding.send({} as unknown as JobMessage, { delaySeconds: 60 }); // no type → priority 0 fallback
+    const { rows } = driver.query(
+      "SELECT payload, priority FROM _selfhost_jobs",
+      [],
+    );
+    const prio = (p: string): number | undefined =>
+      (rows as Array<{ payload: string; priority: number }>).find(
+        (r) => r.payload === p,
+      )?.priority;
+    expect(prio(JSON.stringify(msg("github-webhook")))).toBe(10);
+    expect(prio(JSON.stringify(msg("rag-index-repo")))).toBe(0);
+    expect(prio("{}")).toBe(0);
+  });
+
+  it("migrates an old queue table without a priority column before creating the claim index", async () => {
+    const driver = makeDriver();
+    driver.exec(`
+      CREATE TABLE _selfhost_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        run_after INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        last_error TEXT
+      );
+    `);
+
+    expect(() => createSqliteQueue(driver, async () => undefined)).not.toThrow();
+
+    const { rows } = driver.query("PRAGMA table_info(_selfhost_jobs)", []);
+    expect(rows.map((row) => (row as { name: string }).name)).toContain(
+      "priority",
+    );
+    expect(
+      driver.query("PRAGMA index_info(_selfhost_jobs_claim)", []).rows.map(
+        (row) => (row as { name: string }).name,
+      ),
+    ).toEqual(["status", "run_after", "priority"]);
+  });
+
+  it("rebuilds an old claim index so priority participates in future claims", async () => {
+    const driver = makeDriver();
+    driver.exec(`
+      CREATE TABLE _selfhost_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        run_after INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        last_error TEXT
+      );
+      CREATE INDEX _selfhost_jobs_claim ON _selfhost_jobs(status, run_after);
+    `);
+
+    createSqliteQueue(driver, async () => undefined);
+
+    expect(
+      driver.query("PRAGMA index_info(_selfhost_jobs_claim)", []).rows.map(
+        (row) => (row as { name: string }).name,
+      ),
+    ).toEqual(["status", "run_after", "priority"]);
+  });
+
+  it("claims a high-priority (github-webhook) job before an earlier low-priority one", async () => {
+    const driver = makeDriver();
+    const seen: string[] = [];
+    const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)), {
+      concurrency: 1, // serial so the claim order is deterministic
+    });
+    // Inserted directly so BOTH are pending before any claim; the low one has the smaller id (enqueued earlier).
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
+      [JSON.stringify(msg("rag-index-repo"))],
+    );
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 10)",
+      [JSON.stringify(msg("github-webhook"))],
+    );
+    await q.drain();
+    // github-webhook (priority 10, inserted LATER) is processed BEFORE the earlier rag-index-repo (priority 0).
+    expect(seen).toEqual(["github-webhook", "rag-index-repo"]);
+  });
+
   it("retries then dead-letters after maxRetries", async () => {
     const driver = makeDriver();
     let calls = 0;

@@ -745,12 +745,22 @@ async function main(): Promise<void> {
     ORB_RELAY_MODE: process.env.ORB_RELAY_MODE,
   })
     .then((r) => {
-      if (r === "registered") {
-        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r }));
-      } else if (r === "failed") {
-        // A failed registration means the central Orb won't forward this install's webhooks here — the container
-        // looks alive but reviews NOTHING. Surface at error level so the operator sees a deaf container.
-        console.error(JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed" }));
+      if (r.status === "registered") {
+        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r.status }));
+      } else if (r.status === "failed") {
+        // A failed registration is fatal for PUSH mode (the Orb can't reach our public relay URL → the container
+        // looks alive but reviews NOTHING → error). In PULL mode the outbound drain loop below delivers events
+        // regardless, so a failed announce is only degraded telemetry → warn (not paged as a deaf container).
+        // Either way carry the reason (HTTP status / fetch error) in `error` so Sentry shows WHY, not "(no message)".
+        const pull = process.env.ORB_RELAY_MODE === "pull";
+        console.error(
+          JSON.stringify({
+            level: pull ? "warn" : "error",
+            event: "selfhost_orb_relay_register_failed",
+            mode: pull ? "pull" : "push",
+            error: r.reason ?? "unknown",
+          }),
+        );
       }
     })
     .catch((error) => captureError(error, { kind: "orb_relay_register" }));

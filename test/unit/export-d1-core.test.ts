@@ -32,10 +32,39 @@ describe("export-d1-core redaction (#selfhost-migration)", () => {
     expect(redactRow("repositories", row)).toBe(row);
   });
 
-  it("redacts every DO-NOT-MIGRATE column (token_hash / payload_hash / ciphertext)", () => {
-    expect(REDACTED_COLUMNS).toMatchObject({ auth_sessions: ["token_hash"], webhook_events: ["payload_hash"], repository_ai_keys: ["ciphertext"] });
+  it("redacts every DO-NOT-MIGRATE column", () => {
+    expect(REDACTED_COLUMNS).toMatchObject({
+      auth_sessions: ["token_hash"],
+      webhook_events: ["payload_hash"],
+      repository_ai_keys: ["ciphertext"],
+      submission_user_tokens: ["encrypted_token"],
+      orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt"],
+    });
     expect(redactRow("webhook_events", { delivery_id: "d1", payload_hash: "h" })).toEqual({ delivery_id: "d1" });
     expect(redactRow("repository_ai_keys", { repo_full_name: "o/r", ciphertext: "ENCRYPTED" })).toEqual({ repo_full_name: "o/r" });
+  });
+
+  it("redacts draft OAuth and Orb secret material from self-host exports (regression)", () => {
+    const draftExport = buildTableExport("submission_user_tokens", [
+      { draft_id: "d1", encrypted_token: "LEAK_DRAFT_OAUTH_TOKEN_ENVELOPE", expires_at: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(draftExport?.redactedColumns).toEqual(["encrypted_token"]);
+    expect(draftExport?.rows).toEqual([{ draft_id: "d1", expires_at: "2026-01-01T00:00:00Z" }]);
+
+    const orbExport = buildTableExport("orb_enrollments", [
+      {
+        enroll_id: "e1",
+        installation_id: 42,
+        secret_hash: "LEAK_ORB_ENROLLMENT_SECRET_HASH",
+        relay_secret_enc: "LEAK_RELAY_SECRET",
+        relay_secret_iv: "LEAK_RELAY_IV",
+        relay_secret_salt: "LEAK_RELAY_SALT",
+      },
+    ]);
+    expect(orbExport?.redactedColumns).toEqual(["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt"]);
+    expect(orbExport?.rows).toEqual([{ enroll_id: "e1", installation_id: 42 }]);
+
+    expect(JSON.stringify([draftExport, orbExport])).not.toMatch(/LEAK_/);
   });
 });
 

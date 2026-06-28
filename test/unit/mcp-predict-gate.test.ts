@@ -47,6 +47,19 @@ describe("MCP gittensory_predict_gate", () => {
     expect((minimal.structuredContent as { pack: string }).pack).toBe("oss-anti-slop");
   });
 
+  it("rejects changedPaths entries above the path metadata size cap", async () => {
+    const env = createTestEnv();
+    const client = await connect(env);
+
+    const result = await client.callTool({
+      name: "gittensory_predict_gate",
+      arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Huge path", changedPaths: [`src/${"a".repeat(301)}.ts`] },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("Too big");
+  });
+
   it("predicts the focus-manifest path policy when changedPaths are supplied (#11-13/#18)", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });

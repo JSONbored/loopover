@@ -1,0 +1,5 @@
+# Intentionally no SQLite datasource is provisioned. Grafana must not receive direct access to
+# the live application database; dashboards should use Prometheus/GitHub or a separately redacted
+# reporting database if one is added in the future.
+apiVersion: 1
+datasources: []

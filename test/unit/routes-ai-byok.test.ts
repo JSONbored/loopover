@@ -35,16 +35,47 @@ describe("maintainer AI-review config route", () => {
     await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "enabled", gittensorLabel: "custom-label", blacklistLabel: "abuse" });
     const res = await app.request(
       `/v1/repos/${REPO}/ai-review`,
-      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "block", byok: true, provider: "anthropic", model: "claude-3-5-sonnet-latest" }) },
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "block", byok: true, provider: "anthropic", model: "claude-3-5-sonnet-latest", allAuthors: true, closeOwnerAuthors: true }) },
       env,
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ aiReviewMode: "block", aiReviewByok: true, aiReviewProvider: "anthropic", aiReviewModel: "claude-3-5-sonnet-latest" });
+    expect(await res.json()).toMatchObject({ aiReviewMode: "block", aiReviewByok: true, aiReviewProvider: "anthropic", aiReviewModel: "claude-3-5-sonnet-latest", aiReviewAllAuthors: true, closeOwnerAuthors: true });
     const settings = await getRepositorySettings(env, REPO);
     expect(settings.aiReviewMode).toBe("block");
+    expect(settings.aiReviewAllAuthors).toBe(true); // persisted + read back (DB column round-trip)
+    expect(settings.closeOwnerAuthors).toBe(true); // persisted + read back (DB column round-trip)
     expect(settings.gateCheckMode).toBe("enabled"); // preserved
     expect(settings.gittensorLabel).toBe("custom-label"); // preserved
     expect(settings.blacklistLabel).toBe("abuse"); // #1425 round-trips through the DB
+  });
+
+  it("defaults closeOwnerAuthors off when the AI-review config omits it", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const res = await app.request(
+      `/v1/repos/${REPO}/ai-review`,
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "block", byok: true, provider: "anthropic", model: "claude-3-5-sonnet-latest", allAuthors: true }) },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ closeOwnerAuthors: false });
+    expect((await getRepositorySettings(env, REPO)).closeOwnerAuthors).toBe(false);
+  });
+
+  it("preserves closeOwnerAuthors when an AI-review update omits it", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositorySettings(env, { repoFullName: REPO, closeOwnerAuthors: true });
+
+    const res = await app.request(
+      `/v1/repos/${REPO}/ai-review`,
+      { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "advisory", byok: false }) },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ aiReviewMode: "advisory", closeOwnerAuthors: true });
+    expect((await getRepositorySettings(env, REPO)).closeOwnerAuthors).toBe(true);
   });
 
   it("accepts a config without provider/model (stored as null)", async () => {
@@ -60,6 +91,27 @@ describe("maintainer AI-review config route", () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
     const res = await app.request(`/v1/repos/${REPO}/ai-review`, { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ mode: "loud" }) }, env);
     expect(res.status).toBe(400);
+  });
+
+  it("lets maintainer settings set closeOwnerAuthors without resetting unrelated fields", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "enabled", gittensorLabel: "custom-label" });
+    const res = await app.request(`/v1/repos/${REPO}/settings`, { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ closeOwnerAuthors: true }) }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ closeOwnerAuthors: true, gateCheckMode: "enabled", gittensorLabel: "custom-label" });
+    const settings = await getRepositorySettings(env, REPO);
+    expect(settings.closeOwnerAuthors).toBe(true);
+    expect(settings.gateCheckMode).toBe("enabled");
+  });
+
+  it("lets the internal full settings route persist closeOwnerAuthors", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const res = await app.request(`/v1/internal/repos/${REPO}/settings`, { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ closeOwnerAuthors: true }) }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ closeOwnerAuthors: true });
+    expect((await getRepositorySettings(env, REPO)).closeOwnerAuthors).toBe(true);
   });
 });
 

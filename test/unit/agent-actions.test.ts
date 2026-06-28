@@ -371,6 +371,16 @@ describe("planAgentMaintenanceActions (#778)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, authorIsOwner: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
       expect(plan).toContain("merge");
     });
+
+    it("DOES auto-close a failing owner PR when closeOwnerAuthors is enabled (per-repo opt-in)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: true, closeOwnerAuthors: true, ciState: "passed", pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).toContain("close");
+    });
+
+    it("still does NOT close an AUTOMATION-bot PR even when closeOwnerAuthors is enabled (bots stay exempt)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: false, authorIsAutomationBot: true, closeOwnerAuthors: true, ciState: "passed", pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).not.toContain("close");
+    });
   });
 
   describe("automation-bot guard: never auto-close maintainer-managed accumulator/dependency PRs", () => {
@@ -695,7 +705,7 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     expect(classes(plan)).toEqual(["label", "close"]); // short-circuit: no approve/merge despite a SUCCESS gate
     expect(plan[0]).toMatchObject({ actionClass: "label", label: DEFAULT_BLACKLIST_LABEL, labelOp: "add" });
     expect(plan[1]).toMatchObject({ actionClass: "close", closeKind: "blacklist" });
-    expect(plan[1]?.closeComment).toContain("plagiarism");
+    expect(plan[1]?.closeComment).not.toContain("plagiarism");
     expect(plan[1]?.closeComment).toContain("blocked from contributing");
   });
 
@@ -705,9 +715,11 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     expect(planAgentMaintenanceActions(blacklisted())[0]).toMatchObject({ label: "slop" });
   });
 
-  it("uses a default reason when the entry has none", () => {
-    const plan = planAgentMaintenanceActions(blacklisted({ blacklistMatch: { matched: true, reason: null } }));
-    expect(plan[1]?.closeComment).toContain("blocked from contributing");
+  it("uses the same static public close comment when the entry has no reason", () => {
+    const withReason = planAgentMaintenanceActions(blacklisted());
+    const withoutReason = planAgentMaintenanceActions(blacklisted({ blacklistMatch: { matched: true, reason: null } }));
+    expect(withoutReason[1]?.closeComment).toBe(withReason[1]?.closeComment);
+    expect(withoutReason[1]?.closeComment).toContain("blocked from contributing");
   });
 
   it("fires AHEAD of CI — closes even while CI is still pending (not the pending early-return)", () => {
@@ -728,8 +740,10 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     expect(classes(planAgentMaintenanceActions(blacklisted({ autonomy: { label: "auto" } })))).toEqual(["label"]);
   });
 
-  it("sanitizes the close comment — a forbidden term in the reason never reaches the public thread", () => {
-    const plan = planAgentMaintenanceActions(blacklisted({ blacklistMatch: { matched: true, reason: "leaked a wallet address" } }));
-    expect(plan[1]?.closeComment).not.toMatch(/wallet/i);
+  it("never publishes blacklist reason text in the public close comment", () => {
+    const privateReason = "internal-case-7421-do-not-publish";
+    const plan = planAgentMaintenanceActions(blacklisted({ blacklistMatch: { matched: true, reason: privateReason } }));
+    expect(plan[1]?.closeComment).not.toContain(privateReason);
+    expect(plan[1]?.closeComment).toContain("blocked from contributing");
   });
 });

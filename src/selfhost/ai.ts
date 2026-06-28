@@ -50,6 +50,20 @@ export function resolveEffort(configured: string | undefined): string {
   return VALID_EFFORTS.has(level) ? level : "high";
 }
 
+// Per-effort subprocess timeout (ms) for the subscription CLIs. A higher effort legitimately runs longer, so the
+// old fixed 120s cap silently SIGKILLed a large max-effort review mid-generation (the review then degrades to
+// nothing). These scale the ceiling with the effort dial; AI_TIMEOUT_MS overrides them outright.
+const EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 120_000, high: 240_000, xhigh: 360_000, max: 600_000 };
+
+/** Resolve the subscription-CLI subprocess timeout (ms). An explicit `AI_TIMEOUT_MS` wins, clamped to a sane
+ *  30s–30min range so a typo can neither hang a worker nor cut a review off after a few seconds. Absent/invalid ⇒
+ *  it scales with the `AI_EFFORT` dial (resolveEffort always yields a known level, so the map lookup is total). */
+export function resolveCliTimeoutMs(env: Record<string, string | undefined>): number {
+  const raw = Number(env.AI_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(1_800_000, Math.max(30_000, raw));
+  return EFFORT_TIMEOUT_MS[resolveEffort(env.AI_EFFORT)]!;
+}
+
 /** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
 export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: string | undefined; model?: string | undefined; embedModel?: string | undefined }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
@@ -114,15 +128,50 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
 }
 
 // ── Subscription CLI providers (#979) — locally-authenticated `claude` / `codex` as a subprocess ──────────
-// SECURITY: the child env DELETES the billable API keys so a misconfigured CLI cannot silently bill the
-// metered API instead of using the subscription OAuth token. The CLI runs read-only / no extra tools. Any
-// non-zero exit / empty output / error-envelope THROWS so the caller degrades — never a silent answer.
-const BILLABLE_KEY_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"] as const;
+// SECURITY: subscription CLIs get a strict allowlisted env, not the worker env. This keeps runtime
+// credentials out of prompt-injectable subprocesses while preserving CLI auth/home/proxy/cert settings. The CLI
+// runs read-only / no extra tools, and non-zero exit / empty output / error-envelope THROWS so the caller degrades.
+const SUBSCRIPTION_CLI_ENV_ALLOWLIST = [
+  "CODEX_HOME",
+  "HOME",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "LANG",
+  "LC_ALL",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_PROXY",
+  "PATH",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "TERM",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+] as const;
 
-function scrubBillableKeys(parent: Record<string, string | undefined>): Record<string, string | undefined> {
-  const child = { ...parent };
-  for (const k of BILLABLE_KEY_VARS) delete child[k];
+export function subscriptionCliEnv(
+  parent: Record<string, string | undefined>,
+  extra: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  const child: Record<string, string | undefined> = {};
+  for (const key of SUBSCRIPTION_CLI_ENV_ALLOWLIST) {
+    const value = parent[key];
+    if (value !== undefined) child[key] = value;
+  }
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) child[key] = value;
+  }
   return child;
+}
+
+async function isolatedCliCwd(): Promise<string> {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  return mkdtemp(join(tmpdir(), "gittensory-ai-"));
 }
 
 /** Pull the assistant's final text out of a CLI's JSON output (Claude Code `{result}` or Codex JSONL). */
@@ -163,15 +212,22 @@ export function claudeErrorStatus(stdout: string): string | null {
   return null;
 }
 
-type SpawnFn = (cmd: string, args: string[], opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number }) => Promise<{ stdout: string; code: number | null }>;
+type SpawnFn = (
+  cmd: string,
+  args: string[],
+  opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number; cwd?: string },
+) => Promise<{ stdout: string; code: number | null; stderr?: string }>;
 
 async function defaultSpawn(): Promise<SpawnFn> {
   const cp = await import("node:child_process");
   return (cmd, args, o) =>
     new Promise((resolve, reject) => {
       const stdio: ["pipe", "pipe", "pipe"] = ["pipe", "pipe", "pipe"];
-      const child = cp.spawn(cmd, args, { env: o.env as NodeJS.ProcessEnv, stdio });
+      const child = cp.spawn(cmd, args, { cwd: o.cwd, env: o.env as NodeJS.ProcessEnv, stdio });
       let stdout = "";
+      // Capture stderr too — the CLI's actual error (auth, rate limit, model-not-supported, OOM) lands here, and
+      // it's what makes a `claude_code_exit_1` / `codex_exit_1` diagnosable instead of an opaque exit code (#26).
+      let stderr = "";
       /* v8 ignore start */ // a 120s subprocess timeout is not unit-testable without a 2-minute wait
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
@@ -179,13 +235,14 @@ async function defaultSpawn(): Promise<SpawnFn> {
       }, o.timeoutMs);
       /* v8 ignore stop */
       child.stdout?.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+      child.stderr?.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
       child.on("error", (e) => {
         clearTimeout(timer);
         reject(e);
       });
       child.on("close", (code) => {
         clearTimeout(timer);
-        resolve({ stdout, code });
+        resolve({ stdout, code, stderr });
       });
       if (o.input != null) {
         child.stdin?.write(o.input);
@@ -194,22 +251,58 @@ async function defaultSpawn(): Promise<SpawnFn> {
     });
 }
 
+/** Credential/token shapes that must never reach logs or Sentry. High-precision (prefixed key formats + JWT, each
+ *  anchored on a word boundary) so genuine diagnostics — auth/rate-limit/model errors — survive redaction. */
+const SECRET_PATTERNS: readonly RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g, // OpenAI / Anthropic keys (sk-..., sk-ant-..., sk-proj-...)
+  /\bgh[oprsu]_[A-Za-z0-9]{20,}/g, // GitHub PAT / OAuth / server / refresh tokens
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // GitHub fine-grained PAT
+  /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, // JWT (header.payload.signature)
+  /\bAKIA[0-9A-Z]{16}/g, // AWS access key id
+];
+
+/** Redact secrets from untrusted CLI stderr before it enters an error message that flows to logs/Sentry. The
+ *  claude/codex subprocesses can echo back the OAuth token we hand them via env (or a key from a config they read),
+ *  and the central Sentry forwarder only scrubs secret-KEYED fields, never free-text — so a token inside an error
+ *  string would otherwise leak. Strips the caller's known secret values exactly, then well-known token shapes. */
+export function redactSecrets(text: string, knownSecrets: readonly string[] = []): string {
+  let out = text;
+  for (const secret of knownSecrets) {
+    // Length-guard so a short/empty token (e.g. a stubbed "t") can't blank out unrelated diagnostic text.
+    if (secret.length >= 8) out = out.split(secret).join("[redacted]");
+  }
+  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, "[redacted]");
+  return out;
+}
+
 /** Claude Code subscription (CLAUDE_CODE_OAUTH_TOKEN via `claude setup-token`). Headless, read-only, JSON. */
 export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
+      // Claude has no embeddings model (CLI or API), so REJECT an embed request and let the provider chain fall
+      // through to an embed-capable provider (ollama/openai-compatible). Without this throw the chain would treat
+      // claude's empty-prompt text answer as "success" and never reach the embed provider → RAG silently breaks.
+      if (options.text) throw new Error("claude_code_no_embed");
       const token = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
       if (!token) throw new Error("claude_code_no_oauth_token");
-      const env = scrubBillableKeys(parentEnv);
-      env.CLAUDE_CODE_OAUTH_TOKEN = token;
+      const env = subscriptionCliEnv(parentEnv, { CLAUDE_CODE_OAUTH_TOKEN: token });
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
       const claudeModel = resolveModel(configuredModel(parentEnv), model, "claude-sonnet-4-6");
       const effort = resolveEffort(parentEnv.AI_EFFORT);
-      const { stdout, code } = await spawn("claude", ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"], { env, input: prompt, timeoutMs: 120_000 });
-      if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}`);
+      const { stdout, code, stderr } = await spawn(
+        "claude",
+        ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"],
+        { env, input: prompt, timeoutMs: resolveCliTimeoutMs(parentEnv), cwd: await isolatedCliCwd() },
+      );
+      // Surface the STRUCTURED error envelope FIRST. `claude --output-format json` reports API/auth/model errors in its
+      // stdout JSON ({is_error,api_error_status}) on a NON-ZERO exit too — e.g. an unknown model exits 1 with the 404
+      // envelope in stdout and EMPTY stderr. Checking it before the exit code turns an opaque `claude_code_exit_1: `
+      // (the #1610 symptom) into a precise `claude_code_error_404` — the signal that makes a reviewer outage
+      // diagnosable in logs + Sentry instead of a dead end.
       const errStatus = claudeErrorStatus(stdout);
       if (errStatus) throw new Error(`claude_code_error_${errStatus}`);
+      if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}: ${redactSecrets(stderr ?? "", [token]).slice(0, 500)}`);
       const text = extractCliText(stdout);
       if (!text) throw new Error("claude_code_empty_output");
       return { response: text };
@@ -223,7 +316,9 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
 export function createCodexAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
-      const env = scrubBillableKeys(parentEnv);
+      // Codex is chat-only here — reject embed requests so the chain routes them to an embed-capable provider.
+      if (options.text) throw new Error("codex_no_embed");
+      const env = subscriptionCliEnv(parentEnv);
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
       // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).
@@ -234,8 +329,12 @@ export function createCodexAi(parentEnv: Record<string, string | undefined>, spa
       const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
       if (codexModel) args.push("--model", codexModel);
       args.push("--", prompt);
-      const { stdout, code } = await spawn("codex", args, { env, timeoutMs: 120_000 });
-      if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}`);
+      const { stdout, code, stderr } = await spawn("codex", args, {
+        env,
+        timeoutMs: resolveCliTimeoutMs(parentEnv),
+        cwd: await isolatedCliCwd(),
+      });
+      if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}: ${redactSecrets(stderr ?? "").slice(0, 500)}`);
       const text = extractCliText(stdout);
       if (!text) throw new Error("codex_empty_output");
       return { response: text };
@@ -328,13 +427,30 @@ export function resolveProviderNames(env: Record<string, string | undefined>): s
   return buildProviders(env).map((p) => p.name);
 }
 
-/** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list of TWO+ providers is addressable
- *  by name for dual review (see `routeProviders`) and otherwise falls back through them in order; a single
- *  provider is used directly. Returns undefined when unconfigured or no provider has its credential. */
+/** CLI-subscription providers need their binary present on PATH; keep boot preflight parsing identical to AI_PROVIDER. */
+export function resolveRequiredCliProviders(env: Record<string, string | undefined>): Array<{ provider: string; cli: string }> {
+  const seen = new Set<string>();
+  return resolveProviderNames(env)
+    .map((provider) =>
+      provider === "claude-code" ? { provider, cli: "claude" } : provider === "codex" ? { provider, cli: "codex" } : undefined,
+    )
+    .filter((required): required is { provider: string; cli: string } => {
+      if (!required || seen.has(required.provider)) return false;
+      seen.add(required.provider);
+      return true;
+    });
+}
+
+/** Select the self-host AI provider(s) from AI_PROVIDER and wrap them in the name-aware router. A comma-separated
+ *  list of TWO+ providers is addressable by name for dual review (see `routeProviders`) and otherwise falls back
+ *  through them in order; a SINGLE provider is wrapped the same way — NOT returned bare — so a reviewer-plan address
+ *  that names the provider (`{ model: "claude-code" }`, the single-provider plan from `resolveAiReviewerPlan`)
+ *  resolves to that provider's own default model instead of reaching it verbatim as `claude --model claude-code`
+ *  (a 404 that broke every review on a single-provider self-host, #1610). Returns undefined when unconfigured or no
+ *  provider has its credential. */
 export function createSelfHostAi(env: Record<string, string | undefined>): SelfHostAi | undefined {
   const providers = buildProviders(env);
   if (providers.length === 0) return undefined;
-  if (providers.length === 1) return providers[0]?.ai;
   return routeProviders(providers);
 }
 

@@ -156,10 +156,14 @@ describe("buildReviewRagContext: retrieval wiring + fail-safe", () => {
     expect(vec.query).not.toHaveBeenCalled();
   });
 
-  it("fail-safe: a THROWING vector query degrades to empty context (never throws)", async () => {
+  it("fail-safe: a THROWING vector query degrades to empty context (never throws) + surfaces it at ERROR for Sentry (#5)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const vec = { ...vectorizeStub(), query: vi.fn(async () => { throw new Error("vectorize down"); }) };
     const env = createTestEnv({ DB: ragDbStub(), VECTORIZE: vec as unknown as Vectorize, AI: aiStub() as unknown as Ai });
     await expect(buildReviewRagContext(env, { repoFullName: "acme/rag-throw-1", files: changedFiles })).resolves.toBe("");
+    // A broken RAG backend now surfaces at level:error (central Sentry forwarder) instead of degrading invisibly.
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("review_context_fetch_failed") && String(c[0]).includes('"contextType":"rag"'))).toBe(true);
+    errSpy.mockRestore();
   });
 
   it("fail-safe: no changed files → empty context, no adapter use", async () => {

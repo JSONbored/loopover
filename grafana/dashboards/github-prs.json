@@ -1,0 +1,376 @@
+{
+  "uid": "gittensory-github",
+  "title": "Gittensory — Upstream PRs & issues (GitHub)",
+  "tags": ["gittensory", "github", "maintainer"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "description": "Live upstream census straight from the GitHub API. 'Open' counts ignore the time range (current state); the 'in range' flow counts respect it. Large result sets are capped at 1000 rows by the data source, so flow uses sensible windows rather than all-time totals.",
+  "templating": {
+    "list": [
+      {
+        "name": "scope",
+        "label": "Scope",
+        "type": "custom",
+        "query": "All repos : org:JSONbored, metagraphed : repo:JSONbored/metagraphed, gittensory : repo:JSONbored/gittensory, awesome-claude : repo:JSONbored/awesome-claude, metagraphed-ui : repo:JSONbored/metagraphed-ui",
+        "current": { "text": "All repos", "value": "org:JSONbored" },
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Current state · $scope",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Open PRs",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": { "query": "$scope is:pr is:open", "timeField": 4 }
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Open & draft",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": {
+            "query": "$scope is:pr is:open is:draft",
+            "timeField": 4
+          }
+        }
+      ]
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Open issues",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Issues",
+          "owner": "",
+          "repository": "",
+          "options": { "query": "$scope is:issue is:open" }
+        }
+      ]
+    },
+
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Mergeable now",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "green" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": {
+            "query": "$scope is:pr is:open -is:draft",
+            "timeField": 4
+          }
+        }
+      ]
+    },
+
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Flow (within the selected time range) · $scope",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "PRs opened",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 7 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": { "query": "$scope is:pr", "timeField": 1 }
+        }
+      ]
+    },
+
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "PRs merged",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 7 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "green" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": { "query": "$scope is:pr is:merged", "timeField": 2 }
+        }
+      ]
+    },
+
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "PRs closed unmerged",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 7 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "red" } }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["count"], "fields": "/^number$/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": {
+            "query": "$scope is:pr is:closed is:unmerged",
+            "timeField": 0
+          }
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Open PR triage · $scope",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 11 }
+    },
+
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Open pull requests (oldest first)",
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 12 },
+      "datasource": { "type": "grafana-github-datasource", "uid": "github" },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [{ "displayName": "Opened", "desc": false }]
+      },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "filterable": true } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "url" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "number" },
+            "properties": [
+              { "id": "displayName", "value": "PR" },
+              { "id": "custom.width", "value": 64 },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open PR on GitHub",
+                    "url": "${__data.fields.url}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "repository" },
+            "properties": [
+              { "id": "displayName", "value": "Repo" },
+              { "id": "custom.width", "value": 130 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "title" },
+            "properties": [
+              { "id": "displayName", "value": "Title" },
+              { "id": "custom.width", "value": 360 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "author_login" },
+            "properties": [
+              { "id": "displayName", "value": "Author" },
+              { "id": "custom.width", "value": 130 },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open author on GitHub",
+                    "url": "https://github.com/${__data.fields.author_login}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "is_draft" },
+            "properties": [
+              { "id": "displayName", "value": "Draft" },
+              { "id": "custom.width", "value": 70 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "mergeable" },
+            "properties": [{ "id": "custom.width", "value": 110 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "created_at" },
+            "properties": [
+              { "id": "displayName", "value": "Opened" },
+              { "id": "custom.width", "value": 170 },
+              { "id": "unit", "value": "dateTimeFromNow" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "labels" },
+            "properties": [{ "id": "displayName", "value": "Labels" }]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "additions": true,
+              "deletions": true,
+              "state": true,
+              "author_name": true,
+              "author_email": true,
+              "author_company": true,
+              "closed": true,
+              "locked": true,
+              "merged": true,
+              "closed_at": true,
+              "merged_at": true,
+              "merged_by_name": true,
+              "merged_by_login": true,
+              "merged_by_email": true,
+              "merged_by_company": true,
+              "updated_at": true,
+              "open_time": true
+            },
+            "indexByName": {
+              "number": 0,
+              "repository": 1,
+              "title": 2,
+              "author_login": 3,
+              "is_draft": 4,
+              "mergeable": 5,
+              "created_at": 6,
+              "labels": 7,
+              "url": 8
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "Pull_Requests",
+          "owner": "",
+          "repository": "",
+          "options": { "query": "$scope is:pr is:open", "timeField": 4 }
+        }
+      ]
+    }
+  ]
+}

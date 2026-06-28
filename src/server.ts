@@ -6,13 +6,19 @@
 // Serves the Hono app via @hono/node-server, drives the queue with the same processJob, ticks the same
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
+import {
+  createOpenAiCompatibleAi,
+  createSelfHostAi,
+  resolveAiReviewerPlan,
+  resolveRequiredCliProviders,
+} from "./selfhost/ai";
 import {
   cookieValue,
   credentialsToEnv,
@@ -28,7 +34,11 @@ import {
 import { isOrbBrokerMode, registerOrbRelayTarget } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
-import { readiness, sqliteBackupAdvisory, type ReadinessProbe } from "./selfhost/health";
+import {
+  readiness,
+  sqliteBackupAdvisory,
+  type ReadinessProbe,
+} from "./selfhost/health";
 import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter } from "./selfhost/pg-adapter";
@@ -37,8 +47,20 @@ import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
 import { createFsBlobStore } from "./selfhost/blob-store";
-import { makeLocalManifestReader } from "./selfhost/private-config";
-import { setLocalManifestReader } from "./signals/focus-manifest-loader";
+import {
+  makeLocalManifestReader,
+  makeLocalReviewContextReader,
+} from "./selfhost/private-config";
+import {
+  captureError,
+  flushSentry,
+  initSentry,
+  installStructuredLogForwarding,
+} from "./selfhost/sentry";
+import {
+  setLocalManifestReader,
+  setLocalReviewContextReader,
+} from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -48,16 +70,31 @@ function loadFileSecrets(): void {
     const target = key.slice(0, -"_FILE".length);
     if (process.env[target]) continue; // an explicit value wins
     try {
-      process.env[target] = readFileSync(process.env[key] as string, "utf8").trim();
+      process.env[target] = readFileSync(
+        process.env[key] as string,
+        "utf8",
+      ).trim();
     } catch {
-      console.error(JSON.stringify({ level: "error", event: "selfhost_secret_file_unreadable", var: key }));
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_secret_file_unreadable",
+          var: key,
+        }),
+      );
     }
   }
 }
 
 interface Backend {
   db: D1Database;
-  queue: { binding: Queue; start(): void; stop(): Promise<void>; size(): number | Promise<number>; deadCount(): number | Promise<number> };
+  queue: {
+    binding: Queue;
+    start(): void;
+    stop(): Promise<void>;
+    size(): number | Promise<number>;
+    deadCount(): number | Promise<number>;
+  };
   vectorize?: Vectorize;
   shutdown(): Promise<void>;
 }
@@ -78,9 +115,19 @@ async function waitForPostgres(url: string, maxWaitMs = 30_000): Promise<void> {
       await client.end().catch(() => undefined);
       attempt++;
       const elapsed = Date.now() - start;
-      if (elapsed >= maxWaitMs) throw new Error(`Postgres not ready after ${maxWaitMs}ms (${attempt} attempts)`);
+      if (elapsed >= maxWaitMs)
+        throw new Error(
+          `Postgres not ready after ${maxWaitMs}ms (${attempt} attempts)`,
+        );
       const delay = Math.min(2000, 200 * attempt);
-      console.log(JSON.stringify({ event: "selfhost_pg_wait", attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
+      console.log(
+        JSON.stringify({
+          event: "selfhost_pg_wait",
+          attempt,
+          elapsed_ms: elapsed,
+          retry_in_ms: delay,
+        }),
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -90,7 +137,11 @@ async function waitForPostgres(url: string, maxWaitMs = 30_000): Promise<void> {
  *  crash-restart loop when gittensory starts before a dependency (e.g. Qdrant) is accepting connections —
  *  Qdrant's init is a single fetch with no retry, so a slow-starting --profile qdrant container would
  *  otherwise take the whole process down. */
-async function retryUntilReady(name: string, op: () => Promise<void>, maxWaitMs = 30_000): Promise<void> {
+async function retryUntilReady(
+  name: string,
+  op: () => Promise<void>,
+  maxWaitMs = 30_000,
+): Promise<void> {
   const start = Date.now();
   let attempt = 0;
   while (true) {
@@ -101,17 +152,30 @@ async function retryUntilReady(name: string, op: () => Promise<void>, maxWaitMs 
       attempt++;
       const elapsed = Date.now() - start;
       if (elapsed >= maxWaitMs) {
-        throw new Error(`${name} not ready after ${maxWaitMs}ms (${attempt} attempts): ${error instanceof Error ? error.message : "unknown error"}`);
+        throw new Error(
+          `${name} not ready after ${maxWaitMs}ms (${attempt} attempts): ${error instanceof Error ? error.message : "unknown error"}`,
+        );
       }
       const delay = Math.min(2000, 200 * attempt);
-      console.log(JSON.stringify({ event: "selfhost_dependency_wait", dependency: name, attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
+      console.log(
+        JSON.stringify({
+          event: "selfhost_dependency_wait",
+          dependency: name,
+          attempt,
+          elapsed_ms: elapsed,
+          retry_in_ms: delay,
+        }),
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
 }
 
 /** Build the Postgres backend (shared DB + queue) when DATABASE_URL is a postgres:// URL. */
-async function buildPostgresBackend(url: string, consume: (m: JobMessage) => Promise<void>): Promise<Backend> {
+async function buildPostgresBackend(
+  url: string,
+  consume: (m: JobMessage) => Promise<void>,
+): Promise<Backend> {
   await waitForPostgres(url);
   const pg = (await import("pg")).default;
   pg.types.setTypeParser(20, (v: string) => Number.parseInt(v, 10)); // int8 (COUNT) → number, like D1
@@ -136,9 +200,15 @@ async function buildPostgresBackend(url: string, consume: (m: JobMessage) => Pro
 }
 
 /** Build the SQLite backend (single file, default). */
-function buildSqliteBackend(consume: (m: JobMessage) => Promise<void>): Backend {
-  const sqlite = new DatabaseSync(process.env.DATABASE_PATH ?? "/data/gittensory.sqlite");
-  sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+function buildSqliteBackend(
+  consume: (m: JobMessage) => Promise<void>,
+): Backend {
+  const sqlite = new DatabaseSync(
+    process.env.DATABASE_PATH ?? "/data/gittensory.sqlite",
+  );
+  sqlite.exec(
+    "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
+  );
   const driver = nodeSqliteDriver(sqlite as never);
   const db = createD1Adapter(driver);
   const queue = createSqliteQueue(driver, consume);
@@ -164,40 +234,161 @@ async function main(): Promise<void> {
   // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
   // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
-  setLocalManifestReader(makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR));
+  setLocalManifestReader(
+    makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
+  );
+  // Per-repo review CONTEXT (#review-skills): the same config dir also holds `<repo>/review/CLAUDE.md` + skills/*.md,
+  // injected into the reviewer prompt so reviews follow each repo's conventions. Unset dir ⇒ null reader ⇒ no change.
+  setLocalReviewContextReader(
+    makeLocalReviewContextReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
+  );
+  // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
+  // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,
+  // review failures) are wired at their sites.
+  if (await initSentry(process.env)) {
+    console.log(
+      JSON.stringify({
+        event: "selfhost_sentry",
+        environment: process.env.SENTRY_ENVIRONMENT ?? "production",
+      }),
+    );
+    process.on("uncaughtException", (error) => {
+      captureError(error, { kind: "uncaughtException" });
+      console.error(error);
+      void flushSentry().finally(() => process.exit(1));
+    });
+    process.on("unhandledRejection", (reason) => {
+      captureError(reason, { kind: "unhandledRejection" });
+      console.error(reason);
+    });
+    // Central error forwarding (#1468): operational failures are structured JSON logs emitted through stdout and
+    // stderr. Wrap both sinks so every level:"error"/"fatal" line surfaces as a Sentry issue WITHOUT per-site wiring.
+    installStructuredLogForwarding();
+  }
   const startedAt = Date.now();
 
   // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event
   // arrives, by which point env is set).
   let env: Env;
   const consume = async (message: JobMessage): Promise<void> => {
-    await processJob(env, message);
+    try {
+      await processJob(env, message);
+    } catch (error) {
+      // Self-host best-effort jobs (#registry-soft-fail): the periodic gittensor-registry refresh re-runs every cron
+      // tick, so a degraded/unconfigured GITTENSOR_REGISTRY_URL would otherwise retry→dead-letter EVERY cycle and
+      // flood the dead-letter alert. Swallow its failure here (the next scheduled tick is the retry); keep the last
+      // snapshot. The Cloudflare Worker path (src/index.ts) is untouched, so its rate-limit-aware retry is preserved.
+      if (message.type === "refresh-registry") {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "refresh_registry_soft_fail",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return;
+      }
+      throw error;
+    }
   };
 
   const databaseUrl = process.env.DATABASE_URL;
   const usePostgres = !!databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl);
-  const backend = usePostgres ? await buildPostgresBackend(databaseUrl as string, consume) : buildSqliteBackend(consume);
-  console.log(JSON.stringify({ event: "selfhost_backend", backend: usePostgres ? "postgres" : "sqlite" }));
+  const backend = usePostgres
+    ? await buildPostgresBackend(databaseUrl as string, consume)
+    : buildSqliteBackend(consume);
+  console.log(
+    JSON.stringify({
+      event: "selfhost_backend",
+      backend: usePostgres ? "postgres" : "sqlite",
+    }),
+  );
   // Data-safety advisory (#8): warn LOUDLY at boot if running on a single SQLite file with no acknowledged backup,
   // so an operator doesn't run with zero durability while /ready answers 200.
-  const backupAdvisory = sqliteBackupAdvisory({ usingSqlite: !usePostgres, backupAcknowledged: process.env.BACKUP_ACKNOWLEDGED === "true" });
-  if (backupAdvisory) console.warn(JSON.stringify({ level: "warn", event: "selfhost_backup_advisory", message: backupAdvisory }));
+  const backupAdvisory = sqliteBackupAdvisory({
+    usingSqlite: !usePostgres,
+    backupAcknowledged: process.env.BACKUP_ACKNOWLEDGED === "true",
+  });
+  if (backupAdvisory)
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "selfhost_backup_advisory",
+        message: backupAdvisory,
+      }),
+    );
 
-  const applied = await runSelfHostMigrations(backend.db, process.env.MIGRATIONS_DIR ?? "migrations");
-  console.log(JSON.stringify({ event: "selfhost_migrations_applied", count: applied }));
+  const applied = await runSelfHostMigrations(
+    backend.db,
+    process.env.MIGRATIONS_DIR ?? "migrations",
+  );
+  console.log(
+    JSON.stringify({ event: "selfhost_migrations_applied", count: applied }),
+  );
 
   const ai = createSelfHostAi(process.env);
-  if (ai) console.log(JSON.stringify({ event: "selfhost_ai_provider", provider: process.env.AI_PROVIDER }));
+  if (ai)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_ai_provider",
+        provider: process.env.AI_PROVIDER,
+      }),
+    );
+  // Fail-LOUD preflight (#1566): a CLI-subscription provider (claude-code/codex) reviews by spawning the CLI as a
+  // subprocess; if the binary is absent (image built without INSTALL_AI_CLIS=true) the spawn ENOENTs and EVERY AI
+  // review silently degrades to "no usable output". Shout at boot so the misconfig is obvious, never invisible.
+  const pathDirs = (process.env.PATH ?? "").split(delimiter);
+  for (const { provider, cli } of resolveRequiredCliProviders(process.env)) {
+    if (pathDirs.some((d) => d && existsSync(join(d, cli)))) continue;
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_ai_cli_missing",
+        provider,
+        cli,
+        message: `AI_PROVIDER=${process.env.AI_PROVIDER} includes ${provider} but '${cli}' is not on PATH — every ${provider} AI review will produce NO output. Rebuild the image with --build-arg INSTALL_AI_CLIS=true (or use the published image) and authenticate the CLI.`,
+      }),
+    );
+  }
+  // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
+  // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of
+  // the review chain — so a Claude/Codex outage never falls reviews back to a weak local model. Unset ⇒ absent ⇒
+  // createReviewAdapters falls back to the review `ai` for embeds (byte-identical to before).
+  const embedAi = process.env.AI_EMBED_BASE_URL
+    ? createOpenAiCompatibleAi({
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
+        embedModel: process.env.AI_EMBED_MODEL,
+      })
+    : undefined;
+  if (embedAi)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_embed_provider",
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        model: process.env.AI_EMBED_MODEL ?? "bge-m3",
+      }),
+    );
   // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
   // below so the review call site uses it. Undefined for a single provider's default review or no AI.
   const aiReviewPlan = resolveAiReviewerPlan(process.env);
-  if (aiReviewPlan) console.log(JSON.stringify({ event: "selfhost_ai_review_plan", reviewers: aiReviewPlan.reviewers.map((r) => r.model), combine: aiReviewPlan.combine }));
+  if (aiReviewPlan)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_ai_review_plan",
+        reviewers: aiReviewPlan.reviewers.map((r) => r.model),
+        combine: aiReviewPlan.combine,
+      }),
+    );
 
   // /ready gates on every CONFIGURED optional backend (below) so a load balancer never routes to an instance whose
   // Redis/Qdrant is down. Each probe owns a short timeout so a hung backend can't hang the readiness check.
   const readinessProbes: ReadinessProbe[] = [];
   const withTimeout = (p: Promise<boolean>, ms = 1500): Promise<boolean> =>
-    Promise.race([p, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms))]);
+    Promise.race([
+      p,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
+    ]);
 
   // Redis fixed-window rate limiter + webhook dedup cache (else absent when REDIS_URL is unset).
   let rateLimiter: DurableObjectNamespace | undefined;
@@ -205,24 +396,64 @@ async function main(): Promise<void> {
   if (process.env.REDIS_URL) {
     const { Redis } = await import("ioredis");
     const redisClient = new Redis(process.env.REDIS_URL);
-    const { createRedisRateLimiter } = await import("./selfhost/redis-ratelimit");
+    const { createRedisRateLimiter } =
+      await import("./selfhost/redis-ratelimit");
     const { createRedisCache } = await import("./selfhost/redis-cache");
     rateLimiter = createRedisRateLimiter(redisClient);
     webhookCache = createRedisCache(redisClient);
-    readinessProbes.push({ name: "redis", check: () => withTimeout(redisClient.ping().then(() => true)) });
-    console.log(JSON.stringify({ event: "selfhost_rate_limiter", backend: "redis" }));
+    // Persist the installation-token cache in Redis so warm GitHub App tokens survive restarts/deploys and are
+    // shared across replicas (the in-isolate Map otherwise re-mints — an Orb round-trip — per replica/cold start).
+    const { createRedisTokenCache } =
+      await import("./selfhost/redis-token-cache");
+    const { setInstallationTokenStore, setGitHubResponseCache } =
+      await import("./github/app");
+    setInstallationTokenStore(createRedisTokenCache(redisClient));
+    // Short-TTL cache for safe GitHub GET responses (dedups the ~24 reads per review). Default 20s; 0 disables.
+    const ghCacheTtl = Math.max(
+      0,
+      Number(process.env.GITHUB_CACHE_TTL_SECONDS ?? "20"),
+    );
+    if (ghCacheTtl > 0) {
+      const { createRedisResponseCache } =
+        await import("./selfhost/redis-response-cache");
+      setGitHubResponseCache(createRedisResponseCache(redisClient, ghCacheTtl));
+    }
+    readinessProbes.push({
+      name: "redis",
+      check: () => withTimeout(redisClient.ping().then(() => true)),
+    });
+    console.log(
+      JSON.stringify({
+        event: "selfhost_rate_limiter",
+        backend: "redis",
+        githubResponseCacheTtl: ghCacheTtl,
+      }),
+    );
   }
 
   // Qdrant vector store — overrides the backend's built-in sqlite-vec / pgvector when QDRANT_URL is set.
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
     const qdrantUrl = process.env.QDRANT_URL;
-    const { createQdrantVectorize, initQdrantCollection } = await import("./selfhost/qdrant-vectorize");
+    const { createQdrantVectorize, initQdrantCollection, qdrantReadyzUrl } =
+      await import("./selfhost/qdrant-vectorize");
     // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
     await retryUntilReady("qdrant", () => initQdrantCollection(qdrantUrl));
     vectorizeOverride = createQdrantVectorize(qdrantUrl);
-    readinessProbes.push({ name: "qdrant", check: () => withTimeout(fetch(qdrantUrl, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok).catch(() => false)) });
-    console.log(JSON.stringify({ event: "selfhost_vectorize", backend: "qdrant" }));
+    readinessProbes.push({
+      name: "qdrant",
+      check: () =>
+        withTimeout(
+          fetch(qdrantReadyzUrl(qdrantUrl), {
+            signal: AbortSignal.timeout(1500),
+          })
+            .then((r) => r.ok)
+            .catch(() => false),
+        ),
+    });
+    console.log(
+      JSON.stringify({ event: "selfhost_vectorize", backend: "qdrant" }),
+    );
   }
 
   env = {
@@ -231,9 +462,14 @@ async function main(): Promise<void> {
     JOBS: backend.queue.binding,
     WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(embedAi ? { AI_EMBED: embedAi as unknown as Ai } : {}),
     ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
-    ...(vectorizeOverride ? { VECTORIZE: vectorizeOverride } : backend.vectorize ? { VECTORIZE: backend.vectorize } : {}),
+    ...(vectorizeOverride
+      ? { VECTORIZE: vectorizeOverride }
+      : backend.vectorize
+        ? { VECTORIZE: backend.vectorize }
+        : {}),
     ...(rateLimiter ? { RATE_LIMITER: rateLimiter } : {}),
     // Visual review: when BROWSER_WS_ENDPOINT is set, expose a truthy BROWSER binding so shot.ts's
     // `if (!env.BROWSER) return` guard is bypassed; the puppeteer stub then connects via WS.
@@ -241,28 +477,38 @@ async function main(): Promise<void> {
     // Visual screenshot persistence (#10): bind an fs-backed REVIEW_AUDIT store when REVIEW_AUDIT_DIR is set so
     // captured PNGs are cached + served from /gittensory/shot?key=… instead of re-rendering on demand. Unset ⇒
     // no binding ⇒ on-demand behavior, byte-identical to before.
-    ...(process.env.REVIEW_AUDIT_DIR ? { REVIEW_AUDIT: createFsBlobStore(process.env.REVIEW_AUDIT_DIR) } : {}),
+    ...(process.env.REVIEW_AUDIT_DIR
+      ? { REVIEW_AUDIT: createFsBlobStore(process.env.REVIEW_AUDIT_DIR) }
+      : {}),
   } as unknown as Env;
 
   gauge("gittensory_queue_pending", () => backend.queue.size());
   gauge("gittensory_queue_dead", () => backend.queue.deadCount());
-  gauge("gittensory_uptime_seconds", () => Math.floor((Date.now() - startedAt) / 1000));
+  gauge("gittensory_uptime_seconds", () =>
+    Math.floor((Date.now() - startedAt) / 1000),
+  );
   // Pre-initialize job counters to 0 so they appear in the first Prometheus scrape (lazy counters
   // created on first use would otherwise cause "No data" in Grafana until the first job event).
   for (const c of [
-    "gittensory_jobs_enqueued_total", "gittensory_jobs_processed_total",
-    "gittensory_jobs_failed_total", "gittensory_jobs_dead_total",
+    "gittensory_jobs_enqueued_total",
+    "gittensory_jobs_processed_total",
+    "gittensory_jobs_failed_total",
+    "gittensory_jobs_dead_total",
     "gittensory_webhook_dedup_total",
-    "gittensory_qdrant_queries_total", "gittensory_qdrant_upserts_total",
-    "gittensory_orb_events_exported_total", "gittensory_orb_export_errors_total",
+    "gittensory_qdrant_queries_total",
+    "gittensory_qdrant_upserts_total",
+    "gittensory_orb_events_exported_total",
+    "gittensory_orb_export_errors_total",
   ])
     incr(c, undefined, 0);
   // Seed gittensory_http_requests_total per status class so the breakdown panel has every series from the
   // first scrape (keeping the metric consistently labeled — never mix labeled and unlabeled samples).
-  for (const status of ["2xx", "3xx", "4xx", "5xx"]) incr("gittensory_http_requests_total", { status }, 0);
+  for (const status of ["2xx", "3xx", "4xx", "5xx"])
+    incr("gittensory_http_requests_total", { status }, 0);
 
   const ctx = {
-    waitUntil: (p: Promise<unknown>) => void Promise.resolve(p).catch(() => undefined),
+    waitUntil: (p: Promise<unknown>) =>
+      void Promise.resolve(p).catch(() => undefined),
     passThroughOnException: () => undefined,
   } as unknown as ExecutionContext;
 
@@ -271,25 +517,48 @@ async function main(): Promise<void> {
     {
       fetch: async (request: Request) => {
         const path = new URL(request.url).pathname;
-        if (path === "/health") return new Response(JSON.stringify({ status: "ok" }), { headers: { "content-type": "application/json" } });
+        if (path === "/health")
+          return new Response(JSON.stringify({ status: "ok" }), {
+            headers: { "content-type": "application/json" },
+          });
         if (path === "/ready") {
           const r = await readiness(backend.db, readinessProbes);
-          return new Response(JSON.stringify(r), { status: r.ok ? 200 : 503, headers: { "content-type": "application/json" } });
+          return new Response(JSON.stringify(r), {
+            status: r.ok ? 200 : 503,
+            headers: { "content-type": "application/json" },
+          });
         }
-        if (path === "/metrics") return new Response(await renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } });
+        if (path === "/metrics")
+          return new Response(await renderMetrics(), {
+            headers: { "content-type": "text/plain; version=0.0.4" },
+          });
         // Brokered mode (ORB_ENROLLMENT_SECRET set): the central Orb App provides credentials on demand, so
         // there is no own GitHub App to create — short-circuit the setup wizard to a brokered-mode page rather
         // than walking the operator through (and overriding with) an own-App setup they don't need.
-        if ((path === "/setup" || path === "/setup/callback") && isOrbBrokerMode({ ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET })) {
+        if (
+          (path === "/setup" || path === "/setup/callback") &&
+          isOrbBrokerMode({
+            ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
+          })
+        ) {
           return new Response(renderBrokeredSetupPage(), {
-            headers: { "content-type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "Referrer-Policy": "no-referrer",
+            },
           });
         }
         // First-run GitHub App setup wizard — only while no App is configured (can't rebind a live install).
-        if ((path === "/setup" || path === "/setup/callback") && !process.env.GITHUB_APP_ID) {
+        if (
+          (path === "/setup" || path === "/setup/callback") &&
+          !process.env.GITHUB_APP_ID
+        ) {
           const setupToken = process.env.SELFHOST_SETUP_TOKEN;
           if (!setupToken) {
-            return new Response("SELFHOST_SETUP_TOKEN must be set before using the setup wizard", { status: 400 });
+            return new Response(
+              "SELFHOST_SETUP_TOKEN must be set before using the setup wizard",
+              { status: 400 },
+            );
           }
           // PUBLIC_API_ORIGIN is required: falling back to request.url.origin would let an attacker spoof
           // the Host header and redirect the App-creation callback to an attacker-controlled domain, where
@@ -306,7 +575,9 @@ async function main(): Promise<void> {
             // which would leak the secret to access logs, proxies, and browser history.
             let suppliedToken =
               request.headers.get("x-setup-token") ??
-              request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+              request.headers
+                .get("authorization")
+                ?.replace(/^Bearer\s+/i, "") ??
               "";
             if (!suppliedToken && request.method === "POST") {
               const rejection = setupTokenFormRejection(request.headers);
@@ -318,10 +589,16 @@ async function main(): Promise<void> {
             if (!timingSafeStrEqual(suppliedToken, setupToken)) {
               // Not authenticated → show the token-entry form (token submitted via POST body, not the URL).
               // First visit (no token) is 200; a wrong submission is 403.
-              return new Response(renderTokenEntryPage(suppliedToken.length > 0), {
-                status: suppliedToken.length > 0 ? 403 : 200,
-                headers: { "content-type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
-              });
+              return new Response(
+                renderTokenEntryPage(suppliedToken.length > 0),
+                {
+                  status: suppliedToken.length > 0 ? 403 : 200,
+                  headers: {
+                    "content-type": "text/html; charset=utf-8",
+                    "Referrer-Policy": "no-referrer",
+                  },
+                },
+              );
             }
             // Generate a per-visit CSRF nonce, embed it in the manifest's redirect_url, and bind it to
             // this browser session via an HttpOnly signed cookie so the callback can validate it came
@@ -342,30 +619,56 @@ async function main(): Promise<void> {
           const stateParam = params.get("state");
           const cookieHeader = request.headers.get("cookie") ?? "";
           const setupAuth = cookieValue(cookieHeader, "setup_auth");
-          if (!stateParam || !isValidSetupAuthCookie(setupToken, stateParam, setupAuth)) {
+          if (
+            !stateParam ||
+            !isValidSetupAuthCookie(setupToken, stateParam, setupAuth)
+          ) {
             return new Response("invalid state parameter", { status: 403 });
           }
           try {
             const creds = await exchangeManifestCode(code);
-            const outPath = process.env.SETUP_OUTPUT_PATH ?? "/data/gittensory-app.env";
+            const outPath =
+              process.env.SETUP_OUTPUT_PATH ?? "/data/gittensory-app.env";
             writeFileSync(outPath, credentialsToEnv(creds), { mode: 0o600 });
-            console.log(JSON.stringify({ event: "selfhost_app_created", slug: creds.slug, app_id: creds.id }));
-            return new Response(`<!doctype html><body style="font-family:system-ui;max-width:40rem;margin:4rem auto"><h1>GitHub App created ✓</h1><p>Credentials written to <code>${outPath}</code>. Add them to your <code>.env</code> (or load the file), install the App on your repos, and restart the container.</p></body>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+            console.log(
+              JSON.stringify({
+                event: "selfhost_app_created",
+                slug: creds.slug,
+                app_id: creds.id,
+              }),
+            );
+            return new Response(
+              `<!doctype html><body style="font-family:system-ui;max-width:40rem;margin:4rem auto"><h1>GitHub App created ✓</h1><p>Credentials written to <code>${outPath}</code>. Add them to your <code>.env</code> (or load the file), install the App on your repos, and restart the container.</p></body>`,
+              { headers: { "content-type": "text/html; charset=utf-8" } },
+            );
           } catch (error) {
-            return new Response(`setup failed: ${error instanceof Error ? error.message : "error"}`, { status: 500 });
+            return new Response(
+              `setup failed: ${error instanceof Error ? error.message : "error"}`,
+              { status: 500 },
+            );
           }
         }
         // Instrument real app traffic — status-class counter + latency histogram. (Infra endpoints
         // /health /ready /metrics and the setup wizard already returned above and are not counted.)
         const startedReq = Date.now();
         const record = (status: number): void => {
-          incr("gittensory_http_requests_total", { status: `${Math.floor(status / 100)}xx` });
-          observe("gittensory_http_request_duration_seconds", (Date.now() - startedReq) / 1000);
+          incr("gittensory_http_requests_total", {
+            status: `${Math.floor(status / 100)}xx`,
+          });
+          observe(
+            "gittensory_http_request_duration_seconds",
+            (Date.now() - startedReq) / 1000,
+          );
         };
         // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.
         // We mark only AFTER a successful response — failed/rejected webhooks must be retryable.
-        const isWebhook = webhookCache && path === "/v1/github/webhook" && request.method === "POST";
-        const deliveryId = isWebhook ? request.headers.get("x-github-delivery") : null;
+        const isWebhook =
+          webhookCache &&
+          path === "/v1/github/webhook" &&
+          request.method === "POST";
+        const deliveryId = isWebhook
+          ? request.headers.get("x-github-delivery")
+          : null;
         if (deliveryId) {
           const seen = await webhookCache!.get(`delivery:${deliveryId}`);
           if (seen) {
@@ -377,7 +680,9 @@ async function main(): Promise<void> {
         const response = await worker.fetch(request, env, ctx);
         if (deliveryId && response.ok) {
           // Best-effort — never block the response on a cache write failure
-          void webhookCache!.set(`delivery:${deliveryId}`, "1", 300).catch(() => undefined);
+          void webhookCache!
+            .set(`delivery:${deliveryId}`, "1", 300)
+            .catch(() => undefined);
         }
         record(response.status);
         return response;
@@ -392,9 +697,19 @@ async function main(): Promise<void> {
   // Cron — gittensory ticks ~every 2 minutes; drive the SAME scheduled handler.
   const intervalMs = Number(process.env.CRON_INTERVAL_MS ?? 120_000);
   const cron = setInterval(() => {
-    const controller = { scheduledTime: Date.now(), cron: "*/2 * * * *", noRetry: () => undefined } as unknown as ScheduledController;
+    const controller = {
+      scheduledTime: Date.now(),
+      cron: "*/2 * * * *",
+      noRetry: () => undefined,
+    } as unknown as ScheduledController;
     Promise.resolve(worker.scheduled(controller, env, ctx)).catch((error) =>
-      console.error(JSON.stringify({ level: "error", event: "selfhost_cron_error", error: error instanceof Error ? error.message : "unknown error" })),
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_cron_error",
+          error: error instanceof Error ? error.message : "unknown error",
+        }),
+      ),
     );
   }, intervalMs);
 
@@ -402,8 +717,21 @@ async function main(): Promise<void> {
   // inside exportOrbBatch: a no-op until the GitHub App is configured, or when ORB_AIR_GAP=true.
   const runOrbExport = () =>
     exportOrbBatch(backend.db)
-      .then((n) => { if (n > 0) console.log(JSON.stringify({ event: "selfhost_orb_export", exported: n })); })
-      .catch((error) => console.error(JSON.stringify({ level: "error", event: "selfhost_orb_export_error", error: error instanceof Error ? error.message : "unknown error" })));
+      .then((n) => {
+        if (n > 0)
+          console.log(
+            JSON.stringify({ event: "selfhost_orb_export", exported: n }),
+          );
+      })
+      .catch((error) =>
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "selfhost_orb_export_error",
+            error: error instanceof Error ? error.message : "unknown error",
+          }),
+        ),
+      );
   void runOrbExport(); // flush any pending events at startup
   setInterval(runOrbExport, 3_600_000); // then hourly
 
@@ -414,8 +742,16 @@ async function main(): Promise<void> {
     ORB_BROKER_URL: process.env.ORB_BROKER_URL,
     PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
   })
-    .then((r) => { if (r !== "skipped") console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r })); })
-    .catch(() => {});
+    .then((r) => {
+      if (r === "registered") {
+        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r }));
+      } else if (r === "failed") {
+        // A failed registration means the central Orb won't forward this install's webhooks here — the container
+        // looks alive but reviews NOTHING. Surface at error level so the operator sees a deaf container.
+        console.error(JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed" }));
+      }
+    })
+    .catch((error) => captureError(error, { kind: "orb_relay_register" }));
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;
@@ -426,6 +762,7 @@ async function main(): Promise<void> {
     clearInterval(cron);
     server.close();
     await backend.shutdown();
+    await flushSentry();
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -433,6 +770,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  captureError(error, { kind: "boot" });
   console.error(error);
-  process.exit(1);
+  void flushSentry().finally(() => process.exit(1));
 });

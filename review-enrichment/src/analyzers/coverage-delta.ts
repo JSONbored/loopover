@@ -233,6 +233,8 @@ export async function scanCoverageDelta(
   const owner = parts[0];
   const repo = parts[1];
   if (!owner || !repo) return [];
+  const eOwner = encodeURIComponent(owner);
+  const eRepo = encodeURIComponent(repo);
 
   // Build the changed-line index from the PR patch before touching the network.
   const changedLines = new Map<string, Set<number>>();
@@ -253,7 +255,7 @@ export async function scanCoverageDelta(
   let runs: WorkflowRun[];
   try {
     const runsResp = await fetchFn(
-      `https://api.github.com/repos/${owner}/${repo}/actions/runs?head_sha=${headSha}&per_page=10`,
+      `https://api.github.com/repos/${eOwner}/${eRepo}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=10`,
       { headers, signal: opts?.signal },
     );
     if (!runsResp.ok) return [];
@@ -275,7 +277,7 @@ export async function scanCoverageDelta(
     let artifacts: Artifact[];
     try {
       const artResp = await fetchFn(
-        `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}/artifacts`,
+        `https://api.github.com/repos/${eOwner}/${eRepo}/actions/runs/${run.id}/artifacts`,
         { headers, signal: opts?.signal },
       );
       if (!artResp.ok) continue;
@@ -298,7 +300,7 @@ export async function scanCoverageDelta(
   let zipBuffer: Buffer;
   try {
     const zipResp = await fetchFn(
-      `https://api.github.com/repos/${owner}/${repo}/actions/artifacts/${coverageArtifact.id}/zip`,
+      `https://api.github.com/repos/${eOwner}/${eRepo}/actions/artifacts/${coverageArtifact.id}/zip`,
       { headers, signal: opts?.signal },
     );
     if (!zipResp.ok) return [];

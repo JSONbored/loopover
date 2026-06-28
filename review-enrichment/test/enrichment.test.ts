@@ -1460,6 +1460,26 @@ test("scanCoverageDelta: forwards abort signal to fetch calls", async () => {
   assert.ok(seenSignals.every((s) => s instanceof AbortSignal));
 });
 
+test("scanCoverageDelta: percent-encodes owner, repo, and headSha in API URLs", async () => {
+  const urls: string[] = [];
+  await scanCoverageDelta(
+    COV_REQ({ repoFullName: "owner name/repo name", headSha: "sha with spaces" }),
+    async (url) => {
+      urls.push(String(url));
+      return { ok: true, json: async () => ({ workflow_runs: [] }) };
+    },
+  );
+  assert.ok(urls.length >= 1, "at least one fetch should be made");
+  assert.ok(
+    urls[0].includes("owner%20name/repo%20name"),
+    `owner/repo segments should be encoded; got ${urls[0]}`,
+  );
+  assert.ok(
+    urls[0].includes("head_sha=sha%20with%20spaces"),
+    `headSha should be encoded; got ${urls[0]}`,
+  );
+});
+
 // ── renderBrief: coverage-delta ───────────────────────────────────────────────
 
 test("renderBrief: renders the coverage-delta block with file and line list", () => {

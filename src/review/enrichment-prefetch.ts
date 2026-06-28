@@ -91,7 +91,10 @@ async function fetchJson<T>(
   signal?: AbortSignal,
 ): Promise<T | null> {
   try {
-    const resp = await fetch(url, { headers, signal });
+    const resp = await fetch(
+      url,
+      signal ? { headers, signal } : { headers },
+    );
     if (!resp.ok) return null;
     return (await resp.json()) as T;
   } catch {

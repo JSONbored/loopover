@@ -6,6 +6,10 @@ OUT_DIR="${GITTENSORY_REPORTING_DIR:-/reporting}"
 OUT_DB="${GITTENSORY_REPORTING_DB:-$OUT_DIR/gittensory-reporting.sqlite}"
 TMP_DB="${OUT_DB}.tmp"
 
+sql_string() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
 mkdir -p "$OUT_DIR"
 
 if [ ! -s "$APP_DB" ]; then
@@ -14,6 +18,7 @@ if [ ! -s "$APP_DB" ]; then
 fi
 
 rm -f "$TMP_DB" "$TMP_DB-wal" "$TMP_DB-shm"
+TMP_DB_SQL="$(sql_string "$TMP_DB")"
 
 sqlite3 "$TMP_DB" <<'SQL'
 PRAGMA synchronous=NORMAL;
@@ -48,7 +53,7 @@ SQL
 if sqlite3 "$APP_DB" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_targets' LIMIT 1" | grep -q 1; then
   sqlite3 "$APP_DB" <<SQL
 .timeout 5000
-ATTACH '$TMP_DB' AS report;
+ATTACH '$TMP_DB_SQL' AS report;
 INSERT INTO report.review_targets (
   repo,
   number,
@@ -77,7 +82,7 @@ fi
 if sqlite3 "$APP_DB" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_usage_events' LIMIT 1" | grep -q 1; then
   sqlite3 "$APP_DB" <<SQL
 .timeout 5000
-ATTACH '$TMP_DB' AS report;
+ATTACH '$TMP_DB_SQL' AS report;
 INSERT INTO report.ai_usage_events (
   feature,
   model,
@@ -104,8 +109,8 @@ DETACH report;
 SQL
 fi
 
+sqlite3 "$TMP_DB" "PRAGMA quick_check;" | grep -qx "ok"
 mv "$TMP_DB" "$OUT_DB"
 rm -f "$TMP_DB-wal" "$TMP_DB-shm"
 
-sqlite3 "$OUT_DB" "PRAGMA quick_check;" >/dev/null
 echo "reporting export complete: $OUT_DB"

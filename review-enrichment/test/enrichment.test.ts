@@ -1177,3 +1177,37 @@ test("buildBrief: commitSignature analyzer is wired into the orchestrator", asyn
     globalThis.fetch = realFetch;
   }
 });
+
+test("scanCommitSignature: returns [] when headSha fails SHA format validation (path traversal guard)", async () => {
+  let fetched = false;
+  const fakeFetch = async () => { fetched = true; return { ok: true, json: async () => ({}) }; };
+  for (const badSha of ["../../../evil", "refs/heads/main", "HEAD~1", "", "xyz!@#"]) {
+    const findings = await scanCommitSignature(sigReq({ headSha: badSha }), fakeFetch);
+    assert.deepEqual(findings, [], `expected [] for headSha=${JSON.stringify(badSha)}`);
+  }
+  assert.equal(fetched, false, "no fetch should occur for invalid headSha");
+});
+
+test("scanCommitSignature: returns [] when owner or repo segment is a path traversal sequence", async () => {
+  let fetched = false;
+  const fakeFetch = async () => { fetched = true; return { ok: true, json: async () => ({}) }; };
+  // "../evil/repo" → owner="..", repo="evil" — ".." starts with '.' so SLUG_RE rejects it
+  // "owner/../commits" → repo=".." — same
+  // "./sneaky/repo" → owner="." — "." starts with '.', SLUG_RE rejects it
+  for (const badRepo of ["../evil/repo", "owner/../commits", "./sneaky/repo"]) {
+    const findings = await scanCommitSignature(sigReq({ repoFullName: badRepo }), fakeFetch);
+    assert.deepEqual(findings, [], `expected [] for repoFullName=${JSON.stringify(badRepo)}`);
+  }
+  assert.equal(fetched, false, "no fetch should occur for invalid owner/repo");
+});
+
+test("scanCommitSignature: valid short SHA (7 chars) passes format check and proceeds to fetch", async () => {
+  let didFetch = false;
+  const fetch = async () => {
+    didFetch = true;
+    return { ok: false, json: async () => ({}) };
+  };
+  const findings = await scanCommitSignature(sigReq({ headSha: "abc1234" }), fetch);
+  assert.deepEqual(findings, []);
+  assert.ok(didFetch, "a valid 7-char SHA should reach the fetch");
+});

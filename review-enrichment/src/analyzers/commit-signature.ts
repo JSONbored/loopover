@@ -12,6 +12,10 @@ const MAX_HISTORY_COMMITS = 20;
 const MIN_HISTORY_FOR_PATTERN = 3;    // need ≥ this many non-head commits to infer the repo's signing pattern
 const VERIFIED_RATIO_THRESHOLD = 0.8; // only flag new-committer when ≥80% of recent commits are verified
 
+// Allowlists to prevent path traversal when these values are interpolated into API URL paths.
+const SHA_RE = /^[a-f0-9]{7,40}$/i;
+const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/; // must start with alphanumeric — rejects ".." and other dot-only traversal segments
+
 interface GitHubCommit {
   sha: string;
   commit: {
@@ -32,10 +36,12 @@ export async function scanCommitSignature(
   const { repoFullName, headSha, githubToken } = req;
   if (!githubToken || !headSha) return [];
 
+  if (!SHA_RE.test(headSha)) return [];
+
   const parts = repoFullName.split("/");
   const owner = parts[0];
   const repo = parts[1];
-  if (!owner || !repo) return [];
+  if (!owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${githubToken}`,
@@ -47,7 +53,7 @@ export async function scanCommitSignature(
   let headCommit: GitHubCommit;
   try {
     const resp = await fetchFn(
-      `https://api.github.com/repos/${owner}/${repo}/commits/${headSha}`,
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(headSha)}`,
       { headers, signal: opts?.signal },
     );
     if (!resp.ok) return [];

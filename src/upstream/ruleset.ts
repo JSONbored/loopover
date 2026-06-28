@@ -227,7 +227,16 @@ export async function loadUpstreamStatus(env: Env): Promise<UpstreamStatus> {
   const highest = highestSeverity(openReports.map((report) => report.severity));
   const registryHyperparameterDrift = summarizeRegistryHyperparameterDriftReports(openReports);
   const generatedAt = nowIso();
-  const stale = latestRuleset ? Date.parse(latestRuleset.generatedAt) + UPSTREAM_STALE_MS < Date.now() : false;
+  // generatedAt is a DB-sourced column; an empty/malformed value makes Date.parse return NaN, and
+  // `NaN + UPSTREAM_STALE_MS < Date.now()` is false -- silently reporting a stale/corrupted ruleset as fresh.
+  // Fail safe toward stale (mirror src/github/backfill.ts' Number.isFinite freshness guard). The absent-snapshot
+  // path stays explicitly false so `stale` never conflates "no row" with "stale row" (status is "unavailable" then).
+  const latestGeneratedAtMs = latestRuleset ? Date.parse(latestRuleset.generatedAt) : NaN;
+  const stale = latestRuleset
+    ? Number.isFinite(latestGeneratedAtMs)
+      ? latestGeneratedAtMs + UPSTREAM_STALE_MS < Date.now()
+      : true
+    : false;
   const affectedAreas = [...new Set(openReports.flatMap((report) => report.affectedAreas))].sort();
   return {
     generatedAt,

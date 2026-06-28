@@ -796,6 +796,20 @@ describe("upstream ruleset drift tracking", () => {
     await expect(loadUpstreamStatus(staleEnv)).resolves.toMatchObject({ status: "stale", latestRulesetId: "stale" });
   });
 
+  it("treats an unparseable ruleset generatedAt as stale (fail-safe), not current", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-30T04:00:00.000Z"));
+    // A malformed generatedAt would make Date.parse return NaN; pre-fix the staleness check silently
+    // evaluated false and the status was reported as "current". Fail-safe direction is stale.
+    const corruptEnv = createTestEnv();
+    await persistUpstreamRulesetSnapshot(corruptEnv, ruleset("corrupt", "corrupt-hash", "pending_saturation_model", 1, 0.01, "not-a-date"));
+    await expect(loadUpstreamStatus(corruptEnv)).resolves.toMatchObject({
+      status: "stale",
+      latestRulesetId: "corrupt",
+      latestRulesetGeneratedAt: "not-a-date",
+    });
+  });
+
   it("deduplicates unchanged semantic drift fingerprints and leaves issue filing disabled by default", async () => {
     const env = createTestEnv();
     const previous = ruleset("ruleset-old", "old-hash", "current_density_model", 1, 0.01, "2026-05-30T00:00:00.000Z");

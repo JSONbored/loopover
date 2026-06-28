@@ -44,7 +44,7 @@ const CLI_COMMAND_SPEC = {
   agent: ["plan", "status", "explain", "packet"],
   maintain: ["status", "approve", "reject", "pause", "resume", "set-level"],
 };
-const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
+const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
 // #784 maintain set-level — the autonomy dial's action classes + levels (must mirror src/settings/autonomy.ts).
 const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"];
@@ -316,8 +316,8 @@ const agentRunIdShape = {
 };
 
 if (cliArgs[0] && cliArgs[0] !== "--stdio") {
-  await runCli(cliArgs);
-  process.exit(0);
+  const exitCode = await runCli(cliArgs);
+  process.exit(typeof exitCode === "number" ? exitCode : 0);
 }
 
 const server = new McpServer({
@@ -1674,7 +1674,8 @@ function buildCompletionScript(shell) {
   const withSubcommands = Object.entries(CLI_COMMAND_SPEC).filter(([, subcommands]) => subcommands.length > 0);
   if (shell === "bash") return buildBashCompletion(topLevel, withSubcommands);
   if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
-  return buildFishCompletion(topLevel, withSubcommands);
+  if (shell === "fish") return buildFishCompletion(topLevel, withSubcommands);
+  return buildPowershellCompletion(topLevel, withSubcommands);
 }
 
 function buildBashCompletion(topLevel, withSubcommands) {
@@ -1735,11 +1736,40 @@ ${topLevelLines}
 ${subcommandLines}`;
 }
 
+function buildPowershellCompletion(topLevel, withSubcommands) {
+  const commandList = topLevel.map((command) => `'${command}'`).join(", ");
+  const subcommandEntries = withSubcommands
+    .map(([command, subcommands]) => `    '${command}' = @(${subcommands.map((subcommand) => `'${subcommand}'`).join(", ")})`)
+    .join("\n");
+  return `# gittensory-mcp PowerShell completion. Add to your $PROFILE:
+#   gittensory-mcp completion powershell | Out-String | Invoke-Expression
+Register-ArgumentCompleter -Native -CommandName gittensory-mcp -ScriptBlock {
+  param($wordToComplete, $commandAst, $cursorPosition)
+  $commands = @(${commandList})
+  $subcommands = @{
+${subcommandEntries}
+  }
+  $elements = $commandAst.CommandElements
+  if ($elements.Count -le 2) {
+    $commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+      [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }
+    return
+  }
+  $sub = $subcommands[[string]$elements[1].Value]
+  if ($sub) {
+    $sub | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+      [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }
+  }
+}`;
+}
+
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
   gittensory-mcp version [--json]
-  gittensory-mcp completion bash|zsh|fish [--json]
+  gittensory-mcp completion bash|zsh|fish|powershell [--json]
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]
@@ -1747,7 +1777,7 @@ function printHelp() {
   gittensory-mcp status [--profile name] [--json]
   gittensory-mcp profile list|create|switch|remove [name] [--json]
   gittensory-mcp changelog [--json]
-  gittensory-mcp doctor [--profile name] [--cwd path] [--json]
+  gittensory-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
   gittensory-mcp cache status|clear [--json]
   gittensory-mcp init-client --print codex|claude|cursor|mcp [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
   gittensory-mcp decision-pack --login <github-login> [--json]
@@ -2173,6 +2203,9 @@ async function doctor(options) {
       }
     }
   }
+  // Opt-in: let `doctor` gate CI/pre-commit by exiting non-zero when a check fails. The default
+  // stays exit 0 so existing scripts that ignore the exit code keep working.
+  return options.exitCode && payload.status === "needs_attention" ? 1 : 0;
 }
 
 function doctorStatus(checks) {

@@ -10,6 +10,8 @@ const SYSTEM: Record<string, string> = { npm: "npm", PyPI: "pypi", Go: "go" };
 
 // Strong/weak copyleft families worth a compatibility check against a permissive project.
 const COPYLEFT = /^(A?GPL|LGPL|MPL|EPL|CDDL|EUPL|OSL|SSPL|CPAL|CECILL)/i;
+const MAX_LICENSE_LOOKUPS = 25;
+const LICENSE_LOOKUP_TIMEOUT_MS = 1500;
 
 function classify(licenses: string[]): LicenseFinding["classification"] | null {
   const resolved = licenses.filter(
@@ -28,10 +30,18 @@ async function fetchLicenses(
   fetchImpl: typeof fetch,
 ): Promise<string[] | null> {
   const url = `https://api.deps.dev/v3/systems/${system}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`;
-  const response = await fetchImpl(url);
-  if (!response.ok) return null;
-  const data = (await response.json()) as { licenses?: string[] };
-  return Array.isArray(data.licenses) ? data.licenses : [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LICENSE_LOOKUP_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { licenses?: string[] };
+    return Array.isArray(data.licenses) ? data.licenses : [];
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Analyzer entrypoint: changed deps → deps.dev license → only the copyleft/unknown ones. */
@@ -40,7 +50,11 @@ export async function scanLicenses(
   fetchImpl: typeof fetch = fetch,
 ): Promise<LicenseFinding[]> {
   const findings: LicenseFinding[] = [];
-  for (const change of extractDependencyChanges(req.files ?? [])) {
+  const changes = extractDependencyChanges(req.files ?? []).slice(
+    0,
+    MAX_LICENSE_LOOKUPS,
+  );
+  for (const change of changes) {
     const system = SYSTEM[change.ecosystem];
     if (!system) continue;
     const licenses = await fetchLicenses(

@@ -24,7 +24,6 @@
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
 
 services:
-
   # ── Core app (always runs) ─────────────────────────────────────────────────
   gittensory:
     build:
@@ -39,6 +38,25 @@ services:
     environment:
       PORT: "8787"
       DATABASE_PATH: /data/gittensory.sqlite
+      # Container-private per-repo config (#1390): point at a mounted dir holding {owner}__{repo}/.gittensory.yml
+      # files (and an optional root .gittensory.yml global fallback). Keeps each repo's policy OUT of the public
+      # GitHub repo so contributors can't game the rules. Empty/unmounted ⇒ repos use the public file / defaults.
+      GITTENSORY_REPO_CONFIG_DIR: "${GITTENSORY_REPO_CONFIG_DIR:-/config}"
+      # Codex (ChatGPT subscription) reviewer home (#979). The `codex` CLI reads auth.json from $CODEX_HOME and
+      # REFRESHES the OAuth token in place, so the home MUST be writable — that's the codex-home named volume below,
+      # NOT the read-only /config mount. Defaults to the image `node` run user's ~/.codex; override to relocate.
+      CODEX_HOME: "${CODEX_HOME:-/home/node/.codex}"
+      # Claude Code usage telemetry → OTEL collector → Prometheus → Claude usage dashboard. OFF unless you set
+      # CLAUDE_CODE_ENABLE_TELEMETRY=1 in .env (requires --profile observability so the otel-collector is up).
+      CLAUDE_CODE_ENABLE_TELEMETRY: "${CLAUDE_CODE_ENABLE_TELEMETRY:-}"
+      OTEL_METRICS_EXPORTER: "${OTEL_METRICS_EXPORTER:-otlp}"
+      # Claude Code trace export (beta) → OTEL collector → Tempo. Empty by default; set OTEL_TRACES_EXPORTER=otlp
+      # in .env (with CLAUDE_CODE_ENABLE_TELEMETRY=1) to capture per-review spans.
+      OTEL_TRACES_EXPORTER: "${OTEL_TRACES_EXPORTER:-}"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "${OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE:-cumulative}"
+      OTEL_METRIC_EXPORT_INTERVAL: "${OTEL_METRIC_EXPORT_INTERVAL:-10000}"
       # Uncomment the next two lines and activate --profile postgres to use Postgres:
       # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@postgres:5432/gittensory
       # PGVECTOR_ENABLED: "true"
@@ -57,6 +75,15 @@ services:
       # ORB_BROKER_URL: https://gittensory-api.aethereal.dev   # override only for a private Orb deployment
     volumes:
       - gittensory-data:/data
+      # Container-private per-repo config dir (read-only). Create ./gittensory-config/{owner}__{repo}/.gittensory.yml
+      # locally (gitignored — never commit real policy). Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
+      - ./gittensory-config:/config:ro
+      # Persistent, WRITABLE Codex home for the `codex` (ChatGPT subscription) reviewer — survives restarts so the
+      # auth.json you drop in (and codex's in-place token refresh + app-server state) outlive the container. The
+      # node run user owns /home/node, so the volume is writable. Drop your `codex login` auth.json in with:
+      #   docker compose cp ~/.codex/auth.json gittensory:/home/node/.codex/auth.json
+      # If you override CODEX_HOME above, change this mount target to match (it must equal $CODEX_HOME).
+      - codex-home:/home/node/.codex
     depends_on:
       # Gate startup on a healthy Qdrant when --profile qdrant is active; required:false means the
       # dependency is ignored when qdrant isn't started (default/other profiles). Belt-and-suspenders
@@ -69,7 +96,13 @@ services:
       # whereas /ready returns 503 until the DB answers AND migrations are applied — so dependents that
       # wait on `condition: service_healthy` only start once the app is truly serving. start_period 60s
       # tolerates the Postgres cold start (waitForPostgres blocks up to 30s before the HTTP server binds).
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 30s
       timeout: 5s
       start_period: 60s
@@ -152,8 +185,8 @@ services:
     # qdrant-vectorize.ts) plus a firewall rule. SSH-forward the port for remote dashboard access. This
     # matches the in-network-only posture of Prometheus/Loki/Alertmanager above.
     ports:
-      - "127.0.0.1:6333:6333"   # REST API + Web UI (localhost only)
-      - "127.0.0.1:6334:6334"   # gRPC (localhost only)
+      - "127.0.0.1:6333:6333" # REST API + Web UI (localhost only)
+      - "127.0.0.1:6334:6334" # gRPC (localhost only)
     volumes:
       - qdrant-data:/qdrant/storage
     # The image is Debian (bash present) but ships no curl/wget/nc. bash's /dev/tcp pseudo-device speaks
@@ -212,7 +245,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"   # HTTP/3 QUIC
+      - "443:443/udp" # HTTP/3 QUIC
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -247,7 +280,7 @@ services:
     profiles: ["observability"]
     depends_on: [prometheus]
     expose:
-      - "9093"   # in-network only; reach the UI/API via `docker compose port` or a tunnel
+      - "9093" # in-network only; reach the UI/API via `docker compose port` or a tunnel
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager-data:/alertmanager
@@ -269,6 +302,11 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Only install the signed GitHub datasource plugin. Do not mount or query the live app SQLite
+      # database from Grafana; observability must not bypass application authorization.
+      GF_INSTALL_PLUGINS: grafana-github-datasource
+      # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
 
   # ── Log pipeline (--profile observability) ─────────────────────────────────
   # Loki stores logs; Promtail discovers every container in this compose project via the read-only
@@ -302,18 +340,22 @@ services:
     restart: unless-stopped
     profiles: ["observability"]
     environment:
-      CONTAINERS: "1"   # GET /containers/* (list, inspect, logs)
-      NETWORKS: "1"     # GET /networks/* — docker_sd computes per-target network labels
-      POST: "0"         # deny every mutating call; strictly read-only (no create/exec/start)
+      CONTAINERS: "1" # GET /containers/* (list, inspect, logs)
+      NETWORKS: "1" # GET /networks/* — docker_sd computes per-target network labels
+      POST: "0" # deny every mutating call; strictly read-only (no create/exec/start)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks: [docker-proxy]   # isolated — only Promtail joins this network
+    networks: [docker-proxy] # isolated — only Promtail joins this network
 
   promtail:
     image: grafana/promtail:3.6.11
     restart: unless-stopped
     profiles: ["observability"]
-    command: ["-config.file=/etc/promtail/promtail-config.yml", "-config.expand-env=true"]
+    command:
+      [
+        "-config.file=/etc/promtail/promtail-config.yml",
+        "-config.expand-env=true",
+      ]
     depends_on: [loki, docker-proxy]
     environment:
       # Promtail expands this into its Docker label filter so discovery stays inside this Compose project.
@@ -326,6 +368,30 @@ services:
     # the only service on `docker-proxy`, so the inspect endpoint (and the env it exposes) is unreachable
     # from any other container. No Docker-socket mount — discovery goes through the proxy's read-only API.
     networks: [default, docker-proxy]
+
+  # ── OTEL collector (--profile observability) ──────────────────────────────
+  # Receives OTLP metrics from the Claude Code review CLI and re-exposes them on :8889 for Prometheus to
+  # scrape — powering the Claude usage analytics (cost / tokens / sessions / models). Enable by setting
+  # CLAUDE_CODE_ENABLE_TELEMETRY=1 in .env. Pinned to a known-good version (image layers are reproducible).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.155.0
+    restart: unless-stopped
+    profiles: ["observability"]
+    # Mount our config at the image's default path so the stock entrypoint picks it up (no command override).
+    volumes:
+      - ./otel/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
+
+  # ── Tempo (--profile observability) — trace store for Claude review spans ─────
+  # Receives traces forwarded by the OTEL collector and serves them to Grafana (the Tempo data source).
+  # Local-storage single binary; needs no extra config beyond ./tempo/tempo.yaml.
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
 
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
   # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no
@@ -350,7 +416,7 @@ services:
     volumes:
       - tailscale-state:/var/lib/tailscale
       - /dev/net/tun:/dev/net/tun
-    network_mode: host   # Tailscale needs host networking to advertise the host's address
+    network_mode: host # Tailscale needs host networking to advertise the host's address
 
   # ── Self-hosted GitHub Actions runner (--profile runners) ─────────────────
   # Runs `runs-on: self-hosted` jobs on this machine. Set RUNNER_TOKEN= (or ACCESS_TOKEN=)
@@ -358,8 +424,8 @@ services:
   # Get a token at: https://github.com/<owner>/<repo>/settings/actions/runners/new
   runner:
     # Pin to a specific version tag — `latest` is mutable. Find a digest via:
-    # docker pull myoung34/github-runner:ubuntu-22.04 && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-22.04
-    image: myoung34/github-runner:ubuntu-22.04
+    # docker pull myoung34/github-runner:ubuntu-jammy && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-jammy
+    image: myoung34/github-runner:ubuntu-jammy
     restart: unless-stopped
     profiles: ["runners"]
     environment:
@@ -376,8 +442,30 @@ services:
     volumes:
       - runner-work:/tmp/runner
 
+  # ── Backups (--profile backup) ────────────────────────────────────────────
+  # Online SQLite backup (WAL-safe, consistent even while the app writes) + a Qdrant snapshot, on a loop
+  # (default daily), kept in the gittensory-backups volume with retention. Run on demand:
+  #   docker compose --profile backup run --rm backup sh /backup.sh
+  backup:
+    image: alpine:3.20
+    restart: unless-stopped
+    profiles: ["backup"]
+    environment:
+      DATABASE_PATH: /data/gittensory.sqlite
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      BACKUP_RETAIN: ${BACKUP_RETAIN:-7}
+    volumes:
+      # RW (not :ro) so SQLite's online-backup can use the WAL index; the script only ever reads the DB.
+      - gittensory-data:/data
+      - gittensory-backups:/backups
+      - ./scripts/backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "apk add --no-cache sqlite curl >/dev/null 2>&1 && while true; do sh /backup.sh || echo '[backup] run failed'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"
+
 volumes:
   gittensory-data:
+  codex-home:
   gittensory-pg:
   qdrant-data:
   ollama-models:
@@ -390,6 +478,8 @@ volumes:
   promtail-data:
   tailscale-state:
   runner-work:
+  gittensory-backups:
+  tempo-data:
 
 networks:
   # The implicit project network every service joins by default (declared so it can be referenced

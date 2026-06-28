@@ -6,10 +6,17 @@
 //   • a skipped number (gap) or a stray non-conforming filename.
 // Migration-only PRs trigger this via the `migrations/**` path filter in .github/workflows/ci.yml.
 //
-// KNOWN_DUPLICATES: two pairs (0015, 0017) already merged silently before this guard existed and are
-// already applied in production — D1 records applied migrations by filename, so renaming either now would
-// make wrangler try to re-apply it. They are grandfathered here. Do NOT add to this list; the whole point
-// of the guard is that a NEW duplicate fails CI and gets renumbered before merge.
+// KNOWN_DUPLICATES: pairs already merged AND applied in production before the collision was noticed — D1
+// records applied migrations by filename, so renaming either now would make wrangler (and the self-host
+// migrator) try to RE-APPLY it. For a non-idempotent statement (e.g. `ALTER TABLE … ADD COLUMN`, which SQLite
+// cannot guard with IF NOT EXISTS) the re-apply ERRORS and breaks the deploy, so renumbering is unsafe once the
+// dup has shipped — those are grandfathered here. Do NOT add a NEW (not-yet-merged) duplicate to this list:
+// renumber its branch to the next free number BEFORE merge. Only an already-shipped, can't-be-renumbered dup
+// belongs here.
+//   • 0015 / 0017 — predate the guard.
+//   • 0074 — both 0074_ai_review_cache (#1462) and 0074_orb_self_enrollment_disabled (#1465, a bare ADD COLUMN)
+//     merged + deployed before the collision surfaced; the column already exists in prod, so a rename would
+//     re-run the ALTER and fail. Grandfathered for the same reason as 0015/0017.
 import { readdirSync } from "node:fs";
 
 const DIR = "migrations";
@@ -17,6 +24,7 @@ const NAME = /^(\d{4})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
 const KNOWN_DUPLICATES = new Map([
   [15, new Set(["0015_github_agent_command_feedback.sql", "0015_product_usage_events.sql"])],
   [17, new Set(["0017_agent_recommendation_outcomes.sql", "0017_product_usage_role_retention_rollups.sql"])],
+  [74, new Set(["0074_ai_review_cache.sql", "0074_orb_self_enrollment_disabled.sql"])],
 ]);
 
 const fail = (message) => {
@@ -68,4 +76,7 @@ for (let i = 1; i < numbers.length; i += 1) {
 
 const first = String(numbers[0]).padStart(4, "0");
 const last = String(numbers.at(-1)).padStart(4, "0");
-process.stdout.write(`check-migrations: ${files.length} migrations OK — contiguous ${first}..${last} (2 grandfathered duplicates: 0015, 0017), no new duplicates. Next free: ${nextFree()}\n`);
+const grandfatheredNumbers = [...KNOWN_DUPLICATES.keys()]
+  .sort((a, b) => a - b)
+  .map((number) => String(number).padStart(4, "0"));
+process.stdout.write(`check-migrations: ${files.length} migrations OK — contiguous ${first}..${last} (${grandfatheredNumbers.length} grandfathered duplicates: ${grandfatheredNumbers.join(", ")}), no new duplicates. Next free: ${nextFree()}\n`);

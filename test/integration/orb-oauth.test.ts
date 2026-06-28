@@ -39,18 +39,21 @@ describe("GET /v1/orb/oauth/callback (post-install landing)", () => {
 describe("verifyInstallationAdmin (the privilege-escalation gate)", () => {
   it("a USER-account install: only the account owner is an admin (case-insensitive)", async () => {
     const f = asFetch(async () => Response.json({}));
-    expect(await verifyInstallationAdmin("t", "Alice", "alice", "User", f)).toBe(true);
-    expect(await verifyInstallationAdmin("t", "mallory", "alice", "User", f)).toBe(false);
+    expect(await verifyInstallationAdmin("t", "Alice", 10, "alice", "User", 10, f)).toBe(true);
+    expect(await verifyInstallationAdmin("t", "mallory", 11, "alice", "User", 10, f)).toBe(false);
+    expect(await verifyInstallationAdmin("t", "alice", undefined, "alice", "User", 10, f)).toBe(false);
   });
   it("an ORG install: an ACTIVE org admin passes; a member, a pending admin, and an API error all fail", async () => {
-    expect(await verifyInstallationAdmin("t", "alice", "acme", "Organization", asFetch(async () => Response.json({ role: "admin", state: "active" })))).toBe(true);
-    expect(await verifyInstallationAdmin("t", "bob", "acme", "Organization", asFetch(async () => Response.json({ role: "member", state: "active" })))).toBe(false);
-    expect(await verifyInstallationAdmin("t", "carol", "acme", "Organization", asFetch(async () => Response.json({ role: "admin", state: "pending" })))).toBe(false);
-    expect(await verifyInstallationAdmin("t", "mallory", "acme", "Organization", asFetch(async () => new Response("no", { status: 403 })))).toBe(false);
-    expect(await verifyInstallationAdmin("t", "alice", "acme", "Organization", asFetch(async () => new Response("not-json", { status: 200 })))).toBe(false); // json() rejects → {} → not admin
+    expect(await verifyInstallationAdmin("t", "alice", 7, "acme", "Organization", 20, asFetch(async () => Response.json({ role: "admin", state: "active", organization: { id: 20 } })))).toBe(true);
+    expect(await verifyInstallationAdmin("t", "bob", 8, "acme", "Organization", 20, asFetch(async () => Response.json({ role: "member", state: "active", organization: { id: 20 } })))).toBe(false);
+    expect(await verifyInstallationAdmin("t", "carol", 9, "acme", "Organization", 20, asFetch(async () => Response.json({ role: "admin", state: "pending", organization: { id: 20 } })))).toBe(false);
+    expect(await verifyInstallationAdmin("t", "mallory", 10, "acme", "Organization", 20, asFetch(async () => Response.json({ role: "admin", state: "active", organization: { id: 21 } })))).toBe(false);
+    expect(await verifyInstallationAdmin("t", "mallory", 10, "acme", "Organization", 20, asFetch(async () => new Response("no", { status: 403 })))).toBe(false);
+    expect(await verifyInstallationAdmin("t", "alice", 7, "acme", "Organization", 20, asFetch(async () => new Response("not-json", { status: 200 })))).toBe(false); // json() rejects → {} → not admin
   });
-  it("a missing account login is never admin", async () => {
-    expect(await verifyInstallationAdmin("t", "alice", null, "Organization", asFetch(async () => Response.json({})))).toBe(false);
+  it("a missing account login or account id is never admin", async () => {
+    expect(await verifyInstallationAdmin("t", "alice", 7, null, "Organization", 20, asFetch(async () => Response.json({})))).toBe(false);
+    expect(await verifyInstallationAdmin("t", "alice", 7, "acme", "Organization", null, asFetch(async () => Response.json({})))).toBe(false);
   });
 });
 
@@ -79,7 +82,7 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
   const stubGitHub = (over: { token?: string; user?: unknown; membership?: unknown } = {}) =>
     vi.stubGlobal("fetch", asFetch(async (url) => {
       if (url.includes("/login/oauth/access_token")) return Response.json({ access_token: over.token ?? "ghu_x" });
-      if (url.includes("api.github.com/user/memberships/orgs/")) return Response.json(over.membership ?? { role: "admin", state: "active" });
+      if (url.includes("api.github.com/user/memberships/orgs/")) return Response.json(over.membership ?? { role: "admin", state: "active", organization: { id: 20 } });
       if (url.endsWith("api.github.com/user")) return Response.json(over.user ?? { login: "alice", id: 7 });
       return new Response("nf", { status: 404 });
     }));
@@ -87,7 +90,7 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
 
   it("an org ADMIN self-enrolls a registered install → a one-time secret + recorded maintainer identity", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 500, account_login: "acme", account_type: "Organization", registered: 1 });
+    await seedInstall(e, { installation_id: 500, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
     stubGitHub();
     const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=500", {}, e);
     expect(res.status).toBe(200);
@@ -100,8 +103,8 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
 
   it("a NON-admin is refused (403), NO enrollment created, and the install is NOT auto-registered — the escalation gate", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 501, account_login: "acme", account_type: "Organization", registered: 0 });
-    stubGitHub({ membership: { role: "member", state: "active" } });
+    await seedInstall(e, { installation_id: 501, account_login: "acme", account_type: "Organization", account_id: 20, registered: 0 });
+    stubGitHub({ membership: { role: "member", state: "active", organization: { id: 20 } } });
     const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=501", {}, e);
     expect(res.status).toBe(403);
     expect(await res.text()).toContain("Admin access required");
@@ -110,9 +113,20 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     expect(row?.registered).toBe(0); // a non-admin never auto-registers
   });
 
+  it("refuses stale-login reuse when the OAuth account id does not match the installation account id", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 509, account_login: "old-acme", account_type: "Organization", account_id: 20, registered: 1 });
+    // mallory is an active admin of an org whose id (21) differs from the install's account_id (20) — the
+    // immutable-id bind rejects this even though the login + role would otherwise pass.
+    stubGitHub({ user: { login: "mallory", id: 666 }, membership: { role: "admin", state: "active", organization: { id: 21 } } });
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=509", {}, e);
+    expect(res.status).toBe(403);
+    expect(await db(e).prepare("SELECT 1 AS x FROM orb_enrollments WHERE installation_id=509").first()).toBeUndefined();
+  });
+
   it("a verified admin AUTO-REGISTERS an unregistered install (zero-touch) and gets a secret", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 502, account_login: "acme", account_type: "Organization", registered: 0 });
+    await seedInstall(e, { installation_id: 502, account_login: "acme", account_type: "Organization", account_id: 20, registered: 0 });
     stubGitHub();
     const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=502", {}, e);
     expect(res.status).toBe(200);
@@ -121,10 +135,22 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     expect(row?.registered).toBe(1); // self-registered, no operator step
   });
 
+  it("an operator-disabled install cannot be self-reenabled through OAuth", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 503, account_login: "acme", account_type: "Organization", account_id: 20, registered: 0, self_enrollment_disabled: 1 });
+    stubGitHub();
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=503", {}, e);
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain("Installation disabled");
+    expect(await db(e).prepare("SELECT 1 AS x FROM orb_enrollments WHERE installation_id=503").first()).toBeUndefined();
+    const row = await db(e).prepare("SELECT registered FROM orb_github_installations WHERE installation_id=503").first<{ registered: number }>();
+    expect(row?.registered).toBe(0);
+  });
+
   it("a SUSPENDED or UNINSTALLED install is refused (403 not active), even for an admin", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 507, account_login: "acme", account_type: "Organization", registered: 1, suspended_at: "2026-01-01T00:00:00Z" });
-    await seedInstall(e, { installation_id: 508, account_login: "acme", account_type: "Organization", registered: 0, removed_at: "2026-01-01T00:00:00Z" });
+    await seedInstall(e, { installation_id: 507, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1, suspended_at: "2026-01-01T00:00:00Z" });
+    await seedInstall(e, { installation_id: 508, account_login: "acme", account_type: "Organization", account_id: 20, registered: 0, removed_at: "2026-01-01T00:00:00Z" });
     stubGitHub();
     expect((await app.request("/v1/orb/oauth/callback?code=abc&installation_id=507", {}, e)).status).toBe(403); // suspended (removed_at null → right arm)
     const removed = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=508", {}, e);
@@ -140,16 +166,16 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
 
   it("a USER-account owner self-enrolls (a login-only identity stores a null github id)", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 504, account_login: "alice", account_type: "User", registered: 1 });
-    stubGitHub({ user: { login: "alice" } }); // no id → user.id ?? null
+    await seedInstall(e, { installation_id: 504, account_login: "alice", account_type: "User", account_id: 7, registered: 1 });
+    stubGitHub({ user: { login: "alice", id: 7 } });
     expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=504", {}, e)).text()).toContain("Your enrollment secret");
     const row = await db(e).prepare("SELECT maintainer_login, maintainer_github_id FROM orb_enrollments WHERE installation_id=504").first<{ maintainer_login: string; maintainer_github_id: number | null }>();
-    expect(row).toMatchObject({ maintainer_login: "alice", maintainer_github_id: null });
+    expect(row).toMatchObject({ maintainer_login: "alice", maintainer_github_id: 7 });
   });
 
   it("a failed code exchange → 400; the broker being OFF falls through to the landing page", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 505, account_login: "acme", account_type: "Organization", registered: 1 });
+    await seedInstall(e, { installation_id: 505, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
     vi.stubGlobal("fetch", asFetch(async () => Response.json({}))); // no access_token
     expect((await app.request("/v1/orb/oauth/callback?code=abc&installation_id=505", {}, e)).status).toBe(400);
     const off = createTestEnv({ ORB_GITHUB_CLIENT_ID: "id", ORB_GITHUB_CLIENT_SECRET: "sec" }); // broker OFF
@@ -158,7 +184,7 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
 
   it("a failed /user read → 400", async () => {
     const e = brokeredEnv();
-    await seedInstall(e, { installation_id: 506, account_login: "acme", account_type: "Organization", registered: 1 });
+    await seedInstall(e, { installation_id: 506, account_login: "acme", account_type: "Organization", account_id: 20, registered: 1 });
     vi.stubGlobal("fetch", asFetch(async (url) => (url.endsWith("api.github.com/user") ? new Response("no", { status: 401 }) : Response.json({ access_token: "x" }))));
     expect((await app.request("/v1/orb/oauth/callback?code=abc&installation_id=506", {}, e)).status).toBe(400);
   });

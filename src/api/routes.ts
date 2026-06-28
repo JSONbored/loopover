@@ -128,7 +128,7 @@ import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/broker";
-import { registerOrbRelay } from "../orb/relay";
+import { pullRelayPending, readOrbRelayRegisterBody, registerValidatedOrbRelay, validateOrbRelayEnrollment } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
@@ -233,6 +233,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
+import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
@@ -619,6 +620,8 @@ const repositorySettingsSchema = z.object({
   aiReviewByok: z.boolean().default(false),
   aiReviewProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
   aiReviewModel: z.string().trim().min(1).max(120).nullable().optional(),
+  aiReviewAllAuthors: z.boolean().default(false),
+  closeOwnerAuthors: z.boolean().default(false),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   blacklistLabel: z.string().trim().min(1).max(50).default("slop"),
@@ -673,6 +676,7 @@ const maintainerSettingsSchema = z
     blacklistLabel: z.string().trim().min(1).max(50),
     createMissingLabel: z.boolean(),
     includeMaintainerAuthors: z.boolean(),
+    closeOwnerAuthors: z.boolean(),
     requireLinkedIssue: z.boolean(),
     badgeEnabled: z.boolean(),
     agentPaused: z.boolean(),
@@ -710,6 +714,8 @@ const repositoryAiReviewSchema = z.object({
   byok: z.boolean().default(false),
   provider: z.enum(["anthropic", "openai"]).nullable().optional(),
   model: z.string().trim().min(1).max(120).nullable().optional(),
+  allAuthors: z.boolean().default(false),
+  closeOwnerAuthors: z.boolean().optional(),
 });
 
 const contributorIssueDraftGenerateSchema = z.object({
@@ -2246,6 +2252,8 @@ export function createApp() {
       aiReviewByok: parsed.data.byok,
       aiReviewProvider: parsed.data.provider,
       aiReviewModel: parsed.data.model,
+      aiReviewAllAuthors: parsed.data.allAuthors,
+      closeOwnerAuthors: parsed.data.closeOwnerAuthors ?? current.closeOwnerAuthors,
     });
     // getRepositorySettings normalizes these to a concrete value or null (never undefined).
     return c.json({
@@ -2253,6 +2261,8 @@ export function createApp() {
       aiReviewByok: updated.aiReviewByok,
       aiReviewProvider: updated.aiReviewProvider ?? null,
       aiReviewModel: updated.aiReviewModel ?? null,
+      aiReviewAllAuthors: updated.aiReviewAllAuthors,
+      closeOwnerAuthors: updated.closeOwnerAuthors,
     });
   });
 
@@ -2916,15 +2926,51 @@ export function createApp() {
     const auth = c.req.header("authorization") ?? "";
     const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
-    const body = (await c.req.json().catch(() => null)) as { relayUrl?: unknown } | null;
+    const enrollment = await validateOrbRelayEnrollment(c.env, secret);
+    if ("error" in enrollment) return c.json(enrollment, enrollment.error === "invalid_enrollment" ? 401 : 403);
+    const rawBody = await readOrbRelayRegisterBody(c.req.raw, c.req.header("content-length"));
+    if (rawBody === null) return c.json({ error: "payload_too_large" }, 413);
+    let body: { relayUrl?: unknown; mode?: unknown } | null;
+    try {
+      body = JSON.parse(rawBody) as { relayUrl?: unknown; mode?: unknown };
+    } catch {
+      body = null;
+    }
+    // Pull mode (#16): a tailnet container registers to PULL events (no relay_url to push to). Default 'push'.
+    const mode = body?.mode === "pull" ? "pull" : body?.mode === "push" || body?.mode === undefined ? "push" : null;
+    if (mode === null) return c.json({ error: "invalid_mode" }, 400);
     const relayUrl = typeof body?.relayUrl === "string" ? body.relayUrl.trim() : "";
-    if (!relayUrl) return c.json({ error: "missing_relay_url" }, 400);
-    const result = await registerOrbRelay(c.env, secret, relayUrl);
+    if (mode === "push" && !relayUrl) return c.json({ error: "missing_relay_url" }, 400);
+    const result = await registerValidatedOrbRelay(c.env, enrollment, secret, relayUrl, mode);
     if ("error" in result) {
       const status = result.error === "invalid_enrollment" ? 401 : result.error === "installation_not_eligible" ? 403 : result.error === "encryption_unavailable" ? 500 : 400;
       return c.json(result, status);
     }
     return c.json(result);
+  });
+
+  // Pull-mode relay drain (#16) — a brokered self-host behind NAT/tailnet can't be PUSHED events, so it PULLS its
+  // queued events here (the engine drives this outbound). Auth: the container's own enrollment secret (Bearer).
+  // Body (optional) `{ ack: string[] }` acks the delivery_ids it durably accepted on its previous pull (deleted
+  // before the next batch is returned). Flag-gated (404 until enabled).
+  app.post("/v1/orb/relay/pull", async (c) => {
+    if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const auth = c.req.header("authorization") ?? "";
+    const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
+    const enrollment = await validateOrbRelayEnrollment(c.env, secret);
+    if ("error" in enrollment) return c.json(enrollment, enrollment.error === "invalid_enrollment" ? 401 : 403);
+    const rawBody = await readOrbRelayRegisterBody(c.req.raw, c.req.header("content-length"));
+    if (rawBody === null) return c.json({ error: "payload_too_large" }, 413);
+    let ack: string[] | undefined;
+    try {
+      const body = rawBody ? (JSON.parse(rawBody) as { ack?: unknown }) : null;
+      if (Array.isArray(body?.ack)) ack = body.ack.filter((id): id is string => typeof id === "string");
+    } catch {
+      ack = undefined; // tolerate an empty/invalid body — just no ack this round
+    }
+    const events = await pullRelayPending(c.env, enrollment.installationId, { ack });
+    return c.json({ events }, 200);
   });
 
   // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
@@ -3001,8 +3047,9 @@ export function createApp() {
   });
 
   // Opt an installation into (or out of) the registry. Body: { installationId, registered? } (registered defaults
-  // true). 404 when the installation isn't recorded yet — an install MUST arrive via the webhook first (unlike the
-  // fleet instances there's no account context to upsert a never-seen installation from).
+  // true). Opting out also blocks OAuth self-enrollment until an operator opts back in. 404 when the installation
+  // isn't recorded yet — an install MUST arrive via the webhook first (unlike the fleet instances there's no account
+  // context to upsert a never-seen installation from).
   app.post("/v1/internal/orb/installations/register", async (c) => {
     const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; registered?: unknown } | null;
     const installationId = Number(payload?.installationId);
@@ -3010,7 +3057,7 @@ export function createApp() {
     const existing = await c.env.DB.prepare("SELECT installation_id FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first();
     if (!existing) return c.json({ error: "installation_not_found" }, 404);
     const registered = payload?.registered === false ? 0 : 1;
-    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ? WHERE installation_id = ?").bind(registered, installationId).run();
+    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ?, self_enrollment_disabled = ? WHERE installation_id = ?").bind(registered, registered === 1 ? 0 : 1, installationId).run();
     return c.json({ installationId, registered: registered === 1 });
   });
 
@@ -3053,6 +3100,21 @@ export function createApp() {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };
     await c.env.JOBS.send(message);
     return c.json({ ok: true, status: "queued" }, 202);
+  });
+
+  // Operator-facing RAG (re)index trigger for a self-host maintainer. Bearer-gated by the `/v1/internal/*`
+  // middleware (INTERNAL_JOB_TOKEN). With NO body it enqueues the fan-out (re-indexes every RAG-active configured +
+  // registered repo); with `{ "repoFullName": "owner/repo" }` it indexes just that repo. Either way the job is
+  // gated downstream by convergedFeatureActive, so a repo where RAG is off is a no-op. 404 when RAG is globally off
+  // so the endpoint doesn't exist on a deploy that isn't running RAG. This is how an operator adds/indexes a new
+  // repo on demand instead of waiting for the 6-hourly cron.
+  app.post("/v1/internal/jobs/rag-index", async (c) => {
+    if (!isRagEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as { repoFullName?: unknown };
+    const repoFullName = typeof body?.repoFullName === "string" && body.repoFullName.trim().length > 0 ? body.repoFullName.trim() : undefined;
+    const message: JobMessage = { type: "rag-index-repo", requestedBy: "api", ...(repoFullName ? { repoFullName } : {}) };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", scope: repoFullName ?? "all-configured-repos" }, 202);
   });
 
   app.post("/v1/internal/jobs/refresh-registry/run", async (c) => {
@@ -3364,6 +3426,8 @@ export function createApp() {
         aiReviewByok: parsed.data.aiReviewByok,
         aiReviewProvider: parsed.data.aiReviewProvider,
         aiReviewModel: parsed.data.aiReviewModel,
+        aiReviewAllAuthors: parsed.data.aiReviewAllAuthors,
+        closeOwnerAuthors: parsed.data.closeOwnerAuthors,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         blacklistLabel: parsed.data.blacklistLabel,
@@ -4992,6 +5056,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/orb/oauth/callback") return false;
   if (path === "/v1/orb/token") return false;
   if (path === "/v1/orb/relay/register") return false;
+  if (path === "/v1/orb/relay/pull") return false;
   if (path === "/v1/orb/ingest") return false;
   if (path.startsWith("/v1/internal/")) return false;
   return path.startsWith("/v1/");

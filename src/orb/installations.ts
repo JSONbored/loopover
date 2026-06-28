@@ -17,14 +17,14 @@ export async function upsertOrbInstallation(env: Env, eventName: string, payload
     case "created":
     case "new_permissions_accepted":
       await env.DB.prepare(
-        `INSERT INTO orb_github_installations (installation_id, account_login, account_type, repository_selection, last_event_at)
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO orb_github_installations (installation_id, account_login, account_type, account_id, repository_selection, last_event_at)
+         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(installation_id) DO UPDATE SET
-           account_login = excluded.account_login, account_type = excluded.account_type,
+           account_login = excluded.account_login, account_type = excluded.account_type, account_id = excluded.account_id,
            repository_selection = excluded.repository_selection,
            suspended_at = NULL, removed_at = NULL, last_event_at = CURRENT_TIMESTAMP`,
       )
-        .bind(inst.id, inst.account?.login ?? null, inst.account?.type ?? null, inst.repository_selection ?? null)
+        .bind(inst.id, inst.account?.login ?? null, inst.account?.type ?? null, inst.account?.id ?? null, inst.repository_selection ?? null)
         .run();
       return;
     case "deleted":
@@ -51,14 +51,14 @@ export async function backfillOrbInstallations(env: Env): Promise<{ backfilled: 
   const installs = await listOrbAppInstallations(env);
   for (const inst of installs) {
     await env.DB.prepare(
-      `INSERT INTO orb_github_installations (installation_id, account_login, account_type, repository_selection, last_event_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `INSERT INTO orb_github_installations (installation_id, account_login, account_type, account_id, repository_selection, last_event_at)
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(installation_id) DO UPDATE SET
-         account_login = excluded.account_login, account_type = excluded.account_type,
+         account_login = excluded.account_login, account_type = excluded.account_type, account_id = excluded.account_id,
          repository_selection = excluded.repository_selection, suspended_at = NULL, removed_at = NULL,
          last_event_at = CURRENT_TIMESTAMP`,
     )
-      .bind(inst.id, inst.accountLogin, inst.accountType, inst.repositorySelection)
+      .bind(inst.id, inst.accountLogin, inst.accountType, inst.accountId, inst.repositorySelection)
       .run();
   }
   return { backfilled: installs.length };

@@ -27,12 +27,12 @@ describe("createOrbAppJwt", () => {
 describe("listOrbAppInstallations", () => {
   it("walks pages and maps installs (missing account / id tolerated)", async () => {
     const env = orbEnv({ ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem() });
-    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, account: { login: "acme", type: "Organization" }, repository_selection: "all" }));
-    const page2 = [{ id: 101, account: { login: "bob", type: "User" }, repository_selection: "selected" }, { account: { login: "no-id" } }, { id: 102 }];
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, account: { login: "acme", type: "Organization", id: 20 }, repository_selection: "all" }));
+    const page2 = [{ id: 101, account: { login: "bob", type: "User", id: 21 }, repository_selection: "selected" }, { account: { login: "no-id" } }, { id: 102 }];
     vi.stubGlobal("fetch", async (url: RequestInfo | URL) => Response.json(String(url).includes("&page=1") ? page1 : page2));
     const installs = await listOrbAppInstallations(env);
     expect(installs).toHaveLength(102); // 100 (full page → continue) + 101 + 102; the no-id row is skipped
-    expect(installs.at(-1)).toEqual({ id: 102, accountLogin: null, accountType: null, repositorySelection: null });
+    expect(installs.at(-1)).toEqual({ id: 102, accountLogin: null, accountType: null, accountId: null, repositorySelection: null });
   });
 
   it("throws on a non-ok response", async () => {
@@ -65,17 +65,17 @@ describe("backfillOrbInstallations", () => {
     await (env.DB as unknown as TestD1Database).prepare("INSERT INTO orb_github_installations (installation_id, registered) VALUES (5, 1)").run(); // already opted in
     vi.stubGlobal("fetch", async () =>
       Response.json([
-        { id: 5, account: { login: "acme", type: "Organization" }, repository_selection: "all" },
-        { id: 6, account: { login: "bob", type: "User" }, repository_selection: "selected" },
+        { id: 5, account: { login: "acme", type: "Organization", id: 20 }, repository_selection: "all" },
+        { id: 6, account: { login: "bob", type: "User", id: 21 }, repository_selection: "selected" },
       ]),
     );
     expect(await backfillOrbInstallations(env)).toEqual({ backfilled: 2 });
     const rows = await (env.DB as unknown as TestD1Database)
-      .prepare("SELECT installation_id, account_login, registered FROM orb_github_installations ORDER BY installation_id")
-      .all<{ installation_id: number; account_login: string; registered: number }>();
+      .prepare("SELECT installation_id, account_login, account_id, registered FROM orb_github_installations ORDER BY installation_id")
+      .all<{ installation_id: number; account_login: string; account_id: number; registered: number }>();
     expect(rows.results).toEqual([
-      { installation_id: 5, account_login: "acme", registered: 1 }, // stayed registered (backfill never re-trusts/untrusts)
-      { installation_id: 6, account_login: "bob", registered: 0 }, // new → default opt-out
+      { installation_id: 5, account_login: "acme", account_id: 20, registered: 1 }, // stayed registered (backfill never re-trusts/untrusts)
+      { installation_id: 6, account_login: "bob", account_id: 21, registered: 0 }, // new → default opt-out
     ]);
   });
 });

@@ -55,11 +55,41 @@ export type RegisterResult =
   | { ok: true; installationId: number }
   | { error: "invalid_enrollment" | "installation_not_eligible" | "invalid_relay_url" | "encryption_unavailable" };
 
-/** Register (or update) the container's relay target for a valid enrollment. Validates the secret (→ the bound,
- *  registered, non-suspended install — same gate as the token broker), SSRF-validates the relay URL, then stores
- *  the URL + the enrollment secret encrypted at rest (for the forward-time HMAC). The container presents its OWN
- *  plaintext enrollment secret as the Bearer, so this is self-service + bound to that install. */
-export async function registerOrbRelay(env: Env, secret: string, relayUrl: string): Promise<RegisterResult> {
+export const MAX_ORB_RELAY_REGISTER_BODY_BYTES = 4096;
+
+function parseContentLength(header: string | null | undefined): number | null {
+  if (typeof header !== "string") return null;
+  const n = Number(header);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/** Read the relay-registration JSON with a small hard ceiling; returns null when the sender exceeds it. */
+export async function readOrbRelayRegisterBody(request: Request, contentLengthHeader: string | null | undefined): Promise<string | null> {
+  const declared = parseContentLength(contentLengthHeader);
+  if (declared !== null && declared > MAX_ORB_RELAY_REGISTER_BODY_BYTES) return null;
+
+  const stream = request.body;
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_ORB_RELAY_REGISTER_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
+}
+
+export type RelayEnrollment = { enrollId: string; installationId: number };
+
+export async function validateOrbRelayEnrollment(env: Env, secret: string): Promise<RelayEnrollment | { error: "invalid_enrollment" | "installation_not_eligible" }> {
   const row = await env.DB
     .prepare("SELECT enroll_id, installation_id, state, revoked_at FROM orb_enrollments WHERE secret_hash = ?")
     .bind(await hashToken(secret))
@@ -70,21 +100,126 @@ export async function registerOrbRelay(env: Env, secret: string, relayUrl: strin
     .bind(row.installation_id)
     .first<{ registered: number; suspended_at: string | null; removed_at: string | null }>();
   if (!install || install.registered !== 1 || install.suspended_at !== null || install.removed_at !== null) return { error: "installation_not_eligible" };
+  return { enrollId: row.enroll_id, installationId: row.installation_id };
+}
+
+export async function registerValidatedOrbRelay(env: Env, enrollment: RelayEnrollment, secret: string, relayUrl: string, mode: "push" | "pull" = "push"): Promise<RegisterResult> {
+  // Pull mode (#16): a tailnet container is never POSTed to, so there's no URL to SSRF-validate and no secret to
+  // store for a forward-time HMAC (the engine authenticates its OWN outbound pull). Just flag the enrollment.
+  if (mode === "pull") {
+    await env.DB
+      .prepare("UPDATE orb_enrollments SET relay_mode = 'pull', relay_registered_at = CURRENT_TIMESTAMP WHERE enroll_id = ?")
+      .bind(enrollment.enrollId)
+      .run();
+    return { ok: true, installationId: enrollment.installationId };
+  }
   // SSRF guard: the Orb will POST events to this URL — it must be a public https endpoint (no loopback / private /
   // link-local host), so a registered relay URL can never coerce the Orb into hitting an internal service.
   if (!isSafeHttpUrl(relayUrl)) return { error: "invalid_relay_url" };
   if (!env.TOKEN_ENCRYPTION_SECRET) return { error: "encryption_unavailable" };
   const enc = await encryptSecret(secret, env.TOKEN_ENCRYPTION_SECRET);
+  // Set relay_mode='push' too so a re-register from a previously-pull enrollment flips back to push.
   await env.DB
-    .prepare("UPDATE orb_enrollments SET relay_url = ?, relay_secret_enc = ?, relay_secret_iv = ?, relay_secret_salt = ?, relay_registered_at = CURRENT_TIMESTAMP WHERE enroll_id = ?")
-    .bind(relayUrl, enc.ciphertext, enc.iv, enc.salt, row.enroll_id)
+    .prepare("UPDATE orb_enrollments SET relay_mode = 'push', relay_url = ?, relay_secret_enc = ?, relay_secret_iv = ?, relay_secret_salt = ?, relay_registered_at = CURRENT_TIMESTAMP WHERE enroll_id = ?")
+    .bind(relayUrl, enc.ciphertext, enc.iv, enc.salt, enrollment.enrollId)
     .run();
-  return { ok: true, installationId: row.installation_id };
+  return { ok: true, installationId: enrollment.installationId };
+}
+
+/** Register (or update) the container's relay target for a valid enrollment. Validates the secret (→ the bound,
+ *  registered, non-suspended install — same gate as the token broker), SSRF-validates the relay URL, then stores
+ *  the URL + the enrollment secret encrypted at rest (for the forward-time HMAC). The container presents its OWN
+ *  plaintext enrollment secret as the Bearer, so this is self-service + bound to that install. */
+export async function registerOrbRelay(env: Env, secret: string, relayUrl: string, mode: "push" | "pull" = "push"): Promise<RegisterResult> {
+  const enrollment = await validateOrbRelayEnrollment(env, secret);
+  if ("error" in enrollment) return enrollment;
+  return registerValidatedOrbRelay(env, enrollment, secret, relayUrl, mode);
 }
 
 const RELAY_RETRY_MAX_ATTEMPTS = 5;
 const RELAY_RETRY_BATCH_SIZE = 25;
 const RELAY_RETRY_CONCURRENCY = 5;
+
+// Pull-mode relay (#16): a brokered self-host behind NAT/tailnet can't receive PUSHED forwards, so the Orb instead
+// ENQUEUES its events here and the engine drains them outbound. The batch caps how many rows a single pull returns
+// (and bounds the ack list), and the TTL drops events the engine never came back for (a long-down container).
+const RELAY_PENDING_BATCH_SIZE = 50;
+const RELAY_PENDING_TTL_HOURS = 24;
+const RELAY_PENDING_MAX_PER_INSTALLATION = 500;
+
+export type RelayPendingEvent = { deliveryId: string; eventName: string; rawBody: string };
+
+/** Drop pull-mode rows that exceeded the raw-body retention window, even if their engine never polls. */
+async function pruneRelayPending(env: Env): Promise<number> {
+  const pruned = await env.DB
+    .prepare("DELETE FROM orb_relay_pending WHERE created_at < datetime('now', '-' || ? || ' hours')")
+    .bind(RELAY_PENDING_TTL_HOURS)
+    .run();
+  // Make pull-mode loss VISIBLE too (parity with the push-path drop): a pruned row is a webhook a long-down tailnet
+  // container never drained — emit an alertable error-level log (distinct event name) so it leaves a Sentry trace.
+  if (pruned.meta.changes > 0) {
+    console.error(JSON.stringify({ level: "error", event: "orb_relay_pending_dropped", count: pruned.meta.changes }));
+  }
+  return pruned.meta.changes;
+}
+
+/** Enqueue a pull-mode event for an installation. Idempotent on delivery_id (mirrors storeRelayFailure) — a GitHub
+ *  redelivery reaching the Orb twice never double-queues. Prunes expired rows and caps each install's backlog first so
+ *  an offline/malicious pull enrollment cannot retain raw webhook bodies indefinitely. */
+export async function enqueueRelayPending(
+  env: Env,
+  args: { deliveryId: string; installationId: number; eventName: string; rawBody: string },
+): Promise<void> {
+  await pruneRelayPending(env);
+  await env.DB
+    .prepare(
+      "INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body) VALUES (?, ?, ?, ?) ON CONFLICT(delivery_id) DO NOTHING",
+    )
+    .bind(args.deliveryId, args.installationId, args.eventName, args.rawBody)
+    .run();
+  await env.DB
+    .prepare(
+      `DELETE FROM orb_relay_pending
+       WHERE installation_id = ?
+         AND delivery_id IN (
+           SELECT delivery_id FROM orb_relay_pending
+           WHERE installation_id = ?
+           ORDER BY created_at DESC, delivery_id DESC
+           LIMIT -1 OFFSET ?
+         )`,
+    )
+    .bind(args.installationId, args.installationId, RELAY_PENDING_MAX_PER_INSTALLATION)
+    .run();
+}
+
+/** Drain pending pull-mode events for an installation. The engine calls this outbound (it can't be pushed to):
+ *  1) prune TTL-expired rows fleet-wide, 2) delete rows the caller ACKs (scoped to this install so one container
+ *  can never ack another's), then 3) return the next ordered batch. `ack` and `limit` are both capped at the batch
+ *  size to bound the SQL and the response. */
+export async function pullRelayPending(
+  env: Env,
+  installationId: number,
+  opts?: { ack?: string[] | undefined; limit?: number | undefined },
+): Promise<RelayPendingEvent[]> {
+  // Prune rows the engine never came back for (same datetime() comparison style as retryFailedRelays).
+  await pruneRelayPending(env);
+
+  const ack = opts?.ack?.slice(0, RELAY_PENDING_BATCH_SIZE) ?? [];
+  if (ack.length) {
+    const placeholders = ack.map(() => "?").join(", ");
+    await env.DB
+      .prepare(`DELETE FROM orb_relay_pending WHERE installation_id = ? AND delivery_id IN (${placeholders})`)
+      .bind(installationId, ...ack)
+      .run();
+  }
+
+  const limit = Math.min(opts?.limit ?? RELAY_PENDING_BATCH_SIZE, RELAY_PENDING_BATCH_SIZE);
+  const { results } = await env.DB
+    .prepare("SELECT delivery_id, event_name, raw_body FROM orb_relay_pending WHERE installation_id = ? ORDER BY created_at, delivery_id LIMIT ?")
+    .bind(installationId, limit)
+    .all<{ delivery_id: string; event_name: string; raw_body: string }>();
+  return results.map((r) => ({ deliveryId: r.delivery_id, eventName: r.event_name, rawBody: r.raw_body }));
+}
 
 /** Record a failed relay forward in the retry queue. Idempotent on delivery_id — a duplicate insert (e.g. from a
  *  GitHub redelivery reaching the same event before the retry fires) is silently ignored. */
@@ -114,7 +249,7 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
   // retries exhausted) — e.g. a container down for over an hour. Emit an alertable structured log so the loss
   // leaves a trace instead of vanishing silently.
   if (pruned.meta.changes > 0) {
-    console.warn(JSON.stringify({ level: "warn", event: "orb_relay_events_dropped", count: pruned.meta.changes }));
+    console.error(JSON.stringify({ level: "error", event: "orb_relay_events_dropped", count: pruned.meta.changes }));
   }
   const { results } = await env.DB
     .prepare(
@@ -130,7 +265,7 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
       { eventName: row.event_name, installationId: row.installation_id, deliveryId: row.delivery_id, rawBody: row.raw_body },
       opts?.fetchImpl,
     );
-    if (result === "forwarded" || result === "skipped") {
+    if (result === "forwarded" || result === "queued" || result === "skipped") {
       await env.DB.prepare("DELETE FROM orb_relay_failures WHERE delivery_id = ?").bind(row.delivery_id).run();
     } else {
       await env.DB
@@ -154,15 +289,23 @@ export async function forwardOrbEvent(
   env: Env,
   args: { eventName: string; installationId: number | null | undefined; deliveryId: string; rawBody: string },
   fetchImpl: typeof fetch = fetch,
-): Promise<"forwarded" | "skipped" | "failed"> {
+): Promise<"forwarded" | "queued" | "skipped" | "failed"> {
   if (!args.installationId || !RELAY_FORWARD_EVENTS.has(args.eventName)) return "skipped";
   const row = await env.DB
-    .prepare("SELECT relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL AND relay_url IS NOT NULL")
+    .prepare("SELECT relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL")
     .bind(args.installationId)
-    .first<{ relay_url: string; relay_secret_enc: string; relay_secret_iv: string; relay_secret_salt: string | null }>();
-  if (!row || !env.TOKEN_ENCRYPTION_SECRET) return "skipped";
+    .first<{ relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();
+  if (!row) return "skipped"; // not a brokered self-host (or revoked) — nothing to relay to
+  // Pull mode (#16): a tailnet container can't be pushed to, so ENQUEUE the event for it to drain outbound.
+  if (row.relay_mode === "pull") {
+    await enqueueRelayPending(env, { deliveryId: args.deliveryId, installationId: args.installationId, eventName: args.eventName, rawBody: args.rawBody });
+    return "queued";
+  }
+  // Push mode with nothing registered (relay_url null) or no decryption key → skip. relay_secret_enc/iv are written
+  // atomically with relay_url at registration, so they're non-null whenever relay_url is (asserted below).
+  if (!row.relay_url || !env.TOKEN_ENCRYPTION_SECRET) return "skipped";
   try {
-    const secret = await decryptSecret(row.relay_secret_enc, row.relay_secret_iv, env.TOKEN_ENCRYPTION_SECRET, row.relay_secret_salt);
+    const secret = await decryptSecret(row.relay_secret_enc!, row.relay_secret_iv!, env.TOKEN_ENCRYPTION_SECRET, row.relay_secret_salt);
     const signature = await relaySignature(secret, args.rawBody);
     const res = await fetchImpl(row.relay_url, {
       method: "POST",

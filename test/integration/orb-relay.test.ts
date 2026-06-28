@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
-import { forwardOrbEvent, registerOrbRelay, relaySignature, relayVerify, retryFailedRelays, storeRelayFailure } from "../../src/orb/relay";
+import { relayForward } from "../../src/orb/webhook";
+import { enqueueRelayPending, forwardOrbEvent, MAX_ORB_RELAY_REGISTER_BODY_BYTES, pullRelayPending, readOrbRelayRegisterBody, registerOrbRelay, relaySignature, relayVerify, retryFailedRelays, storeRelayFailure } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
@@ -79,18 +80,62 @@ describe("POST /v1/orb/relay/register", () => {
     expect(await ok.json()).toMatchObject({ ok: true, installationId: 710 });
   });
 
-  it("maps each failure to its status: 401 bad secret, 403 ineligible, 400 SSRF, 500 no-encryption", async () => {
+  it("maps each failure to its status: 401 bad secret, 403 ineligible, 400 SSRF, 413 too-large body, 500 no-encryption", async () => {
     const e = brokeredEnv();
     const sBad = "Bearer orbsec_bad";
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: sBad }, body: JSON.stringify({ relayUrl: "https://x.example" }) }, e)).status).toBe(401);
     const s1 = await enroll(e, 711);
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s1}` }, body: JSON.stringify({ relayUrl: "http://127.0.0.1" }) }, e)).status).toBe(400);
+    expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s1}` }, body: JSON.stringify({ relayUrl: `${"https://x.example/"}${"a".repeat(4096)}` }) }, e)).status).toBe(413);
     const s2 = await enroll(e, 712);
     await db(e).prepare("UPDATE orb_github_installations SET registered=0 WHERE installation_id=712").run();
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s2}` }, body: JSON.stringify({ relayUrl: "https://x.example" }) }, e)).status).toBe(403);
     const noEnc = createTestEnv({ ORB_BROKER_ENABLED: "true" });
     const s3 = await enroll(noEnc, 713);
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s3}` }, body: JSON.stringify({ relayUrl: "https://x.example/relay" }) }, noEnc)).status).toBe(500);
+  });
+
+  it("rejects an invalid enrollment before reading the registration body", async () => {
+    const e = brokeredEnv();
+    let bodyAccesses = 0;
+    const req = new Request("http://localhost/v1/orb/relay/register", { method: "POST", headers: { authorization: "Bearer orbsec_bad" } });
+    Object.defineProperty(req, "body", {
+      get() {
+        bodyAccesses += 1;
+        throw new Error("body should not be read before enrollment validation");
+      },
+    });
+    const res = await app.fetch(req, e);
+    expect(res.status).toBe(401);
+    expect(bodyAccesses).toBe(0);
+  });
+});
+
+describe("readOrbRelayRegisterBody", () => {
+  it("returns an empty string when the request has no body stream", async () => {
+    // A request without a body (e.g. a bodyless POST) has request.body === null — the empty-body path.
+    const req = new Request("http://localhost/v1/orb/relay/register", { method: "POST" });
+    expect(req.body).toBeNull();
+    expect(await readOrbRelayRegisterBody(req, null)).toBe(""); // null content-length → declared null → empty stream
+    expect(await readOrbRelayRegisterBody(req, undefined)).toBe(""); // undefined header → typeof !== "string" arm
+  });
+
+  it("rejects an oversized DECLARED content-length up front (before touching the stream)", async () => {
+    // Past the ceiling: parseContentLength returns a valid integer that exceeds MAX → short-circuit to null.
+    const req = new Request("http://localhost/v1/orb/relay/register", { method: "POST", body: "{}" });
+    expect(await readOrbRelayRegisterBody(req, String(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1))).toBeNull();
+  });
+
+  it("ignores a malformed or negative content-length and reads the actual body", async () => {
+    // Number("abc")=NaN and "-1"<0 → parseContentLength returns null → the declared-too-large guard is skipped.
+    expect(await readOrbRelayRegisterBody(new Request("http://localhost/r", { method: "POST", body: "{}" }), "abc")).toBe("{}"); // non-integer
+    expect(await readOrbRelayRegisterBody(new Request("http://localhost/r", { method: "POST", body: "{}" }), "-1")).toBe("{}"); // negative
+  });
+
+  it("returns null when the STREAMED body exceeds the ceiling regardless of the declared length", async () => {
+    // No content-length declared, but the stream itself runs past MAX → reader is cancelled, null returned.
+    const req = new Request("http://localhost/r", { method: "POST", body: "x".repeat(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1) });
+    expect(await readOrbRelayRegisterBody(req, null)).toBeNull();
   });
 });
 
@@ -150,6 +195,24 @@ describe("forwardOrbEvent", () => {
     await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
     const noKey = { ...e, TOKEN_ENCRYPTION_SECRET: undefined } as unknown as Env; // same DB, key removed
     expect(await forwardOrbEvent(noKey, { eventName: "pull_request", installationId: 803, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+  });
+});
+
+describe("relayForward (deferred forward + failure persistence, #orb-ack-fast)", () => {
+  it("persists a FAILED push to orb_relay_failures so the retry cron re-attempts it", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 820);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    await relayForward(e, { eventName: "pull_request", installationId: 820, deliveryId: "rf-fail", rawBody: "{}" }, (() => Promise.resolve(new Response("no", { status: 503 }))) as typeof fetch);
+    const row = await db(e).prepare("SELECT installation_id, event_name FROM orb_relay_failures WHERE delivery_id='rf-fail'").first<{ installation_id: number; event_name: string }>();
+    expect(row).toMatchObject({ installation_id: 820, event_name: "pull_request" });
+  });
+
+  it("does NOT persist when the forward is skipped (enrolled but no relay) and never throws", async () => {
+    const e = brokeredEnv();
+    await enroll(e, 821); // enrolled, but no relay registered → forwardOrbEvent skips before any fetch
+    await expect(relayForward(e, { eventName: "pull_request", installationId: 821, deliveryId: "rf-skip", rawBody: "{}" })).resolves.toBeUndefined();
+    expect(await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='rf-skip'").first()).toBeFalsy();
   });
 });
 
@@ -281,17 +344,17 @@ describe("retryFailedRelays", () => {
     expect(untouched?.n).toBe(5);
   });
 
-  it("PRUNES rows that have exhausted their attempt budget (attempts >= 5) and logs the drop (#5)", async () => {
+  it("PRUNES rows that have exhausted their attempt budget (attempts >= 5) and logs the drop at error level (#5)", async () => {
     const e = brokeredEnv();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     // Manually insert a row at the attempt ceiling.
     await db(e).prepare("INSERT INTO orb_relay_failures (delivery_id, event_name, installation_id, raw_body, attempts) VALUES (?, ?, ?, ?, ?)").bind("exhausted-1", "pull_request", 9300, "{}", 5).run();
     await retryFailedRelays(e);
     const row = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='exhausted-1'").first();
     expect(row ?? null).toBeNull(); // pruned on the DELETE pass before the SELECT
-    // The drop is no longer silent — an alertable structured log records the lost event count.
-    expect(warn.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped"))).toBe(true);
-    warn.mockRestore();
+    // The drop is no longer silent OR warn-only — an alertable level:error log reaches the Sentry forwarder.
+    expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped") && String(line).includes('"level":"error"'))).toBe(true);
+    errLog.mockRestore();
   });
 
   it("PRUNES expired rows (expires_at in the past) without attempting to forward", async () => {
@@ -306,5 +369,289 @@ describe("retryFailedRelays", () => {
     expect(fetchCalled).toBe(false); // expired row deleted before SELECT — fetch was never called
     const row = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='expired-1'").first();
     expect(row ?? null).toBeNull();
+  });
+});
+
+describe("enqueueRelayPending", () => {
+  it("prunes expired rows before enqueueing so offline pull-mode installs cannot retain raw bodies indefinitely", async () => {
+    const e = brokeredEnv();
+    await db(e).prepare("INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, created_at) VALUES (?, ?, ?, ?, datetime('now', '-25 hours'))").bind("stale-before-enqueue", 9599, "pull_request", '{"stale":true}').run();
+    await enqueueRelayPending(e, { deliveryId: "fresh-after-prune", installationId: 9600, eventName: "pull_request", rawBody: '{"fresh":true}' });
+
+    const stale = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='stale-before-enqueue'").first();
+    const fresh = await db(e).prepare("SELECT raw_body FROM orb_relay_pending WHERE delivery_id='fresh-after-prune'").first<{ raw_body: string }>();
+    expect(stale ?? null).toBeNull();
+    expect(fresh?.raw_body).toBe('{"fresh":true}');
+  });
+
+  it("caps each installation's pending queue by dropping the oldest overflow rows", async () => {
+    const e = brokeredEnv();
+    for (let i = 0; i < 501; i += 1) {
+      await enqueueRelayPending(e, { deliveryId: `cap-${String(i).padStart(3, "0")}`, installationId: 9601, eventName: "pull_request", rawBody: JSON.stringify({ i }) });
+    }
+    await enqueueRelayPending(e, { deliveryId: "other-install", installationId: 9602, eventName: "pull_request", rawBody: "{}" });
+
+    const count = await db(e).prepare("SELECT COUNT(*) AS n FROM orb_relay_pending WHERE installation_id=9601").first<{ n: number }>();
+    const dropped = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='cap-000'").first();
+    const newest = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='cap-500'").first();
+    const other = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='other-install'").first();
+    expect(count?.n).toBe(500);
+    expect(dropped ?? null).toBeNull();
+    expect(newest ?? null).not.toBeNull();
+    expect(other ?? null).not.toBeNull();
+  });
+
+  it("inserts a pending row; duplicate delivery_id is silently ignored (ON CONFLICT DO NOTHING)", async () => {
+    const e = brokeredEnv();
+    await enqueueRelayPending(e, { deliveryId: "pend-1", installationId: 9600, eventName: "pull_request", rawBody: '{"n":1}' });
+    const row = await db(e).prepare("SELECT installation_id, event_name, raw_body FROM orb_relay_pending WHERE delivery_id='pend-1'").first<{ installation_id: number; event_name: string; raw_body: string }>();
+    expect(row?.installation_id).toBe(9600);
+    expect(row?.event_name).toBe("pull_request");
+    expect(row?.raw_body).toBe('{"n":1}');
+    // Second call with same delivery_id keeps the original (no throw, no duplicate, no overwrite).
+    await enqueueRelayPending(e, { deliveryId: "pend-1", installationId: 9600, eventName: "issues", rawBody: '{"n":2}' });
+    const after = await db(e).prepare("SELECT COUNT(*) AS n, MAX(raw_body) AS body FROM orb_relay_pending WHERE delivery_id='pend-1'").first<{ n: number; body: string }>();
+    expect(after?.n).toBe(1);
+    expect(after?.body).toBe('{"n":1}'); // original retained
+  });
+});
+
+describe("pullRelayPending", () => {
+  it("returns an empty array when nothing is queued (and no ack)", async () => {
+    expect(await pullRelayPending(brokeredEnv(), 9700)).toEqual([]);
+  });
+
+  it("returns this installation's queued events, mapped + ordered, and scoped to the install", async () => {
+    const e = brokeredEnv();
+    await enqueueRelayPending(e, { deliveryId: "a", installationId: 9701, eventName: "pull_request", rawBody: "{}" });
+    await enqueueRelayPending(e, { deliveryId: "b", installationId: 9701, eventName: "issues", rawBody: "{}" });
+    await enqueueRelayPending(e, { deliveryId: "other", installationId: 9999, eventName: "pull_request", rawBody: "{}" }); // a different install
+    const events = await pullRelayPending(e, 9701);
+    expect(events.map((ev) => ev.deliveryId)).toEqual(["a", "b"]); // only this install, ordered
+    expect(events[0]).toEqual({ deliveryId: "a", eventName: "pull_request", rawBody: "{}" });
+  });
+
+  it("ACK-deletes only the named rows, scoped to this installation (can't ack another install's row)", async () => {
+    const e = brokeredEnv();
+    await enqueueRelayPending(e, { deliveryId: "k1", installationId: 9702, eventName: "pull_request", rawBody: "{}" });
+    await enqueueRelayPending(e, { deliveryId: "k2", installationId: 9702, eventName: "issues", rawBody: "{}" });
+    await enqueueRelayPending(e, { deliveryId: "victim", installationId: 8888, eventName: "pull_request", rawBody: "{}" }); // another install
+    // Ack k1 (own) AND victim (another install's id) — only k1 is removed; victim is protected by the install scope.
+    const remaining = await pullRelayPending(e, 9702, { ack: ["k1", "victim"] });
+    expect(remaining.map((ev) => ev.deliveryId)).toEqual(["k2"]);
+    const victim = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='victim'").first();
+    expect(victim ?? null).not.toBeNull(); // the other install's row survived the cross-install ack
+  });
+
+  it("treats an empty ack array as no-op (the ack.length === 0 branch)", async () => {
+    const e = brokeredEnv();
+    await enqueueRelayPending(e, { deliveryId: "n1", installationId: 9703, eventName: "pull_request", rawBody: "{}" });
+    const events = await pullRelayPending(e, 9703, { ack: [] });
+    expect(events.map((ev) => ev.deliveryId)).toEqual(["n1"]); // nothing deleted
+  });
+
+  it("caps the ack list at the batch size so the IN(...) SQL is bounded", async () => {
+    const e = brokeredEnv();
+    // Queue 60 rows, ack 60 ids — only the first 50 (batch cap) are actually deleted.
+    for (let i = 0; i < 60; i += 1) await enqueueRelayPending(e, { deliveryId: `ack-${String(i).padStart(2, "0")}`, installationId: 9704, eventName: "pull_request", rawBody: "{}" });
+    const ackIds = Array.from({ length: 60 }, (_, i) => `ack-${String(i).padStart(2, "0")}`);
+    await pullRelayPending(e, 9704, { ack: ackIds, limit: 1 });
+    const left = await db(e).prepare("SELECT COUNT(*) AS n FROM orb_relay_pending WHERE installation_id=9704").first<{ n: number }>();
+    expect(left?.n).toBe(10); // 60 queued − 50 acked (cap) = 10 remain
+  });
+
+  it("returns at most the batch size, and clamps an over-large requested limit down to it", async () => {
+    const e = brokeredEnv();
+    for (let i = 0; i < 55; i += 1) await enqueueRelayPending(e, { deliveryId: `bulk-${String(i).padStart(2, "0")}`, installationId: 9705, eventName: "pull_request", rawBody: "{}" });
+    expect((await pullRelayPending(e, 9705, { limit: 1000 })).length).toBe(50); // clamped to RELAY_PENDING_BATCH_SIZE
+    expect((await pullRelayPending(e, 9705)).length).toBe(50); // default limit is the batch too (opts undefined arm)
+    expect((await pullRelayPending(e, 9705, { limit: 5 })).length).toBe(5); // a smaller requested limit is honoured
+  });
+
+  it("PRUNES rows older than the TTL before returning the batch, and logs the drop at error level", async () => {
+    const e = brokeredEnv();
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await db(e).prepare("INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, created_at) VALUES (?, ?, ?, ?, datetime('now', '-25 hours'))").bind("stale-1", 9706, "pull_request", "{}").run();
+    await enqueueRelayPending(e, { deliveryId: "fresh-1", installationId: 9706, eventName: "pull_request", rawBody: "{}" });
+    const events = await pullRelayPending(e, 9706);
+    expect(events.map((ev) => ev.deliveryId)).toEqual(["fresh-1"]); // the 25h-old row was pruned (TTL 24h)
+    const stale = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='stale-1'").first();
+    expect(stale ?? null).toBeNull();
+    // Pull-mode loss is now traced for the operator at error level (parity with the push-path drop).
+    expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_pending_dropped") && String(line).includes('"level":"error"'))).toBe(true);
+    errLog.mockRestore();
+  });
+});
+
+describe("forwardOrbEvent (pull mode #16)", () => {
+  it("ENQUEUES instead of pushing and returns 'queued' for a pull-mode enrollment", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8100);
+    expect(await registerOrbRelay(e, secret, "", "pull")).toEqual({ ok: true, installationId: 8100 });
+    let fetched = false;
+    const fetchSpy = (() => { fetched = true; return Promise.resolve(new Response("ok")); }) as typeof fetch;
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8100, deliveryId: "q-1", rawBody: '{"a":1}' }, fetchSpy)).toBe("queued");
+    expect(fetched).toBe(false); // pull mode never pushes
+    const row = await db(e).prepare("SELECT event_name, raw_body FROM orb_relay_pending WHERE delivery_id='q-1' AND installation_id=8100").first<{ event_name: string; raw_body: string }>();
+    expect(row?.event_name).toBe("pull_request");
+    expect(row?.raw_body).toBe('{"a":1}');
+  });
+
+  it("SKIPS an enrolled install with no relay registered (push default, relay_url still null)", async () => {
+    const e = brokeredEnv();
+    await enroll(e, 8101); // enrolled, relay_mode defaults to 'push', no relay_url
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8101, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+  });
+
+  it("SKIPS a forwardable event for an install with NO enrollment row at all (the !row arm)", async () => {
+    const e = brokeredEnv();
+    // installationId 8199 is never enrolled → the enrollment lookup returns no row.
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8199, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+  });
+
+  it("re-registering a pull enrollment in push mode flips relay_mode back so it PUSHES again", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8102);
+    await registerOrbRelay(e, secret, "", "pull"); // first: pull
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay", "push"); // re-register: push
+    const { fetchImpl, calls } = (() => {
+      const c: { url: string }[] = [];
+      return { fetchImpl: ((u: RequestInfo | URL) => { c.push({ url: String(u) }); return Promise.resolve(new Response("ok")); }) as typeof fetch, calls: c };
+    })();
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 8102, deliveryId: "d", rawBody: "{}" }, fetchImpl)).toBe("forwarded");
+    expect(calls[0]?.url).toBe("https://c.example/v1/orb/relay");
+    const mode = await db(e).prepare("SELECT relay_mode FROM orb_enrollments WHERE installation_id=8102").first<{ relay_mode: string }>();
+    expect(mode?.relay_mode).toBe("push");
+  });
+});
+
+describe("retryFailedRelays treats 'queued' as terminal-success", () => {
+  it("DELETES a failure row once the enrollment switches to pull (forwardOrbEvent now queues it)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8200);
+    await registerOrbRelay(e, secret, "", "pull");
+    // A failure recorded before the switch (or a stale row) is now resolved by queuing on retry.
+    await storeRelayFailure(e, { deliveryId: "requeue-1", eventName: "pull_request", installationId: 8200, rawBody: "{}" });
+    await retryFailedRelays(e);
+    const fail = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='requeue-1'").first();
+    expect(fail ?? null).toBeNull(); // failure row cleaned up — 'queued' is terminal-success
+    const pending = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='requeue-1'").first();
+    expect(pending ?? null).not.toBeNull(); // and the event was moved into the pull queue
+  });
+});
+
+describe("registerOrbRelay pull vs push", () => {
+  it("pull mode sets relay_mode='pull', stamps relay_registered_at, and skips the SSRF + encryption path", async () => {
+    const e = createTestEnv({ ORB_BROKER_ENABLED: "true" }); // no TOKEN_ENCRYPTION_SECRET — pull must not need it
+    const secret = await enroll(e, 8300);
+    expect(await registerOrbRelay(e, secret, "", "pull")).toEqual({ ok: true, installationId: 8300 }); // no encryption_unavailable
+    const row = await db(e).prepare("SELECT relay_mode, relay_url, relay_secret_enc, relay_registered_at FROM orb_enrollments WHERE installation_id=8300").first<{ relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_registered_at: string | null }>();
+    expect(row?.relay_mode).toBe("pull");
+    expect(row?.relay_url ?? null).toBeNull(); // no URL stored for pull
+    expect(row?.relay_secret_enc ?? null).toBeNull(); // no secret encrypted for pull
+    expect(row?.relay_registered_at).toBeTruthy();
+  });
+
+  it("push mode still SSRF-validates and still errors when encryption is unavailable", async () => {
+    const e = brokeredEnv();
+    const s1 = await enroll(e, 8301);
+    expect(await registerOrbRelay(e, s1, "http://127.0.0.1/relay", "push")).toEqual({ error: "invalid_relay_url" }); // SSRF still enforced
+    const noEnc = createTestEnv({ ORB_BROKER_ENABLED: "true" });
+    const s2 = await enroll(noEnc, 8302);
+    expect(await registerOrbRelay(noEnc, s2, "https://x.example/relay", "push")).toEqual({ error: "encryption_unavailable" });
+  });
+
+  it("defaults to push (the mode arm omitted) and sets relay_mode='push'", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8303);
+    expect(await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay")).toEqual({ ok: true, installationId: 8303 });
+    const row = await db(e).prepare("SELECT relay_mode FROM orb_enrollments WHERE installation_id=8303").first<{ relay_mode: string }>();
+    expect(row?.relay_mode).toBe("push");
+  });
+});
+
+describe("POST /v1/orb/relay/register (mode field)", () => {
+  const app = createApp();
+
+  it("accepts mode='pull' WITHOUT a relayUrl and flags the enrollment for pull", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8400);
+    const res = await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ mode: "pull" }) }, e);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, installationId: 8400 });
+    const row = await db(e).prepare("SELECT relay_mode FROM orb_enrollments WHERE installation_id=8400").first<{ relay_mode: string }>();
+    expect(row?.relay_mode).toBe("pull");
+  });
+
+  it("still requires relayUrl for mode='push' (and an omitted mode defaults to push)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8401);
+    expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ mode: "push" }) }, e)).status).toBe(400); // missing_relay_url
+    expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({}) }, e)).status).toBe(400); // default push, missing url
+  });
+
+  it("400s on an unrecognized mode value (neither push nor pull)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8402);
+    const res = await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ mode: "sideways" }) }, e);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_mode" });
+  });
+});
+
+describe("POST /v1/orb/relay/pull", () => {
+  const app = createApp();
+
+  it("404s when the broker flag is off (byte-identical deploy)", async () => {
+    expect((await app.request("/v1/orb/relay/pull", { method: "POST" }, createTestEnv())).status).toBe(404);
+  });
+
+  it("401 without a secret", async () => {
+    expect((await app.request("/v1/orb/relay/pull", { method: "POST" }, brokeredEnv())).status).toBe(401);
+  });
+
+  it("401 on an unknown secret, 403 on an ineligible install", async () => {
+    const e = brokeredEnv();
+    expect((await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: "Bearer orbsec_bad" } }, e)).status).toBe(401);
+    const secret = await enroll(e, 8500);
+    await db(e).prepare("UPDATE orb_github_installations SET registered=0 WHERE installation_id=8500").run();
+    expect((await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e)).status).toBe(403);
+  });
+
+  it("413 when the body exceeds the register-body ceiling", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8501);
+    const res = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: "x".repeat(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1) }, e);
+    expect(res.status).toBe(413);
+  });
+
+  it("returns the queued events for the bound install (no ack, empty body)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8502);
+    await enqueueRelayPending(e, { deliveryId: "pe-1", installationId: 8502, eventName: "pull_request", rawBody: '{"x":1}' });
+    const res = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ events: [{ deliveryId: "pe-1", eventName: "pull_request", rawBody: '{"x":1}' }] });
+  });
+
+  it("passes a valid ack[] through (acked rows are deleted), and tolerates a non-string ack entry", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8503);
+    await enqueueRelayPending(e, { deliveryId: "ack-a", installationId: 8503, eventName: "pull_request", rawBody: "{}" });
+    await enqueueRelayPending(e, { deliveryId: "ack-b", installationId: 8503, eventName: "issues", rawBody: "{}" });
+    const res = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ ack: ["ack-a", 123] }) }, e); // 123 filtered out
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ events: [{ deliveryId: "ack-b", eventName: "issues", rawBody: "{}" }] }); // ack-a removed
+  });
+
+  it("tolerates a non-array ack field and an unparseable body (no ack, returns events)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 8504);
+    await enqueueRelayPending(e, { deliveryId: "keep-1", installationId: 8504, eventName: "pull_request", rawBody: "{}" });
+    const nonArray = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ ack: "nope" }) }, e); // ack not an array
+    expect(await nonArray.json()).toEqual({ events: [{ deliveryId: "keep-1", eventName: "pull_request", rawBody: "{}" }] });
+    const bad = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: "{not json" }, e); // unparseable → catch
+    expect(bad.status).toBe(200);
+    expect(await bad.json()).toEqual({ events: [{ deliveryId: "keep-1", eventName: "pull_request", rawBody: "{}" }] });
   });
 });

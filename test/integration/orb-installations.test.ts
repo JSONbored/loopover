@@ -2,18 +2,18 @@ import { describe, expect, it } from "vitest";
 import { upsertOrbInstallation } from "../../src/orb/installations";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
-const created = (id: number) => ({ action: "created", installation: { id, account: { login: "acme", type: "Organization" }, repository_selection: "selected" } });
+const created = (id: number) => ({ action: "created", installation: { id, account: { login: "acme", type: "Organization", id: 9001 }, repository_selection: "selected" } });
 const get = (e: Env, id: number) =>
   (e.DB as unknown as TestD1Database)
-    .prepare("SELECT account_login, account_type, repository_selection, registered, suspended_at, removed_at FROM orb_github_installations WHERE installation_id=?")
+    .prepare("SELECT account_login, account_type, account_id, repository_selection, registered, suspended_at, removed_at FROM orb_github_installations WHERE installation_id=?")
     .bind(id)
-    .first<{ account_login: string; account_type: string; repository_selection: string; registered: number; suspended_at: string | null; removed_at: string | null }>();
+    .first<{ account_login: string; account_type: string; account_id: number | null; repository_selection: string; registered: number; suspended_at: string | null; removed_at: string | null }>();
 
 describe("upsertOrbInstallation", () => {
   it("'created' registers the install (registered=0 — the manual-onboarding gate)", async () => {
     const e = createTestEnv();
     await upsertOrbInstallation(e, "installation", created(100));
-    expect(await get(e, 100)).toMatchObject({ account_login: "acme", account_type: "Organization", repository_selection: "selected", registered: 0, suspended_at: null, removed_at: null });
+    expect(await get(e, 100)).toMatchObject({ account_login: "acme", account_type: "Organization", account_id: 9001, repository_selection: "selected", registered: 0, suspended_at: null, removed_at: null });
   });
 
   it("'created' with a minimal installation stores null account/type/selection", async () => {
@@ -36,7 +36,7 @@ describe("upsertOrbInstallation", () => {
     await upsertOrbInstallation(e, "installation", created(102));
     await upsertOrbInstallation(e, "installation", { action: "deleted", installation: { id: 102 } });
     expect((await get(e, 102))?.removed_at).not.toBeNull();
-    await upsertOrbInstallation(e, "installation", { action: "new_permissions_accepted", installation: { id: 102, account: { login: "acme", type: "Organization" }, repository_selection: "all" } });
+    await upsertOrbInstallation(e, "installation", { action: "new_permissions_accepted", installation: { id: 102, account: { login: "acme", type: "Organization", id: 9001 }, repository_selection: "all" } });
     const row = await get(e, 102);
     expect(row?.removed_at).toBeNull();
     expect(row?.repository_selection).toBe("all");

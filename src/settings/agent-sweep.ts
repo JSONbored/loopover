@@ -7,7 +7,17 @@ import type { PullRequestRecord } from "../types";
 
 // Rate-aware ceiling: never recompute more than this many PRs per repo per sweep, so a repo with a large
 // open queue cannot blow the queue-message budget. The stalest are picked first.
-export const SWEEP_MAX_PRS = 25;
+//
+// REST-budget sizing (#audit-rate-headroom): all managed repos share ONE GitHub App installation = ONE ~5000/hr
+// REST bucket. Each fanned-out per-PR re-review costs ~9 REST GETs (1 resync `GET /pulls/{n}`, then required-
+// contexts + CI aggregate in prReadyForReview, then required-contexts + merge-state + CI aggregate + files in
+// auto-maintain). The sweep re-arms every ~2 min (≈30 ticks/hr) and fans out per repo, so the worst-case hourly
+// sweep cost is `SWEEP_MAX_PRS × repos × 9 × 30`. At the old cap of 25 over 3 self-host repos that is ~200k/hr —
+// far over budget, the cause of the `regate_sweep_throttled` exhaustion. A cap of 6 bounds the worst case to
+// `6 × 3 × 9 × 30 ≈ 4.9k/hr` (and steady state is far lower — the freshness skip + the in-flight drain guard stop
+// re-regating just-touched PRs), reserving headroom for webhooks. A 30-PR backlog still fully converges in
+// ceil(30/6)=5 sweeps (~10 min), so no PR's merge/close is meaningfully delayed.
+export const SWEEP_MAX_PRS = 6;
 
 // Skip-if-fresh window: a PR touched within this span was almost certainly just gated by its webhook, so the
 // sweep leaves it alone for that brief moment to avoid racing the in-flight webhook review. Kept SHORT (2 min)

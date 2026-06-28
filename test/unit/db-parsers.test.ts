@@ -12,6 +12,7 @@ import {
   listRepoSyncStates,
   markPullRequestRegated,
   markPullRequestsRegated,
+  markPullRequestSurfacePublished,
   recordAuditEvent,
   recordWebhookEvent,
   upsertOfficialMinerDetection,
@@ -101,6 +102,25 @@ describe("database row parser hardening", () => {
     expect(after?.title).toBe("Stale PR"); // INVARIANT: a plain D1 UPDATE — it touches only the marker, not PR content
   });
 
+  it("markPullRequestSurfacePublished stamps last_published_surface_sha only at the matching live head (#4 over-publish dedup)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "PR", state: "open", user: { login: "alice" }, head: { sha: "headA" }, labels: [] });
+
+    const before = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 9);
+    expect(before?.lastPublishedSurfaceSha ?? null).toBeNull(); // never published → marker absent
+
+    await markPullRequestSurfacePublished(env, "owner/repo", 9, null); // null head → no-op (the !headSha guard)
+    expect((await listPullRequests(env, "owner/repo")).find((p) => p.number === 9)?.lastPublishedSurfaceSha ?? null).toBeNull();
+
+    await markPullRequestSurfacePublished(env, "owner/repo", 9, "oldHead"); // stale head → WHERE head_sha mismatch → no-op
+    expect((await listPullRequests(env, "owner/repo")).find((p) => p.number === 9)?.lastPublishedSurfaceSha ?? null).toBeNull();
+
+    await markPullRequestSurfacePublished(env, "owner/repo", 9, "headA"); // matches the live head → stamps
+    const after = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 9);
+    expect(after?.lastPublishedSurfaceSha).toBe("headA");
+    expect(after?.title).toBe("PR"); // INVARIANT: touches only the marker, not PR content
+  });
+
   it("markPullRequestsRegated batch-stamps every candidate at dispatch and no-ops on an empty list (#audit-sweep-dispatch-stamp)", async () => {
     const env = createTestEnv();
     for (const number of [5, 6, 7]) {
@@ -125,6 +145,18 @@ describe("database row parser hardening", () => {
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:50.000Z", W)).toBe(false); // +50s, still inside → loses
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:31.000Z", W)).toBe(true); // +91s, outside window → wins again
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:40.000Z", W)).toBe(false); // back inside the new window → loses
+  });
+
+  it("REGRESSION: recordWebhookEvent updates payload_hash when processing an existing queued delivery", async () => {
+    const env = createTestEnv();
+    await recordWebhookEvent(env, { deliveryId: "foreign-app-queued", eventName: "pull_request", payloadHash: "raw-sha", status: "queued" });
+
+    await recordWebhookEvent(env, { deliveryId: "foreign-app-queued", eventName: "pull_request", payloadHash: "foreign_app", status: "processed" });
+
+    const row = await env.DB.prepare("select payload_hash, status from webhook_events where delivery_id = ?")
+      .bind("foreign-app-queued")
+      .first<{ payload_hash: string; status: string }>();
+    expect(row).toEqual({ payload_hash: "foreign_app", status: "processed" });
   });
 
   it("REGRESSION: webhook_events.received_at is always a real ISO timestamp, never the 'CURRENT_TIMESTAMP' literal (#audit-ts-literal)", async () => {

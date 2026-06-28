@@ -68,65 +68,6 @@ describe("brokerOrbToken", () => {
     await db(e).prepare("UPDATE orb_github_installations SET suspended_at=CURRENT_TIMESTAMP WHERE installation_id=302").run();
     expect(await brokerOrbToken(e, secret)).toEqual({ error: "installation_not_eligible" });
   });
-
-  it("caches the minted token (encrypted) and serves it WITHOUT re-minting on the next exchange (#12)", async () => {
-    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "test-encryption-key-material-0001" });
-    await seedInstall(e, 310, { registered: 1 });
-    const { secret } = (await issueOrbEnrollment(e, 310)) as { secret: string };
-    let mints = 0;
-    vi.stubGlobal("fetch", async () => {
-      mints += 1;
-      return Response.json({ token: `ghs_${mints}`, expires_at: new Date(Date.now() + 60 * 60_000).toISOString() });
-    });
-    const first = await brokerOrbToken(e, secret);
-    const second = await brokerOrbToken(e, secret);
-    expect(first).toMatchObject({ token: "ghs_1", installationId: 310 });
-    expect(second).toMatchObject({ token: "ghs_1" }); // served from the cache, NOT re-minted
-    expect(mints).toBe(1); // GitHub's token endpoint was hit ONCE across two exchanges (no throttling)
-    const cached = (await db(e).prepare("SELECT cached_token_json FROM orb_enrollments WHERE installation_id=310").first<{ cached_token_json: string }>())?.cached_token_json ?? "";
-    expect(cached).not.toContain("ghs_1"); // stored encrypted, never plaintext
-    expect(cached).toContain("ciphertext");
-  });
-
-  it("re-mints when the cached token is within the expiry margin (never serves a near-expired token)", async () => {
-    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "test-encryption-key-material-0001" });
-    await seedInstall(e, 311, { registered: 1 });
-    const { secret } = (await issueOrbEnrollment(e, 311)) as { secret: string };
-    let mints = 0;
-    vi.stubGlobal("fetch", async () => {
-      mints += 1;
-      return Response.json({ token: `ghs_${mints}`, expires_at: new Date(Date.now() + 60 * 60_000).toISOString() });
-    });
-    // Seed a cache entry only ~5m from expiry (inside the 10m re-mint margin) — read returns before decrypting.
-    await db(e).prepare("UPDATE orb_enrollments SET cached_token_json = ? WHERE installation_id=311").bind(JSON.stringify({ ciphertext: "x", iv: "y", salt: null, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() })).run();
-    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_1" }); // a fresh mint, not the near-expired entry
-    expect(mints).toBe(1);
-  });
-
-  it("re-mints when the cached entry is unparseable (JSON/decrypt failure falls through)", async () => {
-    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "test-encryption-key-material-0001" });
-    await seedInstall(e, 312, { registered: 1 });
-    const { secret } = (await issueOrbEnrollment(e, 312)) as { secret: string };
-    await db(e).prepare("UPDATE orb_enrollments SET cached_token_json = 'not-json' WHERE installation_id=312").run();
-    vi.stubGlobal("fetch", async () => Response.json({ token: "ghs_fresh", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }));
-    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_fresh" }); // malformed cache ignored, re-minted
-  });
-
-  it("swallows a cache-write failure — a valid token exchange never fails on a cache hiccup", async () => {
-    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "test-encryption-key-material-0001" });
-    await seedInstall(e, 313, { registered: 1 });
-    const { secret } = (await issueOrbEnrollment(e, 313)) as { secret: string };
-    vi.stubGlobal("fetch", async () => Response.json({ token: "ghs_ok", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }));
-    const real = e.DB;
-    (e as { DB: unknown }).DB = {
-      prepare: (sql: string) =>
-        sql.includes("SET cached_token_json") ? { bind: () => ({ run: () => Promise.reject(new Error("cache write boom")) }) } : real.prepare(sql),
-    };
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_ok" }); // mint succeeded despite the cache write failing
-    expect(warn.mock.calls.some(([l]) => String(l).includes("orb_token_cache_write_failed"))).toBe(true);
-    warn.mockRestore();
-  });
 });
 
 describe("broker endpoints", () => {

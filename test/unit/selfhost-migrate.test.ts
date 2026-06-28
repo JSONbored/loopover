@@ -48,4 +48,55 @@ describe("runSelfHostMigrations (#980)", () => {
     expect(await runSelfHostMigrations(db, dir)).toBe(0);
   });
 
+  it("applies valid SQL containing semicolons and comment markers inside strings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gtmig-"));
+    writeFileSync(
+      join(dir, "0001_strings.sql"),
+      "CREATE TABLE notes (body TEXT); INSERT INTO notes (body) VALUES ('semi;colon -- literal');",
+    );
+    const db = createD1Adapter(nodeSqliteDriver(new DatabaseSync(":memory:") as never));
+
+    expect(await runSelfHostMigrations(db, dir)).toBe(1);
+    await expect(db.prepare("SELECT body FROM notes").first<{ body: string }>()).resolves.toEqual({
+      body: "semi;colon -- literal",
+    });
+  });
+
+  it("preserves SQL comments outside strings without treating their semicolons as delimiters", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gtmig-"));
+    writeFileSync(
+      join(dir, "0001_comments.sql"),
+      `-- leading comment; ignored by SQLite
+/* block comment; ignored by SQLite */
+CREATE TABLE "quoted;table" (\`body;column\` TEXT);
+INSERT INTO "quoted;table" (\`body;column\`) VALUES ('it''s; ok')`,
+    );
+    const db = createD1Adapter(nodeSqliteDriver(new DatabaseSync(":memory:") as never));
+
+    expect(await runSelfHostMigrations(db, dir)).toBe(1);
+    await expect(db.prepare('SELECT `body;column` AS body FROM "quoted;table"').first<{ body: string }>()).resolves.toEqual({
+      body: "it's; ok",
+    });
+  });
+
+  it("applies trigger bodies that contain internal statement semicolons", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gtmig-"));
+    writeFileSync(
+      join(dir, "0001_trigger.sql"),
+      `CREATE TABLE notes (body TEXT);
+CREATE TABLE audit (body TEXT);
+CREATE TRIGGER notes_ai AFTER INSERT ON notes
+BEGIN
+  INSERT INTO audit (body) VALUES (NEW.body);
+END;
+INSERT INTO notes (body) VALUES ('triggered');`,
+    );
+    const db = createD1Adapter(nodeSqliteDriver(new DatabaseSync(":memory:") as never));
+
+    expect(await runSelfHostMigrations(db, dir)).toBe(1);
+    await expect(db.prepare("SELECT body FROM audit").first<{ body: string }>()).resolves.toEqual({
+      body: "triggered",
+    });
+  });
+
 });

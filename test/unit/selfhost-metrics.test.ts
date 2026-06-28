@@ -20,6 +20,38 @@ describe("metrics registry (#982)", () => {
     expect((await renderMetrics())).toContain('m_total{a="1",b="2"} 1');
   });
 
+  it("redacts private repository labels from public review counters", async () => {
+    incr("gittensory_reviews_published_total", { repo: "private-owner/secret-repo" });
+
+    const out = await renderMetrics();
+    expect(out).toContain("gittensory_reviews_published_total 1");
+    expect(out).not.toContain("private-owner/secret-repo");
+    expect(out).not.toContain('repo="');
+  });
+
+  it("keeps non-sensitive gate labels after redacting the repository", async () => {
+    incr("gittensory_gate_decisions_total", {
+      repo: "private-owner/secret-repo",
+      conclusion: "success",
+    });
+
+    const out = await renderMetrics();
+    expect(out).toContain('gittensory_gate_decisions_total{conclusion="success"} 1');
+    expect(out).not.toContain("private-owner/secret-repo");
+    expect(out).not.toContain('repo="');
+  });
+
+  it("keeps sensitive metric labels when no repository label is present", async () => {
+    incr("gittensory_gate_decisions_total", { conclusion: "hold" });
+
+    expect(await renderMetrics()).toContain('gittensory_gate_decisions_total{conclusion="hold"} 1');
+  });
+
+  it("preserves repository labels for unrelated metrics", async () => {
+    incr("debug_total", { repo: "public-owner/public-repo" });
+    expect(await renderMetrics()).toContain('debug_total{repo="public-owner/public-repo"} 1');
+  });
+
   it("gauges sample at scrape time", async () => {
     let v = 5;
     gauge("g", () => v);

@@ -2,7 +2,7 @@
 // docs/CODEOWNERS), matches each changed file against the glob rules using last-match-wins semantics (per GitHub),
 // and reports files where the PR author is absent from the owner list — plus the blast radius derived at render
 // time from the unique set of ownership domains (users/teams) crossed by the PR.
-// Glob-to-regex conversion uses only atomic `[^/]*`, `.*`, and literal escapes — no catastrophic backtracking.
+// CODEOWNERS matching uses a bounded, linear glob matcher instead of repository-controlled regular expressions.
 // Fail-safe: returns [] on any network error, non-ok response, or missing/unreadable CODEOWNERS file.
 import type { EnrichRequest, CodeownersFinding } from "../types.js";
 
@@ -14,17 +14,29 @@ const CODEOWNERS_PATHS = [
 ] as const;
 const MAX_FILES_REPORTED = 20;
 
+type GlobToken =
+  | { kind: "literal"; value: string }
+  | { kind: "star" }
+  | { kind: "question" }
+  | { kind: "globstar" };
+
 interface ParsedRule {
-  regex: RegExp;
+  tokens: GlobToken[];
+  anchored: boolean;
   owners: string[];
 }
 
+const MAX_CODEOWNERS_BYTES = 64 * 1024;
+const MAX_CODEOWNERS_RULES = 1000;
+const MAX_CODEOWNERS_PATTERN_LENGTH = 512;
+
 // ── Glob matching ─────────────────────────────────────────────────────────────
 
-/** Convert a CODEOWNERS glob pattern to a RegExp that matches repo-root-relative file paths.
- *  `*` matches any non-`/` characters; `**` matches across separators; `?` matches one non-`/` char.
- *  A leading `/` or interior `/` anchors the pattern to the repo root; a leading glob does not. */
-export function patternToRegex(pattern: string): RegExp {
+/** Normalize a CODEOWNERS pattern and determine whether GitHub treats it as root-anchored. */
+function normalizePattern(pattern: string): {
+  pattern: string;
+  anchored: boolean;
+} {
   let p = pattern;
 
   const leadingSlash = p.startsWith("/");
@@ -34,19 +46,87 @@ export function patternToRegex(pattern: string): RegExp {
   if (p.endsWith("/")) p += "**";
 
   // Anchored when explicitly rooted, or when a path separator appears outside a leading `**/`.
-  const anchored = leadingSlash || (p.includes("/") && !p.startsWith("**/"));
+  return {
+    pattern: p,
+    anchored: leadingSlash || (p.includes("/") && !p.startsWith("**/")),
+  };
+}
 
-  let re = "";
+function compilePattern(pattern: string): { tokens: GlobToken[]; anchored: boolean } {
+  const { pattern: p, anchored } = normalizePattern(pattern);
+  const tokens: GlobToken[] = [];
   let i = 0;
   while (i < p.length) {
     const c = p[i]!;
     if (c === "*" && i + 1 < p.length && p[i + 1] === "*") {
       i += 2;
       if (p[i] === "/") i++; // consume the `/` that follows `**`
-      re += ".*";
+      if (tokens.at(-1)?.kind !== "globstar") tokens.push({ kind: "globstar" });
     } else if (c === "*") {
-      re += "[^/]*";
       i++;
+      if (tokens.at(-1)?.kind !== "star") tokens.push({ kind: "star" });
+    } else if (c === "?") {
+      tokens.push({ kind: "question" });
+      i++;
+    } else {
+      tokens.push({ kind: "literal", value: c });
+      i++;
+    }
+  }
+  return { tokens, anchored };
+}
+
+function matchTokens(tokens: GlobToken[], filePath: string, start = 0): boolean {
+  let states = new Set<number>([start]);
+  for (const token of tokens) {
+    const next = new Set<number>();
+    for (const pos of states) {
+      if (token.kind === "literal") {
+        if (filePath[pos] === token.value) next.add(pos + 1);
+      } else if (token.kind === "question") {
+        if (pos < filePath.length && filePath[pos] !== "/") next.add(pos + 1);
+      } else if (token.kind === "star") {
+        next.add(pos);
+        for (let j = pos; j < filePath.length && filePath[j] !== "/"; j++) {
+          next.add(j + 1);
+        }
+      } else {
+        for (let j = pos; j <= filePath.length; j++) next.add(j);
+      }
+    }
+    if (next.size === 0) return false;
+    states = next;
+  }
+  return states.has(filePath.length);
+}
+
+function matchesRule(rule: ParsedRule, filePath: string): boolean {
+  if (rule.anchored) return matchTokens(rule.tokens, filePath);
+  if (matchTokens(rule.tokens, filePath)) return true;
+  for (let i = 0; i < filePath.length; i++) {
+    if (filePath[i] === "/" && matchTokens(rule.tokens, filePath, i + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Convert a CODEOWNERS glob pattern to a RegExp that matches repo-root-relative file paths.
+ *  Kept for compatibility with callers that only need a display/debug regex; matching uses the
+ *  linear token matcher above so repository-controlled glob input cannot trigger regex backtracking. */
+export function patternToRegex(pattern: string): RegExp {
+  const { pattern: p, anchored } = normalizePattern(pattern);
+  let re = "";
+  let i = 0;
+  while (i < p.length) {
+    const c = p[i]!;
+    if (c === "*" && i + 1 < p.length && p[i + 1] === "*") {
+      i += 2;
+      if (p[i] === "/") i++;
+      if (!re.endsWith(".*")) re += ".*";
+    } else if (c === "*") {
+      i++;
+      if (!re.endsWith("[^/]*")) re += "[^/]*";
     } else if (c === "?") {
       re += "[^/]";
       i++;
@@ -55,7 +135,6 @@ export function patternToRegex(pattern: string): RegExp {
       i++;
     }
   }
-
   return new RegExp(anchored ? `^${re}$` : `(^|/)${re}$`);
 }
 
@@ -64,19 +143,21 @@ export function patternToRegex(pattern: string): RegExp {
 /** Parse CODEOWNERS text into ordered rules. Lines are returned in source order; last match wins at query time. */
 export function parseCodeowners(content: string): ParsedRule[] {
   const rules: ParsedRule[] = [];
-  for (const rawLine of content.split("\n")) {
+  const boundedContent = content.slice(0, MAX_CODEOWNERS_BYTES);
+  for (const rawLine of boundedContent.split("\n")) {
+    if (rules.length >= MAX_CODEOWNERS_RULES) break;
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const parts = line.split(/\s+/);
     const pattern = parts[0];
-    if (!pattern) continue;
+    if (!pattern || pattern.length > MAX_CODEOWNERS_PATTERN_LENGTH) continue;
     // Accept @handle and @org/team; also plain email (contains `@` but no leading `@`).
     const owners = parts
       .slice(1)
       .filter((o) => o.startsWith("@") || (o.includes("@") && !o.startsWith("#")));
     if (owners.length === 0) continue; // no owners → unowned pattern, skip
     try {
-      rules.push({ regex: patternToRegex(pattern), owners });
+      rules.push({ ...compilePattern(pattern), owners });
     } catch {
       // malformed pattern — skip
     }
@@ -88,7 +169,7 @@ export function parseCodeowners(content: string): ParsedRule[] {
 export function findOwners(rules: ParsedRule[], filePath: string): string[] {
   let owners: string[] = [];
   for (const rule of rules) {
-    if (rule.regex.test(filePath)) owners = rule.owners;
+    if (matchesRule(rule, filePath)) owners = rule.owners;
   }
   return owners;
 }

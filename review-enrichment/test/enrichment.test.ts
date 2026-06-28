@@ -22,6 +22,12 @@ import {
   scanRedos,
 } from "../dist/analyzers/redos.js";
 import {
+  findOwners,
+  parseCodeowners,
+  patternToRegex,
+  scanCodeowners,
+} from "../dist/analyzers/codeowners.js";
+import {
   codeOnly,
   detectSecretLog,
   scanPatchForSecretLog,
@@ -815,6 +821,70 @@ test("buildBrief: timeout aborts dependency scan so OSV work stops", async () =>
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("findOwners: uses linear CODEOWNERS glob matching for adversarial wildcard patterns", () => {
+  const rules = parseCodeowners(`${"**".repeat(30)}Z @team/security`);
+  const start = performance.now();
+
+  assert.deepEqual(findOwners(rules, "a".repeat(400)), []);
+
+  assert.ok(
+    performance.now() - start < 100,
+    "adversarial non-match stays bounded",
+  );
+});
+
+test("parseCodeowners: caps repository-controlled size, rule count, and pattern length", () => {
+  const oversizedPattern = `${"a".repeat(513)} @too/long`;
+  const manyRules = Array.from(
+    { length: 1005 },
+    (_, index) => `file-${index} @owner/${index}`,
+  );
+  const rules = parseCodeowners([oversizedPattern, ...manyRules].join("\n"));
+
+  assert.equal(rules.length, 1000);
+  assert.deepEqual(findOwners(rules, "file-0"), ["@owner/0"]);
+  assert.deepEqual(findOwners(rules, "file-1001"), []);
+});
+
+test("findOwners: preserves CODEOWNERS anchoring and last-match-wins semantics", () => {
+  const rules = parseCodeowners([
+    "*.ts @global/ts",
+    "/src/*.ts @root/src",
+    "docs/ @docs/team",
+    "src/special.ts @last/match",
+  ].join("\n"));
+
+  assert.deepEqual(findOwners(rules, "nested/file.ts"), ["@global/ts"]);
+  assert.deepEqual(findOwners(rules, "src/file.ts"), ["@root/src"]);
+  assert.deepEqual(findOwners(rules, "nested/src/file.ts"), ["@global/ts"]);
+  assert.deepEqual(findOwners(rules, "docs/guide/intro.md"), ["@docs/team"]);
+  assert.deepEqual(findOwners(rules, "src/special.ts"), ["@last/match"]);
+});
+
+test("scanCodeowners: reports files not owned by the PR author", async () => {
+  const findings = await scanCodeowners(
+    {
+      repoFullName: "owner/repo",
+      prNumber: 1,
+      githubToken: "token",
+      author: "alice",
+      files: [{ path: "src/app.ts" }, { path: "README.md" }],
+    },
+    async () => ({
+      ok: true,
+      text: async () => "src/** @team/reviewers\nREADME.md @alice",
+    }),
+  );
+
+  assert.deepEqual(findings, [
+    { file: "src/app.ts", owners: ["@team/reviewers"] },
+  ]);
+});
+
+test("patternToRegex: collapses adjacent wildcards in compatibility regex output", () => {
+  assert.equal(patternToRegex("******Z").source, "(^|\\/)\.\*Z$");
 });
 
 test("extractVersionPins: Dockerfile FROM + .nvmrc + go.mod; latest skipped", () => {

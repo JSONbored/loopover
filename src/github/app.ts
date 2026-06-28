@@ -80,6 +80,48 @@ export function isCacheableGithubUrl(url: string): boolean {
   );
 }
 
+// Transient GitHub rate-limit handling (#ratelimit-resilience). A primary (x-ratelimit-remaining:0) or secondary
+// (Retry-After / "secondary rate limit" body) limit returns 403/429. Instead of surfacing it as a failure — or
+// MISCLASSIFYING a 403 as a permission gap — back off a few times and retry. A sustained limit exhausts the
+// retries and the response is returned so the caller (and the queue) handles it. Bounded so a review never stalls.
+const GITHUB_RATE_LIMIT_MAX_RETRIES = 3;
+const GITHUB_RATE_LIMIT_MAX_DELAY_MS = 8_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Does this GitHub response signal a rate limit (primary or secondary)? 403/429 with a Retry-After header, an
+ *  exhausted x-ratelimit-remaining, or a secondary-limit/abuse body. A 403 with NONE of these is a real
+ *  permission/other error and must surface — not retry, not be mistaken for a rate limit. Exported for tests. */
+export async function isRateLimitedResponse(
+  response: Response,
+): Promise<boolean> {
+  if (response.status !== 403 && response.status !== 429) return false;
+  if (response.headers.get("retry-after") != null) return true;
+  if (response.headers.get("x-ratelimit-remaining") === "0") return true;
+  try {
+    return /secondary rate limit|\babuse\b|api rate limit exceeded/i.test(
+      await response.clone().text(),
+    );
+    /* v8 ignore next 3 -- defensive: a cloned Response body that fails to read isn't reachable in practice */
+  } catch {
+    return false;
+  }
+}
+
+/** How long to wait before the next rate-limit retry: honor a valid Retry-After (seconds), else exponential
+ *  backoff — each capped so a review can never stall on one call. A sustained PRIMARY limit (reset up to an hour
+ *  out) simply exhausts the few inline retries and the queue retries the job later. Exported for tests. */
+export function rateLimitRetryMs(response: Response, attempt: number): number {
+  const retryAfterHeader = response.headers.get("retry-after");
+  if (retryAfterHeader != null) {
+    const retryAfter = Number(retryAfterHeader);
+    if (Number.isFinite(retryAfter) && retryAfter >= 0)
+      return Math.min(retryAfter * 1000, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+  }
+  return Math.min(500 * 2 ** attempt, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+}
+
 async function timeoutFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -96,12 +138,22 @@ async function timeoutFetch(
         headers: { "content-type": hit.contentType },
       });
   }
-  const response = init?.signal
-    ? await fetch(input, init)
-    : await fetch(input, {
-        ...(init ?? {}),
-        signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
-      });
+  let response: Response;
+  for (let attempt = 0; ; attempt += 1) {
+    response = init?.signal
+      ? await fetch(input, init)
+      : await fetch(input, {
+          ...(init ?? {}),
+          signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+        });
+    // Retry a transient rate-limit (with backoff) instead of surfacing it; stop once exhausted or it's not a limit.
+    if (
+      attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES ||
+      !(await isRateLimitedResponse(response))
+    )
+      break;
+    await sleep(rateLimitRetryMs(response, attempt));
+  }
   if (useCache && response.status === 200) {
     try {
       const body = await response.clone().text(); // clone leaves the returned response readable
@@ -564,6 +616,8 @@ async function createOrUpdateNamedCheckRun(
   },
 ): Promise<CheckRunOutcome | null> {
   if (!advisory.headSha) return null;
+  // Narrow once into a const so the postNewCheckRun closure below sees a string, not string | undefined.
+  const headSha = advisory.headSha;
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo)
     throw new Error(`Invalid repository full name: ${repoFullName}`);
@@ -577,72 +631,80 @@ async function createOrUpdateNamedCheckRun(
   const detailsUrl = maintainerControlPanelUrl(env, repoFullName);
   const detailsUrlBody = detailsUrl ? { details_url: detailsUrl } : {};
 
-  try {
-    if (check.checkRunId) {
-      const response = await octokit.request(
-        "PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}",
-        {
-          owner,
-          repo,
-          check_run_id: check.checkRunId,
-          name: check.name,
-          /* v8 ignore next 2 -- Exported check helpers always provide status/conclusion for known-id finalization. */
-          status: check.status ?? "completed",
-          ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-          output: outputForCheckRunUpdate(check.output),
-          ...detailsUrlBody,
-        },
-      );
-      const data = response.data as CheckRunResponse;
-      return publishedOutcome(data);
-    }
-
-    const existing = await octokit.request(
-      "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
-      {
-        owner,
-        repo,
-        ref: advisory.headSha,
-        check_name: check.name,
-        filter: "latest",
-        per_page: 1,
-      },
-    );
-    const existingCheckRun = (existing.data as CheckRunListResponse)
-      .check_runs?.[0];
-    if (existingCheckRun) {
-      const response = await octokit.request(
-        "PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}",
-        {
-          owner,
-          repo,
-          check_run_id: existingCheckRun.id,
-          name: check.name,
-          status: check.status ?? "completed",
-          ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-          output: outputForCheckRunUpdate(check.output),
-          ...detailsUrlBody,
-        },
-      );
-      const data = response.data as CheckRunResponse;
-      return publishedOutcome(data);
-    }
-
+  // POST a fresh check-run THIS App owns. Used for a brand-new run AND as the cross-app fallback below.
+  const postNewCheckRun = async (): Promise<CheckRunOutcome> => {
     const response = await octokit.request(
       "POST /repos/{owner}/{repo}/check-runs",
       {
         owner,
         repo,
         name: check.name,
-        head_sha: advisory.headSha,
+        head_sha: headSha,
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
         output: check.output,
         ...detailsUrlBody,
       },
     );
-    const data = response.data as CheckRunResponse;
-    return publishedOutcome(data);
+    return publishedOutcome(response.data as CheckRunResponse);
+  };
+  // PATCH an existing run by id. If that run was created by a PRIOR GitHub App (install migrated / reinstalled under a
+  // new app_id), GitHub 403s "can only be modified by the GitHub App that created it" — that stale run is unreachable,
+  // so fall through (null) to POST a fresh one this App owns instead of failing the gate forever. (#cross-app-checkrun)
+  const patchCheckRun = async (id: number): Promise<CheckRunOutcome | null> => {
+    try {
+      const response = await octokit.request(
+        "PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}",
+        {
+          owner,
+          repo,
+          check_run_id: id,
+          name: check.name,
+          status: check.status ?? "completed",
+          ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+          output: outputForCheckRunUpdate(check.output),
+          ...detailsUrlBody,
+        },
+      );
+      return publishedOutcome(response.data as CheckRunResponse);
+    } catch (error) {
+      if (!isCrossAppCheckRunError(error)) throw error;
+      console.log(
+        JSON.stringify({
+          level: "info",
+          event: "check_run_cross_app_repost",
+          repository: `${owner}/${repo}`,
+          staleCheckRunId: id,
+        }),
+      );
+      return null;
+    }
+  };
+
+  try {
+    if (check.checkRunId) {
+      const out = await patchCheckRun(check.checkRunId);
+      if (out) return out;
+    } else {
+      const existing = await octokit.request(
+        "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+        {
+          owner,
+          repo,
+          ref: advisory.headSha,
+          check_name: check.name,
+          filter: "latest",
+          per_page: 1,
+        },
+      );
+      const existingCheckRun = (existing.data as CheckRunListResponse)
+        .check_runs?.[0];
+      if (existingCheckRun) {
+        const out = await patchCheckRun(existingCheckRun.id);
+        if (out) return out;
+      }
+    }
+    return await postNewCheckRun();
   } catch (error) {
     if (isCheckRunPermissionError(error)) {
       // Capture the ACTUAL response (status + body). A 403 here is often NOT a real permission gap (the App has
@@ -687,10 +749,51 @@ function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {
   return outcome;
 }
 
-function isCheckRunPermissionError(error: unknown): boolean {
+/** A check-run created by a PRIOR GitHub App (the install was migrated / reinstalled under a new app_id) cannot be
+ *  PATCHed by THIS App — GitHub 403s "Invalid app_id N - check run can only be modified by the GitHub App that
+ *  created it". That stale run is unreachable, so the caller reposts a fresh one this App owns. (#cross-app-checkrun) */
+export function isCrossAppCheckRunError(error: unknown): boolean {
   /* v8 ignore next -- Octokit wraps thrown fetch values in HttpError objects before this helper sees them. */
   if (typeof error !== "object" || error === null) return false;
-  const e = error as { status?: number; message?: string };
+  const e = error as { message?: string };
+  return (
+    typeof e.message === "string" &&
+    /can only be modified by the GitHub App that created it|invalid app_id/i.test(
+      e.message,
+    )
+  );
+}
+
+/** Mirror of {@link isRateLimitedResponse} for a THROWN Octokit error (has .status, .message, .response.headers).
+ *  A rate-limit 403/429 is not a permission gap — used to keep it out of isCheckRunPermissionError. */
+function isRateLimitedError(error: {
+  status?: number;
+  message?: string;
+  response?: { headers?: Record<string, unknown> };
+}): boolean {
+  if (error.status !== 403 && error.status !== 429) return false;
+  const headers = error.response?.headers ?? {};
+  if (headers["retry-after"] != null) return true;
+  if (headers["x-ratelimit-remaining"] === "0") return true;
+  return (
+    typeof error.message === "string" &&
+    /secondary rate limit|\babuse\b|api rate limit exceeded/i.test(error.message)
+  );
+}
+
+/** Exported for tests. */
+export function isCheckRunPermissionError(error: unknown): boolean {
+  /* v8 ignore next -- Octokit wraps thrown fetch values in HttpError objects before this helper sees them. */
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as {
+    status?: number;
+    message?: string;
+    response?: { headers?: Record<string, unknown> };
+  };
+  // A rate-limit / secondary-limit 403 is NOT a permission gap — never record it as one (the App has Checks:write;
+  // a 403 under burst load is the abuse limit). timeoutFetch already retries these inline; an EXHAUSTED one surfaces
+  // here and must PROPAGATE (→ queue retry), not be swallowed as a permanent permission_missing. (#ratelimit-resilience)
+  if (isRateLimitedError(e)) return false;
   if (e.status === 403) return true;
   return (
     typeof e.message === "string" &&

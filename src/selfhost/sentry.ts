@@ -132,22 +132,29 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   // Lead the Sentry title with the real failure detail (message → error), not just the event slug, so an operator
   // sees WHAT broke straight from the issue list instead of having to open the context blob.
   const detail = typeof obj.message === "string" ? obj.message : typeof obj.error === "string" ? obj.error : undefined;
-  // Title preference: "event: detail" (the real failure text, from message/error) → "event (repo#pr)" (a short
-  // location for context-only logs, not a dump of every field) → detail alone → "error". Real legibility comes
-  // from each log carrying a `message`/`error`; this keeps the no-message fallback short + identifying.
-  const title = event ? (detail ? `${event}: ${detail}` : `${event}${logLocation(obj)}`) : (detail ?? "error");
+  // Forward as a synthetic EXCEPTION, NOT captureMessage. captureMessage leaves the exception value empty, which
+  // Sentry's issue UI renders as "(No error message)". An exception gives the issue a real `type: value`:
+  //   name (type)     = the event slug (e.g. check_run_post_denied)
+  //   message (value) = the failure detail (message/error) → else the PR location → else a pointer to the context
+  // So the issue list always shows a legible "event: detail", never a bare slug or "(No error message)". The
+  // fingerprint (by event) still groups recurrences, so the synthetic stack doesn't fragment grouping. (#1468)
+  const value =
+    detail ?? (logLocation(obj).trim() || "(no message — see the log context)");
+  const errorEvent = new Error(value);
+  errorEvent.name = event ?? "GittensoryLog";
   Sentry.withScope((scope) => {
     scope.setLevel(severity);
     scope.setContext("log", obj);
     if (event) scope.setTag("event", event);
     // Index the dimensions operators filter + group by, so issues are findable without digging into the context.
     for (const key of SENTRY_LOG_TAG_KEYS) {
-      const value = obj[key];
-      if (typeof value === "string" || typeof value === "number") scope.setTag(key, String(value));
+      const tagValue = obj[key];
+      if (typeof tagValue === "string" || typeof tagValue === "number")
+        scope.setTag(key, String(tagValue));
     }
-    // Group recurrences of ONE failure into a single issue (by event, not the variable detail that's in the title).
+    // Group recurrences of ONE failure into a single issue (by event, not the variable detail in the value).
     if (event) scope.setFingerprint(["gittensory-log", event]);
-    Sentry!.captureMessage(title, severity);
+    Sentry!.captureException(errorEvent);
   });
 }
 

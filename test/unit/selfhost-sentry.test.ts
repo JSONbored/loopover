@@ -36,6 +36,11 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// The structured-log forwarder captures a synthetic Error via captureException (name = event slug, message = the
+// value) so issues show a real "type: value", never "(No error message)". This reads back the last captured Error.
+const lastCapturedError = (): Error =>
+  mocks.captureException.mock.calls.at(-1)?.[0] as Error;
+
 describe("scrubEvent — redact secrets before an event leaves the box", () => {
   it("redacts secret-keyed fields in headers/contexts/extra, recurses, and leaves safe fields", () => {
     const ev = scrubEvent({
@@ -163,7 +168,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     forwardStructuredLogToSentry(
       JSON.stringify({ level: "error", event: "x" }),
     );
-    expect(mocks.captureMessage).not.toHaveBeenCalled();
+    expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
   it("ignores non-strings, non-JSON-object strings, and unparseable JSON when enabled", async () => {
@@ -173,7 +178,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     forwardStructuredLogToSentry("plain log line"); // doesn't start with "{"
     forwardStructuredLogToSentry(""); // empty string (charCodeAt(0) is NaN)
     forwardStructuredLogToSentry("{not valid json"); // throws → caught
-    expect(mocks.captureMessage).not.toHaveBeenCalled();
+    expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
   it("skips routine (non-error) structured logs", async () => {
@@ -184,7 +189,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     forwardStructuredLogToSentry(
       JSON.stringify({ event: "regate_sweep_throttled" }),
     ); // no level
-    expect(mocks.captureMessage).not.toHaveBeenCalled();
+    expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
   it("titles a no-message error log with event + a SHORT (repo#pr) location, not a field dump", async () => {
@@ -203,11 +208,10 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
       "event",
       "gate_check_permission_missing",
     );
-    // No message/error → a SHORT location (repo#pr), NOT every field — the long deliveryId stays in tags/context only.
-    expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "gate_check_permission_missing (JSONbored/awesome-claude#4240)",
-      "error",
-    );
+    // No message/error → captureException with value = the PR location (a real value, NOT "(No error message)");
+    // the long deliveryId stays in the tags/context only.
+    expect(lastCapturedError().name).toBe("gate_check_permission_missing");
+    expect(lastCapturedError().message).toBe("(JSONbored/awesome-claude#4240)");
   });
 
   it("leads the title with the real error detail + indexes filterable tags + fingerprints by event (#observability)", async () => {
@@ -221,8 +225,9 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
         installationId: 143010787,
       }),
     );
-    // The issue TITLE now carries the actual failure, not just the event slug — no hunting through the context blob.
-    expect(mocks.captureMessage).toHaveBeenCalledWith("orb_broker_unavailable: The operation was aborted due to timeout", "error");
+    // The issue carries the actual failure as the exception VALUE (no hunting through the context blob).
+    expect(lastCapturedError().name).toBe("orb_broker_unavailable");
+    expect(lastCapturedError().message).toBe("The operation was aborted due to timeout");
     // The present log dimensions become filterable tags.
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "JSONbored/gittensory");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("installationId", "143010787");
@@ -237,13 +242,15 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     );
     expect(mocks.scope.setLevel).toHaveBeenCalledWith("fatal");
     expect(mocks.scope.setTag).not.toHaveBeenCalled();
-    expect(mocks.captureMessage).toHaveBeenCalledWith("boom", "fatal");
+    expect(lastCapturedError().name).toBe("GittensoryLog");
+    expect(lastCapturedError().message).toBe("boom");
   });
 
   it("falls back to a generic title when neither event nor message is present", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(JSON.stringify({ level: "error", code: 500 }));
-    expect(mocks.captureMessage).toHaveBeenCalledWith("error", "error");
+    expect(lastCapturedError().name).toBe("GittensoryLog");
+    expect(lastCapturedError().message).toBe("(no message — see the log context)");
   });
 
   it("uses a bare event title when a no-message error log has no repo to locate it", async () => {
@@ -251,7 +258,8 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     forwardStructuredLogToSentry(
       JSON.stringify({ level: "error", event: "relay_drained_error" }),
     );
-    expect(mocks.captureMessage).toHaveBeenCalledWith("relay_drained_error", "error");
+    expect(lastCapturedError().name).toBe("relay_drained_error");
+    expect(lastCapturedError().message).toBe("(no message — see the log context)");
   });
 
   it("uses (repo) without a pull number, and never dumps other fields into the title", async () => {
@@ -265,11 +273,9 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
         projects: ["a", "b"],
       }),
     );
-    // Only the repo locates it (no pullNumber); count/projects stay in the context blob, NOT crammed in the title.
-    expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "closehold_backlog (JSONbored/gittensory)",
-      "error",
-    );
+    // Only the repo locates it (no pullNumber); count/projects stay in the context, NOT crammed in the value.
+    expect(lastCapturedError().name).toBe("closehold_backlog");
+    expect(lastCapturedError().message).toBe("(JSONbored/gittensory)");
   });
 });
 
@@ -292,10 +298,8 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
       }),
     );
 
-    expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "orb_broker_unavailable",
-      "error",
-    );
+    expect(lastCapturedError().name).toBe("orb_broker_unavailable");
+    expect(lastCapturedError().message).toBe("(no message — see the log context)");
     expect(base.error).toHaveBeenCalledTimes(1);
   });
 
@@ -306,10 +310,8 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     installStructuredLogForwarding(target);
     target.log(JSON.stringify({ level: "error", event: "gate_check_failed" }));
 
-    expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "gate_check_failed",
-      "error",
-    );
+    expect(lastCapturedError().name).toBe("gate_check_failed");
+    expect(lastCapturedError().message).toBe("(no message — see the log context)");
     expect(base.log).toHaveBeenCalledTimes(1);
   });
 
@@ -321,10 +323,8 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     target.error(
       JSON.stringify({ event: "selfhost_ai_provider_failed", repo: "o/r" }),
     );
-    expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "selfhost_ai_provider_failed (o/r)",
-      "error",
-    );
+    expect(lastCapturedError().name).toBe("selfhost_ai_provider_failed");
+    expect(lastCapturedError().message).toBe("(o/r)");
   });
 
   it("does NOT forward a no-level log through console.log (stdout is not error by default)", async () => {
@@ -332,7 +332,7 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     const { target } = makeConsole();
     installStructuredLogForwarding(target);
     target.log(JSON.stringify({ event: "job_complete" }));
-    expect(mocks.captureMessage).not.toHaveBeenCalled();
+    expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
   it("keeps skipping an EXPLICIT level:warn through console.error (explicit level wins over the sink default)", async () => {
@@ -342,21 +342,21 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     target.error(
       JSON.stringify({ level: "warn", event: "orb_broker_degraded" }),
     );
-    expect(mocks.captureMessage).not.toHaveBeenCalled();
+    expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
   it("does not recursively forward if the Sentry path logs while forwarding", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     const { target, base } = makeConsole();
     installStructuredLogForwarding(target);
-    mocks.captureMessage.mockImplementationOnce(() => {
+    mocks.captureException.mockImplementationOnce(() => {
       target.error(JSON.stringify({ level: "error", event: "recursive" }));
     });
 
     target.error(JSON.stringify({ level: "error", event: "outer" }));
 
-    expect(mocks.captureMessage).toHaveBeenCalledTimes(1);
-    expect(mocks.captureMessage).toHaveBeenCalledWith("outer", "error");
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    expect(lastCapturedError().name).toBe("outer");
     expect(base.error).toHaveBeenCalledTimes(2);
   });
 });

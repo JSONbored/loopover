@@ -21,6 +21,14 @@ import {
   scanPatchForRedos,
   scanRedos,
 } from "../dist/analyzers/redos.js";
+import {
+  extractChangedLines,
+  parseLcov,
+  parseIstanbulJson,
+  parseCoberturaXml,
+  readZipEntries,
+  scanCoverageDelta,
+} from "../dist/analyzers/coverage-delta.js";
 
 const NOW = new Date("2026-06-26").getTime();
 const eolFetch =
@@ -933,6 +941,421 @@ test("buildBrief: eol analyzer runs (real now, 2023 cycle is past)", async () =>
     assert.equal(brief.analyzerStatus.eol, "ok");
     assert.equal(brief.findings.eol.length, 1);
     assert.match(brief.promptSection, /End-of-life runtimes/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ── coverage-delta helpers ────────────────────────────────────────────────────
+
+/** Build a minimal stored-only (method=0) ZIP buffer from an array of {name, data} entries. */
+function makeStoredZip(entries) {
+  const localParts = [];
+  const cdParts = [];
+  let offset = 0;
+
+  for (const { name, data } of entries) {
+    const nameBytes = Buffer.from(name, "utf-8");
+    const dataBytes = Buffer.isBuffer(data) ? data : Buffer.from(data, "utf-8");
+
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0);
+    lh.writeUInt16LE(0, 4); lh.writeUInt16LE(0, 6); lh.writeUInt16LE(0, 8);
+    lh.writeUInt16LE(0, 10); lh.writeUInt16LE(0, 12); lh.writeUInt32LE(0, 14);
+    lh.writeUInt32LE(dataBytes.length, 18);
+    lh.writeUInt32LE(dataBytes.length, 22);
+    lh.writeUInt16LE(nameBytes.length, 26); lh.writeUInt16LE(0, 28);
+
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(0, 4); cd.writeUInt16LE(0, 6); cd.writeUInt16LE(0, 8);
+    cd.writeUInt16LE(0, 10); cd.writeUInt16LE(0, 12); cd.writeUInt16LE(0, 14);
+    cd.writeUInt32LE(0, 16);
+    cd.writeUInt32LE(dataBytes.length, 20);
+    cd.writeUInt32LE(dataBytes.length, 24);
+    cd.writeUInt16LE(nameBytes.length, 28); cd.writeUInt16LE(0, 30);
+    cd.writeUInt16LE(0, 32); cd.writeUInt16LE(0, 34); cd.writeUInt16LE(0, 36);
+    cd.writeUInt32LE(0, 38); cd.writeUInt32LE(offset, 42);
+
+    localParts.push(lh, nameBytes, dataBytes);
+    cdParts.push(cd, nameBytes);
+    offset += 30 + nameBytes.length + dataBytes.length;
+  }
+
+  const cd = Buffer.concat(cdParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4); eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, cd, eocd]);
+}
+
+const PATCH_WITH_ADDS = [
+  "@@ -1,3 +1,5 @@",
+  " context",
+  "+added line 2",
+  " context",
+  "+added line 4",
+  "-removed",
+  " context",
+].join("\n");
+
+const LCOV_CONTENT = [
+  "SF:src/foo.ts",
+  "DA:2,0",   // uncovered
+  "DA:3,1",   // covered
+  "DA:4,0",   // uncovered
+  "end_of_record",
+  "SF:src/bar.ts",
+  "DA:1,1",
+  "end_of_record",
+].join("\n");
+
+const ISTANBUL_CONTENT = JSON.stringify({
+  "/workspace/src/foo.ts": {
+    s: { "0": 0, "1": 1, "2": 0 },
+    statementMap: {
+      "0": { start: { line: 2, column: 0 }, end: { line: 2, column: 10 } },
+      "1": { start: { line: 3, column: 0 }, end: { line: 3, column: 10 } },
+      "2": { start: { line: 4, column: 0 }, end: { line: 4, column: 10 } },
+    },
+  },
+});
+
+const COBERTURA_CONTENT = [
+  '<?xml version="1.0"?>',
+  "<coverage>",
+  '  <class filename="src/foo.ts">',
+  '    <lines>',
+  '      <line number="2" hits="0"/>',
+  '      <line number="3" hits="1"/>',
+  '      <line number="4" hits="0"/>',
+  '    </lines>',
+  "  </class>",
+  "</coverage>",
+].join("\n");
+
+const COV_REQ = (overrides = {}) => ({
+  repoFullName: "owner/repo",
+  prNumber: 1,
+  headSha: "abc123",
+  githubToken: "tok",
+  files: [{ path: "src/foo.ts", patch: PATCH_WITH_ADDS }],
+  ...overrides,
+});
+
+const RUNS_RESP = { workflow_runs: [{ id: 42, conclusion: "success", created_at: "2026-06-01T00:00:00Z" }] };
+const ARTIFACTS_RESP = { artifacts: [{ id: 7, name: "coverage", size_in_bytes: 1000 }] };
+
+/** Slice a Buffer into a standalone ArrayBuffer (avoids Node pool byteOffset issues). */
+function toArrayBuffer(buf) {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+function makeCovFetch(lcovContent = LCOV_CONTENT) {
+  const zip = makeStoredZip([{ name: "lcov.info", data: lcovContent }]);
+  const zipAb = toArrayBuffer(zip);
+  return async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    if (u.includes("/actions/runs/42/artifacts")) return { ok: true, json: async () => ARTIFACTS_RESP };
+    if (u.includes("/actions/artifacts/7/zip"))
+      return { ok: true, arrayBuffer: async () => zipAb };
+    return { ok: false, json: async () => ({}) };
+  };
+}
+
+// ── extractChangedLines ───────────────────────────────────────────────────────
+
+test("extractChangedLines: tracks added lines by 1-indexed new-file position, skips removed/context", () => {
+  const lines = extractChangedLines(PATCH_WITH_ADDS);
+  assert.ok(lines.has(2), "line 2 added");
+  assert.ok(lines.has(4), "line 4 added");
+  assert.ok(!lines.has(1), "line 1 is context");
+  assert.ok(!lines.has(3), "line 3 is context");
+  assert.equal(lines.size, 2);
+});
+
+test("extractChangedLines: handles multiple hunks with correct line offsets", () => {
+  const patch = "@@ -1,0 +1,2 @@\n+a\n+b\n@@ -5,0 +7,1 @@\n+c";
+  const lines = extractChangedLines(patch);
+  assert.ok(lines.has(1));
+  assert.ok(lines.has(2));
+  assert.ok(lines.has(7));
+  assert.equal(lines.size, 3);
+});
+
+// ── parseLcov ─────────────────────────────────────────────────────────────────
+
+test("parseLcov: extracts uncovered lines (DA:line,0) per file, ignores covered", () => {
+  const map = parseLcov(LCOV_CONTENT);
+  const fooUncovered = map.get("src/foo.ts")!;
+  assert.ok(fooUncovered.has(2));
+  assert.ok(fooUncovered.has(4));
+  assert.ok(!fooUncovered.has(3));
+  assert.equal(map.get("src/bar.ts")?.size ?? 0, 0, "bar.ts has no uncovered lines");
+});
+
+test("parseLcov: returns empty map for empty content", () => {
+  assert.equal(parseLcov("").size, 0);
+});
+
+// ── parseIstanbulJson ─────────────────────────────────────────────────────────
+
+test("parseIstanbulJson: extracts uncovered statements by line; path preserved as key", () => {
+  const map = parseIstanbulJson(ISTANBUL_CONTENT);
+  const fooUncovered = map.get("/workspace/src/foo.ts")!;
+  assert.ok(fooUncovered.has(2));
+  assert.ok(fooUncovered.has(4));
+  assert.ok(!fooUncovered.has(3));
+});
+
+test("parseIstanbulJson: returns empty map for invalid JSON", () => {
+  assert.equal(parseIstanbulJson("not json").size, 0);
+});
+
+test("parseIstanbulJson: returns empty map for non-object root", () => {
+  assert.equal(parseIstanbulJson("[]").size, 0);
+});
+
+test("parseIstanbulJson: skips file entries missing s or statementMap", () => {
+  const content = JSON.stringify({ "a.ts": { path: "a.ts" } });
+  assert.equal(parseIstanbulJson(content).size, 0);
+});
+
+// ── parseCoberturaXml ─────────────────────────────────────────────────────────
+
+test("parseCoberturaXml: extracts zero-hit lines per class filename", () => {
+  const map = parseCoberturaXml(COBERTURA_CONTENT);
+  const fooUncovered = map.get("src/foo.ts")!;
+  assert.ok(fooUncovered.has(2));
+  assert.ok(fooUncovered.has(4));
+  assert.ok(!fooUncovered.has(3));
+});
+
+test("parseCoberturaXml: returns empty set for file with no zero-hit lines", () => {
+  const xml = '<class filename="a.ts"><lines><line number="1" hits="1"/></lines></class>';
+  const map = parseCoberturaXml(xml);
+  assert.equal(map.get("a.ts")?.size ?? 0, 0);
+});
+
+// ── readZipEntries ────────────────────────────────────────────────────────────
+
+test("readZipEntries: extracts stored entries by name and data", () => {
+  const zip = makeStoredZip([
+    { name: "lcov.info", data: "SF:a\nDA:1,0\nend_of_record" },
+    { name: "other.txt", data: "hello" },
+  ]);
+  const entries = readZipEntries(zip);
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].name, "lcov.info");
+  assert.ok(entries[0].data.toString().includes("DA:1,0"));
+  assert.equal(entries[1].name, "other.txt");
+});
+
+test("readZipEntries: returns [] for a buffer that is not a ZIP", () => {
+  assert.deepEqual(readZipEntries(Buffer.from("not a zip")), []);
+});
+
+test("readZipEntries: returns [] for an empty buffer", () => {
+  assert.deepEqual(readZipEntries(Buffer.alloc(0)), []);
+});
+
+// ── scanCoverageDelta ─────────────────────────────────────────────────────────
+
+test("scanCoverageDelta: returns [] when githubToken is absent", async () => {
+  const findings = await scanCoverageDelta(
+    COV_REQ({ githubToken: undefined }),
+    async () => { throw new Error("no fetch"); },
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when headSha is absent", async () => {
+  const findings = await scanCoverageDelta(
+    COV_REQ({ headSha: undefined }),
+    async () => { throw new Error("no fetch"); },
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when no files have patches", async () => {
+  const findings = await scanCoverageDelta(
+    COV_REQ({ files: [{ path: "src/foo.ts" }] }),
+    async () => { throw new Error("no fetch"); },
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] on runs API non-ok response", async () => {
+  const findings = await scanCoverageDelta(
+    COV_REQ(),
+    async () => ({ ok: false, json: async () => ({}) }),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] on runs API network error (fail-safe)", async () => {
+  const findings = await scanCoverageDelta(COV_REQ(), async () => { throw new Error("down"); });
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when no successful runs are found", async () => {
+  const findings = await scanCoverageDelta(
+    COV_REQ(),
+    async () => ({ ok: true, json: async () => ({ workflow_runs: [{ id: 1, conclusion: "failure", created_at: "2026-01-01" }] }) }),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when artifacts API fails for all runs", async () => {
+  const findings = await scanCoverageDelta(COV_REQ(), async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    return { ok: false, json: async () => ({}) };
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when no coverage artifact is found in the run", async () => {
+  const findings = await scanCoverageDelta(COV_REQ(), async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    if (u.includes("/actions/runs/42/artifacts"))
+      return { ok: true, json: async () => ({ artifacts: [{ id: 9, name: "build-output", size_in_bytes: 500 }] }) };
+    return { ok: false, json: async () => ({}) };
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when artifact ZIP download fails", async () => {
+  const findings = await scanCoverageDelta(COV_REQ(), async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    if (u.includes("/actions/runs/42/artifacts")) return { ok: true, json: async () => ARTIFACTS_RESP };
+    return { ok: false, json: async () => ({}) };
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: returns [] when ZIP contains no recognised coverage file", async () => {
+  const zip = makeStoredZip([{ name: "readme.txt", data: "no coverage here" }]);
+  const zipAb = toArrayBuffer(zip);
+  const findings = await scanCoverageDelta(COV_REQ(), async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    if (u.includes("/actions/runs/42/artifacts")) return { ok: true, json: async () => ARTIFACTS_RESP };
+    if (u.includes("/actions/artifacts/7/zip"))
+      return { ok: true, arrayBuffer: async () => zipAb };
+    return { ok: false };
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: detects uncovered changed lines via lcov artifact", async () => {
+  const findings = await scanCoverageDelta(COV_REQ(), makeCovFetch());
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, "src/foo.ts");
+  // patch adds lines 2 and 4; lcov marks both as uncovered
+  assert.deepEqual(findings[0].uncoveredLines, [2, 4]);
+});
+
+test("scanCoverageDelta: detects uncovered changed lines via Istanbul JSON artifact", async () => {
+  const zip = makeStoredZip([{ name: "coverage-final.json", data: ISTANBUL_CONTENT }]);
+  const zipAb = toArrayBuffer(zip);
+  const findings = await scanCoverageDelta(COV_REQ(), async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    if (u.includes("/actions/runs/42/artifacts")) return { ok: true, json: async () => ARTIFACTS_RESP };
+    if (u.includes("/actions/artifacts/7/zip"))
+      return { ok: true, arrayBuffer: async () => zipAb };
+    return { ok: false };
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, "src/foo.ts");
+  assert.deepEqual(findings[0].uncoveredLines, [2, 4]);
+});
+
+test("scanCoverageDelta: detects uncovered changed lines via Cobertura XML artifact", async () => {
+  const zip = makeStoredZip([{ name: "coverage.xml", data: COBERTURA_CONTENT }]);
+  const zipAb = toArrayBuffer(zip);
+  const findings = await scanCoverageDelta(COV_REQ(), async (url) => {
+    const u = String(url);
+    if (u.includes("/actions/runs?")) return { ok: true, json: async () => RUNS_RESP };
+    if (u.includes("/actions/runs/42/artifacts")) return { ok: true, json: async () => ARTIFACTS_RESP };
+    if (u.includes("/actions/artifacts/7/zip"))
+      return { ok: true, arrayBuffer: async () => zipAb };
+    return { ok: false };
+  });
+  assert.equal(findings.length, 1);
+  assert.deepEqual(findings[0].uncoveredLines, [2, 4]);
+});
+
+test("scanCoverageDelta: returns [] when all changed lines are covered", async () => {
+  // lcov reports all lines covered (hits > 0)
+  const lcov = "SF:src/foo.ts\nDA:2,5\nDA:4,3\nend_of_record\n";
+  const findings = await scanCoverageDelta(COV_REQ(), makeCovFetch(lcov));
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: skips files not present in coverage report", async () => {
+  // PR adds lines to a different file than what's in the lcov
+  const lcov = "SF:src/other.ts\nDA:1,0\nend_of_record\n";
+  const findings = await scanCoverageDelta(COV_REQ(), makeCovFetch(lcov));
+  assert.deepEqual(findings, []);
+});
+
+test("scanCoverageDelta: forwards abort signal to fetch calls", async () => {
+  const seenSignals: AbortSignal[] = [];
+  const controller = new AbortController();
+  await scanCoverageDelta(COV_REQ(), async (_url, init) => {
+    seenSignals.push(init.signal);
+    return { ok: true, json: async () => RUNS_RESP };
+  }, { signal: controller.signal });
+  assert.ok(seenSignals.length >= 1);
+  assert.ok(seenSignals.every((s) => s instanceof AbortSignal));
+});
+
+// ── renderBrief: coverage-delta ───────────────────────────────────────────────
+
+test("renderBrief: renders the coverage-delta block with file and line list", () => {
+  const r = renderBrief({
+    coverageDelta: [
+      { file: "src/foo.ts", uncoveredLines: [5, 12, 23] },
+    ],
+  });
+  assert.match(r.promptSection, /Changed lines not covered by tests/);
+  assert.match(r.promptSection, /`src\/foo\.ts`/);
+  assert.match(r.promptSection, /5, 12, 23/);
+});
+
+test("renderBrief: sanitizes file paths in coverage-delta block", () => {
+  const r = renderBrief({
+    coverageDelta: [
+      { file: "src/evil`\nnext", uncoveredLines: [1] },
+    ],
+  });
+  // The raw newline in the filename must be replaced (not injected as a real newline into the output).
+  assert.ok(!r.promptSection.includes("src/evil\nnext"), "raw newline must be escaped");
+  assert.match(r.promptSection, /`src\/evil/);
+});
+
+test("buildBrief: coverageDelta analyzer is wired into the orchestrator", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = makeCovFetch();
+  try {
+    const brief = await buildBrief({
+      repoFullName: "owner/repo",
+      prNumber: 1,
+      headSha: "abc123",
+      githubToken: "tok",
+      files: [{ path: "src/foo.ts", patch: PATCH_WITH_ADDS }],
+    });
+    assert.equal(brief.analyzerStatus.coverageDelta, "ok");
+    assert.equal(brief.findings.coverageDelta.length, 1);
+    assert.match(brief.promptSection, /Changed lines not covered/);
   } finally {
     globalThis.fetch = realFetch;
   }

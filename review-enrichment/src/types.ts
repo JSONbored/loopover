@@ -93,6 +93,13 @@ export interface RedosFinding {
   pattern: string;
 }
 
+/** Changed lines in the PR that are not covered by the project's own CI coverage report (#1516).
+ *  Sourced from GitHub Actions artifacts (lcov / Istanbul JSON / Cobertura XML). */
+export interface CoverageDeltaFinding {
+  file: string;
+  uncoveredLines: number[]; // sorted, 1-indexed new-file line numbers with zero hits
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -102,6 +109,7 @@ export interface BriefFindings {
   installScript?: InstallScriptFinding[];
   eol?: EolFinding[];
   redos?: RedosFinding[];
+  coverageDelta?: CoverageDeltaFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

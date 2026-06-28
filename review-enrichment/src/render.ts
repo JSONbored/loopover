@@ -129,6 +129,19 @@ export function renderBrief(
     }
   }
 
+  const coverageDeltas = findings.coverageDelta ?? [];
+  if (coverageDeltas.length) {
+    lines.push(
+      "### Changed lines not covered by tests (CI coverage artifact)",
+    );
+    for (const item of coverageDeltas) {
+      const lineList = item.uncoveredLines.join(", ");
+      lines.push(
+        `- ${safeCodeSpan(item.file)} — uncovered changed lines: ${lineList}`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

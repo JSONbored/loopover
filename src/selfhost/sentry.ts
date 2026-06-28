@@ -115,7 +115,7 @@ function summarizeLogFields(obj: Record<string, unknown>): string {
  *  failures (orb_broker_unavailable, gate-check errors, relay drops, …) as JSON strings, often via console.error.
  *  No-op when Sentry is off, the line isn't a JSON object string, or its level isn't error/fatal — routine logs
  *  (audit/info/no-level: job_complete, regate_sweep_throttled, …) are intentionally skipped. */
-export function forwardStructuredLogToSentry(line: unknown): void {
+export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = false): void {
   if (!active || !Sentry) return;
   if (typeof line !== "string" || line.charCodeAt(0) !== 123 /* "{" */) return;
   let obj: Record<string, unknown>;
@@ -125,7 +125,11 @@ export function forwardStructuredLogToSentry(line: unknown): void {
   } catch {
     return; // not JSON — an ordinary log line
   }
-  const level = obj.level;
+  // A console.error sink is error-level by DEFAULT even when the JSON omits an explicit level (many engine error
+  // logs do) — that's how those errors reach Sentry instead of printing to stderr and vanishing. An EXPLICIT level
+  // always wins, so a deliberate level:"warn" emitted via console.error is still skipped.
+  const explicitLevel = typeof obj.level === "string" ? obj.level : undefined;
+  const level = explicitLevel ?? (fromErrorSink ? "error" : undefined);
   if (level !== "error" && level !== "fatal") return;
   const severity = level === "fatal" ? "fatal" : "error";
   const event = typeof obj.event === "string" ? obj.event : undefined;
@@ -175,21 +179,24 @@ export function installStructuredLogForwarding(
   const baseConsoleLog = target.log.bind(target);
   const baseConsoleError = target.error.bind(target);
   let forwardingToSentry = false;
-  const forward = (line: unknown): void => {
+  const forward = (line: unknown, fromErrorSink: boolean): void => {
     if (forwardingToSentry) return;
     forwardingToSentry = true;
     try {
-      forwardStructuredLogToSentry(line);
+      forwardStructuredLogToSentry(line, fromErrorSink);
     } finally {
       forwardingToSentry = false;
     }
   };
+  // stdout (console.log): forward only an EXPLICIT level:error/fatal. stderr (console.error): forward as error by
+  // default (an explicit level still wins) — so EVERY console.error structured log reaches Sentry, not just the
+  // ones that happened to include a level field.
   target.log = (...args: unknown[]): void => {
     baseConsoleLog(...args);
-    forward(args[0]);
+    forward(args[0], false);
   };
   target.error = (...args: unknown[]): void => {
     baseConsoleError(...args);
-    forward(args[0]);
+    forward(args[0], true);
   };
 }

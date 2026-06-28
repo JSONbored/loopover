@@ -312,6 +312,38 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     expect(base.log).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards a NO-LEVEL structured log emitted through console.error (the error sink defaults to error)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target } = makeConsole();
+    installStructuredLogForwarding(target);
+    // No `level` field — previously dropped on the floor; now console.error forwards it as error (with field summary).
+    target.error(
+      JSON.stringify({ event: "selfhost_ai_provider_failed", repo: "o/r" }),
+    );
+    expect(mocks.captureMessage).toHaveBeenCalledWith(
+      "selfhost_ai_provider_failed (repo=o/r)",
+      "error",
+    );
+  });
+
+  it("does NOT forward a no-level log through console.log (stdout is not error by default)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target } = makeConsole();
+    installStructuredLogForwarding(target);
+    target.log(JSON.stringify({ event: "job_complete" }));
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps skipping an EXPLICIT level:warn through console.error (explicit level wins over the sink default)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target } = makeConsole();
+    installStructuredLogForwarding(target);
+    target.error(
+      JSON.stringify({ level: "warn", event: "orb_broker_degraded" }),
+    );
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
+  });
+
   it("does not recursively forward if the Sentry path logs while forwarding", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     const { target, base } = makeConsole();

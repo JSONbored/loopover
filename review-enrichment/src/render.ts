@@ -129,6 +129,27 @@ export function renderBrief(
     }
   }
 
+  const commitSigs = findings.commitSignature ?? [];
+  if (commitSigs.length) {
+    lines.push("### Commit-signature / verified-author provenance");
+    for (const item of commitSigs) {
+      const sha = safeCodeSpan(item.headSha.slice(0, 8));
+      if (item.kind === "unsigned") {
+        const reason = safeCodeSpan(item.reason ?? "unknown");
+        lines.push(
+          `- ${sha} — commit is not signed or verified (reason: ${reason}); sign commits via gpg or ssh`,
+        );
+      } else {
+        const who = item.authorLogin
+          ? safeCodeSpan(item.authorLogin)
+          : "the commit author";
+        lines.push(
+          `- ${sha} — ${who} is a first-time committer in this repository, which otherwise uses verified commits (supply-chain risk: potential impersonation)`,
+        );
+      }
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

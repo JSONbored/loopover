@@ -21,6 +21,7 @@ import {
   scanPatchForRedos,
   scanRedos,
 } from "../dist/analyzers/redos.js";
+import { scanCommitSignature } from "../dist/analyzers/commit-signature.js";
 
 const NOW = new Date("2026-06-26").getTime();
 const eolFetch =
@@ -933,6 +934,245 @@ test("buildBrief: eol analyzer runs (real now, 2023 cycle is past)", async () =>
     assert.equal(brief.analyzerStatus.eol, "ok");
     assert.equal(brief.findings.eol.length, 1);
     assert.match(brief.promptSection, /End-of-life runtimes/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ── scanCommitSignature ──────────────────────────────────────────────────────
+
+const VERIFIED_COMMIT = {
+  sha: "abc1234abc1234ab",
+  commit: { verification: { verified: true, reason: "valid" } },
+  author: { login: "alice" },
+};
+const UNSIGNED_COMMIT = {
+  sha: "abc1234abc1234ab",
+  commit: { verification: { verified: false, reason: "unsigned" } },
+  author: { login: "alice" },
+};
+const REPO_VERIFIED_HISTORY = Array.from({ length: 5 }, (_, i) => ({
+  sha: `old${i}`,
+  commit: { verification: { verified: true, reason: "valid" } },
+  author: { login: "bob" },
+}));
+
+const sigReq = (overrides = {}) => ({
+  repoFullName: "owner/repo",
+  prNumber: 1,
+  headSha: "abc1234abc1234ab",
+  githubToken: "tok",
+  ...overrides,
+});
+
+function makeSigFetch(headCommit, recentCommits = [], authorHistory = []) {
+  return async (url) => {
+    const u = String(url);
+    if (u.includes("/commits/abc1234abc1234ab"))
+      return { ok: true, json: async () => headCommit };
+    if (u.includes("/commits?author="))
+      return { ok: true, json: async () => authorHistory };
+    if (u.includes("/commits?per_page="))
+      return { ok: true, json: async () => recentCommits };
+    return { ok: false, json: async () => ({}) };
+  };
+}
+
+test("scanCommitSignature: returns [] when githubToken is absent", async () => {
+  const findings = await scanCommitSignature(
+    sigReq({ githubToken: undefined }),
+    async () => { throw new Error("should not fetch"); },
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] when headSha is absent", async () => {
+  const findings = await scanCommitSignature(
+    sigReq({ headSha: undefined }),
+    async () => { throw new Error("should not fetch"); },
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] on non-ok head commit response", async () => {
+  const findings = await scanCommitSignature(
+    sigReq(),
+    async () => ({ ok: false, json: async () => ({}) }),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] on network error (fail-safe)", async () => {
+  const findings = await scanCommitSignature(sigReq(), async () => {
+    throw new Error("network down");
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: flags unsigned commit with its reason", async () => {
+  const findings = await scanCommitSignature(
+    sigReq(),
+    makeSigFetch(UNSIGNED_COMMIT),
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "unsigned");
+  assert.equal(findings[0].reason, "unsigned");
+  assert.equal(findings[0].authorLogin, "alice");
+  assert.equal(findings[0].headSha, "abc1234abc1234ab");
+});
+
+test("scanCommitSignature: returns [] for verified commit when author login is null", async () => {
+  const noLoginCommit = {
+    sha: "abc1234abc1234ab",
+    commit: { verification: { verified: true, reason: "valid" } },
+    author: null,
+  };
+  const findings = await scanCommitSignature(
+    sigReq(),
+    makeSigFetch(noLoginCommit),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] when recent commits response is non-ok", async () => {
+  const fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/commits/abc1234abc1234ab"))
+      return { ok: true, json: async () => VERIFIED_COMMIT };
+    return { ok: false, json: async () => ({}) };
+  };
+  const findings = await scanCommitSignature(sigReq(), fetch);
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] when repo has insufficient commit history", async () => {
+  // Only 2 non-head commits — below MIN_HISTORY_FOR_PATTERN (3)
+  const twoCommits = [
+    { sha: "old0", commit: { verification: { verified: true, reason: "valid" } }, author: { login: "bob" } },
+    { sha: "old1", commit: { verification: { verified: true, reason: "valid" } }, author: { login: "bob" } },
+  ];
+  const findings = await scanCommitSignature(
+    sigReq(),
+    makeSigFetch(VERIFIED_COMMIT, twoCommits),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] when repo history is not mostly verified (<80%)", async () => {
+  // 3 commits, only 1 verified (33%)
+  const mixedHistory = [
+    { sha: "old0", commit: { verification: { verified: true, reason: "valid" } }, author: { login: "bob" } },
+    { sha: "old1", commit: { verification: { verified: false, reason: "unsigned" } }, author: { login: "bob" } },
+    { sha: "old2", commit: { verification: { verified: false, reason: "unsigned" } }, author: { login: "bob" } },
+  ];
+  const findings = await scanCommitSignature(
+    sigReq(),
+    makeSigFetch(VERIFIED_COMMIT, mixedHistory),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] when author history response is non-ok", async () => {
+  const fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/commits/abc1234abc1234ab"))
+      return { ok: true, json: async () => VERIFIED_COMMIT };
+    if (u.includes("/commits?per_page="))
+      return { ok: true, json: async () => REPO_VERIFIED_HISTORY };
+    return { ok: false, json: async () => ({}) };
+  };
+  const findings = await scanCommitSignature(sigReq(), fetch);
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: flags new-committer in verified repo when author has no prior commits", async () => {
+  // authorHistory returns empty list → alice has no prior commits
+  const findings = await scanCommitSignature(
+    sigReq(),
+    makeSigFetch(VERIFIED_COMMIT, REPO_VERIFIED_HISTORY, []),
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "new-committer");
+  assert.equal(findings[0].authorLogin, "alice");
+  assert.equal(findings[0].reason, null);
+});
+
+test("scanCommitSignature: returns [] for known committer (has prior commits in repo)", async () => {
+  // authorHistory contains a prior commit (different SHA)
+  const priorCommit = { sha: "prior000" };
+  const findings = await scanCommitSignature(
+    sigReq(),
+    makeSigFetch(VERIFIED_COMMIT, REPO_VERIFIED_HISTORY, [priorCommit]),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanCommitSignature: returns [] on phase-2 network error (fail-safe)", async () => {
+  let calls = 0;
+  const fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/commits/abc1234abc1234ab"))
+      return { ok: true, json: async () => VERIFIED_COMMIT };
+    calls++;
+    throw new Error("network down");
+  };
+  const findings = await scanCommitSignature(sigReq(), fetch);
+  assert.deepEqual(findings, []);
+  assert.ok(calls >= 1, "phase 2 did attempt a fetch before throwing");
+});
+
+test("renderBrief: renders unsigned-commit finding with sha and reason", () => {
+  const r = renderBrief({
+    commitSignature: [
+      { headSha: "deadbeef0011", authorLogin: "alice", kind: "unsigned", reason: "unsigned" },
+    ],
+  });
+  assert.match(r.promptSection, /Commit-signature/);
+  assert.match(r.promptSection, /`deadbeef`/);
+  assert.match(r.promptSection, /not signed or verified/);
+  assert.match(r.promptSection, /`unsigned`/);
+});
+
+test("renderBrief: renders new-committer finding with sha and login", () => {
+  const r = renderBrief({
+    commitSignature: [
+      { headSha: "cafe1234abcd", authorLogin: "eve", kind: "new-committer", reason: null },
+    ],
+  });
+  assert.match(r.promptSection, /Commit-signature/);
+  assert.match(r.promptSection, /`cafe1234`/);
+  assert.match(r.promptSection, /`eve`.*first-time committer|first-time committer.*`eve`/);
+  assert.match(r.promptSection, /supply-chain risk/);
+});
+
+test("renderBrief: renders new-committer finding when authorLogin is null", () => {
+  const r = renderBrief({
+    commitSignature: [
+      { headSha: "aabb1234ccdd", authorLogin: null, kind: "new-committer", reason: null },
+    ],
+  });
+  assert.match(r.promptSection, /the commit author.*first-time committer|first-time committer/);
+});
+
+test("buildBrief: commitSignature analyzer is wired into the orchestrator", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/commits/abc123"))
+      return { ok: true, json: async () => UNSIGNED_COMMIT };
+    return { ok: true, json: async () => ({}) };
+  };
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
+      headSha: "abc1234abc1234ab",
+      githubToken: "tok",
+    });
+    assert.equal(brief.analyzerStatus.commitSignature, "ok");
+    assert.equal(brief.findings.commitSignature.length, 1);
+    assert.equal(brief.findings.commitSignature[0].kind, "unsigned");
+    assert.match(brief.promptSection, /Commit-signature/);
   } finally {
     globalThis.fetch = realFetch;
   }

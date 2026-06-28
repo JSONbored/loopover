@@ -93,6 +93,17 @@ export interface RedosFinding {
   pattern: string;
 }
 
+/** A commit-signature or verified-author provenance signal (#1517).
+ *  "unsigned": head commit is not signed/verified by GitHub.
+ *  "new-committer": the author has no prior commits in a repo that otherwise uses verified commits
+ *  (supply-chain / impersonation risk). */
+export interface CommitSignatureFinding {
+  headSha: string;
+  authorLogin: string | null;
+  kind: "unsigned" | "new-committer";
+  reason: string | null;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -102,6 +113,7 @@ export interface BriefFindings {
   installScript?: InstallScriptFinding[];
   eol?: EolFinding[];
   redos?: RedosFinding[];
+  commitSignature?: CommitSignatureFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

@@ -735,20 +735,51 @@ async function main(): Promise<void> {
   void runOrbExport(); // flush any pending events at startup
   setInterval(runOrbExport, 3_600_000); // then hourly
 
-  // Brokered self-host: register our public relay URL with the central Orb so it forwards this install's events
-  // here (best-effort, fire-and-forget — a no-op unless ORB_ENROLLMENT_SECRET + PUBLIC_API_ORIGIN are set).
+  // Brokered self-host: register our relay target with the central Orb (best-effort, fire-and-forget). PUSH mode
+  // (default) registers a public relay URL the Orb POSTs to; PULL mode (ORB_RELAY_MODE=pull) registers no URL and
+  // the drain loop below pulls events outbound — the right fit behind NAT/tailnet (no inbound endpoint exposed).
   void registerOrbRelayTarget({
     ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
     ORB_BROKER_URL: process.env.ORB_BROKER_URL,
     PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
+    ORB_RELAY_MODE: process.env.ORB_RELAY_MODE,
   })
     .then((r) => {
-      if (r !== "skipped")
-        console.log(
-          JSON.stringify({ event: "selfhost_orb_relay_register", result: r }),
-        );
+      if (r === "registered") {
+        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r }));
+      } else if (r === "failed") {
+        // A failed registration means the central Orb won't forward this install's webhooks here — the container
+        // looks alive but reviews NOTHING. Surface at error level so the operator sees a deaf container.
+        console.error(JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed" }));
+      }
     })
-    .catch(() => {});
+    .catch((error) => captureError(error, { kind: "orb_relay_register" }));
+
+  // Pull-mode relay drain (#secure-relay): when ORB_RELAY_MODE=pull, the engine DRAINS its events from the Orb on a
+  // timer instead of exposing an inbound endpoint — the right fit behind NAT/tailnet. Acks the previous batch so the
+  // Orb deletes delivered events; best-effort (a failed tick retries next interval). Each event enqueues into the
+  // same WEBHOOKS lane the push receiver uses.
+  if (process.env.ORB_RELAY_MODE === "pull" && process.env.ORB_ENROLLMENT_SECRET) {
+    const { drainOrbRelay } = await import("./orb/broker-client");
+    const { enqueueWebhookByEnv } = await import("./github/webhook");
+    let pendingAck: string[] = [];
+    const drainRelay = async (): Promise<void> => {
+      const events = await drainOrbRelay(
+        { ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET, ORB_BROKER_URL: process.env.ORB_BROKER_URL },
+        pendingAck,
+      );
+      pendingAck = [];
+      for (const ev of events) {
+        const result = await enqueueWebhookByEnv(env, ev.deliveryId, ev.eventName, ev.rawBody);
+        // Ack everything durably handled (queued / duplicate / invalid_json) so the Orb deletes it; retry only a
+        // real enqueue failure on the next pull (don't ack → the Orb keeps it).
+        if (result !== "enqueue_failed") pendingAck.push(ev.deliveryId);
+      }
+      if (events.length > 0) console.log(JSON.stringify({ event: "orb_relay_drained", count: events.length }));
+    };
+    void drainRelay();
+    setInterval(() => void drainRelay().catch((error) => captureError(error, { kind: "orb_relay_drain" })), 15_000);
+  }
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;

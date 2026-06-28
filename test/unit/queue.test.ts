@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as sentryModule from "../../src/selfhost/sentry";
 import {
   listCollisionEdges,
   createAgentRun,
@@ -4673,6 +4674,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/context500/check-runs")) return new Response("GitHub check API failed", { status: 500 });
       return new Response("not found", { status: 404 });
     });
+    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
 
     await expect(
       processJob(env, {
@@ -4698,6 +4700,9 @@ describe("queue processors", () => {
       .first<{ detail: string; metadata_json: string }>();
     expect(aggregate).toMatchObject({ detail: "check_run" });
     expect(aggregate?.metadata_json).toContain('"output":"check_run"');
+    // The total publish failure (nothing reached the PR) escalates to Sentry at error level, not just the ledger.
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory" }));
+    captureSpy.mockRestore();
   });
 
   it("audits disabled public-surface skips without miner lookup", async () => {

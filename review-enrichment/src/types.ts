@@ -105,6 +105,11 @@ export interface ProvenanceFinding {
   version?: string;
   /** File path — set for binary and vendored findings. */
   file?: string;
+/** A changed file governed by a CODEOWNERS rule where the PR author is not listed as an owner (#1515).
+ *  The blast radius (distinct ownership domains crossed) is derived at render time from the full findings set. */
+export interface CodeownersFinding {
+  file: string;
+  owners: string[]; // sorted owners from the last-matching CODEOWNERS rule; always non-empty
 }
 
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
@@ -117,6 +122,7 @@ export interface BriefFindings {
   eol?: EolFinding[];
   redos?: RedosFinding[];
   provenance?: ProvenanceFinding[];
+  codeowners?: CodeownersFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

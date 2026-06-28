@@ -35,60 +35,66 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
  *  webhook receiver above AND the Orb relay receiver below (they verify the body differently — GitHub's HMAC vs the
  *  Orb relay HMAC — then share everything after). */
 export async function enqueueVerifiedWebhook(c: Context<{ Bindings: Env }>, deliveryId: string, eventName: string, rawBody: string): Promise<Response> {
+  const result = await enqueueWebhookByEnv(c.env, deliveryId, eventName, rawBody);
+  switch (result) {
+    case "invalid_json":
+      return c.json({ error: "invalid_json" }, 400);
+    case "duplicate":
+      return c.json({ ok: true, deliveryId, eventName, status: "duplicate" }, 202);
+    case "enqueue_failed":
+      return c.json({ error: "enqueue_failed", deliveryId }, 500);
+    default:
+      return c.json({ ok: true, deliveryId, eventName, status: "queued" }, 202);
+  }
+}
+
+export type EnqueueWebhookResult = "queued" | "duplicate" | "invalid_json" | "enqueue_failed";
+
+/** Env-based core of the webhook enqueue (parse → dedup → record → WEBHOOKS lane), with NO Hono Context. Shared by
+ *  the request-context receiver above AND the pull-mode relay drain loop (server.ts), which has no Context. Returns
+ *  a status the caller maps to a response / an ack decision. */
+export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventName: string, rawBody: string): Promise<EnqueueWebhookResult> {
   let payload: GitHubWebhookPayload;
   try {
     payload = JSON.parse(rawBody) as GitHubWebhookPayload;
   } catch {
-    return c.json({ error: "invalid_json" }, 400);
+    return "invalid_json";
   }
 
   const payloadHash = await sha256Hex(rawBody);
-  const existingEvent = await getWebhookEvent(c.env, deliveryId);
+  const existingEvent = await getWebhookEvent(env, deliveryId);
   // Suppress redelivery of an already-processed event (on success its payloadHash is overwritten to a
   // "processed" sentinel, so a hash match alone misses it and the event re-runs its side effects) or one
   // still in flight with the same payload. "error" rows are never suppressed so a failed enqueue/processing
   // can still be retried (#789).
   if (existingEvent && existingEvent.status !== "error" && (existingEvent.status === "processed" || existingEvent.payloadHash === payloadHash)) {
-    return c.json({ ok: true, deliveryId, eventName, status: "duplicate" }, 202);
+    return "duplicate";
   }
 
-  await recordWebhookEvent(c.env, {
+  const eventRow = {
     deliveryId,
     eventName,
     action: payload.action,
     installationId: payload.installation?.id,
     repositoryFullName: payload.repository?.full_name,
     payloadHash,
-    status: "queued",
-  });
-
-  const message: JobMessage = {
-    type: "github-webhook",
-    deliveryId,
-    eventName,
-    payload,
   };
+  await recordWebhookEvent(env, { ...eventRow, status: "queued" });
+
+  const message: JobMessage = { type: "github-webhook", deliveryId, eventName, payload };
   try {
     // Send to the dedicated WEBHOOKS lane (not the shared JOBS queue) so a maintenance burst on JOBS can never
     // starve real GitHub events into the DLQ. (#audit-webhook-queue)
-    await c.env.WEBHOOKS.send(message);
+    await env.WEBHOOKS.send(message);
   } catch {
-    // Enqueue failed: flip the event to "error" so the dedup guard above lets GitHub redeliver,
-    // and return 500 so GitHub retries instead of treating the webhook as handled (#786). This also covers the
-    // deploy-ordering case where the WEBHOOKS queue is not yet provisioned — no event is lost.
-    await recordWebhookEvent(c.env, {
-      deliveryId,
-      eventName,
-      action: payload.action,
-      installationId: payload.installation?.id,
-      repositoryFullName: payload.repository?.full_name,
-      payloadHash,
-      status: "error",
-    });
-    return c.json({ error: "enqueue_failed", deliveryId }, 500);
+    // Enqueue failed: flip the event to "error" so the dedup guard above lets GitHub redeliver / the next pull
+    // re-deliver, instead of treating the webhook as handled (#786). Also covers the deploy-ordering case where
+    // the WEBHOOKS queue is not yet provisioned — no event is lost.
+    await recordWebhookEvent(env, { ...eventRow, status: "error" });
+    return "enqueue_failed";
   }
 
-  return c.json({ ok: true, deliveryId, eventName, status: "queued" }, 202);
+  return "queued";
 }
 
 /** The brokered self-host's relay RECEIVER. The central Orb forwards an event here, HMAC-signed (x-orb-signature-

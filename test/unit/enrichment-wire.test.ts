@@ -90,13 +90,24 @@ describe("buildReviewEnrichment", () => {
     expect(await buildReviewEnrichment(env({}), input)).toBeUndefined();
   });
 
-  it("undefined on a non-200 response", async () => {
+  it("undefined on a non-200 response, and surfaces it at ERROR for Sentry (was a silent skip)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     globalThis.fetch = vi.fn(
-      async () => ({ ok: false, json: async () => ({}) }) as Response,
+      async () =>
+        ({ ok: false, status: 502, json: async () => ({}) }) as Response,
     ) as unknown as typeof fetch;
     expect(
       await buildReviewEnrichment(env({ REES_URL: "https://r" }), input),
     ).toBeUndefined();
+    // A non-2xx REES response now logs at error level (was a silent skip) so a broken backend is visible in Sentry.
+    expect(
+      errSpy.mock.calls.some(
+        (c) =>
+          String(c[0]).includes("review_context_fetch_failed") &&
+          String(c[0]).includes("502"),
+      ),
+    ).toBe(true);
+    errSpy.mockRestore();
   });
 
   it("undefined on a fetch error (network/timeout) and surfaces it at ERROR for Sentry (#5)", async () => {

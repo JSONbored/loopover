@@ -109,6 +109,30 @@ export interface SecretLogFinding {
   category: "secret" | "pii" | "request-object";
 }
 
+/** A revert/regression signal: explicit revert language or symmetric churn that mirrors undoing prior work. */
+export interface RevertRecurrenceFinding {
+  kind: "explicit-revert" | "rollback-language" | "symmetric-churn";
+  detail: string;
+  files?: string[];
+  confidence: "high" | "medium";
+}
+
+/** Author track record + linked-issue alignment for historical review context. */
+export interface LinkedIssueFinding {
+  number: number;
+  repo: string;
+  state: string | null;
+  title: string | null;
+  aligned: boolean;
+}
+
+export interface HistoryFinding {
+  authorLogin: string;
+  mergedPrCount: number | null;
+  authorTier: "newcomer" | "established" | "unknown";
+  linkedIssues: LinkedIssueFinding[];
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -120,6 +144,7 @@ export interface BriefFindings {
   redos?: RedosFinding[];
   codeowners?: CodeownersFinding[];
   secretLog?: SecretLogFinding[];
+  history?: HistoryFinding | null;
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

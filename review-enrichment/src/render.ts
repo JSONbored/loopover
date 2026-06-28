@@ -160,6 +160,28 @@ export function renderBrief(
     }
   }
 
+  const history = findings.history;
+  if (history) {
+    lines.push("### Author history & linked issues");
+    const countLabel =
+      history.mergedPrCount === null
+        ? "unknown merged PR count"
+        : `${history.mergedPrCount} merged PR(s) in this repo`;
+    lines.push(
+      `- Author ${safeCodeSpan(history.authorLogin)} — **${history.authorTier}** (${countLabel})`,
+    );
+    for (const issue of history.linkedIssues) {
+      const state = issue.state ?? "unknown state";
+      const title = issue.title ? ` — ${promptText(issue.title.slice(0, 120))}` : "";
+      lines.push(
+        `- Linked ${safeCodeSpan(`${issue.repo}#${issue.number}`)} (${state})${title}`,
+      );
+    }
+    if (!history.linkedIssues.length) {
+      lines.push("- No linked issues detected in the PR body");
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

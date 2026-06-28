@@ -8,6 +8,7 @@
 // network / parse error, or an empty brief, returns undefined and the review proceeds on diff + grounding + RAG.
 import { sanitizePublicComment } from "../queue-intelligence";
 import { neutralizePromptInjection } from "./prompt-injection";
+import { createInstallationToken } from "../github/app";
 import type { PullRequestFileRecord } from "../types";
 
 interface EnrichmentEnv {
@@ -53,8 +54,25 @@ interface EnrichmentInput {
   headSha: string | null;
   baseSha?: string | null;
   title?: string | undefined;
+  body?: string | undefined;
+  author?: string | undefined;
+  githubToken?: string | undefined;
   files: PullRequestFileRecord[];
   diff: string;
+}
+
+/** Best-effort GitHub token for REES history/codeowners fetches — installation token, then public token. */
+export async function resolveEnrichmentGithubToken(
+  env: Env,
+  installationId: number | null | undefined,
+): Promise<string | undefined> {
+  if (installationId) {
+    const token = await createInstallationToken(env, installationId).catch(
+      () => undefined,
+    );
+    if (token) return token;
+  }
+  return env.GITHUB_PUBLIC_TOKEN ?? undefined;
 }
 
 /** POST the PR to the REES and return the spliceable brief, or undefined on any error/timeout/empty (fail-safe). */
@@ -81,6 +99,9 @@ export async function buildReviewEnrichment(
         headSha: input.headSha,
         baseSha: input.baseSha ?? null,
         title: input.title,
+        body: input.body,
+        author: input.author,
+        githubToken: input.githubToken,
         files: input.files.map((file) => ({
           path: file.path,
           patch:

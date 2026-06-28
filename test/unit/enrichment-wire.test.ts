@@ -2,7 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   isEnrichmentEnabled,
   buildReviewEnrichment,
+  resolveEnrichmentGithubToken,
 } from "../../src/review/enrichment-wire";
+import { createInstallationToken } from "../../src/github/app";
+import { createTestEnv } from "../helpers/d1";
+
+vi.mock("../../src/github/app", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/github/app")>();
+  return { ...actual, createInstallationToken: vi.fn() };
+});
+
+const mockedToken = vi.mocked(createInstallationToken);
 
 const env = (o: Record<string, string>) => o as unknown as Env;
 const input = {
@@ -84,6 +94,30 @@ describe("buildReviewEnrichment", () => {
       { path: "a.ts", patch: "@@ +1 @@" },
       { path: "b.ts", patch: undefined },
     ]);
+  });
+
+  it("POST includes author, body, and githubToken when provided", async () => {
+    const calls: RequestInit[] = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      calls.push(init);
+      return {
+        ok: true,
+        json: async () => ({ promptSection: "history brief" }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(
+      env({ REES_URL: "https://rees/" }),
+      {
+        ...input,
+        body: "Fixes #12",
+        author: "dev1",
+        githubToken: "ghs_test",
+      },
+    );
+    const body = JSON.parse(calls[0]!.body as string);
+    expect(body.body).toBe("Fixes #12");
+    expect(body.author).toBe("dev1");
+    expect(body.githubToken).toBe("ghs_test");
   });
 
   it("undefined when REES_URL is unset", async () => {
@@ -206,5 +240,23 @@ describe("buildReviewEnrichment", () => {
     expect(
       (calls[0]!.headers as Record<string, string>).authorization,
     ).toBeUndefined();
+  });
+});
+
+describe("resolveEnrichmentGithubToken", () => {
+  it("prefers installation token and falls back to GITHUB_PUBLIC_TOKEN", async () => {
+    mockedToken.mockResolvedValueOnce("install-token");
+    const envWithInstall = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await expect(resolveEnrichmentGithubToken(envWithInstall, 42)).resolves.toBe(
+      "install-token",
+    );
+
+    mockedToken.mockRejectedValueOnce(new Error("no app"));
+    await expect(resolveEnrichmentGithubToken(envWithInstall, 42)).resolves.toBe(
+      "public-token",
+    );
+
+    const bareEnv = createTestEnv({});
+    await expect(resolveEnrichmentGithubToken(bareEnv, null)).resolves.toBeUndefined();
   });
 });

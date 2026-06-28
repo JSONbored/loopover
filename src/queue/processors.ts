@@ -325,6 +325,7 @@ import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
+  resolveEnrichmentGithubToken,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
@@ -3733,6 +3734,11 @@ export async function runAiReviewForAdvisory(
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
     // byte-identical prompt. Fully fail-safe (any timeout/error/empty → undefined → review proceeds).
     const enrichmentDiff = buildAiReviewDiff(files);
+    const enrichmentInstallationId =
+      (await getRepository(env, args.repoFullName))?.installationId ?? null;
+    const enrichmentGithubToken = isEnrichmentEnabled(env)
+      ? await resolveEnrichmentGithubToken(env, enrichmentInstallationId)
+      : undefined;
     const enrichment =
       isEnrichmentEnabled(env) && convergedRepoAllowed
         ? await buildReviewEnrichment(env, {
@@ -3740,6 +3746,9 @@ export async function runAiReviewForAdvisory(
             prNumber: args.pr.number,
             headSha: args.advisory.headSha,
             title: args.pr.title,
+            body: args.pr.body ?? undefined,
+            author: args.author ?? undefined,
+            githubToken: enrichmentGithubToken,
             files,
             diff: enrichmentDiff,
           })

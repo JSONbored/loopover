@@ -84,12 +84,17 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
     await seedRepoFile(env, "acme/widgets");
     let reesUrl = "";
     let reesAuth: string | null = null;
+    let reesBody: Record<string, unknown> | null = null;
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (url, init) => {
         if (String(url).includes("/v1/enrich")) {
           reesUrl = String(url);
           reesAuth = new Headers(init?.headers).get("authorization");
+          reesBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
           return new Response(
             JSON.stringify({
               promptSection: "## EXTERNAL REVIEW BRIEF\n- CVE-1 in lodash",
@@ -116,6 +121,12 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       // The enrichment build branch executed: the REES was POSTed at /v1/enrich with the shared-secret bearer.
       expect(reesUrl).toBe("https://rees.example/v1/enrich");
       expect(reesAuth).toBe("Bearer sek");
+      expect(reesBody).toMatchObject({
+        author: "alice",
+        body: "Implements the thing.",
+        repoFullName: "acme/widgets",
+        prNumber: 7,
+      });
       // The brief's content flows into the user prompt, but the system prompt carries our FIXED
       // enrichment suffix — the REES-supplied systemSuffix is untrusted and is never spliced in.
       expect(seenUser[0] ?? "").toContain("## EXTERNAL REVIEW BRIEF");

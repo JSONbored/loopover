@@ -713,6 +713,19 @@ describe("public-safe invariant", () => {
     expect(isFocusManifestPublicSafe("paste your hotkey")).toBe(false);
   });
 
+  it("rejects local filesystem paths, matching the canonical redaction guard", () => {
+    // Unix homes + container/CI `/root/` + tmp.
+    expect(isFocusManifestPublicSafe("see /Users/me/repo/src")).toBe(false);
+    expect(isFocusManifestPublicSafe("see /home/dev/repo/src")).toBe(false);
+    expect(isFocusManifestPublicSafe("see /root/repo/src")).toBe(false);
+    expect(isFocusManifestPublicSafe("see /tmp/build/out")).toBe(false);
+    // Windows, both backslash and forward-slash forms.
+    expect(isFocusManifestPublicSafe("see C:\\Users\\me\\repo")).toBe(false);
+    expect(isFocusManifestPublicSafe("see C:/Users/me/repo")).toBe(false);
+    // A relative path with none of these roots stays safe.
+    expect(isFocusManifestPublicSafe("see src/signals/focus-manifest.ts")).toBe(true);
+  });
+
   it("never emits public next steps that contain forbidden language for generated manifests", () => {
     // Deterministic property-style check (seeded LCG, no external generator dependency):
     // build a wide range of manifests/changed-paths from a fixture pool that deliberately

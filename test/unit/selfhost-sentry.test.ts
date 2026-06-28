@@ -299,6 +299,69 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
       "project=JSONbored/gittensory, closePrecision=0.6, floor=0.8",
     );
   });
+
+  it("does not promote secret-keyed scalar fields into no-message titles (regression)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "attacker_controlled_error",
+        token: "gts_SUPER_SECRET_TOKEN_12345",
+        apiKey: "shh",
+        repository: "owner/repo",
+        pullNumber: 7,
+        project: "safe-project",
+      }),
+    );
+
+    expect(lastCapturedError().name).toBe("attacker_controlled_error");
+    expect(lastCapturedError().message).toBe(
+      "(owner/repo#7) project=safe-project",
+    );
+    expect(lastCapturedError().message).not.toContain(
+      "gts_SUPER_SECRET_TOKEN_12345",
+    );
+    expect(lastCapturedError().message).not.toContain("shh");
+  });
+
+  it("redacts nested secret-keyed values before summarizing object fields", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "provider_metadata_failed",
+        provider: { name: "github", token: "nested-secret" },
+        attempts: [
+          { name: "first", privateKey: "nested-key" },
+          "retry",
+        ],
+      }),
+    );
+
+    expect(lastCapturedError().name).toBe("provider_metadata_failed");
+    expect(lastCapturedError().message).toBe(
+      'provider={"name":"github","token":"[redacted]"}, attempts=[{"name":"first","privateKey":"[redacted]"},"retry"]',
+    );
+    expect(lastCapturedError().message).not.toContain("nested-secret");
+    expect(lastCapturedError().message).not.toContain("nested-key");
+  });
+
+  it("redacts deeply nested summary objects instead of serializing past the depth cap", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "deep_provider_metadata_failed",
+        meta: { a: { b: { c: { d: { e: { f: { token: "deep-secret" } } } } } } },
+      }),
+    );
+
+    expect(lastCapturedError().name).toBe("deep_provider_metadata_failed");
+    expect(lastCapturedError().message).toBe(
+      'meta={"a":{"b":{"c":{"d":{"e":{"f":"[redacted]"}}}}}}',
+    );
+    expect(lastCapturedError().message).not.toContain("deep-secret");
+  });
 });
 
 describe("installStructuredLogForwarding — central console sink instrumentation (#1468)", () => {

@@ -127,10 +127,30 @@ const SUMMARY_SKIP_KEYS = new Set([
   "pullNumber",
   "deliveryId",
 ]);
+function redactSummaryValue(value: unknown, depth = 0): unknown {
+  if (!value || typeof value !== "object") return value;
+  if (depth >= 6) return "[redacted]";
+  if (Array.isArray(value))
+    return value.map((item) => redactSummaryValue(item, depth + 1));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+      key,
+      SECRET_KEY.test(key)
+        ? "[redacted]"
+        : redactSummaryValue(nested, depth + 1),
+    ]),
+  );
+}
+
 function summarizeLogFields(obj: Record<string, unknown>): string {
   return Object.entries(obj)
-    .filter(([k, v]) => !SUMMARY_SKIP_KEYS.has(k) && v !== null)
-    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .filter(
+      ([k, v]) => !SUMMARY_SKIP_KEYS.has(k) && !SECRET_KEY.test(k) && v !== null,
+    )
+    .map(
+      ([k, v]) =>
+        `${k}=${typeof v === "object" ? JSON.stringify(redactSummaryValue(v)) : String(v)}`,
+    )
     .filter((part) => part.length <= 90) // a long blob (id/body) belongs in the context, not the title
     .slice(0, 5) // a few salient fields, not a dump
     .join(", ");

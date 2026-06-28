@@ -9,7 +9,9 @@
 
 /** The Orb's hosted broker base; override (ORB_BROKER_URL) only to point at a private gittensory deployment. */
 const DEFAULT_BROKER_URL = "https://gittensory-api.aethereal.dev";
-const BROKER_TIMEOUT_MS = 10_000;
+// The broker's cold token mint can take many seconds when GitHub is throttling the App; allow headroom so the one
+// uncached mint completes and populates the broker-side cache (steady-state cache hits return in well under a second).
+const BROKER_TIMEOUT_MS = 25_000;
 
 function isLocalBrokerHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || (hostname === "::1" || hostname === "[::1]");

@@ -14,7 +14,7 @@ describe("AI review cache (#1)", () => {
   it("reuses a stored review ONLY on the same (repo, pull, head SHA, mode)", async () => {
     const env = createTestEnv();
     await putCachedAiReview(env, "o/r", 7, "sha1", "block", { notes: "the review", reviewerCount: 2 });
-    expect(await getCachedAiReview(env, "o/r", 7, "sha1", "block")).toEqual({ notes: "the review", reviewerCount: 2 });
+    expect(await getCachedAiReview(env, "o/r", 7, "sha1", "block")).toEqual({ notes: "the review", reviewerCount: 2, findings: [] });
     expect(await getCachedAiReview(env, "o/r", 7, "sha1", "advisory")).toBeNull(); // mode changed → miss
     expect(await getCachedAiReview(env, "o/r", 7, "sha2", "block")).toBeNull(); // new head SHA → miss
     expect(await getCachedAiReview(env, "o/r", 8, "sha1", "block")).toBeNull(); // different PR → miss
@@ -23,7 +23,15 @@ describe("AI review cache (#1)", () => {
   it("upserts — a re-run at the same key replaces the stored review (+ mode)", async () => {
     const env = createTestEnv();
     await putCachedAiReview(env, "o/r", 7, "sha1", "advisory", { notes: "first", reviewerCount: 1 });
-    await putCachedAiReview(env, "o/r", 7, "sha1", "block", { notes: "second", reviewerCount: 2 });
-    expect(await getCachedAiReview(env, "o/r", 7, "sha1", "block")).toEqual({ notes: "second", reviewerCount: 2 });
+    await putCachedAiReview(env, "o/r", 7, "sha1", "block", {
+      notes: "second",
+      reviewerCount: 2,
+      findings: [{ code: "ai_review_split", severity: "critical", title: "Split", detail: "One reviewer blocked." }],
+    });
+    expect(await getCachedAiReview(env, "o/r", 7, "sha1", "block")).toEqual({
+      notes: "second",
+      reviewerCount: 2,
+      findings: [{ code: "ai_review_split", severity: "critical", title: "Split", detail: "One reviewer blocked." }],
+    });
   });
 });

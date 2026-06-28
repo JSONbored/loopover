@@ -29,6 +29,7 @@ export interface OrbAppInstallation {
   id: number;
   accountLogin: string | null;
   accountType: string | null;
+  accountId: number | null;
   repositorySelection: string | null;
 }
 
@@ -43,9 +44,9 @@ export async function listOrbAppInstallations(env: Env): Promise<OrbAppInstallat
       const body = await response.text();
       throw new Error(`Failed to list Orb App installations (${response.status}): ${body.slice(0, 200)}`);
     }
-    const rows = (await response.json()) as Array<{ id?: number; account?: { login?: string; type?: string } | null; repository_selection?: string }>;
+    const rows = (await response.json()) as Array<{ id?: number; account?: { login?: string; type?: string; id?: number } | null; repository_selection?: string }>;
     for (const row of rows) {
-      if (row.id) installs.push({ id: row.id, accountLogin: row.account?.login ?? null, accountType: row.account?.type ?? null, repositorySelection: row.repository_selection ?? null });
+      if (row.id) installs.push({ id: row.id, accountLogin: row.account?.login ?? null, accountType: row.account?.type ?? null, accountId: row.account?.id ?? null, repositorySelection: row.repository_selection ?? null });
     }
     if (rows.length < 100) break; // short page → last page
     /* v8 ignore next 2 -- runaway-loop backstop: a single App would need 1000+ installs (>10 pages) to reach this */
@@ -54,13 +55,18 @@ export async function listOrbAppInstallations(env: Env): Promise<OrbAppInstallat
   return installs;
 }
 
+// GitHub's installation-token endpoint can take many seconds while the App is throttled (too-frequent mints). A
+// generous timeout lets the rare cold mint complete; brokerOrbToken caches the result so this is hit ~once/hour.
+const ORB_TOKEN_MINT_TIMEOUT_MS = 25_000;
+
 /** Mints a short-lived GitHub installation access token for one installation — the broker primitive the
- *  self-hosted container ultimately receives (after enrollment). Not cached: the broker mints on demand. */
+ *  self-hosted container ultimately receives (after enrollment). brokerOrbToken caches the result; this always mints. */
 export async function createOrbInstallationToken(env: Env, installationId: number): Promise<{ token: string; expiresAt: string }> {
   const jwt = await createOrbAppJwt(env);
   const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: orbHeaders(jwt),
+    signal: AbortSignal.timeout(ORB_TOKEN_MINT_TIMEOUT_MS),
   });
   if (!response.ok) {
     const body = await response.text();

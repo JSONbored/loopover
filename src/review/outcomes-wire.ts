@@ -25,6 +25,7 @@
 
 import { recordAuditEvent } from "../db/repositories";
 import { notifyDiscordReview } from "../selfhost/discord-notify";
+import { incr } from "../selfhost/metrics";
 import type { GitHubWebhookPayload } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 import {
@@ -269,6 +270,9 @@ export async function recordPrOutcome(
     return;
 
   const decision = merged ? "merged" : "closed";
+  // Observability (#reviews-dashboard): realized human outcome (merged vs closed) for the Grafana panel + as the
+  // ground truth to compare against the engine's gate verdicts.
+  incr("gittensory_pr_outcomes_total", { outcome: decision });
   const targetId = reviewAuditTargetId(repoFullName, pr.number);
 
   await appendReviewAudit(env, {
@@ -466,9 +470,10 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     const flags = createFlagStore(env);
     const engaged = await applyAutoTune(flags, report);
     for (const action of engaged) {
-      console.warn(
+      console.error(
         JSON.stringify({
-          ev: "breaker_engaged",
+          level: "error",
+          event: "breaker_engaged",
           project: action.project,
           mergePrecision: action.mergePrecision,
           decided: action.decided,
@@ -479,9 +484,10 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     // CLOSE-side breaker: engage closehold for any repo whose close precision dropped below the floor.
     const closeEngaged = await applyCloseAutoTune(flags, report);
     for (const action of closeEngaged) {
-      console.warn(
+      console.error(
         JSON.stringify({
-          ev: "close_breaker_engaged",
+          level: "error",
+          event: "close_breaker_engaged",
           project: action.project,
           closePrecision: action.closePrecision,
           decided: action.decided,
@@ -492,9 +498,10 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     // OBSERVABILITY: a single summary line of the engaged close-hold backlog so a human can see, at a glance,
     // how many (and which) repos are currently holding would-closes for review. Only emitted when ≥1 engaged.
     if (closeEngaged.length > 0) {
-      console.warn(
+      console.error(
         JSON.stringify({
-          ev: "closehold_backlog",
+          level: "error",
+          event: "closehold_backlog",
           count: closeEngaged.length,
           projects: closeEngaged.map((a) => a.project),
         }),

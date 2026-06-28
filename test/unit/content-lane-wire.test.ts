@@ -70,6 +70,33 @@ describe("applySurfaceGate", () => {
   it("a clean generic gate (no blockers) lets the surface verdict stand", () => {
     expect(applySurfaceGate(gate({ conclusion: "success", blockers: [] }), surfaceClose)).toBe(surfaceClose);
   });
+  it("preserves a generic manual-review hold over a surface merge", () => {
+    const oversized: AdvisoryFinding = {
+      code: "oversized_pr",
+      title: "Large change — held for manual review",
+      severity: "warning",
+      detail: "This PR is large.",
+    };
+    const genericHold = gate({
+      conclusion: "neutral",
+      title: "Gittensory Gate — held for manual review",
+      summary: "Large change — held for manual review",
+      blockers: [],
+      warnings: [oversized],
+    });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+
+    expect(applySurfaceGate(genericHold, surfaceMerge)).toBe(genericHold);
+  });
+  it("lets a surface hard failure override a generic warning-only hold", () => {
+    const genericHold = gate({
+      conclusion: "neutral",
+      blockers: [],
+      warnings: [{ code: "oversized_pr", title: "Large change", severity: "warning", detail: "large" }],
+    });
+
+    expect(applySurfaceGate(genericHold, surfaceClose)).toBe(surfaceClose);
+  });
   it("PRESERVES a generic hard blocker over a surface merge (a committed secret can never merge)", () => {
     const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked key" };
     const generic = gate({ conclusion: "failure", blockers: [secret], warnings: [] });

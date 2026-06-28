@@ -3,6 +3,26 @@
 // the environment — self-host only, and a no-op when neither is set or in a runtime without process.env.
 // Best-effort: an absent or failing webhook never affects the review (all errors are swallowed).
 
+const ALLOWED_DISCORD_HOSTS = new Set([
+  "discord.com",
+  "discordapp.com",
+  "canary.discord.com",
+  "ptb.discord.com",
+]);
+
+function isValidDiscordWebhook(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      ALLOWED_DISCORD_HOSTS.has(parsed.hostname.toLowerCase()) &&
+      parsed.pathname.startsWith("/api/webhooks/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readConfig(): { map: Record<string, string>; global: string | null } {
   /* v8 ignore next */ // process is always defined in the self-host (node) runtime; the guard is for the Worker bundle
   const env: Record<string, string | undefined> =
@@ -24,11 +44,9 @@ function readConfig(): { map: Record<string, string>; global: string | null } {
 export function resolveDiscordWebhook(repoFullName: string): string | null {
   const { map, global } = readConfig();
   const repoUrl = map[repoFullName];
-  return typeof repoUrl === "string" && repoUrl.length > 0
-    ? repoUrl
-    : global && global.length > 0
-      ? global
-      : null;
+  if (typeof repoUrl === "string" && isValidDiscordWebhook(repoUrl))
+    return repoUrl;
+  return global && isValidDiscordWebhook(global) ? global : null;
 }
 
 // Embed accent colour by outcome — green = good, amber = caution, red = blocked/closed (matches the hosted look).

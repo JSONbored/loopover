@@ -4,6 +4,7 @@
 // new ones (idempotent), mirroring wrangler's migration ledger.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorMessage } from "../utils/json";
 
 export async function runSelfHostMigrations(db: D1Database, dir: string): Promise<number> {
   await db.exec("CREATE TABLE IF NOT EXISTS _selfhost_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -13,7 +14,17 @@ export async function runSelfHostMigrations(db: D1Database, dir: string): Promis
   let count = 0;
   for (const file of files) {
     if (applied.has(file)) continue;
-    await db.exec(readFileSync(join(dir, file), "utf8"));
+    const sql = readFileSync(join(dir, file), "utf8").replace(/--.*$/gm, "");
+    for (const statement of sql.split(";").map((part) => part.trim()).filter(Boolean)) {
+      try {
+        await db.exec(`${statement};`);
+      } catch (error) {
+        // Idempotency (#migrate-drift): tolerate duplicate DDL per statement so a drifted multi-step migration
+        // still executes the remaining schema changes before the file is recorded as applied.
+        if (!/duplicate column|already exists/i.test(errorMessage(error)))
+          throw error;
+      }
+    }
     await db.prepare("INSERT INTO _selfhost_migrations (name, applied_at) VALUES (?, ?)").bind(file, new Date().toISOString()).run();
     count += 1;
   }

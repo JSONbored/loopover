@@ -17,9 +17,19 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
   attempts INTEGER NOT NULL DEFAULT 0,
   run_after BIGINT NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL,
-  last_error TEXT
+  last_error TEXT,
+  priority INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after);`;
+ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after, priority);`;
+
+// Webhook-driven work (a fresh PR → its review) jumps ahead of heavy background jobs (rag-index, the regate sweep)
+// so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Additive: all other
+// jobs stay priority 0 (today's FIFO order). Mirrors sqlite-queue. (#review-latency)
+const HIGH_PRIORITY_TYPES = new Set(["github-webhook"]);
+function jobPriority(payload: string): number {
+  return HIGH_PRIORITY_TYPES.has(extractPayloadType(payload) ?? "") ? 10 : 0;
+}
 
 export interface PgDurableQueue {
   binding: Queue;
@@ -84,9 +94,10 @@ export function createPgQueue(
     delaySeconds: number,
   ): Promise<void> {
     const now = Date.now();
+    const payload = JSON.stringify(message);
     await pool.query(
-      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at) VALUES ($1,'pending',0,$2,$3)`,
-      [JSON.stringify(message), now + delaySeconds * 1000, now],
+      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority) VALUES ($1,'pending',0,$2,$3,$4)`,
+      [payload, now + delaySeconds * 1000, now, jobPriority(payload)],
     );
     incr("gittensory_jobs_enqueued_total");
     void pump();
@@ -96,7 +107,7 @@ export function createPgQueue(
     // Atomic, multi-instance-safe: lock + claim one due job, skipping rows another instance already locked.
     const res = await pool.query(
       `UPDATE ${TABLE} SET status='processing'
-       WHERE id = (SELECT id FROM ${TABLE} WHERE status='pending' AND run_after<=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1)
+       WHERE id = (SELECT id FROM ${TABLE} WHERE status='pending' AND run_after<=$1 ORDER BY priority DESC, id FOR UPDATE SKIP LOCKED LIMIT 1)
        RETURNING id, payload, attempts`,
       [Date.now()],
     );

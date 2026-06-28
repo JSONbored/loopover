@@ -76,7 +76,18 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isOrbBrokerEnabled(env)) jobs.push({ type: "retry-orb-relay", requestedBy: "schedule" });
   // The heavier sync/health jobs keep their ~30-minute cadence even though the cron now ticks every ~2 minutes.
   if (minute % 30 === 0) {
-    jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
+    // BACKPRESSURE (#audit-rate-headroom): the open-data backfill lists every registered repo and fans out a
+    // per-repo segment + per-PR detail sync — a large GitHub-budget consumer second only to the sweep. Gate it
+    // behind the SAME maintenance headroom the sweep yields at, so when the shared REST budget is low the backfill
+    // SKIPS this 30-min tick and hands the remaining budget to webhooks (which drive timely reviews); the next
+    // 30-min tick retries, and after the bucket resets the backfill resumes. The cheap single-call health jobs
+    // (repair-data-fidelity, refresh-installation-health) stay unconditional — they cost ~one call and keep
+    // installation/health state fresh even while the budget is reserved.
+    if (!sweepThrottledUntil) {
+      jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
+    } else {
+      console.log(JSON.stringify({ event: "backfill_throttled", resetAt: sweepThrottledUntil }));
+    }
     jobs.push({ type: "repair-data-fidelity", requestedBy: "schedule" });
     jobs.push({ type: "refresh-installation-health", requestedBy: "schedule" });
   }

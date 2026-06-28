@@ -37,6 +37,7 @@ function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
     privateTrustEnabled: true,
     aiReviewMode: "off",
     aiReviewByok: false,
+    aiReviewAllAuthors: false, closeOwnerAuthors: false,
     aiReviewProvider: null,
     aiReviewModel: null,
     ...over,

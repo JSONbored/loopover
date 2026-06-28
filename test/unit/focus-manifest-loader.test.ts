@@ -36,6 +36,22 @@ describe("focus-manifest loader", () => {
     expect(fetched).toEqual(["owner/repo"]);
   });
 
+  it("preserves review.instructions across the repo-file cache round trip", async () => {
+    const env = createTestEnv();
+    let fetches = 0;
+    const fetcher = async () => {
+      fetches += 1;
+      return JSON.stringify({ review: { instructions: "Follow our async-error conventions." } });
+    };
+
+    const first = await loadRepoFocusManifest(env, "owner/review-instructions", { fetcher });
+    expect(first.review.instructions).toBe("Follow our async-error conventions.");
+
+    const second = await loadRepoFocusManifest(env, "owner/review-instructions", { fetcher });
+    expect(fetches).toBe(1);
+    expect(second.review.instructions).toBe("Follow our async-error conventions.");
+  });
+
   it("falls back to an empty manifest when no repo file is published and never throws", async () => {
     const env = createTestEnv();
     const manifest = await loadRepoFocusManifest(env, "owner/missing", { fetcher: async () => null });

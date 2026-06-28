@@ -9,7 +9,9 @@
 
 /** The Orb's hosted broker base; override (ORB_BROKER_URL) only to point at a private gittensory deployment. */
 const DEFAULT_BROKER_URL = "https://gittensory-api.aethereal.dev";
-const BROKER_TIMEOUT_MS = 10_000;
+// The broker's cold token mint can take many seconds when GitHub is throttling the App; allow headroom so the one
+// uncached mint completes and populates the broker-side cache (steady-state cache hits return in well under a second).
+const BROKER_TIMEOUT_MS = 25_000;
 
 function isLocalBrokerHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || (hostname === "::1" || hostname === "[::1]");
@@ -79,21 +81,63 @@ export async function fetchBrokeredInstallationToken(
  *  relay until the next boot — it never blocks startup or throws. The relay URL is the container's public origin +
  *  /v1/orb/relay (the receiver); the Orb SSRF-validates it, so PUBLIC_API_ORIGIN must be a real public https host. */
 export async function registerOrbRelayTarget(
-  env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined; PUBLIC_API_ORIGIN?: string | undefined },
+  env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined; PUBLIC_API_ORIGIN?: string | undefined; ORB_RELAY_MODE?: string | undefined },
   fetchImpl: typeof fetch = fetch,
-): Promise<"registered" | "skipped" | "failed"> {
-  if (!isOrbBrokerMode(env) || !env.PUBLIC_API_ORIGIN) return "skipped";
-  const relayUrl = `${env.PUBLIC_API_ORIGIN.replace(/\/+$/, "")}/v1/orb/relay`;
+): Promise<{ status: "registered" | "skipped" | "failed"; reason?: string }> {
+  if (!isOrbBrokerMode(env)) return { status: "skipped" };
+  // Pull mode (#secure-relay): the engine DRAINS events outbound from the Orb, so NO inbound endpoint is exposed —
+  // the right fit for a NAT/tailnet self-host (a public push URL would otherwise be unreachable). Push mode needs a
+  // public relay URL the Orb can reach.
+  const mode = env.ORB_RELAY_MODE === "pull" ? "pull" : "push";
+  if (mode === "push" && !env.PUBLIC_API_ORIGIN) return { status: "skipped" };
+  const relayUrl = mode === "push" ? `${env.PUBLIC_API_ORIGIN!.replace(/\/+$/, "")}/v1/orb/relay` : "";
   try {
     const base = orbBrokerBaseUrl(env);
     const res = await fetchImpl(`${base}/v1/orb/relay/register`, {
       method: "POST",
       headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET}`, "content-type": "application/json" }, // present — isOrbBrokerMode required it
-      body: JSON.stringify({ relayUrl }),
+      body: JSON.stringify({ relayUrl, mode }),
       signal: AbortSignal.timeout(10_000),
     });
-    return res.ok ? "registered" : "failed";
+    // Carry WHY it failed (HTTP status) so the caller's log — and Sentry — show a real reason, not "(no message)".
+    return res.ok
+      ? { status: "registered" }
+      : { status: "failed", reason: `http_${res.status}` };
+  } catch (error) {
+    return {
+      status: "failed",
+      reason: error instanceof Error ? error.message : "fetch_threw",
+    };
+  }
+}
+
+/** Pull-mode drain (#secure-relay): fetch this install's queued events from the Orb, acking the previous batch's
+ *  delivery ids so the Orb deletes them. Lets a NAT/tailnet engine receive events WITHOUT exposing an inbound
+ *  endpoint. BEST-EFFORT — returns [] on a non-broker / unsafe-URL / non-ok / thrown case; the next tick retries. */
+export async function drainOrbRelay(
+  env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined },
+  ack: string[] = [],
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ deliveryId: string; eventName: string; rawBody: string }[]> {
+  if (!isOrbBrokerMode(env)) return [];
+  try {
+    const base = orbBrokerBaseUrl(env);
+    const res = await fetchImpl(`${base}/v1/orb/relay/pull`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.ORB_ENROLLMENT_SECRET}`, "content-type": "application/json" },
+      body: JSON.stringify({ ack }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { events?: Array<{ deliveryId?: unknown; eventName?: unknown; rawBody?: unknown }> };
+    const out: { deliveryId: string; eventName: string; rawBody: string }[] = [];
+    for (const e of body.events ?? []) {
+      if (typeof e.deliveryId === "string" && typeof e.eventName === "string" && typeof e.rawBody === "string") {
+        out.push({ deliveryId: e.deliveryId, eventName: e.eventName, rawBody: e.rawBody });
+      }
+    }
+    return out;
   } catch {
-    return "failed";
+    return [];
   }
 }

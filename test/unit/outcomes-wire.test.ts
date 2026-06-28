@@ -653,9 +653,13 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
     for (let i = 4; i < 12; i += 1)
       await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "closed");
 
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     await runSelfTuneBreaker(env);
 
     expect(await isHoldOnly(env, "owner/repo")).toBe(true);
+    // The bot self-disabling its own auto-merge now surfaces to Sentry at error level (not a hidden warn).
+    expect(err.mock.calls.some(([l]) => String(l).includes("breaker_engaged") && String(l).includes('"level":"error"'))).toBe(true);
+    err.mockRestore();
   });
 
   it("ENGAGES the CLOSE breaker when recorded outcomes show close precision below the floor", async () => {

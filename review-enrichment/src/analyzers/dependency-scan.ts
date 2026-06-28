@@ -10,6 +10,21 @@ interface DepChange {
   to: string;
 }
 
+const MAX_MANIFEST_FILES = 20;
+const MAX_PATCH_LINES_PER_FILE = 500;
+const MAX_DEPENDENCY_QUERIES = 25;
+
+interface ScanLimits {
+  maxManifestFiles?: number;
+  maxPatchLinesPerFile?: number;
+  maxDependencyQueries?: number;
+}
+
+interface ScanOptions {
+  signal?: AbortSignal;
+  limits?: ScanLimits;
+}
+
 // Per-manifest line parsers. Each returns [name, version] for a `+`/`-` diff line, or null. Heuristic (line-based,
 // not a full manifest parse) — good enough to flag the deps a PR adds/bumps without resolving the whole tree.
 const NPM_RE = /^"([^"]+)"\s*:\s*"([\^~>=<\s]*[0-9][^"]*)"/;
@@ -43,16 +58,23 @@ const ECOSYSTEM: Record<string, string> = {
 /** Extract added/changed (not removed) dependency versions from the changed manifests in the diff. Pure. */
 export function extractDependencyChanges(
   files: NonNullable<EnrichRequest["files"]>,
+  limits: ScanLimits = {},
 ): DepChange[] {
   const byKey = new Map<
     string,
     { ecosystem: string; package: string; added?: string; removed?: string }
   >();
+  const maxManifestFiles = limits.maxManifestFiles ?? MAX_MANIFEST_FILES;
+  const maxPatchLinesPerFile =
+    limits.maxPatchLinesPerFile ?? MAX_PATCH_LINES_PER_FILE;
+  let manifestFiles = 0;
   for (const file of files) {
     const manifest = file.path.split("/").pop() ?? file.path;
     const ecosystem = ECOSYSTEM[manifest];
     if (!ecosystem || !file.patch) continue;
-    for (const line of file.patch.split("\n")) {
+    manifestFiles += 1;
+    if (manifestFiles > maxManifestFiles) break;
+    for (const line of file.patch.split("\n", maxPatchLinesPerFile)) {
       const sign = line[0];
       if (
         (sign !== "+" && sign !== "-") ||
@@ -131,11 +153,14 @@ export async function queryOsv(
   name: string,
   version: string,
   fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<Cve[]> {
+  if (signal?.aborted) return [];
   const response = await fetchImpl("https://api.osv.dev/v1/query", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ package: { name, ecosystem }, version }),
+    signal,
   });
   if (!response.ok) return [];
   const data = (await response.json()) as { vulns?: OsvVuln[] };
@@ -153,15 +178,21 @@ export async function queryOsv(
 export async function scanDependencies(
   req: EnrichRequest,
   fetchImpl: typeof fetch = fetch,
+  options: ScanOptions = {},
 ): Promise<DependencyFinding[]> {
-  const changes = extractDependencyChanges(req.files ?? []);
+  const changes = extractDependencyChanges(req.files ?? [], options.limits).slice(
+    0,
+    options.limits?.maxDependencyQueries ?? MAX_DEPENDENCY_QUERIES,
+  );
   const findings: DependencyFinding[] = [];
   for (const change of changes) {
+    if (options.signal?.aborted) break;
     const cves = await queryOsv(
       change.ecosystem,
       change.package,
       change.to,
       fetchImpl,
+      options.signal,
     );
     if (cves.length) {
       findings.push({

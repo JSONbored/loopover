@@ -13,11 +13,12 @@ async function sign(body: string, secret: string): Promise<string> {
   return `sha256=${[...new Uint8Array(signed)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function ctx(e: Env, headers: Record<string, string | null>, request: Request): Context<{ Bindings: Env }> {
+function ctx(e: Env, headers: Record<string, string | null>, request: Request, executionCtx?: { waitUntil(p: Promise<unknown>): void }): Context<{ Bindings: Env }> {
   return {
     req: { raw: request, header: (n: string) => headers[n.toLowerCase()] ?? null },
     env: e,
     json: (payload: unknown, status?: number) => Response.json(payload, status === undefined ? undefined : { status }),
+    ...(executionCtx ? { executionCtx } : {}),
   } as unknown as Context<{ Bindings: Env }>;
 }
 
@@ -95,6 +96,19 @@ describe("handleOrbWebhook (POST /v1/orb/webhook)", () => {
     expect(res.status).toBe(202);
     await expect(res.json()).resolves.toMatchObject({ status: "received", eventName: "installation" });
     expect(await row(e, "ok-1")).toMatchObject({ action: "created", installation_id: 42, repository_full_name: "JSONbored/gittensory", status: "received" });
+  });
+
+  it("ACKs 202 immediately and SCHEDULES the relay forward via waitUntil (never blocks the ACK on a slow container, #orb-ack-fast)", async () => {
+    const e = env();
+    const scheduled: Promise<unknown>[] = [];
+    const PR = JSON.stringify({ action: "opened", installation: { id: 99 }, repository: { full_name: "JSONbored/gittensory" }, number: 7 });
+    const request = new Request("https://collector/v1/orb/webhook", { method: "POST", body: PR });
+    const headers = { "x-github-delivery": "fwd-1", "x-github-event": "pull_request", "x-hub-signature-256": await sign(PR, SECRET) };
+    const res = await handleOrbWebhook(ctx(e, headers, request, { waitUntil: (p) => scheduled.push(p) }));
+    expect(res.status).toBe(202);
+    await expect(res.json()).resolves.toMatchObject({ status: "received", eventName: "pull_request" });
+    expect(scheduled).toHaveLength(1); // forward DEFERRED past the response, not awaited inline
+    await Promise.all(scheduled); // drain — install 99 has no enrollment → forward skips cleanly
   });
 
   it("stores null fields for a payload with no action/installation/repository (e.g. ping)", async () => {

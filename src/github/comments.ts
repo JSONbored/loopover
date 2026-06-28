@@ -72,6 +72,11 @@ async function createOrUpdateIssueCommentWithMarker(
     if (batch.length < 100) break;
   }
   if (existing) {
+    // Idempotency (#4): skip the PATCH when the rendered body is byte-identical to what's already posted. The
+    // re-gate sweep re-renders the same surface every cycle for an unchanged PR; without this, every cycle PATCHes
+    // GitHub (a write + rate-limit cost) for no visible change. Defense-in-depth alongside the head_sha publish
+    // marker — also collapses a duplicate webhook delivery for the same commit.
+    if (existing.body === body) return { id: existing.id, ...(existing.html_url !== undefined ? { html_url: existing.html_url } : {}) };
     const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
       owner,
       repo,

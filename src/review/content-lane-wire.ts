@@ -72,7 +72,14 @@ export function applySurfaceGate(
   surface: GateCheckEvaluation | null,
 ): GateCheckEvaluation | undefined {
   if (surface === null) return generic;
-  if (!generic || generic.blockers.length === 0) return surface; // gate off, or generic was clean → surface stands
+  if (!generic) return surface; // gate off → surface stands
+  // A generic manual-review HOLD is encoded as a non-success conclusion with warning(s), not as a hard blocker.
+  // Preserve it over a surface-lane merge so size/guardrail holds cannot be erased by the content lane (#gate-size).
+  if (generic.blockers.length === 0 && generic.conclusion === "success") return surface; // generic was clean → surface stands
+  if (generic.blockers.length === 0) {
+    if (surface.conclusion === "success") return generic;
+    return surface;
+  }
   return {
     enabled: true,
     conclusion: "failure",

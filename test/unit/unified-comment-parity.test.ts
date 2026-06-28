@@ -73,6 +73,7 @@ const settings: RepositorySettings = {
   privateTrustEnabled: true,
   aiReviewMode: "off",
   aiReviewByok: false,
+  aiReviewAllAuthors: false, closeOwnerAuthors: false,
 };
 
 function buildFixtures() {

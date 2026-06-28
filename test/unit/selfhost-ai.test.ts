@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveEffort, resolveModel, resolveProviderNames, routeProviders } from "../../src/selfhost/ai";
+import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveCliTimeoutMs, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, redactSecrets, routeProviders, subscriptionCliEnv } from "../../src/selfhost/ai";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -30,10 +30,34 @@ describe("resolveEffort (#selfhost-effort — Claude Code intelligence dial, def
   });
 });
 
+describe("resolveCliTimeoutMs (#selfhost — subprocess timeout scales with effort, AI_TIMEOUT_MS overrides)", () => {
+  it("scales the default timeout with the AI_EFFORT dial (max needs far more than the old fixed 120s)", () => {
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "low" })).toBe(120_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "medium" })).toBe(120_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "high" })).toBe(240_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "xhigh" })).toBe(360_000);
+    expect(resolveCliTimeoutMs({ AI_EFFORT: "max" })).toBe(600_000);
+    expect(resolveCliTimeoutMs({})).toBe(240_000); // unset effort → resolveEffort defaults to high
+  });
+  it("honors an explicit AI_TIMEOUT_MS, clamped to a sane 30s–30min range", () => {
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "300000", AI_EFFORT: "low" })).toBe(300_000); // in-range value wins over the effort scale
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "9999999" })).toBe(1_800_000); // clamped down to the 30min ceiling
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "1000" })).toBe(30_000); // clamped up to the 30s floor
+  });
+  it("falls back to the effort scale on a non-positive or non-numeric AI_TIMEOUT_MS", () => {
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "0", AI_EFFORT: "max" })).toBe(600_000); // 0 is not > 0 → effort path
+    expect(resolveCliTimeoutMs({ AI_TIMEOUT_MS: "abc", AI_EFFORT: "high" })).toBe(240_000); // NaN → effort path
+  });
+});
+
 afterEach(() => vi.unstubAllGlobals());
 
-type SpawnResult = { stdout: string; code: number | null };
-type StubSpawn = (cmd: string, args: string[], opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number }) => Promise<SpawnResult>;
+type SpawnResult = { stdout: string; code: number | null; stderr?: string };
+type StubSpawn = (
+  cmd: string,
+  args: string[],
+  opts: { env: Record<string, string | undefined>; input?: string; timeoutMs: number; cwd?: string },
+) => Promise<SpawnResult>;
 
 describe("createOpenAiCompatibleAi (#979)", () => {
   it("POSTs to /chat/completions and returns { response }", async () => {
@@ -182,6 +206,20 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
     const ai = createSelfHostAi({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant", AI_BASE_URL: "http://o/v1" });
     expect(typeof ai?.run).toBe("function");
   });
+
+  it("createSelfHostAi routes a SINGLE provider through the router too — a name address yields the provider default, never `--model <provider>` (#1610)", async () => {
+    // Regression (#1610): a single-provider self-host returned env.AI as the BARE provider, so the reviewer plan's
+    // name address ({ model: "openai-compatible" } — or "claude-code") reached it as a model id. `claude --model
+    // claude-code` 404'd and broke EVERY review. The router must strip the name to the provider's own default.
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = (JSON.parse(init.body) as { model: string }).model;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }));
+    const ai = createSelfHostAi({ AI_PROVIDER: "openai-compatible", AI_BASE_URL: "http://o/v1" });
+    await ai?.run("openai-compatible", { prompt: "x" }); // the single-provider reviewer-plan address IS the provider name
+    expect(sentModel).toBe("llama3.1"); // resolveModel(undefined, "", "llama3.1") — NOT the literal "openai-compatible"
+  });
 });
 
 describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () => {
@@ -190,6 +228,19 @@ describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () 
     expect(resolveProviderNames({ AI_PROVIDER: "  Claude-Code , CODEX " })).toEqual(["claude-code", "codex"]); // CLI providers always credentialed
     expect(resolveProviderNames({ AI_PROVIDER: "anthropic,ollama" })).toEqual(["ollama"]); // anthropic dropped (no key); ollama needs none
     expect(resolveProviderNames({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant" })).toEqual(["anthropic", "ollama"]);
+  });
+
+  it("resolveRequiredCliProviders mirrors comma-list AI_PROVIDER parsing for boot preflight", () => {
+    expect(resolveRequiredCliProviders({})).toEqual([]);
+    expect(resolveRequiredCliProviders({ AI_PROVIDER: "ollama,anthropic" })).toEqual([]);
+    expect(resolveRequiredCliProviders({ AI_PROVIDER: "  Claude-Code , CODEX , ollama " })).toEqual([
+      { provider: "claude-code", cli: "claude" },
+      { provider: "codex", cli: "codex" },
+    ]);
+    expect(resolveRequiredCliProviders({ AI_PROVIDER: "claude-code,codex,claude-code" })).toEqual([
+      { provider: "claude-code", cli: "claude" },
+      { provider: "codex", cli: "codex" },
+    ]);
   });
 
   it("resolveAiReviewerPlan: undefined with no provider; single ⇒ single; two ⇒ default synthesis", () => {
@@ -231,7 +282,7 @@ describe("branch coverage — defaults + edge inputs", () => {
   it("claude/codex with a null exit code", async () => {
     const nullExit: StubSpawn = async () => ({ stdout: "", code: null });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_exit_null/);
-    await expect(createCodexAi({}, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
   });
   it("embed uses the bge-m3 default when no embedModel is set", async () => {
     let sentModel = "";
@@ -284,6 +335,17 @@ describe("branch coverage — defaults + edge inputs", () => {
   });
 });
 
+describe("subscriptionCliEnv (allowlist + extra-override arms)", () => {
+  it("copies only allowlisted parent vars and drops everything else", () => {
+    const child = subscriptionCliEnv({ PATH: "/bin", HOME: "/root", ANTHROPIC_API_KEY: "sk-bill", WORKER_ONLY_VALUE: "internal" });
+    expect(child).toEqual({ PATH: "/bin", HOME: "/root" });
+  });
+  it("merges a defined extra value but skips an undefined one", () => {
+    const child = subscriptionCliEnv({ PATH: "/bin" }, { CLAUDE_CODE_OAUTH_TOKEN: "t", UNSET: undefined });
+    expect(child).toEqual({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "t" }); // UNSET (undefined) skips the extra-loop false arm
+  });
+});
+
 describe("subscription CLI helpers + fail-safe", () => {
   it("extractCliText pulls the result/text field", () => {
     expect(extractCliText(JSON.stringify({ type: "result", result: "ok" }))).toBe("ok");
@@ -297,47 +359,93 @@ describe("subscription CLI helpers + fail-safe", () => {
     const stub: StubSpawn = async () => ({ stdout: JSON.stringify({ is_error: true, api_error_status: 401, result: "Failed to authenticate" }), code: 0 });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, stub).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_error_401/);
   });
+  it("surfaces the structured stdout error on a NON-ZERO exit (precise status, not opaque exit code) (#1610)", async () => {
+    // Regression: an unknown model exits 1 with the error envelope in STDOUT ({is_error,api_error_status:404}) and
+    // EMPTY stderr. The exit-code throw used to win → `claude_code_exit_1: ` (blank, undiagnosable). Now the
+    // structured status is checked first → `claude_code_error_404`, the signal that surfaces in logs + Sentry.
+    const stub: StubSpawn = async () => ({ stdout: JSON.stringify({ is_error: true, api_error_status: 404, result: "There's an issue with the selected model (claude-code)." }), code: 1, stderr: "" });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, stub).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_error_404/);
+  });
   it("Claude Code returns the model text on success and scrubs billable keys", async () => {
     let capturedEnv: Record<string, string | undefined> = {};
     const stub: StubSpawn = async (_c, _a, o) => {
       capturedEnv = o.env;
       return { stdout: JSON.stringify({ type: "result", result: "review text" }), code: 0 };
     };
-    const out = await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", ANTHROPIC_API_KEY: "sk-bill" }, stub).run("sonnet", { prompt: "x" });
+    const out = await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", ANTHROPIC_API_KEY: "sk-bill", WORKER_ONLY_VALUE: "internal" }, stub).run("sonnet", {
+      prompt: "x",
+    });
     expect(out.response).toBe("review text");
-    expect(capturedEnv.ANTHROPIC_API_KEY).toBeUndefined(); // scrubbed
+    expect(capturedEnv.ANTHROPIC_API_KEY).toBeUndefined(); // allowlisted subprocess env does not inherit metered API keys
+    expect(capturedEnv.WORKER_ONLY_VALUE).toBeUndefined();
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("t");
   });
 
-  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; AI_MODEL/AI_EFFORT override", async () => {
+  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; AI_MODEL/AI_EFFORT override; timeout scales with effort", async () => {
     let seen: string[] = [];
-    const cap: StubSpawn = async (_c, a) => {
+    let timeout = 0;
+    const cap: StubSpawn = async (_c, a, o) => {
       seen = a;
+      timeout = o.timeoutMs;
       return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
     };
     // empty model id (the dual-router default) + no AI_MODEL → pinned claude-sonnet-4-6; no AI_EFFORT → high
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
     expect(seen[seen.indexOf("--effort") + 1]).toBe("high");
-    // operator overrides flow through to the argv
-    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", AI_MODEL: "claude-opus-4-8", AI_EFFORT: "low" }, cap).run("", { prompt: "x" });
+    expect(timeout).toBe(240_000); // high → 240s (not the old fixed 120s)
+    // operator overrides flow through to the argv + the timeout scale
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", AI_MODEL: "claude-opus-4-8", AI_EFFORT: "max" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
-    expect(seen[seen.indexOf("--effort") + 1]).toBe("low");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("max");
+    expect(timeout).toBe(600_000); // max → 600s, so a large max-effort review isn't SIGKILLed at 120s
+  });
+
+  it("chat-only CLIs reject embeds so the chain routes embeddings to an embed-capable provider (Claude review + ollama embed)", async () => {
+    const reviewOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "the review" }), code: 0 });
+    // A stand-in embed-capable provider (e.g. ollama): returns `data` for an embed request, `response` for chat.
+    const embedder = { name: "ollama", ai: { run: async (_m: string, o: { text?: string[] }) => (o.text ? { data: o.text.map(() => [0.1, 0.2]) } : { response: "ollama chat" }) } };
+    const claudeChain = createChainAi([{ name: "claude-code", ai: createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, reviewOk) }, embedder]);
+    // A CHAT/review request is served by claude-code (the frontier reviewer), never the embedder.
+    expect((await claudeChain.run("m", { prompt: "review this" })).response).toBe("the review");
+    // An EMBED request makes claude-code throw → the chain falls through to ollama, which returns vectors.
+    expect((await claudeChain.run("bge-m3", { text: ["a", "b"] })).data?.length).toBe(2);
+    // Same for codex as the frontier reviewer.
+    const codexOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 });
+    const codexChain = createChainAi([{ name: "codex", ai: createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexOk) }, embedder]);
+    expect((await codexChain.run("bge-m3", { text: ["a"] })).data?.length).toBe(1);
   });
 
   it("Codex: 0.142+ exec flags (no --ask-for-approval, has --skip-git-repo-check); --model only when configured", async () => {
     let seen: string[] = [];
-    const ok: StubSpawn = async (_cmd, args) => { seen = args; return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 }; };
+    let capturedEnv: Record<string, string | undefined> = {};
+    let capturedCwd = "";
+    let timeout = 0;
+    const ok: StubSpawn = async (_cmd, args, opts) => {
+      seen = args;
+      capturedEnv = opts.env;
+      capturedCwd = opts.cwd ?? "";
+      timeout = opts.timeoutMs;
+      return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 };
+    };
     // no configured model + the dual-router's empty model id → OMIT --model (codex picks the account default;
     // forcing e.g. gpt-5 fails on a ChatGPT-account login). And the removed --ask-for-approval must never appear.
-    expect((await createCodexAi({}, ok).run("", { prompt: "x" })).response).toBe("codex review");
+    expect(
+      (await createCodexAi({ PATH: "/bin", WORKER_ONLY_VALUE: "internal", OPENAI_API_KEY: "sk-bill", AI_TIMEOUT_MS: "300000", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok).run("", {
+        prompt: "x",
+      })).response,
+    ).toBe("codex review");
     expect(seen).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--", "x"]);
     expect(seen).not.toContain("--ask-for-approval");
-    // an explicit model (AI_MODEL, or a `codex:<model>` reviewer id) IS passed through
-    await createCodexAi({ AI_MODEL: "o4-mini" }, ok).run("", { prompt: "x" });
+    expect(capturedEnv).toEqual({ PATH: "/bin" });
+    expect(capturedCwd).toContain("gittensory-ai-");
+    expect(timeout).toBe(300_000); // codex honors the same AI_TIMEOUT_MS override as Claude Code
+    // an explicit model (AI_MODEL, or a `codex:<model>` reviewer id) IS passed through but not inherited as env.
+    await createCodexAi({ AI_MODEL: "o4-mini", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok).run("", { prompt: "x" });
     expect(seen.join(" ")).toContain("--model o4-mini");
+    expect(capturedEnv.AI_MODEL).toBeUndefined();
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
-    await expect(createCodexAi({}, bad).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bad).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
   });
 
   it("drives the REAL subprocess (defaultSpawn) against a fake `claude` on PATH", async () => {
@@ -366,14 +474,80 @@ describe("subscription CLI helpers + fail-safe", () => {
 
   it("Codex throws on empty output", async () => {
     const empty: StubSpawn = async () => ({ stdout: "", code: 0 });
-    await expect(createCodexAi({}, empty).run("gpt-5", { prompt: "x" })).rejects.toThrow(/codex_empty_output/);
+    await expect(
+      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, empty).run("gpt-5", { prompt: "x" }),
+    ).rejects.toThrow(/codex_empty_output/);
+  });
+
+  it("Codex fails closed when a mounted OAuth home would be exposed to the review sandbox", async () => {
+    const shouldNotSpawn: StubSpawn = async () => {
+      throw new Error("spawned");
+    };
+    await expect(
+      createCodexAi(
+        { CODEX_HOME: "/home/node/.codex", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        shouldNotSpawn,
+      ).run("gpt-5", {
+        prompt: "read $CODEX_HOME/auth.json",
+      }),
+    ).rejects.toThrow(/codex_credential_isolation_required/);
+    await expect(createCodexAi({}, shouldNotSpawn).run("gpt-5", { prompt: "x" })).rejects.toThrow(
+      /codex_credential_isolation_required/,
+    );
+  });
+
+  it("surfaces the CLI's stderr in the non-zero-exit error (diagnosable failures, #26)", async () => {
+    // Without stderr in the message, a `claude_code_exit_1` / `codex_exit_1` is an opaque dead-end; with it the real
+    // cause (auth, rate limit, model-not-supported) reaches the logs + Sentry. (stderr-present branch of `?? ""`.)
+    const claudeErr: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "Invalid API key · auth_error" });
+    await expect(
+      createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, claudeErr).run("m", { prompt: "x" }),
+    ).rejects.toThrow(/claude_code_exit_1: Invalid API key/);
+    const codexErr: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "stream error: rate limit reached" });
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, codexErr).run("m", { prompt: "x" })).rejects.toThrow(
+      /codex_exit_1: stream error: rate limit reached/,
+    );
+  });
+
+  it("redacts the OAuth token and key-shaped tokens from claude stderr before they reach the error (#1605 sec)", async () => {
+    // The CLI can echo the token we hand it via env; it must never land in an error string forwarded to Sentry.
+    const token = "oauth-tok-abcdef123456";
+    const leaky: StubSpawn = async () => ({ stdout: "", code: 1, stderr: `fatal: rejected token ${token} (key sk-ant-api03-ABCDEFGHIJKLMNOPqrstuvwx)` });
+    const err = await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: token }, leaky).run("m", { prompt: "x" }).catch((e: Error) => e.message);
+    expect(err).toContain("claude_code_exit_1:");
+    expect(err).not.toContain(token);
+    expect(err).not.toContain("sk-ant-api03");
+    expect(err).toContain("[redacted]");
+  });
+
+  it("redacts key-shaped tokens from codex stderr (no env token to key off) (#1605 sec)", async () => {
+    const leaky: StubSpawn = async () => ({ stdout: "", code: 1, stderr: "auth failed: ghp_ABCDEFGHIJ0123456789KLMNOPQRSTUV" });
+    await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, leaky).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_1: auth failed: \[redacted\]/);
+  });
+
+  it("defaultSpawn captures a failing CLI's stderr and surfaces it on the exit error (#26)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fakecli-"));
+    const fake = join(dir, "claude");
+    // a fake `claude` that reads stdin (so the parent's write never EPIPEs), then writes to STDERR and exits non-zero
+    // — the real failure shape we previously couldn't diagnose.
+    writeFileSync(fake, "#!/usr/bin/env node\nlet i='';process.stdin.on('data',d=>i+=d);process.stdin.on('end',()=>{process.stderr.write('BOOM: auth failed');process.exit(1);});\n");
+    chmodSync(fake, 0o755);
+    const origPath = process.env.PATH;
+    process.env.PATH = `${dir}:${origPath ?? ""}`;
+    try {
+      await expect(
+        createClaudeCodeAi({ ...process.env, CLAUDE_CODE_OAUTH_TOKEN: "t" }).run("sonnet", { prompt: "x" }),
+      ).rejects.toThrow(/claude_code_exit_1: BOOM: auth failed/);
+    } finally {
+      process.env.PATH = origPath;
+    }
   });
 
   it("defaultSpawn rejects when the CLI binary is missing (error handler)", async () => {
     const origPath = process.env.PATH;
     process.env.PATH = "/nonexistent-gittensory-empty";
     try {
-      await expect(createCodexAi({ ...process.env }).run("gpt-5", { prompt: "x" })).rejects.toThrow();
+      await expect(createCodexAi({ ...process.env, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }).run("gpt-5", { prompt: "x" })).rejects.toThrow();
     } finally {
       process.env.PATH = origPath;
     }
@@ -382,5 +556,27 @@ describe("subscription CLI helpers + fail-safe", () => {
   it("extractCliText falls back to the last JSON line (JSONL) and is empty when none parse", () => {
     expect(extractCliText('not json\n{"result":"x"}')).toBe("x");
     expect(extractCliText("not json\nstill not json")).toBe("");
+  });
+});
+
+describe("redactSecrets — strip credentials from untrusted CLI stderr before it reaches logs/Sentry (#1605 sec)", () => {
+  it("redacts caller-known secret values (>= 8 chars) and leaves short ones untouched", () => {
+    expect(redactSecrets("token=supersecretvalue used", ["supersecretvalue"])).toBe("token=[redacted] used");
+    // a short known value must NOT blank out unrelated text (length-guard false branch)
+    expect(redactSecrets("the cat sat", ["cat"])).toBe("the cat sat");
+  });
+
+  it("redacts well-known token shapes with no known-value list (default arg)", () => {
+    expect(redactSecrets("key sk-ant-api03-ABCDEFGHIJKLMNOPqrstuvwx12")).toBe("key [redacted]");
+    expect(redactSecrets("pat ghp_ABCDEFGHIJ0123456789KLMNOPQRSTUV")).toBe("pat [redacted]");
+    expect(redactSecrets("fine github_pat_ABCDEFGHIJ0123456789KLMNO")).toBe("fine [redacted]");
+    expect(redactSecrets("jwt eyJhbGciOi.eyJzdWIiOi.S1gnaTuRe99")).toBe("jwt [redacted]");
+    expect(redactSecrets("aws AKIAIOSFODNN7EXAMPLE here")).toBe("aws [redacted] here");
+  });
+
+  it("leaves benign diagnostics intact, including words that merely contain a token prefix", () => {
+    expect(redactSecrets("Invalid API key · auth_error")).toBe("Invalid API key · auth_error");
+    // "disk-usage-report-2024-summary" must survive — the \b anchor prevents an in-word `sk-` false positive
+    expect(redactSecrets("disk-usage-report-2024-summary failed")).toBe("disk-usage-report-2024-summary failed");
   });
 });

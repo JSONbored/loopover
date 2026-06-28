@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { createQdrantVectorize, initQdrantCollection } from "../../src/selfhost/qdrant-vectorize";
+import { createQdrantVectorize, initQdrantCollection, qdrantReadyzUrl } from "../../src/selfhost/qdrant-vectorize";
 import { resetMetrics, renderMetrics } from "../../src/selfhost/metrics";
 
 const BASE = "http://qdrant:6333";
@@ -8,6 +8,13 @@ const BASE = "http://qdrant:6333";
 function mockFetch(status: number, body: unknown = {}) {
   return vi.fn(async () => new Response(JSON.stringify(body), { status }));
 }
+
+describe("qdrantReadyzUrl (#1482 regression)", () => {
+  it("points readiness probes at Qdrant's unauthenticated /readyz endpoint", () => {
+    expect(qdrantReadyzUrl(BASE)).toBe(`${BASE}/readyz`);
+    expect(qdrantReadyzUrl(`${BASE}/`)).toBe(`${BASE}/readyz`);
+  });
+});
 
 describe("initQdrantCollection (#1217)", () => {
   afterEach(() => { vi.restoreAllMocks(); resetMetrics(); });

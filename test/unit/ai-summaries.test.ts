@@ -7,6 +7,7 @@ import {
 } from "../../src/services/ai-summaries";
 import type { AgentRunBundle } from "../../src/services/agent-orchestrator";
 import { FORBIDDEN_PUBLIC_COMMENT_WORDS } from "../../src/queue-intelligence";
+import { recordAiUsageEvent } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 const PUBLIC_FORBIDDEN_TEXT =
@@ -107,8 +108,8 @@ describe("Workers AI summaries", () => {
     expect(lowTokenRun).toHaveBeenCalledWith("@cf/test/model", expect.objectContaining({ max_tokens: 64 }));
   });
 
-  it("treats invalid daily budget as zero budget", async () => {
-    const run = vi.fn();
+  it("falls back to the HIGH shared default (10M) when the daily budget is invalid, like ai-review/ai-slop (#1369)", async () => {
+    const run = vi.fn(async () => ({ response: "Summary on the default shared budget." }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
       AI_SUMMARIES_ENABLED: "on",
@@ -117,8 +118,28 @@ describe("Workers AI summaries", () => {
 
     const result = await summarizeAgentBundleWithAi(env, bundleFixture(), "private");
 
-    expect(result).toMatchObject({ status: "quota_exceeded", remainingBudget: 0 });
-    expect(run).not.toHaveBeenCalled();
+    // A truthy-but-non-finite budget resolves to the 10M shared default (not the old 10k/zero starvation),
+    // matching the sibling AI features that share the same daily neuron counter.
+    expect(result).toMatchObject({ status: "ok" });
+    expect(run).toHaveBeenCalled();
+  });
+
+  it("resolves the SHARED neuron budget like ai-review/ai-slop: default 10M (not 10k) and ceiling 10M (not 1M) (#1369)", async () => {
+    // Default HIGH: with the budget unset and ~2M already used on the shared counter, summaries must still
+    // run — the old `|| 10000` default would have been quota_exceeded long before 2M.
+    const defaultRun = vi.fn(async () => ({ response: "Within the 10M default." }));
+    const defaultEnv = createTestEnv({ AI: { run: defaultRun } as unknown as Ai, AI_SUMMARIES_ENABLED: "true" });
+    await recordAiUsageEvent(defaultEnv, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 2_000_000 });
+    expect((await summarizeAgentBundleWithAi(defaultEnv, bundleFixture(), "private")).status).toBe("ok");
+    expect(defaultRun).toHaveBeenCalled();
+
+    // Ceiling raised: a configured 2M budget with 1.5M used must NOT be quota_exceeded — the old
+    // clamp(2M, 0, 1M) = 1M ceiling would have starved it.
+    const ceilingRun = vi.fn(async () => ({ response: "Under the 2M configured budget." }));
+    const ceilingEnv = createTestEnv({ AI: { run: ceilingRun } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "2000000" });
+    await recordAiUsageEvent(ceilingEnv, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 1_500_000 });
+    expect((await summarizeAgentBundleWithAi(ceilingEnv, bundleFixture(), "private")).status).not.toBe("quota_exceeded");
+    expect(ceilingRun).toHaveBeenCalled();
   });
 
   it("keeps public summaries disabled unless explicitly enabled and rejects unsafe public text", async () => {
@@ -317,6 +338,20 @@ describe("optional deterministic-summary rewrite layer", () => {
     const result = await rewriteSignalBundleWithAi(env, rewriteReq());
     expect(result).toMatchObject({ status: "ok", model: "@cf/meta/llama-3.1-8b-instruct-fp8-fast" });
     expect(run).toHaveBeenCalledWith("@cf/meta/llama-3.1-8b-instruct-fp8-fast", expect.objectContaining({ max_tokens: 256 }));
+  });
+
+  it("resolves the rewrite path's SHARED neuron budget like ai-review/ai-slop: default 10M, ceiling 10M, invalid → default (#1369)", async () => {
+    // Invalid (truthy non-finite) budget → 10M shared default, not the old 10k/zero starvation.
+    const invalidRun = vi.fn(async () => ({ response: "Invalid budget falls back to the 10M default." }));
+    expect((await rewriteSignalBundleWithAi(publicEnv({ AI_DAILY_NEURON_BUDGET: "not-a-number" }, invalidRun), rewriteReq())).status).toBe("ok");
+    expect(invalidRun).toHaveBeenCalled();
+
+    // Ceiling raised: configured 2M budget with 1.5M used must NOT be quota_exceeded (old clamp to 1M would).
+    const ceilingRun = vi.fn(async () => ({ response: "Under the 2M configured budget." }));
+    const ceilingEnv = publicEnv({ AI_DAILY_NEURON_BUDGET: "2000000" }, ceilingRun);
+    await recordAiUsageEvent(ceilingEnv, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 1_500_000 });
+    expect((await rewriteSignalBundleWithAi(ceilingEnv, rewriteReq())).status).not.toBe("quota_exceeded");
+    expect(ceilingRun).toHaveBeenCalled();
   });
 
   it("honors a custom model and output-token configuration", async () => {

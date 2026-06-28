@@ -229,6 +229,46 @@ describe("GitHub PR intelligence comments", () => {
     expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(true);
   });
 
+  it("skips the PATCH when the existing sticky comment body is byte-identical (#4 idempotency), keeping html_url", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const body = `${PR_INTELLIGENCE_COMMENT_MARKER}\nidentical body`;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        return Response.json([{ id: 101, body, html_url: "https://github.com/comment/101", user: { login: "gittensory[bot]", type: "Bot" } }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", 12, body);
+
+    expect(result).toEqual({ id: 101, html_url: "https://github.com/comment/101" }); // html_url-present branch of the early return
+    expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false); // identical body → NO GitHub write
+  });
+
+  it("skips the PATCH on an identical body even when the existing comment has no html_url (#4 idempotency)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const body = `${PR_INTELLIGENCE_COMMENT_MARKER}\nidentical body`;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        return Response.json([{ id: 202, body, user: { login: "gittensory[bot]", type: "Bot" } }]); // no html_url field
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", 12, body);
+
+    expect(result).toEqual({ id: 202 }); // html_url-absent branch → no html_url key on the early return
+    expect(calls.some((call) => call.startsWith("PATCH "))).toBe(false);
+  });
+
   it("rejects invalid repository names before calling GitHub", async () => {
     await expect(createOrUpdatePrIntelligenceComment(createTestEnv(), 123, "invalid", 12, "body")).rejects.toThrow(/Invalid repository full name/);
   });

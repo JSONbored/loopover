@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as sentryModule from "../../src/selfhost/sentry";
 import {
   listCollisionEdges,
   createAgentRun,
@@ -19,6 +20,7 @@ import {
   listProductUsageDailyRollups,
   listProductUsageEvents,
   listPullRequests,
+  listPullRequestFiles,
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
@@ -39,7 +41,7 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
 } from "../../src/db/repositories";
-import { changedPathsForGuardrail, processJob } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, processJob } from "../../src/queue/processors";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -536,9 +538,10 @@ describe("queue processors", () => {
     ]);
   });
 
-  it("agent re-gate sweep fans out only to repos that opted the agent in (#777)", async () => {
+  it("agent re-gate sweep fans out to acting-autonomy repos (#777), skipping non-acting ones when not allowlisted", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "", // isolate the acting-autonomy gate from the allowlist-sweep path (tested below)
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -563,6 +566,22 @@ describe("queue processors", () => {
     }>();
     expect(fanout?.outcome).toBe("queued");
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2, requestedBy: "schedule" });
+  });
+
+  it("agent re-gate sweep ALSO fans out to allowlisted repos regardless of autonomy mode (#sweep-all-modes)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    // advisory-repo is allowlisted but autonomy is observe (NOT acting) — it must STILL be swept so advisory reviews fire.
+    await upsertRepositoryFromGitHub(env, { name: "advisory-repo", full_name: "owner/advisory-repo", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/advisory-repo", autonomy: { merge: "observe", close: "observe" } });
+    // off-repo is neither allowlisted nor acting → still skipped.
+    await upsertRepositoryFromGitHub(env, { name: "off-repo", full_name: "owner/off-repo", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/off-repo", autonomy: { review: "observe" } });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" });
+
+    const swept = sent.filter((m): m is Extract<import("../../src/types").JobMessage, { type: "agent-regate-sweep" }> => m.type === "agent-regate-sweep").map((m) => m.repoFullName);
+    expect(swept).toEqual(["owner/advisory-repo"]); // allowlisted observe repo IS swept; off-repo is not
   });
 
   it("agent re-gate sweep recomputes stale open PR verdicts as an advisory audit, never publishing (#777)", async () => {
@@ -717,11 +736,274 @@ describe("queue processors", () => {
     expect(mergeAudit?.n).toBe(0);
   });
 
-  it("#1: the block-mode re-gate sweep reuses a cached AI review for the same head SHA — no AI call re-spent", async () => {
+  // #sweep-resync: when a `synchronize` webhook is lost (self-host relay down), the stored head SHA + cached files
+  // go stale and the sweep would review an INCOHERENT diff. The re-review now RESYNCS the stored PR to its live head
+  // before reviewing. These two cases pin both arms of the drift check (differs → resync fires, matches → no-op).
+  it("#sweep-resync: re-review RESYNCS the stored PR to the live head when it drifted, then reviews on the new head", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    // STORED head is the stale a7; GitHub's LIVE head is b8 (a push the lost synchronize never delivered).
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    let liveFilesFetched = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // GET /pulls/7 reports the live head b8 — the resync upserts this over the stale a7.
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) { liveFilesFetched = true; return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]); }
+      if (url.includes("/commits/b8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "resync-drift", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // The stored PR was resynced to the live head, and its files were refreshed (so the review runs on b8, not a7).
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("b8");
+    expect(liveFilesFetched).toBe(true);
+  });
+
+  it("#sweep-resync: re-review does NOT resync when the stored head already matches the live head", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    const resyncUpsertSpy = vi.spyOn(repositoriesModule, "upsertPullRequestFromGitHub");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // GET /pulls/7 reports the SAME head a7 — no drift, so the resync upsert must not fire.
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "resync-nodrift", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // No drift → the resync branch's upsert never ran; the stored head is unchanged.
+    expect(resyncUpsertSpy).not.toHaveBeenCalled();
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("a7");
+    resyncUpsertSpy.mockRestore();
+  });
+
+  // REST-budget dedup (#audit-rate-headroom): the sweep resync already fetched the full live PR (its mergeable_state
+  // covers the behind-base check), so prReadyForReview must REUSE it instead of issuing its own `GET /pulls/{n}`. The
+  // only bare `GET /pulls/7` reads in the per-PR re-review are now the resync (1) + auto-maintain's merge-state (1) —
+  // never a third from prReadyForReview. (This pins the redundancy removal: before the dedup there were three.)
+  it("#audit-rate-headroom: the per-PR re-review reuses the resync payload's merge state — prReadyForReview issues NO extra GET /pulls/{n}", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    let barePullGets = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // The full PR payload carries mergeable_state CLEAN (not behind) + the live head. Count only the bare
+      // `GET /pulls/7` (no sub-resource, GET only) — the redundant prReadyForReview fetch would be a third here.
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") {
+        barePullGets += 1;
+        return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      }
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "dedup-pulls-get", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // Resync (1) + auto-maintain merge-state (1) = 2; the deduped prReadyForReview adds NONE (was 3 before the fix).
+    expect(barePullGets).toBe(2);
+  });
+
+  it("#sweep-resync: a failing resync upsert is swallowed (fail-open) — the sweep never throws", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    // The live head drifted (b8 ≠ a7), so the resync upsert fires — but it REJECTS. The `.catch(() => undefined)`
+    // must swallow it so the sweep proceeds on the stored `pr` rather than stalling (#sweep-resync fail-open).
+    const resyncUpsertSpy = vi.spyOn(repositoriesModule, "upsertPullRequestFromGitHub").mockRejectedValueOnce(new Error("D1 upsert failed"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Drifted PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs") || url.includes("/commits/b8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status") || url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    // The rejecting upsert is caught; the job resolves without throwing and the stored head stays a7 (fail-open).
+    await expect(processJob(env, { type: "agent-regate-pr", deliveryId: "resync-failopen", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 })).resolves.toBeUndefined();
+    expect(resyncUpsertSpy).toHaveBeenCalledTimes(1);
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("a7");
+    resyncUpsertSpy.mockRestore();
+  });
+
+  it("#4 over-publish dedup: the sweep SKIPS re-review when the surface was already published at the current head", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7"); // already published at the live head
+    let checkRunsFetched = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" }); // live head matches → no drift
+      if (url.includes("/check-runs")) { checkRunsFetched = true; return Response.json({ total_count: 0, check_runs: [] }); }
+      if (url.includes("/status")) return Response.json({ state: "success", statuses: [] });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "skip-current", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // The dedup guard returned BEFORE prReadyForReview → no CI check-runs were fetched (the re-review never ran).
+    expect(checkRunsFetched).toBe(false);
+  });
+
+  it("#4 over-publish dedup: same-head CI completions bypass the sweep-only surface-current shortcut", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7");
+    let checkRunsFetched = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) { checkRunsFetched = true; return Response.json({ total_count: 0, check_runs: [] }); }
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "ci-bypass-current",
+      eventName: "check_suite",
+      payload: {
+        action: "completed",
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        installation: { id: 9001 },
+        check_suite: { head_sha: "a7", pull_requests: [{ number: 7 }] },
+      } as never,
+    });
+
+    // CI completion is event-driven dynamic state, so it must re-run prReadyForReview even when the last surface
+    // publish marker already matches this head SHA. Only the scheduled sweep may use the head-only shortcut.
+    expect(checkRunsFetched).toBe(true);
+  });
+
+  it("#4 over-publish dedup: a rebased PR (marker != live head) is NOT skipped — it resyncs + re-reviews at the new head, and the marker survives the resync", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Rebased PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7"); // published at the OLD head a7
+    let checkRunsFetchedAtNewHead = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Rebased PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" }); // LIVE head drifted to b8 (rebase/force-push)
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/b8/check-runs")) { checkRunsFetchedAtNewHead = true; return Response.json({ total_count: 0, check_runs: [] }); }
+      if (url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "rebase-rereview", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // The old-head marker (a7) != the live rebased head (b8) → the guard fell THROUGH → the PR was resynced to b8 and
+    // re-reviewed at the new head (check-runs fetched at b8). The marker is NOT in the GitHub-sync SET clause, so the
+    // resync upsert preserved it (still a7) until a fresh publish advances it — proving rebases are never skipped.
+    expect(checkRunsFetchedAtNewHead).toBe(true);
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.headSha).toBe("b8");
+    expect(stored?.lastPublishedSurfaceSha).toBe("a7"); // marker survived the resync (omitted from the sync SET clause)
+  });
+
+  it("#4 over-publish dedup: a failing surface-published stamp is swallowed (fail-open) — the publish still completes", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commentMode: "all_prs", publicSurface: "comment_only", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", aiReviewMode: "off", gatePack: "oss-anti-slop" });
+    const stampSpy = vi.spyOn(repositoriesModule, "markPullRequestSurfacePublished").mockRejectedValueOnce(new Error("D1 stamp failed"));
+    let commentPosted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") { commentPosted = true; return Response.json({ id: 1 }, { status: 201 }); }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "stamp-failopen",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(commentPosted).toBe(true); // the surface published despite the marker write throwing
+    expect(stampSpy).toHaveBeenCalled();
+    stampSpy.mockRestore();
+  });
+
+  it("#1: the block-mode re-gate sweep replays cached AI findings before gate evaluation", async () => {
     let aiCalls = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Critical defect found.", blockers: ["x"], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
@@ -730,7 +1012,11 @@ describe("queue processors", () => {
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
     await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
     // Pre-seed the AI review for this exact head SHA + mode → the sweep's block-mode review must reuse it, not re-run.
-    await putCachedAiReview(env, "owner/agent-repo", 7, "a7", "block", { notes: "cached review", reviewerCount: 2 });
+    await putCachedAiReview(env, "owner/agent-repo", 7, "a7", "block", {
+      notes: "cached review",
+      reviewerCount: 2,
+      findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Cached defect", detail: "Cached critical defect." }],
+    });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -750,6 +1036,10 @@ describe("queue processors", () => {
     await sweepAndDrainPerPr(env, "owner/agent-repo");
 
     expect(aiCalls).toBe(0); // the cached AI review was reused — the LLM was never called for this head SHA
+    const blocker = await env.DB.prepare("select blocker_codes_json from gate_outcomes where repo_full_name = ? and pull_number = ? order by rowid desc limit 1").bind("owner/agent-repo", 7).first<{ blocker_codes_json: string }>();
+    expect(blocker?.blocker_codes_json).toContain("ai_consensus_defect");
+    const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and detail like ?").bind("agent.action.merge", "%merged%").first<{ n: number }>();
+    expect(mergeAudit?.n).toBe(0);
   });
 
   it("posts the 🟪 reviewing placeholder before the AI review runs, then overwrites it with the verdict (#reviewing-placeholder)", async () => {
@@ -778,7 +1068,8 @@ describe("queue processors", () => {
       autoLabelEnabled: false,
       checkRunMode: "off",
       gateCheckMode: "enabled",
-      aiReviewMode: "advisory",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
     });
     const commentBodies: string[] = [];
     let firstCommentWasPlaceholder = false;
@@ -821,6 +1112,55 @@ describe("queue processors", () => {
     expect(commentBodies[0]).toContain("🟪");
     // A later comment carries the real verdict, not the placeholder prose.
     expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
+  });
+
+  it("does not post the 🟪 reviewing placeholder when public AI comments are disabled (regression)", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "false",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(env, normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"));
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commentMode: "all_prs", publicSurface: "comment_only", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", aiReviewMode: "advisory" });
+    const commentBodies: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/8/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/8")) return Response.json({ number: 8, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a8/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/8/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/8/comments") && method === "POST") {
+        commentBodies.push(String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""));
+        return Response.json({ id: 1 }, { status: 201 });
+      }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "reviewing-placeholder-disabled-ai",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 8, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a8" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    expect(aiCalls).toBe(0);
+    expect(commentBodies.length).toBe(1);
+    expect(commentBodies[0]).not.toContain("is reviewing");
+    expect(commentBodies[0]).not.toContain("🟪");
   });
 
   it("agent re-gate sweep re-reviews each stale open PR (installation id) and swallows a failing re-review", async () => {
@@ -979,7 +1319,7 @@ describe("queue processors", () => {
 
   it("INVARIANT (in-flight guard): the fan-out SKIPS a repo whose prior sweep is still draining, enqueues an idle one (#audit-sweep-fanout)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertInstallation(env, { action: "created", installation: { id: 9101, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     for (const name of ["draining", "idle"]) {
       await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9101);
@@ -1510,6 +1850,84 @@ describe("queue processors", () => {
     // simply not merged (no blocking review); with close acting it would be closed.
     const rcAudit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.request_changes").first<{ outcome: string }>();
     expect(rcAudit).toBeFalsy();
+  });
+
+  it("refreshes pull request files for path-gated pre-merge checks on synchronize (#review-pre-merge-checks)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "off",
+      autonomy: { merge: "observe", request_changes: "observe" },
+      slopGateMode: "off",
+      mergeReadinessGateMode: "off",
+      manifestPolicyGateMode: "off",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      review: { pre_merge_checks: [{ name: "Migration approval", require_label: "approved", when_paths: ["migrations/**"], enforce: true }] },
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 49,
+      title: "feat: add migration",
+      state: "open",
+      user: { login: "contributor" },
+      head: { sha: "gate125" },
+      labels: [],
+      body: "Closes #1",
+    });
+    await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 49, path: "src/feature.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} });
+
+    let pullFilesFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/files")) {
+        pullFilesFetches += 1;
+        return Response.json([{ filename: "migrations/0099_security.sql", status: "added", additions: 3, deletions: 0, changes: 3 }]);
+      }
+      if (url.includes("/pulls/49/reviews")) return Response.json([]);
+      if (url.includes("/commits/gate125/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/gate125/status")) return Response.json({ statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pre-merge-refresh-sync",
+      eventName: "pull_request",
+      payload: {
+        action: "synchronize",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 49,
+          title: "feat: add migration",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "gate125" },
+          labels: [],
+          body: "Closes #1",
+          mergeable_state: "clean",
+        },
+      },
+    });
+
+    expect(pullFilesFetches).toBeGreaterThan(0);
+    expect((await listPullRequestFiles(env, "JSONbored/gittensory", 49)).map((file) => file.path)).toEqual(["migrations/0099_security.sql"]);
   });
 
   it("pre-merge checks (#review-pre-merge-checks): an enforced check that fails blocks the auto-merge", async () => {
@@ -2060,6 +2478,33 @@ describe("queue processors", () => {
     await expect(
       processJob(env, { type: "recapture-preview", deliveryId: "rp-9", installationId: 9101, repoFullName: "owner/preview-repo", prNumber: 9, attempt: 2 }),
     ).resolves.toBeUndefined();
+  });
+
+  it("recapture-preview (#review-pre-merge-checks): a slop-gated re-review refreshes the PR's files before publishing", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9102, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "slop-repo", full_name: "owner/slop-repo", private: false, owner: { login: "owner" } }, 9102);
+    // slopGateMode != "off" ⇒ shouldCollectSlopEvidence(settings) is true ⇒ reReviewStoredPullRequest enters the
+    // refresh branch (the file-refresh body), so the stored files reflect the PR's current head before publishing.
+    await upsertRepositorySettings(env, { repoFullName: "owner/slop-repo", checkRunMode: "off", commentMode: "off", publicSurface: "off", slopGateMode: "advisory" });
+    await upsertPullRequestFromGitHub(env, "owner/slop-repo", { number: 11, title: "Slop PR", state: "open", user: { login: "contributor" }, head: { sha: "s11" }, labels: [], body: "x" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/11/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (/\/pulls\/11(?:\?|$)/.test(url)) return Response.json({ number: 11, title: "Slop PR", state: "open", user: { login: "contributor" }, head: { sha: "s11" }, labels: [], body: "x" });
+      if (url.includes("/commits/s11/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/s11/status")) return Response.json({ state: "success", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      processJob(env, { type: "recapture-preview", deliveryId: "rp-11", installationId: 9102, repoFullName: "owner/slop-repo", prNumber: 11, attempt: 1 }),
+    ).resolves.toBeUndefined();
+
+    // refreshPullRequestDetails ran ⇒ a detail-sync-state row was written for this PR (the if-body executed).
+    const sync = await env.DB.prepare("select status from pull_request_detail_sync_state where repo_full_name = ? and pull_number = ?").bind("owner/slop-repo", 11).first<{ status: string }>();
+    expect(sync?.status).toMatch(/^(complete|partial)$/);
   });
 
   it("auto-maintain (#778): a repo with no acting autonomy takes no agent action", async () => {
@@ -4265,6 +4710,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/context500/check-runs")) return new Response("GitHub check API failed", { status: 500 });
       return new Response("not found", { status: 404 });
     });
+    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
 
     await expect(
       processJob(env, {
@@ -4290,6 +4736,9 @@ describe("queue processors", () => {
       .first<{ detail: string; metadata_json: string }>();
     expect(aggregate).toMatchObject({ detail: "check_run" });
     expect(aggregate?.metadata_json).toContain('"output":"check_run"');
+    // The total publish failure (nothing reached the PR) escalates to Sentry at error level, not just the ledger.
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "publish", repo: "JSONbored/gittensory" }));
+    captureSpy.mockRestore();
   });
 
   it("audits disabled public-surface skips without miner lookup", async () => {
@@ -6941,6 +7390,82 @@ describe("changedPathsForGuardrail", () => {
       { path: "", previousFilename: "" }, // an empty path AND empty rename are both skipped (both guard branches false)
     ] as unknown as Parameters<typeof changedPathsForGuardrail>[0];
     expect(changedPathsForGuardrail(files)).toEqual(["src/a.ts", "src/b.ts", "src/old-b.ts"]);
+  });
+});
+
+describe("agentMaintenanceHeadMatchesGate", () => {
+  it("allows maintenance only when the stored PR head still matches the reviewed gate head", () => {
+    expect(agentMaintenanceHeadMatchesGate("reviewed", "reviewed")).toBe(true);
+    expect(agentMaintenanceHeadMatchesGate("reviewed", "new-unreviewed")).toBe(false);
+  });
+
+  it("keeps legacy no-SHA paths fail-open because no exact reviewed head can be pinned", () => {
+    expect(agentMaintenanceHeadMatchesGate(undefined, "current")).toBe(true);
+    expect(agentMaintenanceHeadMatchesGate("reviewed", null)).toBe(true);
+  });
+
+  it("REGRESSION (#stale-head): a newer synchronize that advances the stored head before maintenance acts blocks the stale-gate auto-merge", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      action: "created",
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        target_type: "User",
+        repository_selection: "all",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    // Clean, mergeable, approved, green CI + merge:auto + approve:auto + close:auto — this PR WOULD be auto-acted.
+    // The ONLY thing that must stop it is the stale-head guard in maybeRunAgentMaintenance.
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      autonomy: { merge: "auto", approve: "auto", close: "auto" },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/stale1/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/stale1/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) return Response.json({ id: 902 }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+
+    // Simulate the concurrent-queue race the guard defends against: the gate evaluated head "stale1", but by the
+    // time maintenance re-reads the persisted row a newer `synchronize` has advanced the stored head to "newer2".
+    // maybeRunAgentMaintenance re-reads via getPullRequest, so divert that read to the advanced head.
+    const realGetPullRequest = repositoriesModule.getPullRequest;
+    const spy = vi.spyOn(repositoriesModule, "getPullRequest").mockImplementation(async (...callArgs) => {
+      const row = await realGetPullRequest(...callArgs);
+      return row ? { ...row, headSha: "newer2" } : row;
+    });
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "stale-head-no-maintenance",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 71, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "stale1" }, labels: [], body: "Closes #1", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    // No terminal maintenance action of ANY class fires: the gate verdict belonged to the now-stale head.
+    const acted = await env.DB.prepare("select count(*) as n from audit_events where event_type in ('agent.action.merge','agent.action.approve','agent.action.close')").first<{ n: number }>();
+    expect(acted?.n).toBe(0);
   });
 });
 

@@ -4,9 +4,9 @@
 // without the gate or its verdict ever changing. Default OFF at BOTH layers: the operator flag
 // GITTENSORY_REVIEW_INLINE_COMMENTS (+ the per-repo GITTENSORY_REVIEW_REPOS cutover allowlist) AND the per-repo
 // `.gittensory.yml` review.inline_comments toggle — the caller ANDs all three to decide whether to ASK the model
-// for inline findings, so this module is only reached once findings exist. Fully FAIL-SAFE: a finding whose line
-// is not a commentable line in the PR diff is dropped (GitHub 422s otherwise), and any API error degrades to "no
-// inline comments" — it NEVER throws and NEVER touches the gate.
+// for inline findings AND passes the same resolved gate to the write boundary. Fully FAIL-SAFE: a finding whose
+// line is not a commentable line in the PR diff is dropped (GitHub 422s otherwise), and any API error degrades to
+// "no inline comments" — it NEVER throws and NEVER touches the gate.
 
 import { createPullRequestReviewComments } from "../github/pr-actions";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
@@ -118,7 +118,9 @@ export async function postInlineReviewComments(
     await createPullRequestReviewComments(env, args.installationId, args.repoFullName, args.pullNumber, args.commitId, comments, args.mode);
     return { posted: comments.length };
   } catch (error) {
-    console.warn(JSON.stringify({ level: "warn", event: "inline_comments_post_failed", repository: args.repoFullName, pullNumber: args.pullNumber, count: comments.length, error: errorMessage(error) }));
+    // ERROR level (#5 review observability) so the central Sentry forwarder captures a failing inline-comment post
+    // (auth/permission/422) — it degrades silently (gate unaffected) and was otherwise invisible at warn.
+    console.error(JSON.stringify({ level: "error", event: "inline_comments_post_failed", repository: args.repoFullName, pullNumber: args.pullNumber, count: comments.length, error: errorMessage(error) }));
     return { posted: 0 };
   }
 }
@@ -137,8 +139,10 @@ export async function maybePostInlineComments(
     commitId: string | null | undefined;
     getFiles: () => Promise<Pick<PullRequestFileRecord, "path" | "payload">[]>;
     mode: AgentActionMode;
+    inlineCommentsEnabled: boolean;
   },
 ): Promise<void> {
+  if (!args.inlineCommentsEnabled) return;
   const findings = args.aiReview?.inlineFindings;
   if (!findings?.length) return;
   await postInlineReviewComments(env, {

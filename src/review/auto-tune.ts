@@ -80,6 +80,7 @@ export interface AutoTuneAction {
   project: string;
   mergePrecision: number;
   decided: number;
+  wouldMerge: number;
   message: string;
 }
 
@@ -87,13 +88,18 @@ export interface AutoTuneAction {
 export function planAutoTune(report: GateEvalReport): AutoTuneAction[] {
   const actions: AutoTuneAction[] = [];
   for (const r of report.rows) {
-    if (r.decided < AUTOTUNE_MIN_DECIDED || r.mergePrecision == null) continue;
+    // Gate on wouldMerge, NOT decided: precision is measured over WOULD-MERGE predictions, so a project with many
+    // holds/closes but few would-merges (e.g. 9 holds + 1 wrong would-merge) must not trip the breaker on a
+    // statistically meaningless sample. mergePrecision is non-null iff wouldMerge > 0, so check it FIRST to keep
+    // both arms of the guard reachable.
+    if (r.mergePrecision == null || r.wouldMerge < AUTOTUNE_MIN_DECIDED) continue;
     if (r.mergePrecision < AUTOTUNE_MERGE_PRECISION_FLOOR) {
       actions.push({
         project: r.project,
         mergePrecision: r.mergePrecision,
         decided: r.decided,
-        message: `Auto-merge DISABLED for ${r.project}: merge precision ${Math.round(r.mergePrecision * 100)}% over ${r.decided} decided PR(s) (< ${Math.round(AUTOTUNE_MERGE_PRECISION_FLOOR * 100)}%). Would-merges now HOLD for review. Investigate, then clear holdonly:${r.project}.`,
+        wouldMerge: r.wouldMerge,
+        message: `Auto-merge DISABLED for ${r.project}: merge precision ${Math.round(r.mergePrecision * 100)}% over ${r.wouldMerge} would-merge PR(s) (< ${Math.round(AUTOTUNE_MERGE_PRECISION_FLOOR * 100)}%). Would-merges now HOLD for review. Investigate, then clear holdonly:${r.project}.`,
       });
     }
   }
@@ -129,7 +135,7 @@ export function shouldAutoClear(report: GateEvalReport, project: string, setAtIs
   const setMs = Date.parse(hasZone ? t : `${t}Z`);
   if (!Number.isFinite(setMs) || nowMs - setMs < AUTOCLEAR_AFTER_MS) return false; // still in cooldown
   const row = report.rows.find((r) => r.project === project);
-  const stillFailing = !!row && row.mergePrecision != null && row.decided >= AUTOTUNE_MIN_DECIDED && row.mergePrecision < AUTOTUNE_MERGE_PRECISION_FLOOR;
+  const stillFailing = !!row && row.mergePrecision != null && row.wouldMerge >= AUTOTUNE_MIN_DECIDED && row.mergePrecision < AUTOTUNE_MERGE_PRECISION_FLOOR;
   return !stillFailing; // cooldown elapsed + precision recovered (or no signal) → clear and let it retry
 }
 

@@ -3,6 +3,7 @@ import { indexRepo, reindexChangedPaths } from "../../src/review/rag-index";
 import { MAX_CHUNKS_PER_REPO, MAX_FILE_BYTES, RAG_DIMENSIONS, ragNamespace } from "../../src/review/rag";
 import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 // A valid bge-m3-width (1024-d) embedding vector — embedTexts rejects any other width.
@@ -172,18 +173,40 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     expect(vec.upserted.length).toBe(0);
   });
 
-  it("a tree fetch that THROWS degrades to nothing indexed (fetchRepoTree catch arm)", async () => {
+  it("a tree fetch that THROWS degrades to nothing indexed (fetchRepoTree catch arm) + surfaces it at ERROR for Sentry (#5)", async () => {
     const { env, vec } = indexEnv();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       if (input.toString().includes("/git/trees/")) throw new Error("network down");
       return new Response("missing", { status: 404 });
     });
     await expect(indexRepo(env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
     expect(vec.upserted.length).toBe(0);
+    // A broken RAG index-population (tree fetch) now surfaces at level:error → captured by the central Sentry forwarder.
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("rag_index_tree_error") && String(c[0]).includes('"level":"error"'))).toBe(true);
+    errSpy.mockRestore();
   });
 
-  it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes)", async () => {
+  it("bounds the tree + contents GitHub fetches with an abort-timeout signal (a hung connection can't stall the queue worker)", async () => {
     const { env } = indexEnv();
+    const inits: Array<RequestInit | undefined> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      inits.push(init);
+      const url = input.toString();
+      if (url.includes("/git/trees/")) return Response.json({ tree: [{ type: "blob", path: "src/a.ts", size: 20 }], truncated: false });
+      if (url.includes("/contents/")) return new Response("export const a = 1;\n", { status: 200 });
+      return new Response("missing", { status: 404 });
+    });
+    await indexRepo(env, PROJECT, REPO);
+    // Both the tree fetch and each per-file contents fetch must carry an AbortSignal so a stalled GitHub connection
+    // aborts (→ the existing fail-safe catches) instead of pinning the index job + its queue consumer indefinitely.
+    expect(inits.length).toBeGreaterThan(1);
+    expect(inits.every((i) => i?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes) + surfaces it at ERROR for Sentry (#5)", async () => {
+    const { env } = indexEnv();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     // Make ONLY the listStoredChunkPaths SELECT throw; everything else uses the real test D1.
     const realPrepare = env.DB.prepare.bind(env.DB);
     env.DB.prepare = ((query: string) =>
@@ -197,6 +220,9 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     // The list failed → [] → nothing pruned, but the current file still indexes (fail-safe).
     expect(result.files).toBe(1);
     expect(await pathsFor(env, PROJECT, "gittensory")).toContain("src/current.ts");
+    // A broken stored-paths read now surfaces at level:error → captured by the central Sentry forwarder.
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("rag_list_paths_error") && String(c[0]).includes('"level":"error"'))).toBe(true);
+    errSpy.mockRestore();
   });
 
   it("listStoredChunkPaths drops blank paths and tolerates an absent result set (defensive branches)", async () => {
@@ -491,6 +517,30 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, requestedBy: "schedule" });
   });
 
+  it("cron fan-out ALSO indexes CONFIGURED (GITTENSORY_REVIEW_REPOS) repos never registered via webhook (brokered self-host fix)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/metagraphed, JSONbored/gittensory", // configured, NOT registered (is_registered=0)
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    // No registerRepo() — these are is_registered=0 (the brokered model); the old registered-only fan-out indexed NOTHING.
+    await processJob(env, { type: "rag-index-repo", requestedBy: "schedule" });
+    expect(sent.map((m) => (m as { repoFullName?: string }).repoFullName).sort()).toEqual(["JSONbored/gittensory", "JSONbored/metagraphed"]);
+  });
+
+  it("dedupes a repo that is BOTH registered and configured (no double-index)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    await registerRepo(env, "JSONbored/gittensory"); // registered AND configured → must appear exactly once
+    await processJob(env, { type: "rag-index-repo", requestedBy: "schedule" });
+    expect(sent.filter((m) => (m as { repoFullName?: string }).repoFullName === "JSONbored/gittensory").length).toBe(1);
+  });
+
   it("FLAG-OFF cron fan-out is a no-op (no per-repo jobs enqueued, no fan-out audit)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
@@ -512,19 +562,37 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(1);
   });
 
-  it("per-repo dispatch SKIPS a non-allowlisted repo (no indexing)", async () => {
+  it("per-repo dispatch SKIPS a repo where RAG is not active (no indexing)", async () => {
     const env = createTestEnv({
       GITTENSORY_REVIEW_RAG: "true",
-      GITTENSORY_REVIEW_REPOS: "", // empty allowlist → nothing converged
+      GITTENSORY_REVIEW_REPOS: "", // empty allowlist → not active (no per-repo features.rag override either)
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: aiStub() as unknown as Ai,
     });
     await registerRepo(env, "JSONbored/gittensory");
-    const fetchSpy = vi.fn();
+    // The manifest IS consulted now (that's how a per-repo `features.rag: true` override would activate an
+    // un-allowlisted repo); it returns no manifest here, so the repo stays inactive and is never indexed.
+    const fetchSpy = vi.fn(async (url: RequestInfo | URL) => new Response("", { status: 404, headers: { "x-url": String(url) } }));
     vi.stubGlobal("fetch", fetchSpy);
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // No indexing work: the GitHub git/trees endpoint (the index walk) was never hit.
+    expect(fetchSpy.mock.calls.some((call) => String(call[0]).includes("/git/trees/"))).toBe(false);
     expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(0);
+  });
+
+  it("per-repo dispatch INDEXES an un-allowlisted repo when features.rag is overridden on via the private config", async () => {
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      GITTENSORY_REVIEW_REPOS: "", // not allowlisted — only the per-repo override activates it
+      VECTORIZE: vectorizeStub() as unknown as Vectorize,
+      AI: aiStub() as unknown as Ai,
+    });
+    await registerRepo(env, "JSONbored/gittensory");
+    // Private-config override: features.rag = true. upsert persists it as an api_record the loader reads.
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { features: { rag: true } });
+    stubGithub({ tree: [{ path: "src/a.ts", size: 30 }], files: { "src/a.ts": "export const a = 1;\n" } });
+    await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(1); // indexed despite the empty allowlist
   });
 
   it("per-repo INCREMENTAL dispatch (with paths) runs reindexChangedPaths", async () => {

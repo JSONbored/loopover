@@ -73,7 +73,7 @@ a live install. (Scripted setups can pass the token via an `x-setup-token` heade
 
 - **Webhook URL** `https://<your-host>/v1/github/webhook`, and a **webhook secret** (→ `GITHUB_WEBHOOK_SECRET`).
 - **Permissions**: Pull requests (read/write), Contents (read; read/write if you want merge), Issues
-  (read/write), Checks (read), Metadata (read). Commit statuses (read).
+  (read/write), Checks (read/write), Metadata (read). Commit statuses (read).
 - **Events**: Pull request, Pull request review, Push, Issues, Check suite, Check run, Status.
 - Generate a **private key** (→ `GITHUB_APP_PRIVATE_KEY`), and note the **App ID** (→ `GITHUB_APP_ID`) and the
   app **slug** (→ `GITHUB_APP_SLUG`). Install the app on the repos you want reviewed.
@@ -146,11 +146,11 @@ bake them in, then provide `CLAUDE_CODE_OAUTH_TOKEN` / codex auth at run time. N
   substantive review, not a fast shallow one); override with `AI_MODEL` (any `claude`-CLI model id or alias —
   `sonnet`, `opus`, `claude-opus-4-8`, …) and `AI_EFFORT` (`low`|`medium`|`high`|`xhigh`|`max`; the CLI clamps a
   level above the model's own ceiling).
-- **Codex:** codex reads `auth.json` from `$CODEX_HOME` (default `~/.codex`) and **must have a WRITABLE home** — it
-  refreshes the token in place, so a read-only mount fails with _"Read-only file system"_. Set `CODEX_HOME` to a
-  writable path and **copy** your `~/.codex/auth.json` there (don't bind-mount it read-only). With a ChatGPT-
-  subscription login, leave `AI_MODEL` unset for codex — pinning `gpt-5*` returns _"not supported … with a ChatGPT
-  account"_; codex picks the entitled default. (`ca-certificates` for codex's native TLS is baked in by `INSTALL_AI_CLIS`.)
+- **Codex (ChatGPT subscription).** The `codex` CLI is pre-baked, but self-hosted Codex reviews are fail-closed by
+  default because the CLI stores its OAuth refresh credential in `auth.json` on the same filesystem that the
+  prompt-influenced review sandbox can read. Do **not** copy `~/.codex/auth.json` into the app container or mount a
+  writable Codex home for PR review. Use `claude-code`, an API-key provider, or a local OpenAI-compatible endpoint for
+  automated reviews until Codex offers a credential-isolated non-interactive mode.
 
 **Local RAG (retrieval-augmented review).** Self-host ships a SQLite-backed vector store, so RAG works without
 Cloudflare Vectorize. Enable it with `GITTENSORY_REVIEW_RAG=true` + the repo in `GITTENSORY_REVIEW_REPOS`, and

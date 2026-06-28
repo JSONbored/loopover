@@ -69,6 +69,9 @@ export function reviewInferenceAdapter(ai: Ai): InferenceAdapter {
 export function createReviewAdapters(env: Env): RagInfra {
   const infra: RagInfra = { storage: reviewStorageAdapter(env) };
   if (env.VECTORIZE) infra.vector = reviewVectorAdapter(env.VECTORIZE);
-  if (env.AI) infra.inference = reviewInferenceAdapter(env.AI);
+  // Embeddings use the DEDICATED embed provider (env.AI_EMBED) when configured — keeping the review chat chain
+  // frontier-only — and fall back to env.AI otherwise (byte-identical to before).
+  const embedAi = env.AI_EMBED ?? env.AI;
+  if (embedAi) infra.inference = reviewInferenceAdapter(embedAi);
   return infra;
 }

@@ -168,6 +168,38 @@ describe("worker entrypoint", () => {
     expect(sent.find((m) => m.type === "agent-regate-sweep")).toBeUndefined();
   });
 
+  it("THROTTLES the open-data backfill too when the REST budget is at/below the maintenance headroom, keeping the cheap health jobs (#audit-rate-headroom)", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    // Low REST budget (remaining 50 <= MAINTENANCE_RESERVED_HEADROOM=150) with a future reset.
+    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 50, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() });
+    const waitUntil: Promise<unknown>[] = [];
+    // A :30 tick is when the backfill would normally enqueue — assert it does NOT while the budget is reserved.
+    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+    // Backfill (+ sweep) yield the budget to webhooks; the cheap single-call health jobs still run.
+    expect(sent.some((m) => m.type === "backfill-registered-repos")).toBe(false);
+    expect(sent.some((m) => m.type === "agent-regate-sweep")).toBe(false);
+    expect(sent.some((m) => m.type === "repair-data-fidelity")).toBe(true);
+    expect(sent.some((m) => m.type === "refresh-installation-health")).toBe(true);
+  });
+
+  it("enqueues the open-data backfill on a :30 tick when there is REST headroom (#audit-rate-headroom)", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    // Ample REST budget (remaining 4000 > MAINTENANCE_RESERVED_HEADROOM=150) → the throttle does NOT engage.
+    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 4000, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "backfill-registered-repos")).toBe(true);
+    expect(sent.some((m) => m.type === "agent-regate-sweep")).toBe(true);
+  });
+
   it("enqueues hourly refreshes without full detail work outside the six-hour window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

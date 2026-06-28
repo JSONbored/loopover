@@ -6,13 +6,19 @@
 // Serves the Hono app via @hono/node-server, drives the queue with the same processJob, ticks the same
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
+import {
+  createOpenAiCompatibleAi,
+  createSelfHostAi,
+  resolveAiReviewerPlan,
+  resolveRequiredCliProviders,
+} from "./selfhost/ai";
 import {
   cookieValue,
   credentialsToEnv,
@@ -41,9 +47,20 @@ import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
 import { createFsBlobStore } from "./selfhost/blob-store";
-import { makeLocalManifestReader } from "./selfhost/private-config";
-import { captureError, flushSentry, initSentry } from "./selfhost/sentry";
-import { setLocalManifestReader } from "./signals/focus-manifest-loader";
+import {
+  makeLocalManifestReader,
+  makeLocalReviewContextReader,
+} from "./selfhost/private-config";
+import {
+  captureError,
+  flushSentry,
+  initSentry,
+  installStructuredLogForwarding,
+} from "./selfhost/sentry";
+import {
+  setLocalManifestReader,
+  setLocalReviewContextReader,
+} from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -220,6 +237,11 @@ async function main(): Promise<void> {
   setLocalManifestReader(
     makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
   );
+  // Per-repo review CONTEXT (#review-skills): the same config dir also holds `<repo>/review/CLAUDE.md` + skills/*.md,
+  // injected into the reviewer prompt so reviews follow each repo's conventions. Unset dir ⇒ null reader ⇒ no change.
+  setLocalReviewContextReader(
+    makeLocalReviewContextReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
+  );
   // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
   // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,
   // review failures) are wired at their sites.
@@ -239,6 +261,9 @@ async function main(): Promise<void> {
       captureError(reason, { kind: "unhandledRejection" });
       console.error(reason);
     });
+    // Central error forwarding (#1468): operational failures are structured JSON logs emitted through stdout and
+    // stderr. Wrap both sinks so every level:"error"/"fatal" line surfaces as a Sentry issue WITHOUT per-site wiring.
+    installStructuredLogForwarding();
   }
   const startedAt = Date.now();
 
@@ -246,7 +271,25 @@ async function main(): Promise<void> {
   // arrives, by which point env is set).
   let env: Env;
   const consume = async (message: JobMessage): Promise<void> => {
-    await processJob(env, message);
+    try {
+      await processJob(env, message);
+    } catch (error) {
+      // Self-host best-effort jobs (#registry-soft-fail): the periodic gittensor-registry refresh re-runs every cron
+      // tick, so a degraded/unconfigured GITTENSOR_REGISTRY_URL would otherwise retry→dead-letter EVERY cycle and
+      // flood the dead-letter alert. Swallow its failure here (the next scheduled tick is the retry); keep the last
+      // snapshot. The Cloudflare Worker path (src/index.ts) is untouched, so its rate-limit-aware retry is preserved.
+      if (message.type === "refresh-registry") {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "refresh_registry_soft_fail",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return;
+      }
+      throw error;
+    }
   };
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -291,6 +334,41 @@ async function main(): Promise<void> {
         provider: process.env.AI_PROVIDER,
       }),
     );
+  // Fail-LOUD preflight (#1566): a CLI-subscription provider (claude-code/codex) reviews by spawning the CLI as a
+  // subprocess; if the binary is absent (image built without INSTALL_AI_CLIS=true) the spawn ENOENTs and EVERY AI
+  // review silently degrades to "no usable output". Shout at boot so the misconfig is obvious, never invisible.
+  const pathDirs = (process.env.PATH ?? "").split(delimiter);
+  for (const { provider, cli } of resolveRequiredCliProviders(process.env)) {
+    if (pathDirs.some((d) => d && existsSync(join(d, cli)))) continue;
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_ai_cli_missing",
+        provider,
+        cli,
+        message: `AI_PROVIDER=${process.env.AI_PROVIDER} includes ${provider} but '${cli}' is not on PATH — every ${provider} AI review will produce NO output. Rebuild the image with --build-arg INSTALL_AI_CLIS=true (or use the published image) and authenticate the CLI.`,
+      }),
+    );
+  }
+  // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
+  // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of
+  // the review chain — so a Claude/Codex outage never falls reviews back to a weak local model. Unset ⇒ absent ⇒
+  // createReviewAdapters falls back to the review `ai` for embeds (byte-identical to before).
+  const embedAi = process.env.AI_EMBED_BASE_URL
+    ? createOpenAiCompatibleAi({
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        apiKey: process.env.AI_EMBED_API_KEY ?? process.env.OPENAI_API_KEY,
+        embedModel: process.env.AI_EMBED_MODEL,
+      })
+    : undefined;
+  if (embedAi)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_embed_provider",
+        baseUrl: process.env.AI_EMBED_BASE_URL,
+        model: process.env.AI_EMBED_MODEL ?? "bge-m3",
+      }),
+    );
   // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
   // below so the review call site uses it. Undefined for a single provider's default review or no AI.
   const aiReviewPlan = resolveAiReviewerPlan(process.env);
@@ -323,12 +401,33 @@ async function main(): Promise<void> {
     const { createRedisCache } = await import("./selfhost/redis-cache");
     rateLimiter = createRedisRateLimiter(redisClient);
     webhookCache = createRedisCache(redisClient);
+    // Persist the installation-token cache in Redis so warm GitHub App tokens survive restarts/deploys and are
+    // shared across replicas (the in-isolate Map otherwise re-mints — an Orb round-trip — per replica/cold start).
+    const { createRedisTokenCache } =
+      await import("./selfhost/redis-token-cache");
+    const { setInstallationTokenStore, setGitHubResponseCache } =
+      await import("./github/app");
+    setInstallationTokenStore(createRedisTokenCache(redisClient));
+    // Short-TTL cache for safe GitHub GET responses (dedups the ~24 reads per review). Default 20s; 0 disables.
+    const ghCacheTtl = Math.max(
+      0,
+      Number(process.env.GITHUB_CACHE_TTL_SECONDS ?? "20"),
+    );
+    if (ghCacheTtl > 0) {
+      const { createRedisResponseCache } =
+        await import("./selfhost/redis-response-cache");
+      setGitHubResponseCache(createRedisResponseCache(redisClient, ghCacheTtl));
+    }
     readinessProbes.push({
       name: "redis",
       check: () => withTimeout(redisClient.ping().then(() => true)),
     });
     console.log(
-      JSON.stringify({ event: "selfhost_rate_limiter", backend: "redis" }),
+      JSON.stringify({
+        event: "selfhost_rate_limiter",
+        backend: "redis",
+        githubResponseCacheTtl: ghCacheTtl,
+      }),
     );
   }
 
@@ -336,7 +435,7 @@ async function main(): Promise<void> {
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
     const qdrantUrl = process.env.QDRANT_URL;
-    const { createQdrantVectorize, initQdrantCollection } =
+    const { createQdrantVectorize, initQdrantCollection, qdrantReadyzUrl } =
       await import("./selfhost/qdrant-vectorize");
     // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
     await retryUntilReady("qdrant", () => initQdrantCollection(qdrantUrl));
@@ -345,7 +444,9 @@ async function main(): Promise<void> {
       name: "qdrant",
       check: () =>
         withTimeout(
-          fetch(qdrantUrl, { signal: AbortSignal.timeout(1500) })
+          fetch(qdrantReadyzUrl(qdrantUrl), {
+            signal: AbortSignal.timeout(1500),
+          })
             .then((r) => r.ok)
             .catch(() => false),
         ),
@@ -361,6 +462,7 @@ async function main(): Promise<void> {
     JOBS: backend.queue.binding,
     WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(embedAi ? { AI_EMBED: embedAi as unknown as Ai } : {}),
     ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
     ...(vectorizeOverride
@@ -633,20 +735,61 @@ async function main(): Promise<void> {
   void runOrbExport(); // flush any pending events at startup
   setInterval(runOrbExport, 3_600_000); // then hourly
 
-  // Brokered self-host: register our public relay URL with the central Orb so it forwards this install's events
-  // here (best-effort, fire-and-forget — a no-op unless ORB_ENROLLMENT_SECRET + PUBLIC_API_ORIGIN are set).
+  // Brokered self-host: register our relay target with the central Orb (best-effort, fire-and-forget). PUSH mode
+  // (default) registers a public relay URL the Orb POSTs to; PULL mode (ORB_RELAY_MODE=pull) registers no URL and
+  // the drain loop below pulls events outbound — the right fit behind NAT/tailnet (no inbound endpoint exposed).
   void registerOrbRelayTarget({
     ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
     ORB_BROKER_URL: process.env.ORB_BROKER_URL,
     PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
+    ORB_RELAY_MODE: process.env.ORB_RELAY_MODE,
   })
     .then((r) => {
-      if (r !== "skipped")
-        console.log(
-          JSON.stringify({ event: "selfhost_orb_relay_register", result: r }),
+      if (r.status === "registered") {
+        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r.status }));
+      } else if (r.status === "failed") {
+        // A failed registration is fatal for PUSH mode (the Orb can't reach our public relay URL → the container
+        // looks alive but reviews NOTHING → error). In PULL mode the outbound drain loop below delivers events
+        // regardless, so a failed announce is only degraded telemetry → warn (not paged as a deaf container).
+        // Either way carry the reason (HTTP status / fetch error) in `error` so Sentry shows WHY, not "(no message)".
+        const pull = process.env.ORB_RELAY_MODE === "pull";
+        console.error(
+          JSON.stringify({
+            level: pull ? "warn" : "error",
+            event: "selfhost_orb_relay_register_failed",
+            mode: pull ? "pull" : "push",
+            error: r.reason ?? "unknown",
+          }),
         );
+      }
     })
-    .catch(() => {});
+    .catch((error) => captureError(error, { kind: "orb_relay_register" }));
+
+  // Pull-mode relay drain (#secure-relay): when ORB_RELAY_MODE=pull, the engine DRAINS its events from the Orb on a
+  // timer instead of exposing an inbound endpoint — the right fit behind NAT/tailnet. Acks the previous batch so the
+  // Orb deletes delivered events; best-effort (a failed tick retries next interval). Each event enqueues into the
+  // same WEBHOOKS lane the push receiver uses.
+  if (process.env.ORB_RELAY_MODE === "pull" && process.env.ORB_ENROLLMENT_SECRET) {
+    const { drainOrbRelay } = await import("./orb/broker-client");
+    const { enqueueWebhookByEnv } = await import("./github/webhook");
+    let pendingAck: string[] = [];
+    const drainRelay = async (): Promise<void> => {
+      const events = await drainOrbRelay(
+        { ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET, ORB_BROKER_URL: process.env.ORB_BROKER_URL },
+        pendingAck,
+      );
+      pendingAck = [];
+      for (const ev of events) {
+        const result = await enqueueWebhookByEnv(env, ev.deliveryId, ev.eventName, ev.rawBody);
+        // Ack everything durably handled (queued / duplicate / invalid_json) so the Orb deletes it; retry only a
+        // real enqueue failure on the next pull (don't ack → the Orb keeps it).
+        if (result !== "enqueue_failed") pendingAck.push(ev.deliveryId);
+      }
+      if (events.length > 0) console.log(JSON.stringify({ event: "orb_relay_drained", count: events.length }));
+    };
+    void drainRelay();
+    setInterval(() => void drainRelay().catch((error) => captureError(error, { kind: "orb_relay_drain" })), 15_000);
+  }
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;

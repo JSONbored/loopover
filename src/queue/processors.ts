@@ -1107,7 +1107,9 @@ async function sweepRepoRegate(
 // dry-run between fan-out and processing stays inert. Self-contained: resolves the repo settings to mirror the
 // sweep's skipAiReview policy. The convergence marker is NOT stamped here — the sweep already stamped every
 // candidate at dispatch (#audit-sweep-dispatch-stamp), so the in-flight guard does not wait on this job and a
-// deferred/failed re-review never stalls convergence (the next sweep after the window re-claims the PR).
+// deferred/failed re-review never stalls convergence (the next sweep after the window re-claims the PR). The public
+// surface marker is observability only; it cannot prove GitHub still shows a complete current review panel, so the
+// per-PR job always re-evaluates the head.
 async function regatePullRequest(
   env: Env,
   repoFullName: string,
@@ -1149,7 +1151,6 @@ async function regatePullRequest(
     // re-spend, so an advisory PR gets a posted review without burning a token every sweep tick.
     {
       skipAiReview: settings.aiReviewMode === "off",
-      skipWhenSurfaceCurrent: true,
     },
   ).catch((error) => {
     console.error(
@@ -1480,7 +1481,7 @@ async function reReviewStoredPullRequest(
   repoFullName: string,
   prNumber: number,
   previewPollAttempt?: number,
-  options: { skipAiReview?: boolean; skipWhenSurfaceCurrent?: boolean } = {},
+  options: { skipAiReview?: boolean } = {},
 ): Promise<void> {
   const [repo, settings] = await Promise.all([
     getRepository(env, repoFullName),
@@ -1512,16 +1513,6 @@ async function reReviewStoredPullRequest(
     );
     /* v8 ignore next -- the row was just upserted above, so the re-read always returns it; `?? pr` is belt-and-suspenders fail-open. */
     pr = (await getPullRequest(env, repoFullName, prNumber)) ?? pr;
-  }
-  // Over-publish dedup (#4): only scheduled sweeps opt into the head-only shortcut. Event-driven
-  // re-reviews (CI completion, deployment/preview refreshes) must re-evaluate dynamic same-head state.
-  if (
-    options.skipWhenSurfaceCurrent &&
-    pr.lastPublishedSurfaceSha &&
-    pr.lastPublishedSurfaceSha === pr.headSha
-  ) {
-    console.log(JSON.stringify({ level: "info", event: "rereview_skipped_surface_current", deliveryId, repository: repoFullName, pullNumber: prNumber, headSha: pr.headSha }));
-    return;
   }
   // Operator review flow: rebase-if-behind → wait for ALL CI to finish → only THEN review. Defers (returns) when
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
@@ -1629,10 +1620,9 @@ async function reReviewStoredPullRequest(
  * Operator per-PR review flow (rebase → wait for ALL CI → review once). Returns TRUE to review NOW, FALSE to
  * DEFER:
  *  - BEHIND base → issue update-branch; the resulting `synchronize` re-triggers on the rebased head.
- *  - CI still RUNNING (any check pending, none failed yet → ciState "pending") → wait; the check_run/check_suite
- *    `completed` webhook re-triggers once CI settles (the sweep backstops a missed event). A RED check
- *    (ciState "failed") does NOT defer — a bad PR is reviewed + closed promptly; only a green-so-far-but-still-
- *    running PR waits, so we never merge before every check is green.
+ *  - CI still RUNNING (any non-bot check/status pending, regardless of whether it is branch-protection-required)
+ *    → wait; the check_run/check_suite `completed` webhook re-triggers once CI settles (the sweep backstops a
+ *    missed event). Once settled, only the gate disposition can block/close; readiness remains advisory.
  * Agent-OFF / draft / no-head PRs are never gated (reviewed as before). Fail-OPEN on a token/API hiccup (review
  * rather than stall a PR forever).
  */
@@ -1702,7 +1692,8 @@ async function prReadyForReview(
     }
     // Not authorized, staged, dry-run, or failed (conflict/transient) → fall through and review without mutating.
   }
-  // 2) wait for trusted required CI to finish. Non-required checks are advisory and must not stall review.
+  // 2) wait for CI to finish before running the Gittensory review. Required contexts still define which failures
+  // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
   const requiredContexts = await fetchRequiredStatusContexts(
     env,
     repoFullName,
@@ -1716,7 +1707,7 @@ async function prReadyForReview(
     token,
     requiredContexts,
   ).catch(() => undefined);
-  if (ci?.ciState === "pending") {
+  if (ci?.hasPending) {
     // Staleness cap: genuinely-running CI settles in minutes. A required check that stays pending far longer
     // (an orphaned / never-completing check — e.g. a fork check that never reports back) would otherwise make us
     // defer FOREVER → the PR is silently stuck and never surfaces (the dominant metagraphed stall). Past
@@ -1742,7 +1733,7 @@ async function prReadyForReview(
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
       detail:
-        "required CI stuck pending past the staleness cap — finalizing so the PR is surfaced, not silently deferred forever",
+        "CI stuck pending past the staleness cap — finalizing so the PR is surfaced, not silently deferred forever",
       metadata: { deliveryId, repoFullName },
     }).catch(() => undefined);
     // fall through → return true → the gate finalizes + the PR is disposed/held, never silently stuck.
@@ -5365,10 +5356,11 @@ async function maybePublishPrPublicSurface(
       failedOutputs,
     },
   });
-  // Over-publish dedup (#4): stamp the head SHA we just published at, so the scheduled sweep skips re-reviewing +
-  // re-publishing this PR until its head changes (see the guard in reReviewStoredPullRequest). Reached only when at
-  // least one surface output actually published (the zero-output early-return above covers the suppressed/dry-run
-  // case). The helper no-ops on a null head, and its WHERE pins head_sha so a head that advanced mid-pass won't stamp.
+  // Stamp the head SHA we just published at for reporting and stale-surface diagnostics. This is not a hard
+  // re-review skip: GitHub comments/checks can be stale or incomplete even when this marker matches the current
+  // head. Reached only when at least one surface output actually published (the zero-output early-return above
+  // covers the suppressed/dry-run case). The helper no-ops on a null head, and its WHERE pins head_sha so a head
+  // that advanced mid-pass won't stamp.
   await markPullRequestSurfacePublished(env, repoFullName, pr.number, advisory.headSha).catch((error) => {
     console.error(JSON.stringify({ level: "warn", event: "surface_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
   });

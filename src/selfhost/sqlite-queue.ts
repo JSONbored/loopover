@@ -26,11 +26,16 @@ DROP INDEX IF EXISTS ${TABLE}_claim;
 CREATE INDEX ${TABLE}_claim ON ${TABLE}(status, run_after, priority);`;
 
 // Webhook-driven work (a fresh PR → its review) jumps ahead of heavy background jobs (rag-index ~4min, the regate
-// sweep) so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Additive: every
-// other job stays priority 0 (today's FIFO order), so only github-webhook moves. (#review-latency)
-const HIGH_PRIORITY_TYPES = new Set(["github-webhook"]);
+// sweep) so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Per-PR review
+// refreshes sit just below webhooks: they repair stale GitHub surfaces quickly without starving fresh webhook work.
+// Additive: every other job stays priority 0 (today's FIFO order). (#review-latency)
+const PRIORITY_BY_TYPE = new Map([
+  ["github-webhook", 10],
+  ["agent-regate-pr", 9],
+  ["recapture-preview", 9],
+]);
 function jobPriority(payload: string): number {
-  return HIGH_PRIORITY_TYPES.has(extractPayloadType(payload) ?? "") ? 10 : 0;
+  return PRIORITY_BY_TYPE.get(extractPayloadType(payload) ?? "") ?? 0;
 }
 
 export interface DurableQueue {
@@ -83,6 +88,14 @@ export function createSqliteQueue(
     /* column already present */
   }
   driver.exec(CLAIM_INDEX_DDL);
+  const priorityBackfilled = backfillJobPriorities(driver);
+  if (priorityBackfilled)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_queue_priority_backfilled",
+        count: priorityBackfilled,
+      }),
+    );
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = driver.query(
     `UPDATE ${TABLE} SET status='pending' WHERE status='processing'`,
@@ -291,4 +304,22 @@ export function createSqliteQueue(
       );
     },
   };
+}
+
+function backfillJobPriorities(driver: SqliteDriver): number {
+  const { rows } = driver.query(
+    `SELECT id, payload, priority FROM ${TABLE} WHERE status IN ('pending', 'processing')`,
+    [],
+  );
+  let changed = 0;
+  for (const row of rows as Array<{ id: number; payload: string; priority: number }>) {
+    const priority = jobPriority(row.payload);
+    if (priority === Number(row.priority ?? 0)) continue;
+    driver.query(`UPDATE ${TABLE} SET priority=? WHERE id=?`, [
+      priority,
+      row.id,
+    ]);
+    changed += 1;
+  }
+  return changed;
 }

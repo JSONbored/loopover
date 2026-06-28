@@ -26,11 +26,13 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(q.size()).toBe(0);
   });
 
-  it("tags github-webhook with priority 10, other jobs 0, untyped 0 (#review-latency)", async () => {
+  it("tags webhook and PR review refresh jobs with elevated priorities (#review-latency)", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);
     // delaySeconds keeps them pending (not claimed) so we can read the stored priority.
     await q.binding.send(msg("github-webhook"), { delaySeconds: 60 });
+    await q.binding.send(msg("agent-regate-pr"), { delaySeconds: 60 });
+    await q.binding.send(msg("recapture-preview"), { delaySeconds: 60 });
     await q.binding.send(msg("rag-index-repo"), { delaySeconds: 60 });
     await q.binding.send({} as unknown as JobMessage, { delaySeconds: 60 }); // no type → priority 0 fallback
     const { rows } = driver.query(
@@ -42,8 +44,45 @@ describe("createSqliteQueue (durable #980)", () => {
         (r) => r.payload === p,
       )?.priority;
     expect(prio(JSON.stringify(msg("github-webhook")))).toBe(10);
+    expect(prio(JSON.stringify(msg("agent-regate-pr")))).toBe(9);
+    expect(prio(JSON.stringify(msg("recapture-preview")))).toBe(9);
     expect(prio(JSON.stringify(msg("rag-index-repo")))).toBe(0);
     expect(prio("{}")).toBe(0);
+  });
+
+  it("backfills stale priorities on startup so existing regate jobs are not buried", async () => {
+    const driver = makeDriver();
+    driver.exec(`
+      CREATE TABLE _selfhost_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        run_after INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        last_error TEXT,
+        priority INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
+      [JSON.stringify(msg("agent-regate-pr"))],
+    );
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
+      [JSON.stringify(msg("github-webhook"))],
+    );
+
+    createSqliteQueue(driver, async () => undefined);
+
+    const { rows } = driver.query(
+      "SELECT payload, priority FROM _selfhost_jobs ORDER BY id",
+      [],
+    );
+    expect(rows.map((row) => row as { payload: string; priority: number })).toEqual([
+      { payload: JSON.stringify(msg("agent-regate-pr")), priority: 9 },
+      { payload: JSON.stringify(msg("github-webhook")), priority: 10 },
+    ]);
   });
 
   it("migrates an old queue table without a priority column before creating the claim index", async () => {
@@ -97,7 +136,7 @@ describe("createSqliteQueue (durable #980)", () => {
     ).toEqual(["status", "run_after", "priority"]);
   });
 
-  it("claims a high-priority (github-webhook) job before an earlier low-priority one", async () => {
+  it("claims webhook work before regate work, and regate work before earlier background jobs", async () => {
     const driver = makeDriver();
     const seen: string[] = [];
     const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)), {
@@ -109,12 +148,15 @@ describe("createSqliteQueue (durable #980)", () => {
       [JSON.stringify(msg("rag-index-repo"))],
     );
     driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 9)",
+      [JSON.stringify(msg("agent-regate-pr"))],
+    );
+    driver.query(
       "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 10)",
       [JSON.stringify(msg("github-webhook"))],
     );
     await q.drain();
-    // github-webhook (priority 10, inserted LATER) is processed BEFORE the earlier rag-index-repo (priority 0).
-    expect(seen).toEqual(["github-webhook", "rag-index-repo"]);
+    expect(seen).toEqual(["github-webhook", "agent-regate-pr", "rag-index-repo"]);
   });
 
   it("retries then dead-letters after maxRetries", async () => {

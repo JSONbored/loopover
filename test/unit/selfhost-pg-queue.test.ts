@@ -51,20 +51,35 @@ describe("createPgQueue (durable #977)", () => {
   it("init() creates the table and recovers stuck-processing jobs", async () => {
     const m = makePool();
     m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // DDL
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // priority backfill
     m.fn.mockResolvedValueOnce({ rows: [], rowCount: 2 }); // recovery UPDATE
     const q = createPgQueue(m.pool, async () => undefined);
     await q.init();
-    expect(m.pool.query).toHaveBeenCalledTimes(2);
+    expect(m.pool.query).toHaveBeenCalledTimes(3);
   });
 
   it("init() handles null rowCount from the recovery query (rowCount ?? 0 nullish arm)", async () => {
     const m = makePool();
     m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // DDL
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // priority backfill
     // pg driver can return null for rowCount on some UPDATE results
     m.fn.mockResolvedValueOnce({ rows: [], rowCount: null });
     const q = createPgQueue(m.pool, async () => undefined);
     await q.init(); // rowCount=null → ?? 0 → 0 → no recovery log emitted
-    expect(m.pool.query).toHaveBeenCalledTimes(2);
+    expect(m.pool.query).toHaveBeenCalledTimes(3);
+  });
+
+  it("init() backfills review-refresh priorities without parsing payload JSON in SQL", async () => {
+    const m = makePool();
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // DDL
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 3 }); // priority backfill
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // recovery UPDATE
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    expect(m.pool.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("agent-regate-pr|recapture-preview"),
+    );
   });
 
   it("processes a job successfully (job_complete audit emitted)", async () => {

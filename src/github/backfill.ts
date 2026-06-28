@@ -1930,6 +1930,10 @@ function isOwnGitHubAppCheckRun(env: Env, run: GitHubCheckRunPayload): boolean {
 
 export type LiveCiAggregate = {
   ciState: "passed" | "failed" | "pending" | "unverified";
+  // Any non-bot CI source that is still pending, inferred missing, or unreadable. This is deliberately broader
+  // than ciState: a non-required pending check must not fail the gate, but review execution should still wait
+  // until every visible CI signal has settled.
+  hasPending: boolean;
   // Checks that FAIL the gate: every failing check when required contexts are unknown, else only the failing
   // REQUIRED contexts. These drive ciState === "failed" and the disposition (no-merge / close / request-changes).
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
@@ -1988,13 +1992,14 @@ export async function fetchLiveCiAggregate(
   // back to gating on all contexts to avoid silently passing an unknown required failure.
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", failingDetails: [], nonRequiredFailingDetails: [] };
+  if (!headSha) return { ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] };
   const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
   const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;
   let anyPending = false;
+  let anyVisiblePending = false;
   // CI visibility flags: a failed/short read of either source means we did NOT enumerate the commit's full check
   // set, so we must not certify it "passed". They drive the fail-CLOSED degrade below. In enforce-required mode
   // the absent-context guard already catches this; this additionally closes the fold-all (unknown-required) seam
@@ -2036,8 +2041,9 @@ export async function fetchLiveCiAggregate(
         (isRequired(run.name) ? failingDetails : nonRequiredFailingDetails).push(detail);
       } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
         // concluded and not failing → passing
-      } else if (isRequired(run.name)) {
-        anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+      } else {
+        anyVisiblePending = true;
+        if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
       }
     }
     if (!hasNextPage(result.link)) break;
@@ -2074,8 +2080,9 @@ export async function fetchLiveCiAggregate(
       (isRequired(name) ? failingDetails : nonRequiredFailingDetails).push(detail);
     } else if (state === "success") {
       // passing
-    } else if (isRequired(name)) {
-      anyPending = true; // pending — only a REQUIRED context holds the gate
+    } else {
+      anyVisiblePending = true;
+      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
     }
   }
 
@@ -2084,7 +2091,10 @@ export async function fetchLiveCiAggregate(
   // trigger on forks, or a check that was skipped).
   if (seenContextNames) {
     for (const ctx of requiredContexts!) {
-      if (!seenContextNames.has(ctx)) anyPending = true;
+      if (!seenContextNames.has(ctx)) {
+        anyPending = true;
+        anyVisiblePending = true;
+      }
     }
   }
 
@@ -2125,7 +2135,13 @@ export async function fetchLiveCiAggregate(
   // commit as passed/clean — hold (pending) so the gate waits and re-evaluates on the next sweep instead of
   // auto-merging on partial data. An OBSERVED failure ("failed") is authoritative and preserved.
   if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
-  return { ciState, failingDetails, nonRequiredFailingDetails };
+  const hasPending =
+    anyVisiblePending ||
+    anyPending ||
+    checkRunsIncomplete ||
+    statusIncomplete ||
+    ciState === "pending";
+  return { ciState, hasPending, failingDetails, nonRequiredFailingDetails };
 }
 
 /**

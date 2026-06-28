@@ -2658,11 +2658,10 @@ export async function markPullRequestApproved(env: Env, fullName: string, number
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
-/** Over-publish dedup (#4): record the head SHA at which the PR's public surface was just published. The scheduled
- *  re-gate sweep skips re-reviewing while last_published_surface_sha == headSha. Scoped to headSha so a later commit
- *  (push/rebase/force-push — the live head no longer matches) re-publishes the new code without any manual reset.
- *  The eq(headSha) in the WHERE is load-bearing: if the live head advanced between review and this write, the UPDATE
- *  no-ops (never stamps a stale head) → the next sweep correctly re-reviews. Mirrors markPullRequestApproved. */
+/** Public-surface marker: record the head SHA at which the PR's public surface was just published. This is
+ *  reporting/diagnostic state, not a hard scheduled-sweep skip; GitHub comments/checks can be stale or partial even
+ *  when the marker matches the current head. The eq(headSha) in the WHERE is load-bearing: if the live head advanced
+ *  between review and this write, the UPDATE no-ops (never stamps a stale head). Mirrors markPullRequestApproved. */
 export async function markPullRequestSurfacePublished(env: Env, fullName: string, number: number, headSha: string | null | undefined): Promise<void> {
   if (!headSha) return; // no head to key the marker on → nothing to stamp (the caller's advisory had no head SHA)
   const db = getDb(env.DB);

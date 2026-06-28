@@ -865,13 +865,13 @@ describe("queue processors", () => {
     resyncUpsertSpy.mockRestore();
   });
 
-  it("#4 over-publish dedup: the sweep SKIPS re-review when the surface was already published at the current head", async () => {
+  it("#4 stale-surface repair: the sweep re-reviews even when the local surface marker already matches the current head", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
-    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7"); // already published at the live head
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7"); // marker says current, but GitHub may still show a stale/partial panel
     let checkRunsFetched = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -883,13 +883,14 @@ describe("queue processors", () => {
     });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
 
-    await processJob(env, { type: "agent-regate-pr", deliveryId: "skip-current", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "repair-current", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
 
-    // The dedup guard returned BEFORE prReadyForReview → no CI check-runs were fetched (the re-review never ran).
-    expect(checkRunsFetched).toBe(false);
+    // The marker is not authoritative enough to skip: re-review still reaches prReadyForReview and can repair
+    // stale legacy/placeholder GitHub surfaces at the same head.
+    expect(checkRunsFetched).toBe(true);
   });
 
-  it("#4 over-publish dedup: same-head CI completions bypass the sweep-only surface-current shortcut", async () => {
+  it("#4 stale-surface repair: same-head CI completions also re-run review when the marker is current", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
@@ -921,11 +922,11 @@ describe("queue processors", () => {
     });
 
     // CI completion is event-driven dynamic state, so it must re-run prReadyForReview even when the last surface
-    // publish marker already matches this head SHA. Only the scheduled sweep may use the head-only shortcut.
+    // publish marker already matches this head SHA.
     expect(checkRunsFetched).toBe(true);
   });
 
-  it("#4 over-publish dedup: a rebased PR (marker != live head) is NOT skipped — it resyncs + re-reviews at the new head, and the marker survives the resync", async () => {
+  it("#4 stale-surface repair: a rebased PR resyncs + re-reviews at the new head, and the marker survives the resync", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
@@ -948,9 +949,8 @@ describe("queue processors", () => {
 
     await processJob(env, { type: "agent-regate-pr", deliveryId: "rebase-rereview", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
 
-    // The old-head marker (a7) != the live rebased head (b8) → the guard fell THROUGH → the PR was resynced to b8 and
-    // re-reviewed at the new head (check-runs fetched at b8). The marker is NOT in the GitHub-sync SET clause, so the
-    // resync upsert preserved it (still a7) until a fresh publish advances it — proving rebases are never skipped.
+    // The PR was resynced to b8 and re-reviewed at the new head (check-runs fetched at b8). The marker is NOT in the
+    // GitHub-sync SET clause, so the resync upsert preserved it (still a7) until a fresh publish advances it.
     expect(checkRunsFetchedAtNewHead).toBe(true);
     const stored = await getPullRequest(env, "owner/agent-repo", 7);
     expect(stored?.headSha).toBe("b8");

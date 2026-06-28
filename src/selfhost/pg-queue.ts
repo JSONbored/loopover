@@ -24,11 +24,16 @@ ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 
 CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after, priority);`;
 
 // Webhook-driven work (a fresh PR → its review) jumps ahead of heavy background jobs (rag-index, the regate sweep)
-// so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Additive: all other
-// jobs stay priority 0 (today's FIFO order). Mirrors sqlite-queue. (#review-latency)
-const HIGH_PRIORITY_TYPES = new Set(["github-webhook"]);
+// so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Per-PR review refreshes
+// sit just below webhooks: they repair stale GitHub surfaces quickly without starving fresh webhook work. Additive:
+// all other jobs stay priority 0 (today's FIFO order). Mirrors sqlite-queue. (#review-latency)
+const PRIORITY_BY_TYPE = new Map([
+  ["github-webhook", 10],
+  ["agent-regate-pr", 9],
+  ["recapture-preview", 9],
+]);
 function jobPriority(payload: string): number {
-  return HIGH_PRIORITY_TYPES.has(extractPayloadType(payload) ?? "") ? 10 : 0;
+  return PRIORITY_BY_TYPE.get(extractPayloadType(payload) ?? "") ?? 0;
 }
 
 export interface PgDurableQueue {
@@ -77,6 +82,30 @@ export function createPgQueue(
 
   async function init(): Promise<void> {
     await pool.query(DDL);
+    const priorityBackfilled =
+      (
+        await pool.query(
+          `UPDATE ${TABLE}
+              SET priority = CASE
+                WHEN payload ~ '"type"[[:space:]]*:[[:space:]]*"github-webhook"' THEN 10
+                WHEN payload ~ '"type"[[:space:]]*:[[:space:]]*"(agent-regate-pr|recapture-preview)"' THEN 9
+                ELSE 0
+              END
+            WHERE status IN ('pending', 'processing')
+              AND priority IS DISTINCT FROM CASE
+                WHEN payload ~ '"type"[[:space:]]*:[[:space:]]*"github-webhook"' THEN 10
+                WHEN payload ~ '"type"[[:space:]]*:[[:space:]]*"(agent-regate-pr|recapture-preview)"' THEN 9
+                ELSE 0
+              END`,
+        )
+      ).rowCount ?? 0;
+    if (priorityBackfilled)
+      console.log(
+        JSON.stringify({
+          event: "selfhost_queue_priority_backfilled",
+          count: priorityBackfilled,
+        }),
+      );
     const recovered =
       (
         await pool.query(

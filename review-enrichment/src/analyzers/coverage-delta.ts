@@ -179,7 +179,8 @@ export function readZipEntries(buf: Buffer): ZipEntry[] {
 
     let data: Buffer;
     if (method === 0) {
-      data = compData; // stored — no decompression
+      if (compData.length > MAX_COVERAGE_BYTES) continue; // stored entry too large
+      data = compData;
     } else if (method === 8) {
       try { data = inflateRawSync(compData, { maxOutputLength: MAX_COVERAGE_BYTES }); }
       catch { continue; } // RangeError from maxOutputLength or corrupt data → skip entry
@@ -187,7 +188,6 @@ export function readZipEntries(buf: Buffer): ZipEntry[] {
       continue; // unsupported compression method
     }
 
-    if (data.length > MAX_COVERAGE_BYTES) continue;
     entries.push({ name, data });
   }
   return entries;
@@ -209,7 +209,9 @@ function parseCoverage(kind: "lcov" | "istanbul" | "cobertura", content: string)
   return parseCoberturaXml(content);
 }
 
-/** True when covPath equals prFile or ends with /<prFile> (handles absolute workspace-prefixed paths). */
+/** True when covPath equals prFile or ends with /<prFile> (handles absolute workspace-prefixed paths).
+ *  Suffix matching can produce false positives when two distinct paths share a trailing component
+ *  (e.g. `lib/utils.ts` in coverage matching PR file `utils.ts`); acceptable given the heuristic nature. */
 function pathMatches(covPath: string, prFile: string): boolean {
   const c = covPath.replace(/\\/g, "/");
   const p = prFile.replace(/\\/g, "/");
@@ -251,7 +253,7 @@ export async function scanCoverageDelta(
   let runs: WorkflowRun[];
   try {
     const runsResp = await fetchFn(
-      `https://api.github.com/repos/${owner}/${repo}/actions/runs?head_sha=${headSha}&per_page=20`,
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs?head_sha=${headSha}&per_page=10`,
       { headers, signal: opts?.signal },
     );
     if (!runsResp.ok) return [];
@@ -268,7 +270,6 @@ export async function scanCoverageDelta(
 
   // Walk runs most-recent-first and stop at the first one that has a coverage artifact.
   let coverageArtifact: Artifact | null = null;
-  let artifactRunId = 0;
 
   for (const run of runs) {
     let artifacts: Artifact[];
@@ -288,11 +289,10 @@ export async function scanCoverageDelta(
       .filter((a) => COVERAGE_ARTIFACT_RE.test(a.name) && a.size_in_bytes <= MAX_ARTIFACT_BYTES)
       .sort((a, b) => a.size_in_bytes - b.size_in_bytes)[0];
 
-    if (found) { coverageArtifact = found; artifactRunId = run.id; break; }
+    if (found) { coverageArtifact = found; break; }
   }
 
   if (!coverageArtifact) return [];
-  void artifactRunId; // used only for the API path above
 
   // Download the artifact ZIP (GitHub responds with a redirect to a signed S3 URL; fetch follows it).
   let zipBuffer: Buffer;

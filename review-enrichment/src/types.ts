@@ -98,6 +98,8 @@ export interface RedosFinding {
 export interface CoverageDeltaFinding {
   file: string;
   uncoveredLines: number[]; // sorted, 1-indexed new-file line numbers with zero hits
+}
+
 /** A changed file governed by a CODEOWNERS rule where the PR author is not listed as an owner (#1515).
  *  The blast radius (distinct ownership domains crossed) is derived at render time from the full findings set. */
 export interface CodeownersFinding {

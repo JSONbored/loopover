@@ -139,6 +139,9 @@ export function renderBrief(
       lines.push(
         `- ${safeCodeSpan(item.file)} — uncovered changed lines: ${lineList}`,
       );
+    }
+  }
+
   const codeownersViolations = findings.codeowners ?? [];
   if (codeownersViolations.length) {
     const allOwners = new Set(codeownersViolations.flatMap((f) => f.owners));

@@ -30,6 +30,7 @@ import {
   readZipEntries,
   scanCoverageDelta,
 } from "../dist/analyzers/coverage-delta.js";
+import {
   findOwners,
   parseCodeowners,
   patternToRegex,
@@ -1497,6 +1498,11 @@ test("buildBrief: coverageDelta analyzer is wired into the orchestrator", async 
     assert.equal(brief.analyzerStatus.coverageDelta, "ok");
     assert.equal(brief.findings.coverageDelta.length, 1);
     assert.match(brief.promptSection, /Changed lines not covered/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("codeOnly: blanks string messages, keeps ${...} interpolation bodies", () => {
   assert.equal(codeOnly('"a secret here"'), " ");
   assert.equal(codeOnly("'plain'"), " ");

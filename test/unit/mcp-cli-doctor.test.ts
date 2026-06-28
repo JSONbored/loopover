@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, createPacketRepo, git, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
+import { bin, closeFixtureServer, createPacketRepo, git, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
 describe("gittensory-mcp CLI — doctor", () => {
   let tempDir: string | null = null;
@@ -408,5 +409,62 @@ describe("gittensory-mcp CLI — doctor", () => {
     expect(statusOutput).not.toContain("session-token");
     // Sanity: upgrade guidance still surfaces in human-readable output.
     expect(statusOutput).toContain("npm install -g @jsonbored/gittensory-mcp@latest");
+  });
+
+  it("keeps doctor exit code 0 by default even when a check fails", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    // No token configured -> the auth check fails -> status "needs_attention".
+    const payload = JSON.parse(
+      await runAsync(["doctor", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as { status: string; checks: Array<{ name: string; status: string }> };
+    expect(payload.status).toBe("needs_attention");
+    expect(payload.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "auth", status: "fail" })]));
+  });
+
+  it("exits non-zero from doctor --exit-code when a check fails", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    let exitCode = 0;
+    let stdout = "";
+    try {
+      stdout = execFileSync("node", [bin, "doctor", "--exit-code", "--json"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITTENSORY_API_TIMEOUT_MS: "1000",
+          GITTENSORY_API_URL: url,
+          GITTENSORY_CONFIG_DIR: tempDir,
+          GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      const execError = error as { status?: number | null; stdout?: string };
+      exitCode = execError.status ?? 0;
+      stdout = execError.stdout ?? "";
+    }
+    expect(exitCode).toBe(1);
+    // The diagnostic report is still printed; only the process exit code changes.
+    expect((JSON.parse(stdout) as { status: string }).status).toBe("needs_attention");
+  });
+
+  it("keeps doctor --exit-code at 0 when checks pass", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    // runAsync resolves only on a zero exit code, so reaching the assertion proves exit 0.
+    const payload = JSON.parse(
+      await runAsync(["doctor", "--exit-code", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as { status: string };
+    expect(payload.status).toMatch(/ok|warnings/);
   });
 });

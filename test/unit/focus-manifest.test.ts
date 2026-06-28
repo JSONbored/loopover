@@ -1095,6 +1095,17 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(noOverride.contributorBlacklist?.map((e) => e.login)).toEqual(["keep-me"]);
   });
 
+  it("resolves contributor blacklist by unioning the shared/global list with effective per-repo settings", () => {
+    const manifest = parseFocusManifest({ settings: { contributorBlacklist: [{ login: "repo-only", reason: "manifest" }, { login: "Global-Repo", reason: "manifest-overrides-global" }] } });
+    const eff = resolveEffectiveSettings(
+      { contributorBlacklist: [{ login: "global-repo", reason: "repo-db" }] } as unknown as RepositorySettings,
+      manifest,
+      [{ login: "global-repo", reason: "global" }, { login: "global-only", reason: "shared-only" }],
+    );
+    expect(eff.contributorBlacklist?.map((entry) => entry.login)).toEqual(["repo-only", "Global-Repo", "global-only"]);
+    expect(eff.contributorBlacklist?.find((entry) => entry.login === "Global-Repo")?.reason).toBe("manifest-overrides-global");
+  });
+
   it("resolveEffectiveSettings overlays settings: over DB and lets gate: win for gate fields", () => {
     const db = { commentMode: "off", gateCheckMode: "off", linkedIssueGateMode: "off", duplicatePrGateMode: "off", autoLabelEnabled: true } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(

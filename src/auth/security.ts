@@ -116,7 +116,10 @@ export async function authenticateSessionToken(env: Env, token: string | undefin
   if (!token) return null;
   const session = await getAuthSessionByTokenHash(env, await hashToken(token));
   if (!session) return null;
-  if (session.revokedAt || Date.parse(session.expiresAt) <= Date.now()) return null;
+  // Fail closed on an unparseable expiry: Date.parse → NaN makes `NaN <= Date.now()` false, which would
+  // otherwise authenticate a session whose stored expires_at is malformed/empty as if it never expired.
+  const expiresAtMs = Date.parse(session.expiresAt);
+  if (session.revokedAt || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
   await touchAuthSession(env, session.id);
   return { kind: "session", actor: session.login, session };
 }

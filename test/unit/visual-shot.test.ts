@@ -24,6 +24,20 @@ function request(url: string): Request {
   return new Request(`https://api.example.test/gittensory/shot?url=${encodeURIComponent(url)}`);
 }
 
+function shotRequest(query: string): Request {
+  return new Request(`https://api.example.test/gittensory/shot?${query}`);
+}
+
+// Minimal R2 stub: REVIEW_AUDIT.get(key) returns an object whose `.body` is a byte stream, or null.
+function r2Env(objects: Record<string, Uint8Array>): Env {
+  return {
+    REVIEW_AUDIT: {
+      get: async (key: string) =>
+        objects[key] ? { body: new Response(objects[key]).body } : null,
+    },
+  } as unknown as Env;
+}
+
 function makeRequest(url: string, navigation = true) {
   return {
     url: () => url,
@@ -134,5 +148,95 @@ describe("visual screenshot on-demand SSRF guard", () => {
     mocks.finalUrl = "http://127.0.0.1/admin";
     const response = await handleShot(request("https://preview.pages.dev/page"), env());
     expect(response.status).toBe(502);
+  });
+});
+
+describe("visual screenshot placeholder cards", () => {
+  it("serves the loading spinner SVG for placeholder=loading", async () => {
+    const response = await handleShot(shotRequest("placeholder=loading"), {} as Env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=60");
+    expect(await response.text()).toContain("Rendering preview");
+  });
+
+  it("serves the failed-deploy SVG for placeholder=failed", async () => {
+    const response = await handleShot(shotRequest("placeholder=failed"), {} as Env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(await response.text()).toContain("Preview deploy failed");
+  });
+
+  it("serves the auth-wall SVG for placeholder=auth", async () => {
+    const response = await handleShot(shotRequest("placeholder=auth"), {} as Env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(await response.text()).toContain("requires authentication");
+  });
+
+  it("does not treat an unknown placeholder value as a placeholder card", async () => {
+    // An unrecognized placeholder falls through to the key/url modes; with neither present it is a bad url.
+    const response = await handleShot(shotRequest("placeholder=unknown"), {} as Env);
+
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("visual screenshot R2 key serve + traversal guard", () => {
+  it("streams a stored PNG for a valid key inside the namespace", async () => {
+    const png = new Uint8Array([10, 20, 30, 40]);
+    const key = "gittensory/shots/abc.png";
+    const response = await handleShot(shotRequest(`key=${encodeURIComponent(key)}`), r2Env({ [key]: png }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=86400, immutable");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(png);
+  });
+
+  it("returns 404 for a valid key that is absent from R2", async () => {
+    const response = await handleShot(
+      shotRequest(`key=${encodeURIComponent("gittensory/shots/missing.png")}`),
+      r2Env({}),
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("not found");
+  });
+
+  it("rejects a key that traverses with ..", async () => {
+    const response = await handleShot(
+      shotRequest(`key=${encodeURIComponent("gittensory/shots/../../etc/passwd")}`),
+      r2Env({}),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("bad key");
+  });
+
+  it("rejects a key outside the namespace prefix", async () => {
+    const response = await handleShot(
+      shotRequest(`key=${encodeURIComponent("evil/shots/x.png")}`),
+      r2Env({}),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("bad key");
+  });
+
+  it("honors a custom namespace option for the prefix check", async () => {
+    const png = new Uint8Array([99]);
+    const key = "customns/shots/x.png";
+    const response = await handleShot(
+      shotRequest(`key=${encodeURIComponent(key)}`),
+      r2Env({ [key]: png }),
+      { namespace: "customns" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
   });
 });

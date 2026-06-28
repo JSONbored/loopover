@@ -60,6 +60,13 @@ describe("planAutoTune (#self-improve) — circuit-breaker is one-directional", 
   it("does NOT engage when precision is healthy (it only ever tightens, never loosens)", () => {
     expect(planAutoTune(report([row({ project: "p", decided: 30, wouldMerge: 30, mergeConfirmed: 29, mergePrecision: 0.97 })]))).toHaveLength(0);
   });
+  it("does NOT engage on a thin WOULD-MERGE sample even when total decided is high (gate on wouldMerge, not decided)", () => {
+    // 19 holds/closes + 1 wrong would-merge: decided=20 (over the floor) but only 1 would-merge — meaningless precision.
+    expect(planAutoTune(report([row({ project: "p", decided: 20, wouldMerge: 1, mergeConfirmed: 0, mergePrecision: 0 })]))).toHaveLength(0);
+  });
+  it("skips a project with no would-merge predictions (mergePrecision null → nothing to judge)", () => {
+    expect(planAutoTune(report([row({ project: "x", decided: 20, wouldMerge: 0, mergePrecision: null })]))).toHaveLength(0);
+  });
 });
 
 describe("applyAutoTune", () => {
@@ -104,6 +111,12 @@ describe("shouldAutoClear (#272 recovery-gated breaker auto-clear)", () => {
   });
   it("keeps the breaker engaged if precision is STILL failing after cooldown", () => {
     expect(shouldAutoClear(failing, "g", past, now)).toBe(false);
+  });
+  it("clears after cooldown when there's no would-merge signal (mergePrecision null → not still-failing)", () => {
+    expect(shouldAutoClear(report([row({ project: "g", decided: 20, wouldMerge: 0, mergePrecision: null })]), "g", past, now)).toBe(true);
+  });
+  it("clears after cooldown on a thin would-merge sample (undersampled → not still-failing)", () => {
+    expect(shouldAutoClear(report([row({ project: "g", decided: 20, wouldMerge: 1, mergeConfirmed: 0, mergePrecision: 0 })]), "g", past, now)).toBe(true);
   });
   it("parses a SQLite 'YYYY-MM-DD HH:MM:SS' (UTC, no zone) timestamp as UTC, not local (#272 tz-fix)", () => {
     const sqlite = new Date(now - AUTOCLEAR_AFTER_MS - 3_600_000).toISOString().slice(0, 19).replace("T", " "); // 25h ago, SQLite format

@@ -147,6 +147,9 @@ export function renderBrief(
           `- ${sha} — ${who} is a first-time committer in this repository, which otherwise uses verified commits (supply-chain risk: potential impersonation)`,
         );
       }
+    }
+  }
+
   const codeownersViolations = findings.codeowners ?? [];
   if (codeownersViolations.length) {
     const allOwners = new Set(codeownersViolations.flatMap((f) => f.owners));

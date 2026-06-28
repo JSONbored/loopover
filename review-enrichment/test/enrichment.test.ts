@@ -1258,6 +1258,21 @@ test("buildBrief: commitSignature analyzer is wired into the orchestrator", asyn
       return { ok: true, json: async () => UNSIGNED_COMMIT };
     return { ok: true, json: async () => ({}) };
   };
+  try {
+    const brief = await buildBrief({
+      repoFullName: "owner/repo",
+      prNumber: 1,
+      headSha: "abc1234abc1234ab",
+      githubToken: "tok",
+    });
+    assert.equal(brief.analyzerStatus.commitSignature, "ok");
+    assert.equal(brief.findings.commitSignature.length, 1);
+    assert.equal(brief.findings.commitSignature[0].kind, "unsigned");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("codeOnly: blanks string messages, keeps ${...} interpolation bodies", () => {
   assert.equal(codeOnly('"a secret here"'), " ");
   assert.equal(codeOnly("'plain'"), " ");
@@ -1405,9 +1420,20 @@ test("renderBrief: renders the secret-log block, code-spanning + sanitizing", ()
   assert.match(r.promptSection, /a secret\/credential/);
 });
 
-test("buildBrief: secret-log analyzer runs (pure, no network)", async () => {
+test("buildBrief: commitSignature analyzer runs and reports unsigned commit", async () => {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/commits/abc1234abc1234ab"))
+      return {
+        ok: true,
+        json: async () => ({
+          sha: "abc1234abc1234ab",
+          commit: { verification: { verified: false, reason: "unsigned" } },
+          author: { login: "alice" },
+        }),
+      };
+    return { ok: true, json: async () => ({}) };
+  };
   try {
     const brief = await buildBrief({
       repoFullName: "o/r",
@@ -1419,6 +1445,18 @@ test("buildBrief: secret-log analyzer runs (pure, no network)", async () => {
     assert.equal(brief.findings.commitSignature.length, 1);
     assert.equal(brief.findings.commitSignature[0].kind, "unsigned");
     assert.match(brief.promptSection, /Commit-signature/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("buildBrief: secret-log analyzer runs (pure, no network)", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
       files: [
         {
           path: "src/a.ts",

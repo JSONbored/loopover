@@ -1,35 +1,138 @@
 {
   "uid": "gittensory-maintainer",
   "title": "Gittensory — Reviews & PRs (maintainer)",
-  "tags": [
-    "gittensory",
-    "maintainer"
-  ],
+  "tags": ["gittensory", "maintainer"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
+  "editable": false,
+  "graphTooltip": 1,
   "refresh": "1m",
-  "time": {
-    "from": "now-90d",
-    "to": "now"
-  },
-  "templating": {
-    "list": []
-  },
+  "time": { "from": "now-90d", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "links": [],
   "panels": [
     {
-      "type": "text",
-      "title": "Maintainer review dashboard disabled",
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 0
+      "type": "row",
+      "id": 1,
+      "title": "Reviews & PRs (maintainer)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "PRs tracked",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS prs FROM review_targets", "rawQueryText": "SELECT count(*) AS prs FROM review_targets" }]
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Merged",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS merged FROM review_targets WHERE status='merged'", "rawQueryText": "SELECT count(*) AS merged FROM review_targets WHERE status='merged'" }]
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Closed",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" }, "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS closed FROM review_targets WHERE status='closed'", "rawQueryText": "SELECT count(*) AS closed FROM review_targets WHERE status='closed'" }]
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Manual review",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" }, "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS manual FROM review_targets WHERE status='manual' OR verdict='manual'", "rawQueryText": "SELECT count(*) AS manual FROM review_targets WHERE status='manual' OR verdict='manual'" }]
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Commented (advisory)",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS commented FROM review_targets WHERE status='commented'", "rawQueryText": "SELECT count(*) AS commented FROM review_targets WHERE status='commented'" }]
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "Ignored",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS ignored FROM review_targets WHERE status='ignored'", "rawQueryText": "SELECT count(*) AS ignored FROM review_targets WHERE status='ignored'" }]
+    },
+    {
+      "type": "table",
+      "id": 8,
+      "title": "Pull requests (latest 1000)",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "filterable": true, "inspect": false } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "number" }, "properties": [
+            { "id": "links", "value": [{ "title": "Open #${__data.fields.number} on GitHub", "url": "https://github.com/${__data.fields.repo}/pull/${__data.fields.number}", "targetBlank": true }] },
+            { "id": "custom.width", "value": 80 }
+          ]},
+          { "matcher": { "id": "byName", "options": "author" }, "properties": [
+            { "id": "links", "value": [{ "title": "@${__data.fields.author} on GitHub", "url": "https://github.com/${__data.fields.author}", "targetBlank": true }] },
+            { "id": "custom.width", "value": 160 }
+          ]},
+          { "matcher": { "id": "byName", "options": "repo" }, "properties": [{ "id": "custom.width", "value": 200 }] },
+          { "matcher": { "id": "byName", "options": "status" }, "properties": [
+            { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+            { "id": "custom.width", "value": 110 },
+            { "id": "mappings", "value": [{ "type": "value", "options": { "merged": { "color": "green", "index": 0 }, "closed": { "color": "red", "index": 1 }, "manual": { "color": "orange", "index": 2 }, "commented": { "color": "blue", "index": 3 }, "ignored": { "color": "purple", "index": 4 } } }] }
+          ]},
+          { "matcher": { "id": "byName", "options": "verdict" }, "properties": [
+            { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+            { "id": "custom.width", "value": 100 },
+            { "id": "mappings", "value": [{ "type": "value", "options": { "merge": { "color": "green", "index": 0 }, "close": { "color": "red", "index": 1 }, "manual": { "color": "orange", "index": 2 }, "comment": { "color": "blue", "index": 3 }, "ignore": { "color": "purple", "index": 4 } } }] }
+          ]},
+          { "matcher": { "id": "byName", "options": "updated_at" }, "properties": [{ "id": "custom.width", "value": 200 }] }
+        ]
       },
-      "options": {
-        "mode": "markdown",
-        "content": "## Maintainer review dashboard disabled\n\nThis dashboard does not query the live Gittensory SQLite database from Grafana. Direct datasource access would bypass application authorization and expose private application tables. Use the application API or a separately redacted reporting database for maintainer review analytics."
-      }
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false }, "sortBy": [{ "displayName": "updated_at", "desc": true }] },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT repo, number, submitter AS author, status, verdict, title, updated_at FROM review_targets ORDER BY updated_at DESC LIMIT 1000", "rawQueryText": "SELECT repo, number, submitter AS author, status, verdict, title, updated_at FROM review_targets ORDER BY updated_at DESC LIMIT 1000" }]
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Reviews per day",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "showPoints": "never", "stacking": { "mode": "none" } }, "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "time series", "timeColumns": ["time"], "queryText": "SELECT date(created_at) AS time, count(*) AS reviews FROM review_targets GROUP BY date(created_at) ORDER BY time", "rawQueryText": "SELECT date(created_at) AS time, count(*) AS reviews FROM review_targets GROUP BY date(created_at) ORDER BY time" }]
+    },
+    {
+      "type": "piechart",
+      "id": 10,
+      "title": "By verdict",
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "right", "showLegend": true, "values": ["value", "percent"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL GROUP BY verdict ORDER BY c DESC", "rawQueryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL GROUP BY verdict ORDER BY c DESC" }]
     }
   ]
 }

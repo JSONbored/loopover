@@ -244,6 +244,10 @@ content-lane are not yet per-repo toggleable and stay on the allowlist.)
   For **continuous, point-in-time backup**, enable the optional [Litestream](https://litestream.io) sidecar in
   `docker-compose.yml` (copy `litestream.yml.example` → `litestream.yml`, set your bucket + credentials); it
   streams every change to S3/B2/MinIO/R2.
+- **Maintainer Grafana dashboards.** Grafana does **not** mount the live app database. The observability profile
+  starts `reporting-exporter`, which copies only the dashboard-safe `review_targets` and `ai_usage_events`
+  columns into `/reporting/gittensory-reporting.sqlite` every `GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS` seconds
+  (default 30). The SQLite datasource points at that redacted reporting DB.
 - **App-level metrics.** Enable `GITTENSORY_REVIEW_OPS=true` for the read-only gate-block anomaly scan and the
   bearer-gated `GET /v1/internal/ops/stats` aggregate.
 

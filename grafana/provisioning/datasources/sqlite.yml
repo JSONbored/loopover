@@ -1,5 +1,5 @@
-# Maintainer-only SQLite datasource for local operator dashboards. The compose stack mounts the app
-# database at /appdb for Grafana, and these dashboards run aggregate SELECTs over internal tables.
+# Maintainer-only SQLite datasource for local operator dashboards. Grafana reads a redacted reporting
+# database produced by reporting-exporter; it never mounts the live application database.
 apiVersion: 1
 datasources:
   - name: GittensoryDB
@@ -8,4 +8,4 @@ datasources:
     access: proxy
     editable: false
     jsonData:
-      path: /appdb/gittensory.sqlite
+      path: /reporting/gittensory-reporting.sqlite

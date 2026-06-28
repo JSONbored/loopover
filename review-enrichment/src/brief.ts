@@ -30,7 +30,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   eol: (req) => scanEol(req),
   redos: (req) => scanRedos(req),
   codeowners: (req, signal) => scanCodeowners(req, fetch, { signal }),
-  secretLog: (req) => scanSecretLog(req),
+  secretLog: (req, signal) => scanSecretLog(req, signal),
 };
 
 function runWithTimeout<T>(

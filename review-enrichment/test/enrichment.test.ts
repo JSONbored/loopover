@@ -22,6 +22,12 @@ import {
   scanRedos,
 } from "../dist/analyzers/redos.js";
 import {
+  findOwners,
+  parseCodeowners,
+  patternToRegex,
+  scanCodeowners,
+} from "../dist/analyzers/codeowners.js";
+import {
   codeOnly,
   detectSecretLog,
   scanPatchForSecretLog,
@@ -817,6 +823,70 @@ test("buildBrief: timeout aborts dependency scan so OSV work stops", async () =>
   }
 });
 
+test("findOwners: uses linear CODEOWNERS glob matching for adversarial wildcard patterns", () => {
+  const rules = parseCodeowners(`${"**".repeat(30)}Z @team/security`);
+  const start = performance.now();
+
+  assert.deepEqual(findOwners(rules, "a".repeat(400)), []);
+
+  assert.ok(
+    performance.now() - start < 100,
+    "adversarial non-match stays bounded",
+  );
+});
+
+test("parseCodeowners: caps repository-controlled size, rule count, and pattern length", () => {
+  const oversizedPattern = `${"a".repeat(513)} @too/long`;
+  const manyRules = Array.from(
+    { length: 1005 },
+    (_, index) => `file-${index} @owner/${index}`,
+  );
+  const rules = parseCodeowners([oversizedPattern, ...manyRules].join("\n"));
+
+  assert.equal(rules.length, 1000);
+  assert.deepEqual(findOwners(rules, "file-0"), ["@owner/0"]);
+  assert.deepEqual(findOwners(rules, "file-1001"), []);
+});
+
+test("findOwners: preserves CODEOWNERS anchoring and last-match-wins semantics", () => {
+  const rules = parseCodeowners([
+    "*.ts @global/ts",
+    "/src/*.ts @root/src",
+    "docs/ @docs/team",
+    "src/special.ts @last/match",
+  ].join("\n"));
+
+  assert.deepEqual(findOwners(rules, "nested/file.ts"), ["@global/ts"]);
+  assert.deepEqual(findOwners(rules, "src/file.ts"), ["@root/src"]);
+  assert.deepEqual(findOwners(rules, "nested/src/file.ts"), ["@global/ts"]);
+  assert.deepEqual(findOwners(rules, "docs/guide/intro.md"), ["@docs/team"]);
+  assert.deepEqual(findOwners(rules, "src/special.ts"), ["@last/match"]);
+});
+
+test("scanCodeowners: reports files not owned by the PR author", async () => {
+  const findings = await scanCodeowners(
+    {
+      repoFullName: "owner/repo",
+      prNumber: 1,
+      githubToken: "token",
+      author: "alice",
+      files: [{ path: "src/app.ts" }, { path: "README.md" }],
+    },
+    async () => ({
+      ok: true,
+      text: async () => "src/** @team/reviewers\nREADME.md @alice",
+    }),
+  );
+
+  assert.deepEqual(findings, [
+    { file: "src/app.ts", owners: ["@team/reviewers"] },
+  ]);
+});
+
+test("patternToRegex: collapses adjacent wildcards in compatibility regex output", () => {
+  assert.equal(patternToRegex("******Z").source, "(^|\\/)\.\*Z$");
+});
+
 test("extractVersionPins: Dockerfile FROM + .nvmrc + go.mod; latest skipped", () => {
   const pins = extractVersionPins([
     {
@@ -1041,6 +1111,62 @@ test("scanSecretLog: scans every changed file's added lines, caps to its budget"
   });
   assert.equal(findings.length, 1);
   assert.equal(findings[0].file, "a.ts");
+});
+
+test("scanPatchForSecretLog: stops scanning once the finding budget is exhausted", () => {
+  // Fixture patch lines are intentionally scanner-triggering inputs.
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    "+console.log(user.password);",
+    "+console.log(user.apiKey);",
+    "+console.log(user.secret);",
+    "+console.log(user.accessToken);",
+  ].join("\n");
+
+  const findings = scanPatchForSecretLog("src/a.ts", patch, {
+    maxFindings: 2,
+  });
+
+  assert.deepEqual(
+    findings.map(({ line, category }) => ({ line, category })),
+    [
+      { line: 1, category: "secret" },
+      { line: 2, category: "secret" },
+    ],
+  );
+});
+
+test("scanPatchForSecretLog: returns no findings when the budget is exhausted", () => {
+  const findings = scanPatchForSecretLog(
+    "src/a.ts",
+    "@@ -1,0 +1,1 @@\n+console.log(user.password);",
+    { maxFindings: 0 },
+  );
+
+  assert.deepEqual(findings, []);
+});
+
+test("scanSecretLog: forwards abort signals to the per-file scanner", async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () =>
+      scanSecretLog(
+        {
+          repoFullName: "o/r",
+          prNumber: 1,
+          files: [
+            {
+              path: "a.ts",
+              patch: "@@ -1,0 +1,1 @@\n+console.log(user.password);",
+            },
+          ],
+        },
+        controller.signal,
+      ),
+    /analyzer_aborted/,
+  );
 });
 
 test("renderBrief: renders the secret-log block, code-spanning + sanitizing", () => {

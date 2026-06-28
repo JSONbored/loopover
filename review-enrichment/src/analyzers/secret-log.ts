@@ -94,13 +94,33 @@ export function detectSecretLog(
 }
 
 /** Scan one file patch's added lines for sensitive-data-into-a-sink, line-cited via hunk headers. Pure. */
+type SecretLogScanLimits = {
+  maxFindings?: number;
+  signal?: AbortSignal;
+};
+
+function* patchLines(patch: string): Generator<string> {
+  // Stream by patch line so large diffs do not require an intermediate split array; abort is sampled per line below.
+  let start = 0;
+  for (let i = 0; i <= patch.length; i++) {
+    if (i === patch.length || patch[i] === "\n") {
+      yield patch.slice(start, i);
+      start = i + 1;
+    }
+  }
+}
+
 export function scanPatchForSecretLog(
   path: string,
   patch: string,
+  limits: SecretLogScanLimits = {},
 ): SecretLogFinding[] {
+  const maxFindings = limits.maxFindings ?? MAX_FINDINGS;
+  if (maxFindings <= 0) return [];
   const findings: SecretLogFinding[] = [];
   let newLine = 0;
-  for (const line of patch.split("\n")) {
+  for (const line of patchLines(patch)) {
+    if (limits.signal?.aborted) throw new Error("analyzer_aborted");
     if (line.startsWith("+++") || line.startsWith("---")) continue;
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
@@ -118,6 +138,7 @@ export function scanPatchForSecretLog(
             sink: hit.sink,
             category: hit.category,
           });
+          if (findings.length >= maxFindings) return findings;
         }
       }
       newLine++;
@@ -131,12 +152,18 @@ export function scanPatchForSecretLog(
 /** Analyzer entrypoint: scan every changed file's added lines for secrets/PII reaching a log or stdout sink. */
 export async function scanSecretLog(
   req: EnrichRequest,
+  signal?: AbortSignal,
 ): Promise<SecretLogFinding[]> {
   const findings: SecretLogFinding[] = [];
   for (const file of req.files ?? []) {
+    if (signal?.aborted) throw new Error("analyzer_aborted");
     if (!file.patch) continue;
-    for (const finding of scanPatchForSecretLog(file.path, file.patch)) {
+    for (const finding of scanPatchForSecretLog(file.path, file.patch, {
+      maxFindings: MAX_FINDINGS - findings.length,
+      signal,
+    })) {
       findings.push(finding);
+      // The per-file scan is capped to the remaining budget; keep this as a final invariant if that scanner changes.
       if (findings.length >= MAX_FINDINGS) return findings;
     }
   }

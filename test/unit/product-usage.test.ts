@@ -153,6 +153,8 @@ describe("product usage events", () => {
         cwd: "/Users/example/private/project",
         nested: {
           localPath: "/Users/example/private/project/file.ts",
+          rootPath: "/root/work/private/project/file.ts",
+          varPath: "/var/log/private/app.log",
           values: ["see /Users/example/private/file.ts", "github_pat_1234567890abcdef"],
           safe: "kept",
         },
@@ -174,7 +176,7 @@ describe("product usage events", () => {
     expect(row.metadata).not.toHaveProperty("body");
     expect(row.metadata).not.toHaveProperty("diff");
     expect(row.metadata).not.toHaveProperty("cwd");
-    expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
+    expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|\/root\/|\/var\/|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
   });
 
   it("persists normalized role on the event row and strips private scoreability metadata", async () => {
@@ -324,6 +326,21 @@ describe("product usage events", () => {
         estimatedNeurons: -4,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("matches digest subscriptions case-insensitively by login and dedupes case-variant logins", async () => {
+    const env = createTestEnv();
+    // Subscribe under a mixed-case login, then look up under a different casing — GitHub logins are
+    // case-insensitive, so it must still resolve (mirrors the notification/issue-watch subscription paths).
+    await upsertDigestSubscription(env, { login: "OktoFeesh1", email: "digest@example.com" });
+    await expect(listDigestSubscriptionsForLogin(env, "oktofeesh1")).resolves.toEqual([
+      expect.objectContaining({ login: "oktofeesh1", email: "digest@example.com", status: "active" }),
+    ]);
+    // Re-subscribing under another casing with the same email updates the one row instead of duplicating it.
+    await upsertDigestSubscription(env, { login: "OKTOFEESH1", email: "digest@example.com", status: "paused" });
+    await expect(listDigestSubscriptionsForLogin(env, "Oktofeesh1")).resolves.toEqual([
+      expect.objectContaining({ login: "oktofeesh1", email: "digest@example.com", status: "paused" }),
+    ]);
   });
 
   it("summarizes recent events without counting stale records", async () => {

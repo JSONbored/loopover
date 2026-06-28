@@ -5042,7 +5042,7 @@ async function maybePublishPrPublicSurface(
         ciState,
         aiCiRefutationActive(env, repoFullName),
       );
-      // Observability (#reviews-dashboard): record the would-be gate verdict per repo so the Grafana panel shows the
+      // Observability (#reviews-dashboard): record the would-be gate verdict so the Grafana panel shows the
       // merge/close/hold mix — the "are we rubber-stamping?" signal — even in advisory/dryRun (this is the rendered verdict).
       incr("gittensory_gate_decisions_total", {
         repo: repoFullName,

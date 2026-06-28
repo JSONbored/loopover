@@ -63,6 +63,10 @@ describe("isLockfile", () => {
       "go.sum",
       "uv.lock",
       "poetry.lock",
+      "bun.lock",
+      "deno.lock",
+      "pubspec.lock",
+      "Podfile.lock",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }
@@ -233,6 +237,10 @@ describe("classifyChangedFile", () => {
       ["src/api.generated.ts", "generated"],
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
+      ["bun.lock", "lockfile"],
+      ["deno.lock", "lockfile"],
+      ["pubspec.lock", "lockfile"],
+      ["ios/Podfile.lock", "lockfile"],
       ["package.json", "dependency_manifest"],
       ["tsconfig.json", "config"],
       ["vitest.config.ts", "config"],

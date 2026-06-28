@@ -23,6 +23,12 @@ export type GateCheckPolicy = {
   /** When `block`, a dual-model AI consensus defect (`ai_consensus_defect` finding) becomes a hard
    *  blocker. Defaults to advisory — AI never blocks unless the maintainer opts in. */
   aiReviewGateMode?: GateRuleMode | undefined;
+  /** Minimum calibrated confidence (0-1) for an AI-judgment defect (`ai_consensus_defect` / `ai_review_split`) to
+   *  BLOCK under `aiReviewGateMode: block` (#7). The finding blocks only when its `confidence >= this`; below-threshold
+   *  AI defects hold for human review instead of passing or auto-closing. `null`/undefined ⇒ the 0.9 default. A finding
+   *  with no confidence (deterministic, or a graceful-fallback AI defect) is treated as 1.0 and always clears the floor
+   *  — matching the historical always-block behavior. */
+  aiReviewCloseConfidence?: number | null | undefined;
   readinessScore?: number | null | undefined;
   /** When `block`, the deterministic slop score becomes a hard blocker once `slopRisk >= slopGateMinScore`
    *  (default threshold 60, the `high` band). Defaults to off/advisory — slop never blocks unless opted in. */
@@ -55,11 +61,31 @@ export type GateCheckPolicy = {
    *  regardless of confirmed status, which now affects only on-chain scoring). `undefined` = unresolved.
    *  (#gate-nonconfirmed) */
   confirmedContributor?: boolean | undefined;
+  /** PR-size HOLD (#gate-size). When set (advisory/block), a PR with >= sizeGateMaxFiles changed files OR
+   *  >= sizeGateMaxLines changed (added+deleted) lines that would OTHERWISE pass is HELD for manual review — a
+   *  neutral gate → "manual" verdict, never auto-merged and never a hard failure. Defaults off; thresholds default
+   *  to 10 files / 500 lines. This is a HOLD (advisory dry-run friendly), not a close. */
+  sizeGateMode?: GateRuleMode | undefined;
+  /** Aggregate change size, threaded from the resolved file list (changedLineCount = additions + deletions). */
+  changedFileCount?: number | null | undefined;
+  changedLineCount?: number | null | undefined;
+  /** True when the PR's diff trips a hard guardrail path (caller computes via loadHardGuardrailGlobs + isGuardrailHit).
+   *  A guardrail hit HOLDS an otherwise-passing gate for manual review (neutral → "manual"), never auto-merged.
+   *  Always-on (the guardrail globs default to the crucial/config-as-code/engine paths). (#gate-guardrail) */
+  guardrailHit?: boolean | undefined;
+  /** Dry-run disposition (#gate-dryrun). When true, the gate ALSO computes the would-be conclusion with every
+   *  `advisory` sub-gate promoted to `block` and exposes it as `displayConclusion` (the rendered merge/close/manual
+   *  verdict), WITHOUT changing the posted, non-enforcing `conclusion`. Lets advisory mode show exactly what it WOULD
+   *  do (close/merge/manual) before the maintainer flips to real enforcement. Default off. */
+  dryRun?: boolean | undefined;
 };
 
 export type GateCheckEvaluation = {
   enabled: boolean;
   conclusion: GateCheckConclusion;
+  /** Dry-run only (#gate-dryrun): the would-be conclusion (advisory sub-gates promoted to block) used to render the
+   *  merge/close/manual verdict. Absent ⇒ the renderer falls back to `conclusion`. Never affects what is posted. */
+  displayConclusion?: GateCheckConclusion | undefined;
   title: string;
   summary: string;
   blockers: AdvisoryFinding[];
@@ -378,7 +404,68 @@ export function formatCheckRunOutput(
   return annotations.length > 0 ? { title, summary, text, annotations } : { title, summary, text };
 }
 
+const SIZE_HOLD_DEFAULT_MAX_FILES = 10;
+const SIZE_HOLD_DEFAULT_MAX_LINES = 500;
+
+/** Oversized-PR manual-review HOLD finding (#gate-size), or null when the size gate is off or the PR is within both
+ *  thresholds. A HOLD (→ neutral gate → "manual" verdict), never a hard blocker, so it is dry-run/advisory friendly. */
+function buildSizeHoldFinding(policy: GateCheckPolicy): AdvisoryFinding | null {
+  if (!policy.sizeGateMode || policy.sizeGateMode === "off") return null;
+  const files = policy.changedFileCount ?? 0;
+  const lines = policy.changedLineCount ?? 0;
+  if (
+    files < SIZE_HOLD_DEFAULT_MAX_FILES &&
+    lines < SIZE_HOLD_DEFAULT_MAX_LINES
+  )
+    return null;
+  return {
+    code: "oversized_pr",
+    severity: "warning",
+    title: "Large change — held for manual review",
+    detail: `This PR changes ${files} file(s) / ${lines} line(s) (hold threshold: ${SIZE_HOLD_DEFAULT_MAX_FILES} files or ${SIZE_HOLD_DEFAULT_MAX_LINES} lines).`,
+    action: "Split this into smaller, focused PRs, or a maintainer reviews and merges it manually.",
+  };
+}
+
+/** Guardrail-path manual-review HOLD finding (#gate-guardrail). A HOLD (neutral gate), never a hard blocker. */
+function buildGuardrailHoldFinding(): AdvisoryFinding {
+  return {
+    code: "guardrail_hold",
+    severity: "warning",
+    title: "Touches a guarded path — held for manual review",
+    detail: "This PR changes a guardrail-protected path, so it is held for a maintainer to review and merge manually.",
+    action: "A maintainer must review and merge this change.",
+  };
+}
+
+/** Dry-run disposition (#gate-dryrun): promote every `advisory` sub-gate mode to `block` so the core eval yields the
+ *  would-be conclusion. `off`/`block`/unset modes are untouched; non-mode policy (grace, size HOLD, guardrail) is
+ *  preserved as-is, so the would-be verdict still honours newcomer grace and the manual-review holds. PURE. */
+function promoteAdvisoryToBlock(policy: GateCheckPolicy): GateCheckPolicy {
+  // #disposition-redesign: the dry-run "would-be" verdict must reflect the REAL disposition model — a CLOSE is driven by
+  // the AI reviewer's confidence + genuine hard blockers (secret/CI/banned) ONLY. The advisory signals — missing linked
+  // issue, readiness/quality, slop, duplicates, manifest policy, self-authored issue — are NEVER close drivers, so they
+  // are deliberately NOT promoted here. Only the AI sub-gate is promoted, so an `advisory` AI defect still previews its
+  // would-be close while a missing linked issue or a low readiness score can never render a "close" verdict.
+  const block = (mode: GateRuleMode | undefined): GateRuleMode | undefined => (mode === "advisory" ? "block" : mode);
+  return {
+    ...policy,
+    dryRun: false,
+    aiReviewGateMode: block(policy.aiReviewGateMode),
+  };
+}
+
+/** Public entry. In normal mode this is exactly `evaluateGateCheckCore`. In dry-run mode (#gate-dryrun) it ALSO runs
+ *  the core eval with advisory sub-gates promoted to block and attaches that as `displayConclusion` — the would-be
+ *  merge/close/manual verdict — while the POSTED `conclusion` stays the real, non-enforcing one. */
 export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
+  const result = evaluateGateCheckCore(advisoryResult, policy);
+  if (!policy.dryRun) return result;
+  const wouldBe = evaluateGateCheckCore(advisoryResult, promoteAdvisoryToBlock(policy));
+  return { ...result, displayConclusion: wouldBe.conclusion };
+}
+
+function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
   const warnings = advisoryResult.findings.filter((finding) => finding.severity === "warning");
   // App/infra state (repo not synced yet, PR not cached): gittensory cannot evaluate this PR yet, so the
   // gate is NEUTRAL (non-blocking) and re-evaluates automatically on the next sync/webhook. Never block a
@@ -396,10 +483,11 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
   // Merge-readiness composite (#551): when set, escalate every sub-gate to its mode so they roll into one
   // pass/fail. When off, this is a no-op and each sub-gate keeps its own mode.
   const effective = applyMergeReadinessGate(policy);
-  const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding.code, effective));
+  const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding, effective));
   const qualityBlocker = buildQualityGateBlocker(effective);
   const slopBlocker = buildSlopGateBlocker(effective);
   const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : []), ...(slopBlocker ? [slopBlocker] : [])];
+  const lowConfidenceAiHolds = advisoryResult.findings.filter((finding) => isLowConfidenceAiReviewHold(finding, effective));
   // Non-confirmed contributors are gated NORMALLY (real blockers → failure → one-shot close; clean → success →
   // merge), the SAME as confirmed contributors: the review + CI + guardrail vet every PR, and confirmed-status
   // affects only on-chain SCORING, never the merge/close decision. (#gate-nonconfirmed) The old blanket
@@ -425,6 +513,16 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
     };
   }
   if (blockers.length === 0) {
+    if (lowConfidenceAiHolds.length > 0) {
+      return {
+        enabled: true,
+        conclusion: "neutral",
+        title: "Gittensory Gate — held for human review",
+        summary: "The AI review flagged a possible must-fix defect below the automatic close-confidence floor, so the gate is held for a human reviewer instead of passed automatically.",
+        blockers: [],
+        warnings: [...warnings, ...lowConfidenceAiHolds],
+      };
+    }
     // Fail-CLOSED AI hold (#ai-fail-closed, #audit-3.5): with NO deterministic blocker, a block-mode AI review
     // that could not return a usable verdict HOLDS the gate (neutral) for a human rather than passing
     // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
@@ -438,6 +536,24 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
         summary: "The AI review could not be completed for this change, so the gate is held for a human reviewer rather than passed automatically. It re-evaluates on the next update.",
         blockers: [],
         warnings,
+      };
+    }
+    // Manual-review HOLD (#gate-size / #gate-guardrail): a PR that would otherwise PASS but is oversized or touches
+    // a guarded path is HELD for a human (neutral → "manual" verdict) rather than auto-approved — never a failure,
+    // so neutral never blocks the merge (dry-run/advisory friendly) and a contributor PR is never auto-closed for size.
+    const sizeHold = buildSizeHoldFinding(effective);
+    const guardrailHold = effective.guardrailHit ? buildGuardrailHoldFinding() : null;
+    const holds = [sizeHold, guardrailHold].filter(
+      (f): f is AdvisoryFinding => f !== null,
+    );
+    if (holds.length > 0) {
+      return {
+        enabled: true,
+        conclusion: "neutral",
+        title: "Gittensory Gate — held for manual review",
+        summary: holds.map((h) => sanitizeForCheckRun(h.title)).join("; "),
+        blockers: [],
+        warnings: [...warnings, ...holds],
       };
     }
     return {
@@ -711,17 +827,29 @@ function isEvaluationBlocker(code: string): boolean {
   return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved";
 }
 
-function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean {
+// Default minimum calibrated confidence for an AI defect to BLOCK (#7) — used when the repo set `aiReview: block`
+// without a `closeConfidence`. 0.9 = block only on a high-confidence AI defect; below that stays advisory.
+const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.9;
+
+function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
+  const code = finding.code;
   // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
   // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
   if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory") === "block";
   if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block") === "block";
   // A dual-model AI consensus defect blocks ONLY when the maintainer opted into aiReview: block. It is the
-  // most conservative AI signal (two independent models, high confidence) but still confirmed-contributor
-  // gated by evaluateGateCheck, and advisory by default.
+  // most conservative AI signal (two independent models) but still confirmed-contributor gated by
+  // evaluateGateCheck, and advisory by default.
   // A consensus defect (both reviewers) OR a SPLIT (one reviewer flagged a blocker the other did not) both block
-  // when aiReviewGateMode is `block` — reviewbot's quorum: ANY reviewer rejection closes the PR. (#ai-review-split)
-  if (code === "ai_consensus_defect" || code === "ai_review_split") return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
+  // when aiReviewGateMode is `block` AND the finding's CALIBRATED confidence clears the close-confidence floor (#7).
+  // Below-floor AI defects are handled as a neutral human-review HOLD in evaluateGateCheckCore: the LLM-provided
+  // confidence must never turn a concrete AI defect into an auto-mergeable passing gate. A finding with no confidence
+  // (graceful fallback) is treated as 1.0 and always clears the floor — byte-identical to today's behavior. (#ai-review-split)
+  if (code === "ai_consensus_defect" || code === "ai_review_split") {
+    if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
+    const confidence = finding.confidence ?? 1;
+    return confidence >= (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
+  }
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
   // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
   // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
@@ -742,6 +870,13 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
   if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory") === "block";
   return false;
+}
+
+function isLowConfidenceAiReviewHold(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
+  if (!AI_JUDGMENT_BLOCKER_CODES.has(finding.code)) return false;
+  if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
+  const confidence = finding.confidence ?? 1;
+  return confidence < (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
 }
 
 function buildQualityGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {

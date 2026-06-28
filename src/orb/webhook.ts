@@ -78,16 +78,44 @@ export async function handleOrbWebhook(c: Context<{ Bindings: Env }>): Promise<R
   }
 
   await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "received" });
-  // Forward the event to a brokered self-host registered for this installation (best-effort, fail-safe — a down
-  // container never fails the 202; a non-forwardable event / no registered relay is a fast no-op).
-  const installId = payload.installation?.id;
-  const relayResult = await forwardOrbEvent(c.env, { eventName, installationId: installId, deliveryId, rawBody });
-  // Persist failed deliveries so the retry-orb-relay cron can re-attempt them (containers that are temporarily
-  // down recover without losing events; max 5 attempts within a 1-hour TTL).
-  if (relayResult === "failed" && installId !== undefined) {
-    await storeRelayFailure(c.env, { deliveryId, eventName, installationId: installId, rawBody });
-  }
+  // Forward to a brokered self-host registered for this installation — but NEVER block the 202 we owe GitHub on it.
+  // A push-mode forward POSTs to the container's relay URL with a 10s timeout; a slow (e.g. tailnet) container would
+  // otherwise delay our response past GitHub's ~10s delivery deadline, so GitHub marks the delivery FAILED even
+  // though we received + queued it. Run the forward (+ its failure-persistence for the retry cron) AFTER the
+  // response via waitUntil. (#orb-ack-fast)
+  scheduleAfterResponse(c, relayForward(c.env, { eventName, installationId: payload.installation?.id, deliveryId, rawBody }));
   return c.json({ ok: true, deliveryId, eventName, status: "received" }, 202);
+}
+
+/** Forward an Orb webhook to the brokered self-host registered for the installation, persisting a FAILED push for
+ *  the retry-orb-relay cron (a temporarily-down container recovers without losing events; max 5 attempts / 1h TTL).
+ *  Self-contained + fail-safe (never throws) so it can run AFTER the response via {@link scheduleAfterResponse}. */
+export async function relayForward(
+  env: Env,
+  args: { eventName: string; installationId: number | null | undefined; deliveryId: string; rawBody: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  try {
+    const relayResult = await forwardOrbEvent(env, args, fetchImpl);
+    // forwardOrbEvent returns "failed" only for an ENROLLED install (a null/absent id "skips"), so installationId is
+    // non-null here — persist the failed push so the retry-orb-relay cron re-attempts it.
+    if (relayResult === "failed") {
+      await storeRelayFailure(env, { deliveryId: args.deliveryId, eventName: args.eventName, installationId: args.installationId!, rawBody: args.rawBody });
+    }
+  } catch {
+    /* v8 ignore next -- fail-safe: a forward/persist error must never surface from the deferred task */
+  }
+}
+
+/** Run `task` AFTER the response is sent (Cloudflare Workers `waitUntil`), so a slow downstream relay forward can't
+ *  delay the webhook ACK past GitHub's ~10s delivery deadline. Falls back to fire-and-forget where there is no
+ *  execution context (e.g. a unit-test harness); the self-host server provides its own waitUntil shim. */
+function scheduleAfterResponse(c: Context<{ Bindings: Env }>, task: Promise<unknown>): void {
+  try {
+    (c.executionCtx as unknown as { waitUntil(p: Promise<unknown>): void }).waitUntil(task);
+  } catch {
+    void task;
+  }
 }
 
 async function getOrbWebhookEvent(env: Env, deliveryId: string): Promise<{ payloadHash: string; status: string } | null> {

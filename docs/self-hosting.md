@@ -73,7 +73,7 @@ a live install. (Scripted setups can pass the token via an `x-setup-token` heade
 
 - **Webhook URL** `https://<your-host>/v1/github/webhook`, and a **webhook secret** (→ `GITHUB_WEBHOOK_SECRET`).
 - **Permissions**: Pull requests (read/write), Contents (read; read/write if you want merge), Issues
-  (read/write), Checks (read), Metadata (read). Commit statuses (read).
+  (read/write), Checks (read/write), Metadata (read). Commit statuses (read).
 - **Events**: Pull request, Pull request review, Push, Issues, Check suite, Check run, Status.
 - Generate a **private key** (→ `GITHUB_APP_PRIVATE_KEY`), and note the **App ID** (→ `GITHUB_APP_ID`) and the
   app **slug** (→ `GITHUB_APP_SLUG`). Install the app on the repos you want reviewed.
@@ -146,10 +146,20 @@ bake them in, then provide `CLAUDE_CODE_OAUTH_TOKEN` / codex auth at run time. N
   substantive review, not a fast shallow one); override with `AI_MODEL` (any `claude`-CLI model id or alias —
   `sonnet`, `opus`, `claude-opus-4-8`, …) and `AI_EFFORT` (`low`|`medium`|`high`|`xhigh`|`max`; the CLI clamps a
   level above the model's own ceiling).
-- **Codex:** codex reads `auth.json` from `$CODEX_HOME` (default `~/.codex`) and **must have a WRITABLE home** — it
-  refreshes the token in place, so a read-only mount fails with _"Read-only file system"_. Set `CODEX_HOME` to a
-  writable path and **copy** your `~/.codex/auth.json` there (don't bind-mount it read-only). With a ChatGPT-
-  subscription login, leave `AI_MODEL` unset for codex — pinning `gpt-5*` returns _"not supported … with a ChatGPT
+- **Codex (ChatGPT subscription) — second AI reviewer.** Native, like `claude-code`: the `codex` CLI is **pre-baked**
+  (`INSTALL_AI_CLIS=true`) and reviews run on your **ChatGPT subscription** — **no API key**. It reads `auth.json` from
+  `$CODEX_HOME`, which the compose file points at a **persistent, writable `codex-home` volume** (default
+  `/home/node/.codex`, the `node` run user's home) — codex refreshes the OAuth token **in place**, so the home must be
+  writable (a read-only mount fails with _"Read-only file system"_) and durable (so the refreshed token survives
+  restarts). Set it up once:
+  1. On a trusted machine, authenticate: `codex login` (browser) — or `codex login --device-auth` for a headless box —
+     which writes `~/.codex/auth.json`.
+  2. Drop that file into the volume: `docker compose cp ~/.codex/auth.json gittensory:/home/node/.codex/auth.json`
+     (or bind-mount a host dir at `$CODEX_HOME` — keep it **read-write**, never `:ro`).
+  3. Add codex to the reviewer set and restart: `AI_PROVIDER=claude-code,codex` (combined per `AI_COMBINE`), then
+     `docker compose up -d --force-recreate gittensory`.
+
+  Leave `AI_MODEL` unset for a ChatGPT-subscription login — pinning `gpt-5*` returns _"not supported … with a ChatGPT
   account"_; codex picks the entitled default. (`ca-certificates` for codex's native TLS is baked in by `INSTALL_AI_CLIS`.)
 
 **Local RAG (retrieval-augmented review).** Self-host ships a SQLite-backed vector store, so RAG works without

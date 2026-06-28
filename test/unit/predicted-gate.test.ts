@@ -50,6 +50,14 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.note).toContain("public .gittensory.yml");
   });
 
+  it("threads gate.aiReview.closeConfidence into the policy without disturbing the public-config verdict (#7)", () => {
+    // The predictor builds the advisory from PUBLIC metadata only (no AI finding exists), so a closeConfidence
+    // floor has nothing to act on — the verdict stays a clean pass. This exercises the truthy `?? null` branch.
+    const result = verdict({ gate: { duplicates: "block", linkedIssue: "advisory", aiReview: { mode: "block", closeConfidence: 0.4 } } });
+    expect(result.conclusion).toBe("success");
+    expect(result.blockers).toHaveLength(0);
+  });
+
   it("predicts a BLOCK when a duplicate PR exists and duplicates:block (the default)", () => {
     // Another open PR already targets the same linked issue → duplicate_pr_risk.
     const result = verdict({ gate: { duplicates: "block" }, pullRequests: [openPr(42, "Retry uploads on 5xx responses", [7])] });

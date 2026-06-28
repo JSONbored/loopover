@@ -111,6 +111,7 @@ already-enabled gate.
 | AI review BYOK | `gate.aiReview.byok` | `aiReviewByok` | bool | `false` | When `true` and a provider key is configured, the *advisory* write-up uses the maintainer's frontier model. The consensus blocker always uses the free Workers-AI pair, so BYOK never changes who can be blocked. |
 | AI review provider | `gate.aiReview.provider` | `aiReviewProvider` | `anthropic` / `openai` / `null` | `null` | `null` = use the stored key's own provider. Must match the stored key's provider or BYOK is skipped (Workers-AI fallback). The key itself is only in the encrypted key store. |
 | AI review model | `gate.aiReview.model` | `aiReviewModel` | string / `null` | `null` | Model override for the BYOK advisory write-up (e.g. `claude-3-5-sonnet-latest`). `null` = the key record's model, else a conservative per-provider default. |
+| AI close confidence | `gate.aiReview.closeConfidence` | `aiReviewCloseConfidence` | number 0–1 (nullable) | `null` (engine uses `0.9`) | Minimum **calibrated** AI-reviewer confidence for a consensus defect / split to **block** under `aiReview.mode: block`. Below-threshold AI defects stay advisory (visible, never close). Each reviewer rates its own confidence; consensus carries the weaker reviewer's. Config-as-code only (no dashboard/DB column). |
 
 ### Guardrails and scope (focus manifest)
 

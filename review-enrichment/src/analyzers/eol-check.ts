@@ -21,6 +21,10 @@ interface VersionPin {
   version: string;
 }
 
+const MAX_EOL_FILES = 40;
+const MAX_EOL_PATCH_LINES = 1_000;
+const MAX_EOL_PINS = 80;
+
 // Leading numeric version from a tag/value: "3.8-slim" → "3.8", "18" → "18", "latest" → null.
 function leadingVersion(value: string): string | null {
   return /^v?(\d+(?:\.\d+)*)/.exec(value.trim())?.[1] ?? null;
@@ -36,10 +40,17 @@ export function extractVersionPins(
   files: NonNullable<EnrichRequest["files"]>,
 ): VersionPin[] {
   const pins: VersionPin[] = [];
+  let filesScanned = 0;
+  let linesScanned = 0;
   for (const file of files) {
     if (!file.patch) continue;
+    if (filesScanned >= MAX_EOL_FILES) break;
+    filesScanned += 1;
     const base = file.path.split("/").pop() ?? file.path;
     for (const raw of file.patch.split("\n")) {
+      if (linesScanned >= MAX_EOL_PATCH_LINES || pins.length >= MAX_EOL_PINS)
+        return pins;
+      linesScanned += 1;
       if (raw[0] !== "+" || raw.startsWith("+++")) continue;
       const line = raw.slice(1).trim();
       if (isDockerfile(file.path)) {
@@ -115,11 +126,14 @@ export async function scanEol(
 ): Promise<EolFinding[]> {
   const findings: EolFinding[] = [];
   const seen = new Set<string>();
+  const cyclesByProduct = new Map<string, Cycle[] | null>();
   for (const pin of extractVersionPins(req.files ?? [])) {
     const key = `${pin.product}:${pin.version}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const cycles = await fetchCycles(pin.product, fetchImpl);
+    if (!cyclesByProduct.has(pin.product))
+      cyclesByProduct.set(pin.product, await fetchCycles(pin.product, fetchImpl));
+    const cycles = cyclesByProduct.get(pin.product);
     if (!cycles) continue;
     const cycle = matchCycle(cycles, pin.version);
     if (!cycle) continue;

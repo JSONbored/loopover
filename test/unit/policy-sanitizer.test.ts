@@ -83,6 +83,7 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     privateTrustEnabled: true,
     aiReviewMode: "off",
     aiReviewByok: false,
+    aiReviewAllAuthors: false, closeOwnerAuthors: false,
     ...overrides,
   };
 }

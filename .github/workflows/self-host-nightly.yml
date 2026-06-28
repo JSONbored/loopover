@@ -30,7 +30,12 @@ jobs:
     steps:
       - name: Self-host health
         run: |
-          curl -fsS "$SELF_HOST_URL/ready" >/dev/null && echo "✓ self-host ready" || { echo "✗ self-host not ready"; exit 1; }
+          if curl -fsS "$SELF_HOST_URL/ready" >/dev/null; then
+            echo "✓ self-host ready"
+          else
+            echo "✗ self-host not ready"
+            exit 1
+          fi
 
       - name: Refresh the RAG index (fan out over configured repos)
         run: |

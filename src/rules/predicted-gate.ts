@@ -230,6 +230,7 @@ export function buildPredictedGateVerdict(args: {
     qualityGateMode: gate.readinessMode ?? undefined,
     qualityGateMinScore: gate.readinessMinScore ?? null,
     aiReviewGateMode: gate.aiReviewMode ?? undefined,
+    aiReviewCloseConfidence: gate.aiReviewCloseConfidence ?? null,
     mergeReadinessGateMode: gate.mergeReadiness ?? undefined,
     // #12: only meaningful when changed paths were supplied (the policy findings are pushed above only then);
     // absent paths ⇒ no manifest finding exists, so this mode has nothing to act on (byte-identical).

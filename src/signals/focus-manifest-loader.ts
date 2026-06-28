@@ -1,7 +1,7 @@
 import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
-import { gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, reviewConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource } from "./focus-manifest";
+import { featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, reviewConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
 import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
@@ -31,6 +31,35 @@ export type RepoFocusManifestFetcher = (repoFullName: string) => Promise<string 
 let localManifestReader: RepoFocusManifestFetcher | null = null;
 export function setLocalManifestReader(reader: RepoFocusManifestFetcher | null): void {
   localManifestReader = reader;
+}
+
+/**
+ * Async source for a repo's review CONTEXT (#review-skills): the `review/CLAUDE.md` guide + `review/skills/*.md` rubric
+ * modules from the container-private config dir. Registered once at boot by the Node entry (server.ts); the filesystem
+ * access lives inside that injected closure, keeping THIS module Workers-safe. Unset (cloud, or a self-host without the
+ * dir) ⇒ the loader returns an empty context and the reviewer prompt is byte-identical.
+ */
+export type RepoReviewContextReader = (
+  repoFullName: string,
+) => Promise<RepoReviewContext>;
+let localReviewContextReader: RepoReviewContextReader | null = null;
+export function setLocalReviewContextReader(
+  reader: RepoReviewContextReader | null,
+): void {
+  localReviewContextReader = reader;
+}
+
+/** Load the per-repo review context via the registered reader. Local file reads are cheap, so this is NOT cached.
+ *  Unset reader ⇒ empty context; a read error degrades to empty (the reviewer prompt stays byte-identical). */
+export async function loadRepoReviewContext(
+  repoFullName: string,
+): Promise<RepoReviewContext> {
+  if (!localReviewContextReader) return { guide: null, skills: [] };
+  try {
+    return await localReviewContextReader(repoFullName);
+  } catch {
+    return { guide: null, skills: [] };
+  }
 }
 
 /**
@@ -227,6 +256,7 @@ function manifestToJson(manifest: FocusManifest): Record<string, JsonValue> {
     gate: gateConfigToJson(manifest.gate),
     settings: settingsOverrideToJson(manifest.settings),
     review: reviewConfigToJson(manifest.review),
+    features: featuresConfigToJson(manifest.features),
   };
 }
 

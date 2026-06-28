@@ -104,15 +104,18 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
     expect(picked.map((p) => p.number)).toEqual([3]);
   });
 
-  it("REGRESSION (convergence): ceil(50/25)=2 sweeps with all GitHub writes suppressed cover ALL 50 open PRs, none re-selected before the rest are stamped", () => {
+  it("REGRESSION (convergence): ceil(open/cap) sweeps with all GitHub writes suppressed cover ALL open PRs, none re-selected before the rest are stamped", () => {
     // Simulate the dry-run / paused world: a re-gate stamps lastRegatedAt (a D1 write, never suppressed) but the
-    // GitHub updatedAt is frozen. Without the fix the same 25 stalest would recur every sweep forever; with it,
-    // two sweeps of 25 (the cap) cover all 50 distinct PRs exactly once — full coverage in ceil(open/max) sweeps.
-    const pulls = Array.from({ length: 50 }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(1000 - i), updatedAt: minutesAgo(1000) }));
+    // GitHub updatedAt is frozen. Without the fix the same `cap` stalest would recur every sweep forever; with it,
+    // ceil(open/cap) sweeps cover all distinct PRs exactly once — full coverage in ceil(open/max) sweeps. Sized off
+    // the live cap so it stays correct as SWEEP_MAX_PRS is tuned for the REST budget (#audit-rate-headroom).
+    const open = SWEEP_MAX_PRS * 2; // exactly two full sweeps' worth of stale open PRs
+    const sweepsNeeded = Math.ceil(open / SWEEP_MAX_PRS);
+    const pulls = Array.from({ length: open }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(1000 - i), updatedAt: minutesAgo(1000) }));
     const stampedAt = new Map<number, string>();
     const covered = new Set<number>();
     let sweepNow = nowMs;
-    for (let sweep = 0; sweep < 2; sweep++) {
+    for (let sweep = 0; sweep < sweepsNeeded; sweep++) {
       sweepNow += 5 * 60 * 1000; // each sweep runs ~5 min later (outside the freshness window)
       const now = new Date(sweepNow).toISOString();
       const view = pulls.map((p) => ({ ...p, lastRegatedAt: stampedAt.get(p.number) ?? p.lastRegatedAt }));
@@ -124,14 +127,14 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
         stampedAt.set(p.number, now); // the sweep stamps lastRegatedAt = now
       }
     }
-    expect(covered.size).toBe(50); // full coverage of every open PR
+    expect(covered.size).toBe(open); // full coverage of every open PR
   });
 
-  it("defaults: freshness window is two minutes and the cap is 25", () => {
+  it("defaults: freshness window is two minutes and the cap is bounded for the shared REST budget (#audit-rate-headroom)", () => {
     expect(SWEEP_FRESHNESS_MS).toBe(2 * 60 * 1000);
-    expect(SWEEP_MAX_PRS).toBe(25);
+    expect(SWEEP_MAX_PRS).toBe(6); // lowered from 25: 6 × 3 repos × 9 GETs × 30 ticks/hr ≈ 4.9k/hr ≤ the 5000 bucket
     const pulls = Array.from({ length: 40 }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(120 + i) }));
-    expect(selectRegateCandidates({ pulls, now: NOW })).toHaveLength(25);
+    expect(selectRegateCandidates({ pulls, now: NOW })).toHaveLength(SWEEP_MAX_PRS);
   });
 });
 

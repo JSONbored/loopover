@@ -376,6 +376,12 @@ export type AdvisoryFinding = {
   detail: string;
   action?: string;
   publicText?: string;
+  /** Calibrated confidence in [0,1] for an AI-judgment finding (`ai_consensus_defect` / `ai_review_split`) — the
+   *  reviewer's own probability that the flagged blocker is a real defect (#8). The gate's `aiReviewCloseConfidence`
+   *  threshold uses it: an AI defect blocks ONLY when this clears the floor. Absent for deterministic findings (they
+   *  carry no model confidence); an absent/unparseable reviewer confidence degrades to 1.0 upstream, so omitting it
+   *  here behaves exactly like today. */
+  confidence?: number;
 };
 
 export type Advisory = {
@@ -447,6 +453,10 @@ export type PullRequestRecord = {
    *  review write that would bump updatedAt is suppressed (dry-run / paused). Sweep-written; read straight from
    *  the row (never the GitHub payload). */
   lastRegatedAt?: string | null | undefined;
+  /** Over-publish dedup: the head SHA at which the public surface was last published. The re-gate sweep skips
+   *  re-reviewing + re-publishing while lastPublishedSurfaceSha === headSha; a new commit (push/rebase/force-push)
+   *  clears the match so the surface re-publishes the new code. Publish-written; read straight from the row. */
+  lastPublishedSurfaceSha?: string | null | undefined;
 };
 
 export type IssueRecord = {
@@ -505,6 +515,14 @@ export type RepositorySettings = {
    *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
    *  only, applies to every author like every blocker). Default `off` — opt-in via .gittensory.yml. */
   slopGateMode: GateRuleMode;
+  /** PR-size manual-review HOLD (#gate-size). `off` (default/absent) = no size hold; `advisory`/`block` = a PR with
+   *  >= 10 changed files OR >= 500 changed (added+deleted) lines that would otherwise pass is HELD for manual review
+   *  (neutral gate → "manual" verdict), never auto-merged and never a hard failure. Opt-in via `gate.size.mode`. */
+  sizeGateMode?: GateRuleMode | undefined;
+  /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
+   *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
+   *  preview exactly what it would do before the maintainer flips to real enforcement. Default off. */
+  gateDryRun?: boolean | undefined;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;
   /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (blocked paths,
@@ -542,6 +560,23 @@ export type RepositorySettings = {
   /** Config-as-code model override for the BYOK advisory write-up (e.g. "claude-3-5-sonnet-latest").
    *  `null` = use the key record's model, else a conservative per-provider default. */
   aiReviewModel?: string | null | undefined;
+  /** Review EVERY PR's author, not only confirmed Gittensor contributors. The AI maintainer review is
+   *  confirmed-contributor-gated by default (an AI-spend guard). When true the review runs for any author —
+   *  intended for a self-host operator who wants real reviews on all PRs (incl. their own) and pays for the
+   *  AI themselves. Default false — opt-in via `.gittensory.yml gate.aiReview.allAuthors`. Independent of
+   *  `aiReviewMode`: `off` still means no AI; this only widens WHO an enabled review covers. */
+  aiReviewAllAuthors: boolean;
+  /** Minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK under `aiReviewMode: block` (#7).
+   *  A dual-model consensus defect / split blocks only when its finding `confidence >= aiReviewCloseConfidence`;
+   *  below-threshold AI defects hold for human review rather than passing. Config-as-code only — set via
+   *  `.gittensory.yml gate.aiReview.closeConfidence` (no dashboard/DB column); unset ⇒ the gate uses the 0.9
+   *  default. Clamped to [0,1] at parse time. */
+  aiReviewCloseConfidence?: number | null | undefined;
+  /** When TRUE, the repo OWNER's (and maintainer's) own PRs are eligible for auto-CLOSE like a contributor's
+   *  (still subject to the `close` autonomy class + the same adverse-signal conditions). Default FALSE — owner
+   *  PRs are exempt from auto-close (merge or manual-hold only). Per-repo configurable so maintainers choose
+   *  rather than inheriting a hardwired opinion. */
+  closeOwnerAuthors: boolean;
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;

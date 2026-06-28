@@ -36,3 +36,25 @@ export function isConvergenceRepoAllowed(env: { GITTENSORY_REVIEW_REPOS?: string
   }
   return false;
 }
+
+/**
+ * The configured GITTENSORY_REVIEW_REPOS as a deduped list of "owner/repo" full-names (original case preserved,
+ * deduped case-insensitively, empty entries dropped). Empty when unset.
+ *
+ * Used to PROACTIVELY index a self-host maintainer's repos for RAG even when they were never registered via a
+ * webhook (the brokered model leaves is_registered=0), so a maintainer's whole repo set is pre-indexed for
+ * codebase-aware reviews instead of waiting for a cold first-PR index.
+ */
+export function listConvergenceRepos(env: { GITTENSORY_REVIEW_REPOS?: string | undefined }): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of (env.GITTENSORY_REVIEW_REPOS ?? "").split(",")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}

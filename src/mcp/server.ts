@@ -72,6 +72,8 @@ import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outco
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
+import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
+import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/maintainer-lane";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -611,6 +613,32 @@ const maintainerNoiseOutputSchema = {
   summary: z.string().optional(),
 };
 
+const labelAuditOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  configuredLabels: z.array(z.string()).optional(),
+  liveLabels: z.array(z.string()).optional(),
+  observedLabels: z.array(z.unknown()).optional(),
+  missingConfiguredLabels: z.array(z.string()).optional(),
+  suspiciousConfiguredLabels: z.array(z.string()).optional(),
+  trustedPipelineReady: z.boolean().optional(),
+  findings: z.array(z.unknown()).optional(),
+  summary: z.string().optional(),
+};
+
+const maintainerLaneOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  lane: z.unknown().optional(),
+  maintainerCut: z.number().optional(),
+  maintainerCutConfigured: z.boolean().optional(),
+  queueHealth: z.unknown().optional(),
+  configQuality: z.unknown().optional(),
+  contributorIntakeHealth: z.unknown().optional(),
+  findings: z.array(z.unknown()).optional(),
+  summary: z.string().optional(),
+};
+
 const freshnessResponseOutputSchema = {
   status: z.string().optional(),
   repoFullName: z.string().optional(),
@@ -1060,6 +1088,26 @@ export class GittensoryMcp {
         outputSchema: maintainerNoiseOutputSchema,
       },
       async (input) => this.toolResult(await this.getMaintainerNoise(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_label_audit",
+      {
+        description: "Return the repo's label-policy audit: configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness for label-multiplier scoring. Maintainer-authenticated; advisory only.",
+        inputSchema: ownerRepoShape,
+        outputSchema: labelAuditOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getLabelAudit(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_maintainer_lane",
+      {
+        description: "Return the maintainer-lane triage report for a repo: the lane recommendation alongside the configured maintainer cut, queue health, config quality, and contributor-intake health. Maintainer-authenticated; advisory only.",
+        inputSchema: ownerRepoShape,
+        outputSchema: maintainerLaneOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getMaintainerLane(input)),
     );
 
     server.registerTool(
@@ -1825,6 +1873,26 @@ export class GittensoryMcp {
     const report = await loadMaintainerNoiseReport(this.env, fullName);
     return {
       summary: maintainerNoiseSummary(report),
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getLabelAudit(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const report = await loadLabelAudit(this.env, fullName);
+    return {
+      summary: labelAuditSummary(report),
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getMaintainerLane(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const report = await loadMaintainerLaneReport(this.env, fullName);
+    return {
+      summary: maintainerLaneSummary(report),
       data: report as unknown as Record<string, unknown>,
     };
   }

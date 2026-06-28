@@ -3,6 +3,7 @@ import {
   buildFocusManifestGuidance,
   compileFocusManifestPolicy,
   deriveContributionLanes,
+  featuresConfigToJson,
   gateConfigToJson,
   isFocusManifestPublicSafe,
   matchesManifestPath,
@@ -12,6 +13,7 @@ import {
   excludeReviewPaths,
   resolveReviewPathInstructions,
   resolveReviewPreMergeChecks,
+  composeRepoReviewContext,
   resolveReviewPromptOverrides,
   reviewConfigToJson,
   settingsOverrideToJson,
@@ -475,9 +477,10 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+      features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -763,7 +766,7 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -776,6 +779,18 @@ describe("parseFocusManifest gate config", () => {
     expect(bad.gate.mergeReadiness).toBeNull();
     expect(bad.gate.firstTimeContributorGrace).toBeNull();
     expect(bad.gate.present).toBe(false);
+  });
+
+  it("parses gate.selfAuthoredLinkedIssue + settings.selfAuthoredLinkedIssueGateMode, round-trips + resolves them (the gate alias wins)", () => {
+    const m = parseFocusManifest({ gate: { selfAuthoredLinkedIssue: "block" }, settings: { selfAuthoredLinkedIssueGateMode: "advisory" } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.selfAuthoredLinkedIssue).toBe("block");
+    expect(m.settings.selfAuthoredLinkedIssueGateMode).toBe("advisory");
+    expect(gateConfigToJson(m.gate)).toMatchObject({ selfAuthoredLinkedIssue: "block" });
+    const eff = resolveEffectiveSettings({ selfAuthoredLinkedIssueGateMode: "off" } as RepositorySettings, m);
+    expect(eff.selfAuthoredLinkedIssueGateMode).toBe("block");
+    const bad = parseFocusManifest({ gate: { selfAuthoredLinkedIssue: "sometimes" } });
+    expect(bad.gate.selfAuthoredLinkedIssue).toBeNull();
   });
 
   it("parses gate.manifestPolicy, round-trips it through gateConfigToJson, and warns + nulls on a bad value (#555)", () => {
@@ -899,6 +914,70 @@ describe("parseFocusManifest gate config", () => {
     expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate);
     expect(parseFocusManifest({ gate: { aiReview: ["nope"] } }).warnings.some((w) => /gate\.aiReview" must be a mapping/.test(w))).toBe(true);
     expect(parseFocusManifest({ gate: { aiReview: { mode: "loud" } } }).warnings.some((w) => /gate\.aiReview\.mode/.test(w))).toBe(true);
+  });
+
+  it("parses gate.aiReview.allAuthors, makes the gate present, round-trips it, and resolves it into effective settings", () => {
+    // allAuthors alone makes the gate present (so an operator can set ONLY this), serializes back under
+    // gate.aiReview.allAuthors, and the gate alias projects it onto effective settings.
+    const m = parseFocusManifest({ gate: { aiReview: { allAuthors: true } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewAllAuthors).toBe(true);
+    expect((gateConfigToJson(m.gate) as { aiReview: { allAuthors: boolean } }).aiReview.allAuthors).toBe(true);
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    expect(parseFocusManifest({ gate: { aiReview: { allAuthors: "yes" } } }).warnings.some((w) => /gate\.aiReview\.allAuthors/.test(w))).toBe(true);
+    const eff = resolveEffectiveSettings({ aiReviewAllAuthors: false , closeOwnerAuthors: false} as unknown as RepositorySettings, m);
+    expect(eff.aiReviewAllAuthors).toBe(true);
+    // Absent ⇒ null ⇒ the gate alias leaves the DB value untouched.
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewAllAuthors).toBeNull();
+    expect(resolveEffectiveSettings({ aiReviewAllAuthors: true , closeOwnerAuthors: false} as unknown as RepositorySettings, noFlag).aiReviewAllAuthors).toBe(true);
+  });
+
+  it("parses gate.aiReview.closeConfidence, clamps to [0,1], makes the gate present, round-trips + resolves it, and warns on a bad value (#7)", () => {
+    // closeConfidence alone makes the gate present, serializes back under gate.aiReview.closeConfidence, and the
+    // gate alias projects it onto effective settings.
+    const m = parseFocusManifest({ gate: { aiReview: { closeConfidence: 0.75 } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewCloseConfidence).toBe(0.75);
+    expect((gateConfigToJson(m.gate) as { aiReview: { closeConfidence: number } }).aiReview.closeConfidence).toBe(0.75);
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    // Clamped to [0,1] WITHOUT rounding (a fractional confidence, not a 0-100 score).
+    expect(parseFocusManifest({ gate: { aiReview: { closeConfidence: 1.5 } } }).gate.aiReviewCloseConfidence).toBe(1);
+    expect(parseFocusManifest({ gate: { aiReview: { closeConfidence: -0.2 } } }).gate.aiReviewCloseConfidence).toBe(0);
+    expect(parseFocusManifest({ gate: { aiReview: { closeConfidence: 0.333 } } }).gate.aiReviewCloseConfidence).toBe(0.333); // not rounded
+    // A non-number value warns and is dropped (stays null).
+    expect(parseFocusManifest({ gate: { aiReview: { closeConfidence: "high" } } }).warnings.some((w) => /gate\.aiReview\.closeConfidence/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { aiReview: { closeConfidence: "high" } } }).gate.aiReviewCloseConfidence).toBeNull();
+    // The gate alias projects it onto effective settings; absent ⇒ null ⇒ the DB value (here undefined) is untouched.
+    const eff = resolveEffectiveSettings({ aiReviewCloseConfidence: undefined } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewCloseConfidence).toBe(0.75);
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewCloseConfidence).toBeNull();
+    expect(resolveEffectiveSettings({ aiReviewCloseConfidence: 0.6 } as unknown as RepositorySettings, noFlag).aiReviewCloseConfidence).toBe(0.6);
+  });
+
+  it("parses the features: block (per-repo converged-feature toggles), round-trips it, and makes the manifest present", () => {
+    const m = parseFocusManifest({ features: { rag: true, reputation: false, unifiedComment: true } });
+    expect(m.present).toBe(true);
+    expect(m.features.present).toBe(true);
+    expect(m.features.rag).toBe(true);
+    expect(m.features.reputation).toBe(false);
+    expect(m.features.unifiedComment).toBe(true);
+    expect(m.features.safety).toBeNull(); // unset stays null (⇒ allowlist default at resolve time)
+    // Round-trips through featuresConfigToJson → parseFocusManifest unchanged.
+    expect(parseFocusManifest({ features: featuresConfigToJson(m.features) }).features).toEqual(m.features);
+    // A non-boolean value warns and is dropped (stays null); a non-mapping warns.
+    expect(parseFocusManifest({ features: { rag: "yes" } }).warnings.some((w) => /features\.rag/.test(w))).toBe(true);
+    expect(parseFocusManifest({ features: ["nope"] }).warnings.some((w) => /"features" must be a mapping/.test(w))).toBe(true);
+    // An empty features block leaves the manifest absent (no recognized fields).
+    expect(parseFocusManifest({ features: {} }).features.present).toBe(false);
+    expect(featuresConfigToJson(parseFocusManifest({ features: {} }).features)).toBeNull();
+  });
+
+  it("parses aiReviewAllAuthors from the settings: block (generic override)", () => {
+    const parsed = parseFocusManifest({ settings: { aiReviewAllAuthors: true , closeOwnerAuthors: false} });
+    expect(parsed.settings.aiReviewAllAuthors).toBe(true);
+    expect(resolveEffectiveSettings({ aiReviewAllAuthors: false , closeOwnerAuthors: false} as unknown as RepositorySettings, parsed).aiReviewAllAuthors).toBe(true);
   });
 
   it("parses gate.aiReview provider + model (config-as-code) and rejects an unknown provider", () => {
@@ -1187,10 +1266,10 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
-    const manifest = parseFocusManifest({ review: { profile: "chill", inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
+    const manifest = parseFocusManifest({ review: { profile: "chill", inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", exclude_paths: ["**/*.lock"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", excludePaths: ["**/*.lock"] });
     // A null manifest (load failure) yields the byte-identical defaults; inline comments default OFF.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, inlineComments: false, pathInstructions: [], excludePaths: [] });
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, inlineComments: false, pathInstructions: [], instructions: null, excludePaths: [] });
     // An explicit false / absent toggle both resolve to the strict-boolean false.
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { inline_comments: false } })).inlineComments).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).inlineComments).toBe(false);
@@ -1308,5 +1387,69 @@ describe("review.pre_merge_checks (#review-pre-merge-checks)", () => {
     const manifest = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l" }] } });
     expect(resolveReviewPreMergeChecks(manifest)).toEqual(manifest.review.preMergeChecks);
     expect(resolveReviewPreMergeChecks(null)).toEqual([]);
+  });
+});
+
+describe("composeRepoReviewContext (#review-skills)", () => {
+  it("returns '' for null/empty/whitespace-only context", () => {
+    expect(composeRepoReviewContext(null, ["a.ts"])).toBe("");
+    expect(composeRepoReviewContext({ guide: null, skills: [] }, ["a.ts"])).toBe("");
+    expect(composeRepoReviewContext({ guide: "   ", skills: [] }, ["a.ts"])).toBe("");
+  });
+
+  it("includes the guide + always/blank-when/glob-matched skills, excluding non-matching ones", () => {
+    const ctx = {
+      guide: "Review THIS repo carefully.",
+      skills: [
+        { name: "voice", when: "always", body: "Be decisive." },
+        { name: "blank", when: "", body: "Blank-when is always-on." },
+        { name: "sql", when: "**/*.sql", body: "Check the index usage." },
+        { name: "schema", when: "{**/db/schema.ts,**/*.sql}", body: "Migration parity." },
+        { name: "ui", when: "app/**", body: "Should not appear." },
+      ],
+    };
+    const out = composeRepoReviewContext(ctx, ["migrations/0079_x.sql"]);
+    expect(out).toContain("Review THIS repo carefully.");
+    expect(out).toContain("## skill: voice");
+    expect(out).toContain("## skill: blank");
+    expect(out).toContain("## skill: sql"); // **/*.sql matched the .sql file
+    expect(out).toContain("## skill: schema"); // brace-list matched the .sql file
+    expect(out).not.toContain("## skill: ui"); // app/** did not match
+    expect(out).not.toContain("Should not appear.");
+  });
+
+  it("drops empty-body and non-matching skills (⇒ '' when nothing applies)", () => {
+    const out = composeRepoReviewContext(
+      { guide: null, skills: [{ name: "empty", when: "always", body: "   " }, { name: "x", when: "src/**", body: "nope" }] },
+      ["README.md"],
+    );
+    expect(out).toBe("");
+  });
+
+  it("bounds the injected context to the cost cap", () => {
+    const out = composeRepoReviewContext({ guide: "x".repeat(20_000), skills: [] }, []);
+    expect(out.length).toBeLessThanOrEqual(16_000);
+  });
+});
+
+describe("gate.size manual-review hold config (#gate-size)", () => {
+  it("parses gate.size.mode, warns on a non-mapping size, and round-trips via gateConfigToJson", () => {
+    const m = parseFocusManifest({ gate: { size: { mode: "advisory" } } });
+    expect(m.gate.sizeMode).toBe("advisory");
+    expect(m.gate.present).toBe(true);
+    const bad = parseFocusManifest({ gate: { size: "nope" } });
+    expect(bad.gate.sizeMode).toBeNull();
+    expect(bad.warnings.some((w) => w.includes("gate.size"))).toBe(true);
+    const round = parseFocusManifest({ gate: gateConfigToJson(m.gate) });
+    expect(round.gate.sizeMode).toBe("advisory");
+  });
+});
+
+describe("gate.dryRun dry-run disposition config (#gate-dryrun)", () => {
+  it("parses gate.dryRun, sets present, and round-trips via gateConfigToJson", () => {
+    const m = parseFocusManifest({ gate: { dryRun: true } });
+    expect(m.gate.dryRun).toBe(true);
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ dryRun: true });
   });
 });

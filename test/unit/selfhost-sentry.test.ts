@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock @sentry/node so the dynamic import inside initSentry() resolves to spies. Hoisted so vi.mock can see it.
 const mocks = vi.hoisted(() => {
-  const scope = { setContext: vi.fn(), setLevel: vi.fn(), setTag: vi.fn() };
+  const scope = { setContext: vi.fn(), setLevel: vi.fn(), setTag: vi.fn(), setFingerprint: vi.fn() };
   return {
     scope,
     init: vi.fn(),
     withScope: vi.fn((cb: (s: typeof scope) => void) => cb(scope)),
     captureException: vi.fn(),
+    captureMessage: vi.fn(),
     flush: vi.fn().mockResolvedValue(true),
   };
 });
@@ -15,6 +16,7 @@ vi.mock("@sentry/node", () => ({
   init: mocks.init,
   withScope: mocks.withScope,
   captureException: mocks.captureException,
+  captureMessage: mocks.captureMessage,
   flush: mocks.flush,
 }));
 
@@ -23,6 +25,8 @@ import {
   captureError,
   captureReviewFailure,
   flushSentry,
+  forwardStructuredLogToSentry,
+  installStructuredLogForwarding,
   scrubEvent,
   resetSentryForTest,
 } from "../../src/selfhost/sentry";
@@ -121,7 +125,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureException).toHaveBeenCalledTimes(2);
   });
 
-  it("captureReviewFailure sets warning level + repo/PR/SHA tags, skipping null/undefined, and works without context", async () => {
+  it("captureReviewFailure sets error level + repo/PR/SHA tags, skipping null/undefined, and works without context", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureReviewFailure(new Error("rev"), {
       repo: "o/r",
@@ -129,7 +133,7 @@ describe("enabled when SENTRY_DSN is set", () => {
       head_sha: "abc",
       owner: null,
     });
-    expect(mocks.scope.setLevel).toHaveBeenCalledWith("warning");
+    expect(mocks.scope.setLevel).toHaveBeenCalledWith("error");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "o/r");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("pr", "7");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("head_sha", "abc");
@@ -151,5 +155,152 @@ describe("enabled when SENTRY_DSN is set", () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     mocks.flush.mockRejectedValueOnce(new Error("network"));
     await expect(flushSentry()).resolves.toBeUndefined();
+  });
+});
+
+describe("forwardStructuredLogToSentry — central console.log → Sentry error forwarding (#1468)", () => {
+  it("is a no-op when Sentry is off", () => {
+    forwardStructuredLogToSentry(
+      JSON.stringify({ level: "error", event: "x" }),
+    );
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
+  });
+
+  it("ignores non-strings, non-JSON-object strings, and unparseable JSON when enabled", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(42); // not a string
+    forwardStructuredLogToSentry({ level: "error" }); // not a string
+    forwardStructuredLogToSentry("plain log line"); // doesn't start with "{"
+    forwardStructuredLogToSentry(""); // empty string (charCodeAt(0) is NaN)
+    forwardStructuredLogToSentry("{not valid json"); // throws → caught
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips routine (non-error) structured logs", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({ level: "audit", event: "job_complete" }),
+    );
+    forwardStructuredLogToSentry(
+      JSON.stringify({ event: "regate_sweep_throttled" }),
+    ); // no level
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
+  });
+
+  it("forwards a level:error log titled by event, with context + an event tag", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "orb_broker_unavailable",
+        installationId: 1,
+      }),
+    );
+    expect(mocks.scope.setLevel).toHaveBeenCalledWith("error");
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("log", {
+      level: "error",
+      event: "orb_broker_unavailable",
+      installationId: 1,
+    });
+    expect(mocks.scope.setTag).toHaveBeenCalledWith(
+      "event",
+      "orb_broker_unavailable",
+    );
+    expect(mocks.captureMessage).toHaveBeenCalledWith(
+      "orb_broker_unavailable",
+      "error",
+    );
+  });
+
+  it("leads the title with the real error detail + indexes filterable tags + fingerprints by event (#observability)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "orb_broker_unavailable",
+        error: "The operation was aborted due to timeout",
+        repo: "JSONbored/gittensory",
+        installationId: 143010787,
+      }),
+    );
+    // The issue TITLE now carries the actual failure, not just the event slug — no hunting through the context blob.
+    expect(mocks.captureMessage).toHaveBeenCalledWith("orb_broker_unavailable: The operation was aborted due to timeout", "error");
+    // The present log dimensions become filterable tags.
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "JSONbored/gittensory");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installationId", "143010787");
+    // Recurrences of one failure group into a single issue by event.
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-log", "orb_broker_unavailable"]);
+  });
+
+  it("forwards a level:fatal log titled by message (no event ⇒ no tag)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({ level: "fatal", message: "boom" }),
+    );
+    expect(mocks.scope.setLevel).toHaveBeenCalledWith("fatal");
+    expect(mocks.scope.setTag).not.toHaveBeenCalled();
+    expect(mocks.captureMessage).toHaveBeenCalledWith("boom", "fatal");
+  });
+
+  it("falls back to a generic title when neither event nor message is present", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(JSON.stringify({ level: "error", code: 500 }));
+    expect(mocks.captureMessage).toHaveBeenCalledWith("error", "error");
+  });
+});
+
+describe("installStructuredLogForwarding — central console sink instrumentation (#1468)", () => {
+  const makeConsole = () => {
+    const base = { log: vi.fn(), error: vi.fn() };
+    return { target: { ...base }, base };
+  };
+
+  it("forwards structured level:error logs emitted through console.error (regression)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target, base } = makeConsole();
+
+    installStructuredLogForwarding(target);
+    target.error(
+      JSON.stringify({
+        level: "error",
+        event: "orb_broker_unavailable",
+        installationId: 1,
+      }),
+    );
+
+    expect(mocks.captureMessage).toHaveBeenCalledWith(
+      "orb_broker_unavailable",
+      "error",
+    );
+    expect(base.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps forwarding structured level:error logs emitted through console.log", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target, base } = makeConsole();
+
+    installStructuredLogForwarding(target);
+    target.log(JSON.stringify({ level: "error", event: "gate_check_failed" }));
+
+    expect(mocks.captureMessage).toHaveBeenCalledWith(
+      "gate_check_failed",
+      "error",
+    );
+    expect(base.log).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recursively forward if the Sentry path logs while forwarding", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target, base } = makeConsole();
+    installStructuredLogForwarding(target);
+    mocks.captureMessage.mockImplementationOnce(() => {
+      target.error(JSON.stringify({ level: "error", event: "recursive" }));
+    });
+
+    target.error(JSON.stringify({ level: "error", event: "outer" }));
+
+    expect(mocks.captureMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.captureMessage).toHaveBeenCalledWith("outer", "error");
+    expect(base.error).toHaveBeenCalledTimes(2);
   });
 });

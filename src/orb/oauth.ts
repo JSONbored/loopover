@@ -16,6 +16,7 @@ import type { Context } from "hono";
 import { isOrbBrokerEnabled, issueOrbEnrollment } from "./broker";
 
 type GitHubUser = { login: string; id?: number };
+type GitHubOrgMembership = { role?: string; state?: string; organization?: { id?: number } };
 
 /** Exchange the OAuth code for the maintainer's access token using the ORB App's OAuth credentials. Null when the
  *  credentials aren't configured or GitHub returns no token. */
@@ -46,20 +47,22 @@ export async function fetchOrbOAuthUser(token: string, fetchImpl: typeof fetch =
 export async function verifyInstallationAdmin(
   token: string,
   userLogin: string,
+  userId: number | null | undefined,
   accountLogin: string | null,
   accountType: string | null,
+  accountId: number | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
-  if (!accountLogin) return false;
+  if (!accountLogin || accountId === null) return false;
   if (accountType !== "Organization") {
-    return userLogin.toLowerCase() === accountLogin.toLowerCase();
+    return userId === accountId && userLogin.toLowerCase() === accountLogin.toLowerCase();
   }
   const res = await fetchImpl(`https://api.github.com/user/memberships/orgs/${encodeURIComponent(accountLogin)}`, {
     headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "gittensory/0.1" },
   });
   if (!res.ok) return false;
-  const body = (await res.json().catch(() => ({}))) as { role?: string; state?: string };
-  return body.state === "active" && body.role === "admin";
+  const body = (await res.json().catch(() => ({}))) as GitHubOrgMembership;
+  return body.state === "active" && body.role === "admin" && body.organization?.id === accountId;
 }
 
 async function handleOrbEnrollment(c: Context<{ Bindings: Env }>, code: string, installationId: number): Promise<Response> {
@@ -67,13 +70,14 @@ async function handleOrbEnrollment(c: Context<{ Bindings: Env }>, code: string, 
   if (!token) return c.html(landingPage("Couldn't verify your GitHub identity", "The authorization didn't complete — re-run the install from GitHub and try again."), 400);
   const user = await fetchOrbOAuthUser(token);
   if (!user) return c.html(landingPage("Couldn't verify your GitHub identity", "We couldn't read your GitHub account — try the install again."), 400);
-  const install = await c.env.DB.prepare("SELECT account_login, account_type, registered, self_enrollment_disabled, suspended_at, removed_at FROM orb_github_installations WHERE installation_id = ?")
+  const install = await c.env.DB.prepare("SELECT account_login, account_type, account_id, registered, self_enrollment_disabled, suspended_at, removed_at FROM orb_github_installations WHERE installation_id = ?")
     .bind(installationId)
-    .first<{ account_login: string | null; account_type: string | null; registered: number; self_enrollment_disabled: number; suspended_at: string | null; removed_at: string | null }>();
+    .first<{ account_login: string | null; account_type: string | null; account_id: number | null; registered: number; self_enrollment_disabled: number; suspended_at: string | null; removed_at: string | null }>();
   if (!install) return c.html(landingPage("Installation not recognized", "We haven't recorded this installation yet — give it a moment after installing, then retry."), 404);
   // The admin-of-installation check is the authorization gate — it runs BEFORE we reveal or change any state, so a
-  // non-admin learns nothing about the install and can never enroll someone else's.
-  const isAdmin = await verifyInstallationAdmin(token, user.login, install.account_login, install.account_type);
+  // non-admin learns nothing about the install and can never enroll someone else's. It binds to the immutable
+  // GitHub account id (logins can be renamed/reused), so a stale account_login can never grant access.
+  const isAdmin = await verifyInstallationAdmin(token, user.login, user.id, install.account_login, install.account_type, install.account_id);
   if (!isAdmin) return c.html(landingPage("Admin access required", "You must be an admin of this installation's account to enroll it for self-host."), 403);
   if (install.removed_at !== null || install.suspended_at !== null) return c.html(landingPage("Installation not active", "This installation is suspended or uninstalled — re-install the Orb App, then retry."), 403);
   if (install.self_enrollment_disabled === 1) return c.html(landingPage("Installation disabled", "This installation was disabled by the operator — contact the operator to re-enable self-host enrollment."), 403);

@@ -160,6 +160,20 @@ export function renderBrief(
     }
   }
 
+  const revertSignals = findings.revertRecurrence ?? [];
+  if (revertSignals.length) {
+    lines.push(
+      "### Revert / regression risk (verify intent and add regression coverage)",
+    );
+    for (const item of revertSignals) {
+      const files =
+        item.files?.length ? ` — files: ${item.files.map((f) => safeCodeSpan(f)).join(", ")}` : "";
+      lines.push(
+        `- **${item.confidence}** (${item.kind}): ${promptText(item.detail)}${files}`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

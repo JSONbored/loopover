@@ -109,6 +109,14 @@ export interface SecretLogFinding {
   category: "secret" | "pii" | "request-object";
 }
 
+/** A revert/regression signal: explicit revert language or symmetric churn that mirrors undoing prior work. */
+export interface RevertRecurrenceFinding {
+  kind: "explicit-revert" | "rollback-language" | "symmetric-churn";
+  detail: string;
+  files?: string[];
+  confidence: "high" | "medium";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -120,6 +128,7 @@ export interface BriefFindings {
   redos?: RedosFinding[];
   codeowners?: CodeownersFinding[];
   secretLog?: SecretLogFinding[];
+  revertRecurrence?: RevertRecurrenceFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

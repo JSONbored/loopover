@@ -246,11 +246,11 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(lastCapturedError().message).toBe("boom");
   });
 
-  it("falls back to a generic title when neither event nor message is present", async () => {
+  it("summarizes salient fields when neither event nor message is present", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(JSON.stringify({ level: "error", code: 500 }));
     expect(lastCapturedError().name).toBe("GittensoryLog");
-    expect(lastCapturedError().message).toBe("(no message — see the log context)");
+    expect(lastCapturedError().message).toBe("code=500");
   });
 
   it("uses a bare event title when a no-message error log has no repo to locate it", async () => {
@@ -262,7 +262,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(lastCapturedError().message).toBe("(no message — see the log context)");
   });
 
-  it("uses (repo) without a pull number, and never dumps other fields into the title", async () => {
+  it("summarizes salient fields (count/projects) alongside the repo location", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(
       JSON.stringify({
@@ -273,9 +273,31 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
         projects: ["a", "b"],
       }),
     );
-    // Only the repo locates it (no pullNumber); count/projects stay in the context, NOT crammed in the value.
+    // The repo locates it AND its salient fields are summarized, so the issue shows real data, not "(no message)".
     expect(lastCapturedError().name).toBe("closehold_backlog");
-    expect(lastCapturedError().message).toBe("(JSONbored/gittensory)");
+    expect(lastCapturedError().message).toBe(
+      '(JSONbored/gittensory) count=2, projects=["a","b"]',
+    );
+  });
+
+  it("summarizes a field-only error log (close_breaker_engaged), skipping nulls + long blobs", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "close_breaker_engaged",
+        project: "JSONbored/gittensory",
+        closePrecision: 0.6,
+        floor: 0.8,
+        extra: null,
+        note: "x".repeat(100),
+      }),
+    );
+    // project/closePrecision/floor are summarized; the null `extra` and the 100-char `note` are skipped.
+    expect(lastCapturedError().name).toBe("close_breaker_engaged");
+    expect(lastCapturedError().message).toBe(
+      "project=JSONbored/gittensory, closePrecision=0.6, floor=0.8",
+    );
   });
 });
 
@@ -299,7 +321,7 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     );
 
     expect(lastCapturedError().name).toBe("orb_broker_unavailable");
-    expect(lastCapturedError().message).toBe("(no message — see the log context)");
+    expect(lastCapturedError().message).toBe("installationId=1");
     expect(base.error).toHaveBeenCalledTimes(1);
   });
 

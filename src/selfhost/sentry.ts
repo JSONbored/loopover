@@ -107,6 +107,35 @@ function logLocation(obj: Record<string, unknown>): string {
   return typeof pr === "number" ? ` (${repo}#${pr})` : ` (${repo})`;
 }
 
+/** When a log carries no message/error, summarize its SALIENT scalar fields (project, counts, precisions, …) into the
+ *  Sentry value so a field-only log — e.g. close_breaker_engaged{project,closePrecision,floor} or closehold_backlog
+ *  {count,projects} — shows real data instead of "(no message)". Skips meta + the location keys logLocation already
+ *  used + long blobs (IDs/bodies stay in the indexed tags + the "log" context); caps to a few fields so the title
+ *  stays readable. This is the STRUCTURAL fix for field-only error logs (current + future), not per-log message-adding. */
+const SUMMARY_SKIP_KEYS = new Set([
+  "level",
+  "event",
+  "ts",
+  "time",
+  "timestamp",
+  "msg",
+  "ev",
+  "message",
+  "error",
+  "repo",
+  "repository",
+  "pullNumber",
+  "deliveryId",
+]);
+function summarizeLogFields(obj: Record<string, unknown>): string {
+  return Object.entries(obj)
+    .filter(([k, v]) => !SUMMARY_SKIP_KEYS.has(k) && v !== null)
+    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .filter((part) => part.length <= 90) // a long blob (id/body) belongs in the context, not the title
+    .slice(0, 5) // a few salient fields, not a dump
+    .join(", ");
+}
+
 /** Forward a structured console line to Sentry when it is an ERROR-level log. The engine logs operational
  *  failures (orb_broker_unavailable, gate-check errors, relay drops, …) as JSON strings, often via console.error.
  *  No-op when Sentry is off, the line isn't a JSON object string, or its level isn't error/fatal — routine logs
@@ -138,8 +167,13 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   //   message (value) = the failure detail (message/error) → else the PR location → else a pointer to the context
   // So the issue list always shows a legible "event: detail", never a bare slug or "(No error message)". The
   // fingerprint (by event) still groups recurrences, so the synthetic stack doesn't fragment grouping. (#1468)
+  // value = the real detail (message/error) → else the PR location + a summary of salient fields (so a field-only log
+  // like close_breaker_engaged shows "project=x, closePrecision=0.6, floor=0.8") → else a context pointer.
   const value =
-    detail ?? (logLocation(obj).trim() || "(no message — see the log context)");
+    detail ??
+    ([logLocation(obj).trim(), summarizeLogFields(obj)]
+      .filter(Boolean)
+      .join(" ") || "(no message — see the log context)");
   const errorEvent = new Error(value);
   errorEvent.name = event ?? "GittensoryLog";
   Sentry.withScope((scope) => {

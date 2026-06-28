@@ -743,12 +743,15 @@ async function main(): Promise<void> {
     PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
   })
     .then((r) => {
-      if (r !== "skipped")
-        console.log(
-          JSON.stringify({ event: "selfhost_orb_relay_register", result: r }),
-        );
+      if (r === "registered") {
+        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r }));
+      } else if (r === "failed") {
+        // A failed registration means the central Orb won't forward this install's webhooks here — the container
+        // looks alive but reviews NOTHING. Surface at error level so the operator sees a deaf container.
+        console.error(JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed" }));
+      }
     })
-    .catch(() => {});
+    .catch((error) => captureError(error, { kind: "orb_relay_register" }));
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;

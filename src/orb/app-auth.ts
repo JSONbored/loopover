@@ -55,13 +55,18 @@ export async function listOrbAppInstallations(env: Env): Promise<OrbAppInstallat
   return installs;
 }
 
+// GitHub's installation-token endpoint can take many seconds while the App is throttled (too-frequent mints). A
+// generous timeout lets the rare cold mint complete; brokerOrbToken caches the result so this is hit ~once/hour.
+const ORB_TOKEN_MINT_TIMEOUT_MS = 25_000;
+
 /** Mints a short-lived GitHub installation access token for one installation — the broker primitive the
- *  self-hosted container ultimately receives (after enrollment). Not cached: the broker mints on demand. */
+ *  self-hosted container ultimately receives (after enrollment). brokerOrbToken caches the result; this always mints. */
 export async function createOrbInstallationToken(env: Env, installationId: number): Promise<{ token: string; expiresAt: string }> {
   const jwt = await createOrbAppJwt(env);
   const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: orbHeaders(jwt),
+    signal: AbortSignal.timeout(ORB_TOKEN_MINT_TIMEOUT_MS),
   });
   if (!response.ok) {
     const body = await response.text();

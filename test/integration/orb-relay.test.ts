@@ -344,17 +344,17 @@ describe("retryFailedRelays", () => {
     expect(untouched?.n).toBe(5);
   });
 
-  it("PRUNES rows that have exhausted their attempt budget (attempts >= 5) and logs the drop (#5)", async () => {
+  it("PRUNES rows that have exhausted their attempt budget (attempts >= 5) and logs the drop at error level (#5)", async () => {
     const e = brokeredEnv();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     // Manually insert a row at the attempt ceiling.
     await db(e).prepare("INSERT INTO orb_relay_failures (delivery_id, event_name, installation_id, raw_body, attempts) VALUES (?, ?, ?, ?, ?)").bind("exhausted-1", "pull_request", 9300, "{}", 5).run();
     await retryFailedRelays(e);
     const row = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='exhausted-1'").first();
     expect(row ?? null).toBeNull(); // pruned on the DELETE pass before the SELECT
-    // The drop is no longer silent — an alertable structured log records the lost event count.
-    expect(warn.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped"))).toBe(true);
-    warn.mockRestore();
+    // The drop is no longer silent OR warn-only — an alertable level:error log reaches the Sentry forwarder.
+    expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped") && String(line).includes('"level":"error"'))).toBe(true);
+    errLog.mockRestore();
   });
 
   it("PRUNES expired rows (expires_at in the past) without attempting to forward", async () => {
@@ -468,14 +468,18 @@ describe("pullRelayPending", () => {
     expect((await pullRelayPending(e, 9705, { limit: 5 })).length).toBe(5); // a smaller requested limit is honoured
   });
 
-  it("PRUNES rows older than the TTL before returning the batch", async () => {
+  it("PRUNES rows older than the TTL before returning the batch, and logs the drop at error level", async () => {
     const e = brokeredEnv();
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await db(e).prepare("INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, created_at) VALUES (?, ?, ?, ?, datetime('now', '-25 hours'))").bind("stale-1", 9706, "pull_request", "{}").run();
     await enqueueRelayPending(e, { deliveryId: "fresh-1", installationId: 9706, eventName: "pull_request", rawBody: "{}" });
     const events = await pullRelayPending(e, 9706);
     expect(events.map((ev) => ev.deliveryId)).toEqual(["fresh-1"]); // the 25h-old row was pruned (TTL 24h)
     const stale = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='stale-1'").first();
     expect(stale ?? null).toBeNull();
+    // Pull-mode loss is now traced for the operator at error level (parity with the push-path drop).
+    expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_pending_dropped") && String(line).includes('"level":"error"'))).toBe(true);
+    errLog.mockRestore();
   });
 });
 

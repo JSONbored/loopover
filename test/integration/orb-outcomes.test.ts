@@ -4,12 +4,19 @@ import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
 
-const closedPr = (repo: string, number: number, mergedAt: string | null, installationId = 100) =>
+const closedPr = (
+  repo: string,
+  number: number,
+  mergedAt: string | null,
+  installationId = 100,
+  opts: { sender?: { login?: string; type?: string }; author?: string } = {},
+) =>
   ({
     action: "closed",
-    pull_request: { number, state: "closed", merged_at: mergedAt },
+    pull_request: { number, state: "closed", merged_at: mergedAt, ...(opts.author !== undefined ? { user: { login: opts.author } } : {}) },
     repository: { full_name: repo },
     installation: { id: installationId },
+    ...(opts.sender !== undefined ? { sender: opts.sender } : {}),
   }) as never;
 
 const registerInstall = (e: Env, id: number, registered: number) =>
@@ -43,6 +50,24 @@ describe("recordOrbPrOutcome", () => {
     await recordOrbPrOutcome(e, "pull_request", closedPr("acme/widgets", 9, null)); // closed
     await recordOrbPrOutcome(e, "pull_request", closedPr("acme/widgets", 9, "2026-06-24T01:00:00Z")); // reopened → merged
     expect((await db(e).prepare("SELECT outcome FROM orb_pr_outcomes WHERE pr_number=9").first<{ outcome: string }>())?.outcome).toBe("merged");
+  });
+
+  it("does NOT record a contributor self-close (sender === author, unmerged) and never overwrites a prior row", async () => {
+    const e = createTestEnv();
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/self", 20, null, 100, { sender: { login: "alice" }, author: "alice" }));
+    expect((await db(e).prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes WHERE pr_number=20").first<{ n: number }>())?.n).toBe(0);
+    // A later self-close must not OVERWRITE a prior authoritative (maintainer) row.
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/self", 20, null, 100, { sender: { login: "maintainer" }, author: "alice" })); // maintainer close → recorded
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/self", 20, null, 100, { sender: { login: "alice" }, author: "alice" })); // self-close → ignored
+    expect((await db(e).prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes WHERE pr_number=20").first<{ n: number }>())?.n).toBe(1);
+  });
+
+  it("DOES record a maintainer close, a bot-actor close, and a close with no author (non-self / authoritative)", async () => {
+    const e = createTestEnv();
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/maint", 21, null, 100, { sender: { login: "maintainer" }, author: "alice" })); // sender != author
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/bot", 22, null, 100, { sender: { login: "x[bot]", type: "Bot" }, author: "x[bot]" })); // bot actor → recorded even when login matches
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/noauthor", 23, null, 100, { sender: { login: "someone" } })); // no author field → not a self-close
+    expect((await db(e).prepare("SELECT COUNT(*) AS n FROM orb_pr_outcomes").first<{ n: number }>())?.n).toBe(3);
   });
 });
 

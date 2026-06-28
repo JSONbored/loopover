@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock @sentry/node so the dynamic import inside initSentry() resolves to spies. Hoisted so vi.mock can see it.
 const mocks = vi.hoisted(() => {
-  const scope = { setContext: vi.fn(), setLevel: vi.fn(), setTag: vi.fn() };
+  const scope = { setContext: vi.fn(), setLevel: vi.fn(), setTag: vi.fn(), setFingerprint: vi.fn() };
   return {
     scope,
     init: vi.fn(),
@@ -187,7 +187,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(mocks.captureMessage).not.toHaveBeenCalled();
   });
 
-  it("forwards a level:error log titled by event, with context + an event tag", async () => {
+  it("titles a no-message error log with event + a (key=value) summary of its scalar context", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(
       JSON.stringify({
@@ -206,10 +206,31 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
       "event",
       "orb_broker_unavailable",
     );
+    // No message/error → the title still surfaces WHERE from the structured fields (not a bare slug).
     expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "orb_broker_unavailable",
+      "orb_broker_unavailable (installationId=1)",
       "error",
     );
+  });
+
+  it("leads the title with the real error detail + indexes filterable tags + fingerprints by event (#observability)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "orb_broker_unavailable",
+        error: "The operation was aborted due to timeout",
+        repo: "JSONbored/gittensory",
+        installationId: 143010787,
+      }),
+    );
+    // The issue TITLE now carries the actual failure, not just the event slug — no hunting through the context blob.
+    expect(mocks.captureMessage).toHaveBeenCalledWith("orb_broker_unavailable: The operation was aborted due to timeout", "error");
+    // The present log dimensions become filterable tags.
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "JSONbored/gittensory");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installationId", "143010787");
+    // Recurrences of one failure group into a single issue by event.
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-log", "orb_broker_unavailable"]);
   });
 
   it("forwards a level:fatal log titled by message (no event ⇒ no tag)", async () => {
@@ -226,6 +247,28 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(JSON.stringify({ level: "error", code: 500 }));
     expect(mocks.captureMessage).toHaveBeenCalledWith("error", "error");
+  });
+
+  it("uses a bare event title when a no-message error log has no scalar context (empty field-summary)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({ level: "error", event: "relay_drained_error" }),
+    );
+    expect(mocks.captureMessage).toHaveBeenCalledWith("relay_drained_error", "error");
+  });
+
+  it("field-summary includes scalar fields but skips non-scalar (array/object) values", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "closehold_backlog",
+        count: 2,
+        projects: ["a", "b"],
+      }),
+    );
+    // count (scalar) is folded into the title; projects (array) stays in the context blob only.
+    expect(mocks.captureMessage).toHaveBeenCalledWith("closehold_backlog (count=2)", "error");
   });
 });
 
@@ -249,7 +292,7 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     );
 
     expect(mocks.captureMessage).toHaveBeenCalledWith(
-      "orb_broker_unavailable",
+      "orb_broker_unavailable (installationId=1)",
       "error",
     );
     expect(base.error).toHaveBeenCalledTimes(1);
@@ -267,6 +310,38 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
       "error",
     );
     expect(base.log).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards a NO-LEVEL structured log emitted through console.error (the error sink defaults to error)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target } = makeConsole();
+    installStructuredLogForwarding(target);
+    // No `level` field — previously dropped on the floor; now console.error forwards it as error (with field summary).
+    target.error(
+      JSON.stringify({ event: "selfhost_ai_provider_failed", repo: "o/r" }),
+    );
+    expect(mocks.captureMessage).toHaveBeenCalledWith(
+      "selfhost_ai_provider_failed (repo=o/r)",
+      "error",
+    );
+  });
+
+  it("does NOT forward a no-level log through console.log (stdout is not error by default)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target } = makeConsole();
+    installStructuredLogForwarding(target);
+    target.log(JSON.stringify({ event: "job_complete" }));
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps skipping an EXPLICIT level:warn through console.error (explicit level wins over the sink default)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const { target } = makeConsole();
+    installStructuredLogForwarding(target);
+    target.error(
+      JSON.stringify({ level: "warn", event: "orb_broker_degraded" }),
+    );
+    expect(mocks.captureMessage).not.toHaveBeenCalled();
   });
 
   it("does not recursively forward if the Sentry path logs while forwarding", async () => {

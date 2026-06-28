@@ -92,7 +92,20 @@ export async function buildReviewEnrichment(
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      // A non-2xx from REES (auth/5xx/bad-gateway) silently degraded the review to no-enrichment with no signal.
+      // Surface it at ERROR level (same event as the catch below) so the Sentry forwarder catches a broken REES.
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "review_context_fetch_failed",
+          repository: input.repoFullName,
+          contextType: "enrichment",
+          message: `REES /v1/enrich returned ${response.status}`,
+        }),
+      );
+      return undefined;
+    }
     const brief = (await response.json()) as {
       promptSection?: string;
       systemSuffix?: string;

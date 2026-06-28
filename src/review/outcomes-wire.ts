@@ -466,9 +466,10 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     const flags = createFlagStore(env);
     const engaged = await applyAutoTune(flags, report);
     for (const action of engaged) {
-      console.warn(
+      console.error(
         JSON.stringify({
-          ev: "breaker_engaged",
+          level: "error",
+          event: "breaker_engaged",
           project: action.project,
           mergePrecision: action.mergePrecision,
           decided: action.decided,
@@ -479,9 +480,10 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     // CLOSE-side breaker: engage closehold for any repo whose close precision dropped below the floor.
     const closeEngaged = await applyCloseAutoTune(flags, report);
     for (const action of closeEngaged) {
-      console.warn(
+      console.error(
         JSON.stringify({
-          ev: "close_breaker_engaged",
+          level: "error",
+          event: "close_breaker_engaged",
           project: action.project,
           closePrecision: action.closePrecision,
           decided: action.decided,
@@ -492,9 +494,10 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     // OBSERVABILITY: a single summary line of the engaged close-hold backlog so a human can see, at a glance,
     // how many (and which) repos are currently holding would-closes for review. Only emitted when ≥1 engaged.
     if (closeEngaged.length > 0) {
-      console.warn(
+      console.error(
         JSON.stringify({
-          ev: "closehold_backlog",
+          level: "error",
+          event: "closehold_backlog",
           count: closeEngaged.length,
           projects: closeEngaged.map((a) => a.project),
         }),

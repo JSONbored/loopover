@@ -87,11 +87,35 @@ export function captureReviewFailure(
   });
 }
 
+// The structured-log fields worth indexing as Sentry tags — the dimensions operators filter + group by. Only
+// string|number values are tagged; everything else stays in the full "log" context.
+const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId"] as const;
+
+// Fields already represented in the title/level (or non-scalar) — excluded from the field-summary below so a
+// no-message title isn't padded with redundant or unrenderable values.
+const SENTRY_LOG_META_FIELDS = new Set(["level", "event", "ev", "message", "error", "err", "stack"]);
+
+/** Build a one-line `(key=value, …)` summary of a structured log's SCALAR fields. Many engine error logs carry
+ *  only an event slug + structured context (no `message`/`error`) — without this they'd land in Sentry as a bare
+ *  slug ("gate_check_permission_missing") with no hint of WHERE. This folds the context into the title instead:
+ *  `gate_check_permission_missing (repository=owner/repo, pullNumber=42)`. Empty when there's no scalar context
+ *  beyond the meta fields; capped so a fat log can't blow up the issue title. */
+function summarizeLogFields(obj: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (SENTRY_LOG_META_FIELDS.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      parts.push(`${key}=${value}`);
+    }
+  }
+  return parts.length > 0 ? ` (${parts.join(", ").slice(0, 180)})` : "";
+}
+
 /** Forward a structured console line to Sentry when it is an ERROR-level log. The engine logs operational
  *  failures (orb_broker_unavailable, gate-check errors, relay drops, …) as JSON strings, often via console.error.
  *  No-op when Sentry is off, the line isn't a JSON object string, or its level isn't error/fatal — routine logs
  *  (audit/info/no-level: job_complete, regate_sweep_throttled, …) are intentionally skipped. */
-export function forwardStructuredLogToSentry(line: unknown): void {
+export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = false): void {
   if (!active || !Sentry) return;
   if (typeof line !== "string" || line.charCodeAt(0) !== 123 /* "{" */) return;
   let obj: Record<string, unknown>;
@@ -101,19 +125,32 @@ export function forwardStructuredLogToSentry(line: unknown): void {
   } catch {
     return; // not JSON — an ordinary log line
   }
-  const level = obj.level;
+  // A console.error sink is error-level by DEFAULT even when the JSON omits an explicit level (many engine error
+  // logs do) — that's how those errors reach Sentry instead of printing to stderr and vanishing. An EXPLICIT level
+  // always wins, so a deliberate level:"warn" emitted via console.error is still skipped.
+  const explicitLevel = typeof obj.level === "string" ? obj.level : undefined;
+  const level = explicitLevel ?? (fromErrorSink ? "error" : undefined);
   if (level !== "error" && level !== "fatal") return;
   const severity = level === "fatal" ? "fatal" : "error";
-  const title =
-    typeof obj.event === "string"
-      ? obj.event
-      : typeof obj.message === "string"
-        ? obj.message
-        : "error";
+  const event = typeof obj.event === "string" ? obj.event : undefined;
+  // Lead the Sentry title with the real failure detail (message → error), not just the event slug, so an operator
+  // sees WHAT broke straight from the issue list instead of having to open the context blob.
+  const detail = typeof obj.message === "string" ? obj.message : typeof obj.error === "string" ? obj.error : undefined;
+  // Title preference: "event: detail" (real failure text) → "event (key=value, …)" (context-only logs, so the
+  // issue list is never a bare slug) → detail alone → "error". The forwarder can't invent a sentence, but it can
+  // always surface WHERE from the structured fields.
+  const title = event ? (detail ? `${event}: ${detail}` : `${event}${summarizeLogFields(obj)}`) : (detail ?? "error");
   Sentry.withScope((scope) => {
     scope.setLevel(severity);
     scope.setContext("log", obj);
-    if (typeof obj.event === "string") scope.setTag("event", obj.event);
+    if (event) scope.setTag("event", event);
+    // Index the dimensions operators filter + group by, so issues are findable without digging into the context.
+    for (const key of SENTRY_LOG_TAG_KEYS) {
+      const value = obj[key];
+      if (typeof value === "string" || typeof value === "number") scope.setTag(key, String(value));
+    }
+    // Group recurrences of ONE failure into a single issue (by event, not the variable detail that's in the title).
+    if (event) scope.setFingerprint(["gittensory-log", event]);
     Sentry!.captureMessage(title, severity);
   });
 }
@@ -142,21 +179,24 @@ export function installStructuredLogForwarding(
   const baseConsoleLog = target.log.bind(target);
   const baseConsoleError = target.error.bind(target);
   let forwardingToSentry = false;
-  const forward = (line: unknown): void => {
+  const forward = (line: unknown, fromErrorSink: boolean): void => {
     if (forwardingToSentry) return;
     forwardingToSentry = true;
     try {
-      forwardStructuredLogToSentry(line);
+      forwardStructuredLogToSentry(line, fromErrorSink);
     } finally {
       forwardingToSentry = false;
     }
   };
+  // stdout (console.log): forward only an EXPLICIT level:error/fatal. stderr (console.error): forward as error by
+  // default (an explicit level still wins) — so EVERY console.error structured log reaches Sentry, not just the
+  // ones that happened to include a level field.
   target.log = (...args: unknown[]): void => {
     baseConsoleLog(...args);
-    forward(args[0]);
+    forward(args[0], false);
   };
   target.error = (...args: unknown[]): void => {
     baseConsoleError(...args);
-    forward(args[0]);
+    forward(args[0], true);
   };
 }

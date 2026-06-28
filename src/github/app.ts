@@ -162,6 +162,12 @@ async function writeCachedToken(
   else installationTokenCache.set(installationId, value);
 }
 
+// Single-flight the mint: on a cold cache, N concurrent jobs for the SAME install would each mint a token (a
+// thundering herd — in broker mode the Orb re-mints N times → GitHub secondary-rate-limits the token endpoint →
+// orb_broker_unavailable). Coalesce concurrent callers onto ONE in-flight mint, so a cold start / restart costs a
+// single mint, not one-per-job. Keyed by installation; the entry self-deletes on settle (success OR failure).
+const inFlightMints = new Map<number, Promise<string>>();
+
 export async function createInstallationToken(
   env: Env,
   installationId: number,
@@ -169,6 +175,23 @@ export async function createInstallationToken(
   const cached = await readCachedToken(installationId);
   if (cached && cached.expiresAtMs - TOKEN_SAFETY_MARGIN_MS > Date.now())
     return cached.token;
+  const existing = inFlightMints.get(installationId);
+  if (existing) return existing; // a concurrent caller is already minting for this install — join it
+  const mint = mintInstallationToken(env, installationId, cached).finally(() => {
+    inFlightMints.delete(installationId);
+  });
+  inFlightMints.set(installationId, mint);
+  return mint;
+}
+
+/** Mint a fresh installation token (broker or local App-JWT) and cache it. `cached` is the expired/absent prior
+ *  entry, consulted only for the brokered stale-token grace. Extracted from createInstallationToken so that
+ *  function can single-flight concurrent cold-cache callers onto one mint (see inFlightMints). */
+async function mintInstallationToken(
+  env: Env,
+  installationId: number,
+  cached: { token: string; expiresAtMs: number } | null,
+): Promise<string> {
   // Self-host broker mode: a brokered self-host holds no App private key, so source the installation token from
   // the central Orb (enrollment secret → short-lived token) instead of minting locally. Cloud sets no enrollment
   // secret, so this branch is inert there → byte-identical. The token caches the same way (the install id is the

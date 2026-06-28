@@ -142,6 +142,31 @@ describe("GitHub check runs", () => {
     expect(mints).toBe(1);
   });
 
+  it("single-flights concurrent cold-cache mints for one install (no thundering herd)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mints = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({
+          token: `installation-token-${mints}`,
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    // Ten concurrent callers on a COLD cache → exactly ONE mint (single-flight); all share the same token. Without
+    // coalescing this would be ten mints — the herd that secondary-rate-limits the Orb broker on a cold start.
+    const tokens = await Promise.all(
+      Array.from({ length: 10 }, () => createInstallationToken(env, 4242)),
+    );
+    expect(new Set(tokens)).toEqual(new Set(["installation-token-1"]));
+    expect(mints).toBe(1);
+  });
+
   it("re-mints an installation token once the cached one is within the expiry safety margin", async () => {
     const privateKey = await generatePrivateKeyPem();
     let mints = 0;

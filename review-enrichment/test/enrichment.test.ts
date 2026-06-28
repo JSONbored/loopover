@@ -26,6 +26,7 @@ import {
   isSafeToCheck,
   hasNpmAttestation,
   hasPypiProvenance,
+  matchesPypiVersion,
   scanProvenance,
 } from "../dist/analyzers/provenance.js";
 
@@ -1158,6 +1159,71 @@ test("hasPypiProvenance: passes Accept header for PEP 740 simple API", async () 
     capturedHeaders?.["Accept"] ?? capturedHeaders?.Accept,
     "application/vnd.pypi.simple.v1+json",
   );
+});
+
+// ---------------------------------------------------------------------------
+// matchesPypiVersion
+// ---------------------------------------------------------------------------
+
+test("matchesPypiVersion: matches wheel filename for exact version", () => {
+  assert.equal(matchesPypiVersion("requests-2.31.0-py3-none-any.whl", "requests", "2.31.0"), true);
+});
+
+test("matchesPypiVersion: matches sdist .tar.gz filename for exact version", () => {
+  assert.equal(matchesPypiVersion("requests-2.31.0.tar.gz", "requests", "2.31.0"), true);
+});
+
+test("matchesPypiVersion: matches sdist .zip filename for exact version", () => {
+  assert.equal(matchesPypiVersion("requests-2.31.0.zip", "requests", "2.31.0"), true);
+});
+
+test("matchesPypiVersion: rejects post-release suffix (version substring of longer version)", () => {
+  // 2.31.0 is a substring of 2.31.0.post1 — must NOT match
+  assert.equal(matchesPypiVersion("requests-2.31.0.post1-py3-none-any.whl", "requests", "2.31.0"), false);
+});
+
+test("matchesPypiVersion: rejects version with shared numeric suffix (prefix overlap)", () => {
+  // 2.31.0 is a substring of 12.31.0 — must NOT match
+  assert.equal(matchesPypiVersion("requests-12.31.0-py3-none-any.whl", "requests", "2.31.0"), false);
+});
+
+test("matchesPypiVersion: matches hyphenated package name normalised to underscore in wheel", () => {
+  // PyPI normalises my-package → my_package in wheel filenames (PEP 503)
+  assert.equal(matchesPypiVersion("my_package-1.0.0-py3-none-any.whl", "my-package", "1.0.0"), true);
+});
+
+test("matchesPypiVersion: rejects filename from a different package", () => {
+  assert.equal(matchesPypiVersion("other-requests-2.31.0-py3-none-any.whl", "requests", "2.31.0"), false);
+});
+
+test("hasPypiProvenance: returns true (fail-safe) when only post-release file exists for version", async () => {
+  // The API returns requests-2.31.0.post1 files; no file for exact 2.31.0 → can't determine → don't flag
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => ({
+      ok: true,
+      json: async () => ({
+        files: [{ filename: "requests-2.31.0.post1-py3-none-any.whl" }],
+      }),
+    }),
+  );
+  assert.equal(result, true);
+});
+
+test("hasPypiProvenance: returns true (fail-safe) when only a different version with shared suffix exists", async () => {
+  // 12.31.0 contains "2.31.0" as substring; must not be treated as a match for version 2.31.0
+  const result = await hasPypiProvenance(
+    "requests",
+    "2.31.0",
+    async () => ({
+      ok: true,
+      json: async () => ({
+        files: [{ filename: "requests-12.31.0-py3-none-any.whl" }],
+      }),
+    }),
+  );
+  assert.equal(result, true);
 });
 
 // ---------------------------------------------------------------------------

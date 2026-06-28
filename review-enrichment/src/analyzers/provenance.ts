@@ -67,6 +67,23 @@ export async function hasNpmAttestation(
   }
 }
 
+/** Match a PyPI distribution filename to an exact package version.
+ *  PEP 503: -, _, . are equivalent in distribution names. The version must be followed by a wheel
+ *  component separator (-) or an sdist archive extension (.tar / .zip) to reject substrings like
+ *  `2.31.0` inside `2.31.0.post1` or `12.31.0`. */
+export function matchesPypiVersion(
+  filename: string,
+  pkg: string,
+  version: string,
+): boolean {
+  const normalizedPkg = pkg.toLowerCase().replace(/[-_.]/g, "[-_.]");
+  const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^${normalizedPkg}-${escapedVersion}(?:-|\\.(?:tar|zip))`,
+    "i",
+  ).test(filename);
+}
+
 /** Check whether a PyPI package version has published provenance (PEP 740 via the simple repository JSON
  *  API). Returns true when provenance is found OR when the check cannot be completed (fail-safe). */
 export async function hasPypiProvenance(
@@ -89,7 +106,7 @@ export async function hasPypiProvenance(
       files?: Array<{ filename: string; provenance?: string }>;
     };
     const versionFiles = (data.files ?? []).filter((f) =>
-      f.filename.includes(version),
+      matchesPypiVersion(f.filename, pkg, version),
     );
     if (!versionFiles.length) return true; // can't determine → don't flag
     return versionFiles.some((f) => Boolean(f.provenance));

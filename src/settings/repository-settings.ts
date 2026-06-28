@@ -1,4 +1,4 @@
-import { getRepositorySettings } from "../db/repositories";
+import { getGlobalContributorBlacklist, getRepositorySettings } from "../db/repositories";
 import { loadOverride, type StorageEnv } from "../review/auto-apply";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -32,11 +32,12 @@ export function applySelfTuneOverrideToSettings(
  *  self-improvement loop is enabled (`GITTENSORY_REVIEW_SELFTUNE`, default OFF) — with the repo's promoted,
  *  soak-passed, tightening-only auto-tune override. Flag-OFF (default) ⇒ no override read, byte-identical to before. */
 export async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
-  const [dbSettings, manifest] = await Promise.all([
+  const [dbSettings, manifest, globalContributorBlacklist] = await Promise.all([
     getRepositorySettings(env, repoFullName),
     loadRepoFocusManifest(env, repoFullName),
+    getGlobalContributorBlacklist(env).catch(() => []),
   ]);
-  const effective = resolveEffectiveSettings(dbSettings, manifest);
+  const effective = resolveEffectiveSettings(dbSettings, manifest, globalContributorBlacklist);
   if (!selfTuneFlagOn(env)) return effective;
   // loadOverride is internally fail-safe (returns null on a DB blip), so this never breaks settings resolution.
   const override = await loadOverride(env as unknown as StorageEnv, repoFullName);

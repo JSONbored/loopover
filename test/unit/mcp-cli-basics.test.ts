@@ -176,6 +176,14 @@ describe("gittensory-mcp CLI — basics", () => {
     expect(fish).toContain("__fish_seen_subcommand_from agent");
   });
 
+  it("prints a PowerShell argument-completer script", () => {
+    const ps = run(["completion", "powershell"]);
+    expect(ps).toContain("Register-ArgumentCompleter -Native -CommandName gittensory-mcp");
+    expect(ps).toContain("[System.Management.Automation.CompletionResult]::new");
+    expect(ps).toContain("$commands = @('login', 'logout'");
+    expect(ps).toContain("'maintain' = @('status', 'approve', 'reject', 'pause', 'resume', 'set-level')");
+  });
+
   it("emits completion as machine-readable json", () => {
     const payload = JSON.parse(run(["completion", "zsh", "--json"])) as { shell: string; script: string };
     expect(payload.shell).toBe("zsh");
@@ -183,8 +191,8 @@ describe("gittensory-mcp CLI — basics", () => {
   });
 
   it("rejects missing or unsupported completion shells", () => {
-    expect(() => run(["completion"])).toThrow(/Usage: gittensory-mcp completion <bash\|zsh\|fish>/);
-    expect(() => run(["completion", "powershell"])).toThrow(/Unsupported shell: powershell/);
+    expect(() => run(["completion"])).toThrow(/Usage: gittensory-mcp completion <bash\|zsh\|fish\|powershell>/);
+    expect(() => run(["completion", "tcsh"])).toThrow(/Unsupported shell: tcsh/);
   });
 
   it("reports resolved configuration provenance via config", () => {

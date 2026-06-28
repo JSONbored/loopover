@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { upsertRepositorySettings } from "../../src/db/repositories";
+import { describe, expect, it, vi } from "vitest";
+import * as repositories from "../../src/db/repositories";
 import { writeLiveOverride, type StorageEnv } from "../../src/review/auto-apply";
 import { applySelfTuneOverrideToSettings, resolveRepositorySettings } from "../../src/settings/repository-settings";
 import type { RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 
 // The promoted override is ALWAYS a tightening (selftune-wire only ever populates the would-merge error side),
 // so the read-back must only ever RAISE an existing readiness threshold — never create or lower one.
@@ -34,7 +35,7 @@ describe("resolveRepositorySettings — self-tune override overlay (flag-gated)"
   const repo = "acme/widgets";
   async function seed(env: Env): Promise<void> {
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, 'acme', 'widgets', 1, 1)").bind(repo).run();
-    await upsertRepositorySettings(env, { repoFullName: repo, qualityGateMinScore: 50 });
+    await repositories.upsertRepositorySettings(env, { repoFullName: repo, qualityGateMinScore: 50 });
     await writeLiveOverride(env as unknown as StorageEnv, repo, { confidenceFloor: 0.7 });
   }
 
@@ -48,5 +49,35 @@ describe("resolveRepositorySettings — self-tune override overlay (flag-gated)"
     const env = createTestEnv();
     await seed(env);
     expect((await resolveRepositorySettings(env, repo)).qualityGateMinScore).toBe(50);
+  });
+
+  it("merges shared/global blacklist entries with effective repo settings", async () => {
+    const env = createTestEnv();
+    const repoFullName = "acme/blacklist";
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, 'acme', 'blacklist', 1, 1)").bind(repoFullName).run();
+    await Promise.all([
+      repositories.upsertRepositorySettings(env, { repoFullName, qualityGateMinScore: 50 }),
+      repositories.upsertGlobalContributorBlacklist(env, { contributorBlacklist: [{ login: "GlobalBad", reason: "global" }] }),
+      upsertRepoFocusManifest(env, repoFullName, { settings: { contributorBlacklist: [{ login: "ManifestBad" }] } }, "api_record"),
+    ]);
+
+    const settings = await resolveRepositorySettings(env, repoFullName);
+    expect(settings.contributorBlacklist?.map((entry) => entry.login)).toEqual(["ManifestBad", "GlobalBad"]);
+  });
+
+  it("uses fallback [] when shared/global blacklist read rejects", async () => {
+    const env = createTestEnv();
+    const repo = "acme/fallback";
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, 'acme', 'fallback', 1, 1)").bind(repo).run();
+
+    const getGlobalSpy = vi.spyOn(repositories, "getGlobalContributorBlacklist").mockRejectedValue(new Error("transient DB issue"));
+
+    try {
+      const settings = await resolveRepositorySettings(env, repo);
+      expect(settings.contributorBlacklist).toEqual([]);
+      expect(getGlobalSpy).toHaveBeenCalledOnce();
+    } finally {
+      getGlobalSpy.mockRestore();
+    }
   });
 });

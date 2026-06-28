@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findBlacklistEntry, isAuthorBlacklisted, mergeContributorBlacklists, normalizeContributorBlacklist } from "../../src/settings/contributor-blacklist";
-import { getRepositorySettings, upsertRepositorySettings } from "../../src/db/repositories";
+import { getGlobalContributorBlacklist, getRepositorySettings, upsertGlobalContributorBlacklist, upsertRepositorySettings } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 import type { ContributorBlacklistEntry } from "../../src/types";
 
@@ -16,6 +16,26 @@ describe("contributor blacklist DB round-trip (#1425)", () => {
   it("defaults to an empty list for an unconfigured repo", async () => {
     const settings = await getRepositorySettings(createTestEnv(), "owner/none");
     expect(settings.contributorBlacklist).toEqual([]);
+  });
+
+  it("persists + resolves the shared/global blacklist singleton through DB", async () => {
+    const env = createTestEnv();
+    await upsertGlobalContributorBlacklist(env, { contributorBlacklist: [{ login: "global-bad-actor", reason: "global" }, { login: "-bad" }, { login: "Global-Owner", reason: "repo" }] });
+    const globalList = await getGlobalContributorBlacklist(env);
+    expect(globalList?.map((entry) => entry.login)).toEqual(["global-bad-actor", "Global-Owner"]);
+    expect(globalList?.[0]).toEqual({ login: "global-bad-actor", reason: "global" });
+  });
+
+  it("returns [] when singleton global row is missing", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("DELETE FROM global_contributor_blacklist WHERE id = 'singleton'").run();
+    expect(await getGlobalContributorBlacklist(env)).toEqual([]);
+  });
+
+  it("fails open to an empty list when the shared/global table is unavailable", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("DROP TABLE global_contributor_blacklist").run();
+    expect(await getGlobalContributorBlacklist(env)).toEqual([]);
   });
 });
 

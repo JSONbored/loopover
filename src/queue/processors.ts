@@ -266,6 +266,7 @@ import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { screenshotsAllowed } from "../review/visual-wire";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, type CaptureRoute } from "../review/visual/capture";
+import { incr } from "../selfhost/metrics";
 import {
   renderReviewingPlaceholder,
   shouldPostReviewingPlaceholder,
@@ -5041,6 +5042,12 @@ async function maybePublishPrPublicSurface(
         ciState,
         aiCiRefutationActive(env, repoFullName),
       );
+      // Observability (#reviews-dashboard): record the would-be gate verdict per repo so the Grafana panel shows the
+      // merge/close/hold mix — the "are we rubber-stamping?" signal — even in advisory/dryRun (this is the rendered verdict).
+      incr("gittensory_gate_decisions_total", {
+        repo: repoFullName,
+        conclusion: commentGate.conclusion,
+      });
       // Guarded-hold (#guarded-hold-comment): a clean+green PR whose diff touches a hard-guardrail path is HELD
       // for owner review by the disposition (planAgentMaintenanceActions), never auto-merged — so the comment
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
@@ -5192,6 +5199,7 @@ async function maybePublishPrPublicSurface(
         { mode },
       );
       publishedOutputs.push("comment");
+      incr("gittensory_reviews_published_total", { repo: repoFullName });
     } catch (error) {
       const message = errorMessage(error);
       failedOutputs.push({ output: "comment", error: message });

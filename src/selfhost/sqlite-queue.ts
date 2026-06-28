@@ -20,8 +20,10 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
   created_at INTEGER NOT NULL,
   last_error TEXT,
   priority INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after, priority);`;
+);`;
+const CLAIM_INDEX_DDL = `
+DROP INDEX IF EXISTS ${TABLE}_claim;
+CREATE INDEX ${TABLE}_claim ON ${TABLE}(status, run_after, priority);`;
 
 // Webhook-driven work (a fresh PR → its review) jumps ahead of heavy background jobs (rag-index ~4min, the regate
 // sweep) so a NEW PR is reviewed promptly instead of waiting behind them in the shared FIFO queue. Additive: every
@@ -72,7 +74,7 @@ export function createSqliteQueue(
 
   driver.exec(DDL);
   // Idempotent add for queues created before the priority column existed (#review-latency): the CREATE is skipped
-  // for a pre-existing table, so ALTER adds the column; on a later boot it throws "duplicate column" → swallowed.
+  // for a pre-existing table, so ALTER must run before any index references the new column.
   try {
     driver.exec(
       `ALTER TABLE ${TABLE} ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`,
@@ -80,6 +82,7 @@ export function createSqliteQueue(
   } catch {
     /* column already present */
   }
+  driver.exec(CLAIM_INDEX_DDL);
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = driver.query(
     `UPDATE ${TABLE} SET status='pending' WHERE status='processing'`,

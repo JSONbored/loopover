@@ -59,6 +59,10 @@ import {
   installStructuredLogForwarding,
 } from "./selfhost/sentry";
 import {
+  initOpenTelemetry,
+  shutdownOpenTelemetry,
+} from "./selfhost/otel";
+import {
   setLocalManifestReader,
   setLocalReviewContextReader,
 } from "./signals/focus-manifest-loader";
@@ -233,6 +237,10 @@ function buildSqliteBackend(
 
 async function main(): Promise<void> {
   loadFileSecrets();
+  /* v8 ignore start -- importing this entrypoint starts the Node server; init behavior is covered in selfhost/otel tests. */
+  if (await initOpenTelemetry(process.env))
+    console.log(JSON.stringify({ event: "selfhost_otel", traces: "otlp" }));
+  /* v8 ignore stop */
   // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
   // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
@@ -816,6 +824,8 @@ async function main(): Promise<void> {
     clearInterval(cron);
     server.close();
     await backend.shutdown();
+    /* v8 ignore next -- graceful process signal path is not imported in unit tests; shutdown helper is covered. */
+    await shutdownOpenTelemetry();
     await flushSentry();
     process.exit(0);
   };
@@ -826,5 +836,6 @@ async function main(): Promise<void> {
 main().catch((error) => {
   captureError(error, { kind: "boot" });
   console.error(error);
-  void flushSentry().finally(() => process.exit(1));
+  /* v8 ignore next -- boot failure exits the process; shutdown helper is covered independently. */
+  void Promise.all([shutdownOpenTelemetry(), flushSentry()]).finally(() => process.exit(1));
 });

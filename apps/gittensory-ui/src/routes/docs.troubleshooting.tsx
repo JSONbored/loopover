@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
-import { CodeBlock } from "@/components/site/primitives";
+import { Callout, CodeBlock } from "@/components/site/primitives";
 
 export const Route = createFileRoute("/docs/troubleshooting")({
   head: () => ({
@@ -40,6 +40,36 @@ gittensory-mcp whoami`}
       />
       <p>Or hit the public API endpoint directly to confirm reachability:</p>
       <CodeBlock lang="http" code={`GET https://gittensory-api.aethereal.dev/health`} />
+
+      <h2>Self-host Docker observability</h2>
+      <p>
+        The Docker stack exposes three different operator signals: structured logs from the{" "}
+        <code>gittensory</code> container, Prometheus metrics at <code>/metrics</code>, and optional
+        OpenTelemetry traces through the observability profile. Metrics answer <em>how much</em>{" "}
+        work is happening; traces answer <em>where time went</em> inside a review job.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`# Enable the collector + Tempo/Grafana stack.
+docker compose --profile observability up -d
+
+# Export app queue-job and AI-provider spans to Tempo.
+OTEL_TRACES_EXPORTER=otlp
+OTEL_TRACES_SAMPLER=parentbased_traceidratio
+OTEL_TRACES_SAMPLER_ARG=0.05
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`}
+      />
+      <p>
+        App traces are off unless <code>OTEL_TRACES_EXPORTER</code> includes <code>otlp</code>. When
+        enabled, the self-host runtime exports durable queue-job spans and AI-provider attempt spans
+        over OTLP/HTTP; the default collector endpoint is normalized to <code>/v1/traces</code>.
+        Span attributes are bounded to operational labels such as job type, queue backend, provider,
+        model, and request kind.
+      </p>
+      <Callout variant="safety" title="Trace data stays operational">
+        Do not put request bodies, prompts, diffs, credentials, or private config in trace
+        attributes. The built-in self-host spans intentionally avoid those fields.
+      </Callout>
 
       <h2>Common issues</h2>
       <h3>Login hangs on device flow</h3>

@@ -24,6 +24,7 @@ export async function verifyGitHubSignature(rawBody: string, signatureHeader: st
 export function timingSafeEqualHex(left: string, right: string): boolean {
   const leftBytes = hexToBytes(left);
   const rightBytes = hexToBytes(right);
+  if (!leftBytes || !rightBytes) return false;
   if (leftBytes.length !== rightBytes.length) return false;
   let result = 0;
   for (let index = 0; index < leftBytes.length; index += 1) {
@@ -32,8 +33,8 @@ export function timingSafeEqualHex(left: string, right: string): boolean {
   return result === 0;
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2 !== 0) return new Uint8Array();
+function hexToBytes(hex: string): Uint8Array | null {
+  if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) return null;
   const bytes = new Uint8Array(hex.length / 2);
   for (let index = 0; index < bytes.length; index += 1) {
     bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);

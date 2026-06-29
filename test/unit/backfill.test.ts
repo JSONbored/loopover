@@ -287,7 +287,7 @@ describe("GitHub backfill", () => {
     expect(await listContributorRepoStats(env, "jsonbored")).toEqual([
       expect.objectContaining({
         dominantLabels: ["alpha", "zeta"],
-        lastActivityAt: "bad-date",
+        lastActivityAt: "2026-05-24T00:00:00Z",
         unlinkedPullRequests: 1,
       }),
     ]);

@@ -38,7 +38,7 @@ describe("export-d1-core redaction (#selfhost-migration)", () => {
       webhook_events: ["payload_hash"],
       repository_ai_keys: ["ciphertext"],
       submission_user_tokens: ["encrypted_token"],
-      orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt"],
+      orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt", "cached_token_json"],
     });
     expect(redactRow("webhook_events", { delivery_id: "d1", payload_hash: "h" })).toEqual({ delivery_id: "d1" });
     expect(redactRow("repository_ai_keys", { repo_full_name: "o/r", ciphertext: "ENCRYPTED" })).toEqual({ repo_full_name: "o/r" });
@@ -59,9 +59,10 @@ describe("export-d1-core redaction (#selfhost-migration)", () => {
         relay_secret_enc: "LEAK_RELAY_SECRET",
         relay_secret_iv: "LEAK_RELAY_IV",
         relay_secret_salt: "LEAK_RELAY_SALT",
+        cached_token_json: "LEAK_CACHED_ORB_TOKEN_ENVELOPE",
       },
     ]);
-    expect(orbExport?.redactedColumns).toEqual(["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt"]);
+    expect(orbExport?.redactedColumns).toEqual(["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt", "cached_token_json"]);
     expect(orbExport?.rows).toEqual([{ enroll_id: "e1", installation_id: 42 }]);
 
     expect(JSON.stringify([draftExport, orbExport])).not.toMatch(/LEAK_/);

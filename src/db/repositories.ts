@@ -1361,7 +1361,12 @@ export async function upsertDigestSubscription(
 
 export async function listDigestSubscriptionsForLogin(env: Env, login: string): Promise<DigestSubscriptionRecord[]> {
   const db = getDb(env.DB);
-  const rows = await db.select().from(digestSubscriptions).where(eq(digestSubscriptions.login, login.toLowerCase())).orderBy(desc(digestSubscriptions.updatedAt)).limit(20);
+  const rows = await db
+    .select()
+    .from(digestSubscriptions)
+    .where(sql`lower(${digestSubscriptions.login}) = ${login.toLowerCase()}`)
+    .orderBy(desc(digestSubscriptions.updatedAt))
+    .limit(20);
   return rows.map(toDigestSubscriptionRecord);
 }
 

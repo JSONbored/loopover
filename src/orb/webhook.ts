@@ -142,6 +142,7 @@ async function recordOrbWebhookEvent(
 
 function parsePositiveInt(value: string | null | undefined): number | null {
   if (!value) return null;
+  if (!/^\d+$/.test(value)) return null;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return parsed;

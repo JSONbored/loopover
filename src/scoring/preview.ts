@@ -895,6 +895,16 @@ function selectLabelMultiplier(labels: string[], multipliers: Record<string, num
   return matched.length > 0 ? Math.max(...matched) : fallback || 1;
 }
 
+/** True when `label` matches the configured multiplier `pattern` under the SAME case-insensitive fnmatch glob
+ *  semantics scoring uses to resolve label multipliers (see {@link labelPatternToRegExp}). Exported so the
+ *  signals surfaces that audit configured label keys (config-quality, label-audit) match them as the GLOBS they
+ *  are: a `type:*` key must count `type:bug-fix` as observed/configured, not silently report it missing because
+ *  the literal pattern never appears verbatim on a real issue/PR. A literal key (no glob metacharacter) still
+ *  matches only its exact label, so existing configs behave identically. */
+export function labelMatchesPattern(label: string, pattern: string): boolean {
+  return labelPatternToRegExp(pattern.toLowerCase()).test(label.toLowerCase());
+}
+
 // Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
 // literal string: `fnmatch(label.lower(), pattern.lower())` in
 // gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or

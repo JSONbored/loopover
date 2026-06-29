@@ -776,6 +776,21 @@ describe("agent orchestrator", () => {
     expect(publicPacket.publicSafe.rerunWhen).toMatch(/private context/);
   });
 
+  it("redacts /root/, /var/, and forward-slash Windows local paths from the public-safe card (#1418)", () => {
+    const card = buildAgentActionExplanationCard({
+      actionType: "prepare_pr_packet",
+      status: "ready",
+      why: ["A concise packet keeps public context focused on linked work."],
+      blockedBy: [],
+      // /root/ and /var/ were previously missed by this card's local path regex; C:/Users/ (forward-slash) is also now covered.
+      publicSafeSummary: "Built at /root/work/repo and /var/log/app.log on C:/Users/alice/repo.",
+      safetyClass: "public_safe",
+    });
+
+    expect(card.publicSafe.summary).toContain("<redacted>");
+    expect(card.publicSafe.summary).not.toMatch(/\/root\/work|\/var\/log|C:\/Users\/alice/);
+  });
+
   it("covers local action ready and blocker-free branches from prepared metadata", () => {
     const run = __agentOrchestratorInternals.buildRunRecord({
       objective: "local ready branch",

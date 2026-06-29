@@ -175,6 +175,42 @@ describe("weekly value reports", () => {
     expect(markdown).not.toMatch(FORBIDDEN_EXPORT_TERMS);
   });
 
+  it("redacts /root/ and /var/ local paths in operator rollup dimensions (#1418)", () => {
+    const report = buildWeeklyValueReport({
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      variant: "operator",
+      days: 7,
+      repositories: [repo("JSONbored/gittensory", true, true)],
+      installations: [installation(1)],
+      health: [health(1, "healthy")],
+      registry: registry([]),
+      scoring: scoring([]),
+      upstreamDrift: upstream({ status: "current", openReportCount: 0 }),
+      usageSummary: usageSummary({ totalEvents: 2, activeActors: 1 }),
+      usageRollups: [
+        rollup("2026-05-31", {
+          totalEvents: 2,
+          activeActors: 1,
+          activeRepos: 2,
+          // /root/ (container/CI home) and /var/ (service paths) were previously missed by this surface's regex.
+          repos: [
+            { key: "/root/work/private-repo", count: 1 },
+            { key: "/var/folders/alice/private-repo", count: 1 },
+          ],
+          events: [],
+          surfaces: [],
+          commands: [],
+          tools: [],
+        }),
+      ],
+      usageRollupStatus: rollupStatus({ status: "ready" }),
+    });
+
+    // Both keys collapse to the same placeholder, so they aggregate into a single redacted row.
+    expect(report.operatorDetails?.topRepos).toEqual(expect.arrayContaining([{ key: "<redacted-path>", count: 2 }]));
+    expect(JSON.stringify(report)).not.toMatch(/\/root\/work|\/var\/folders/);
+  });
+
   it("keeps clean complete windows marked ready", () => {
     const report = buildWeeklyValueReport({
       generatedAt: "2026-06-01T12:00:00.000Z",

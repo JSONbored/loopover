@@ -25,7 +25,7 @@ import type { FocusManifestReviewConfig, ReviewFieldKey } from "./focus-manifest
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
-import { projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
+import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
 import { isDuplicateClusterWinner } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
@@ -1009,7 +1009,11 @@ export function buildConfigQuality(
   const lane = buildLaneAdvice(repo, fullName);
   const configuredLabels = Object.keys(repo?.registryConfig?.labelMultipliers ?? {}).sort();
   const observedLabels = [...new Set([...issues, ...pullRequests].flatMap((record) => record.labels))].sort();
-  const notObservedConfiguredLabels = configuredLabels.filter((label) => !observedLabels.includes(label));
+  // Configured keys are fnmatch GLOBS (scoring resolves them via labelMatchesPattern), so a key is "observed"
+  // when it matches any cached label — not only when the literal pattern string appears verbatim. The old
+  // exact `.includes` reported every wildcard key (e.g. `type:*`) as not-observed even when `type:bug-fix` is in
+  // active use, spuriously docking the config-quality score for glob-configured repos. (#1769)
+  const notObservedConfiguredLabels = configuredLabels.filter((pattern) => !observedLabels.some((label) => labelMatchesPattern(label, pattern)));
   const findings: SignalFinding[] = [];
   let score = 100;
 
@@ -1097,10 +1101,14 @@ export function buildLabelAudit(repo: RepositoryRecord | null, repoLabels: RepoL
     .map(([name, count]) => ({
       name,
       count,
-      configured: configuredLabels.includes(name),
+      // Match each observed label against the configured GLOB keys (fnmatch), the same way scoring resolves a
+      // label's multiplier — so a label covered by a `type:*` key is reported as configured, not unconfigured. (#1769)
+      configured: configuredLabels.some((pattern) => labelMatchesPattern(name, pattern)),
       existsOnGitHub: liveLabels.includes(name),
     }));
-  const missingConfiguredLabels = configuredLabels.filter((label) => !liveLabels.includes(label));
+  // A configured key is "missing" only when NO live GitHub label matches it as a glob; a `type:*` key backed by a
+  // real `type:bug` label is present, not missing (the old exact `.includes` flagged every wildcard key missing). (#1769)
+  const missingConfiguredLabels = configuredLabels.filter((pattern) => !liveLabels.some((live) => labelMatchesPattern(live, pattern)));
   // Require a real separator (`:`/`/`/`-`) OR end-of-string after the keyword so this flags prefix-style labels
   // (`status:ready`, `reward/x`) and bare keywords (`bot`) — but NOT mid-word matches like `bottleneck` (`bot`),
   // `scoreboard` (`score`), or `riskier` (`risk`). The old optional+unanchored `[:/-]?` over-matched those.

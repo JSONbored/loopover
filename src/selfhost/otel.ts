@@ -8,6 +8,7 @@ type OtelProvider = {
   forceFlush(): Promise<void>;
   shutdown(): Promise<void>;
 };
+type SpanOptions = { parentTraceParent?: string | undefined };
 
 let Otel: OtelApi | undefined;
 let provider: OtelProvider | undefined;
@@ -18,6 +19,7 @@ const contextStore = new AsyncLocalStorage<Context>();
 const SECRET_KEY =
   /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
 const MAX_ATTRIBUTE_LENGTH = 160;
+const TRACEPARENT_RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/i;
 
 function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -76,6 +78,42 @@ export function otelSafeAttributes(input: Record<string, unknown> | undefined): 
   return out;
 }
 
+const SELFHOST_STATIC_ROUTES = new Set([
+  "/mcp",
+  "/v1/github/webhook",
+  "/v1/orb/relay",
+  "/v1/orb/relay/pull",
+  "/v1/orb/webhook",
+]);
+
+function selfHostHttpRoute(path: string): string {
+  if (SELFHOST_STATIC_ROUTES.has(path)) return path;
+  if (path.startsWith("/v1/internal/")) return "/v1/internal/*";
+  return path.startsWith("/v1/") ? "/v1/*" : "other";
+}
+
+export function selfHostHttpRequestAttributes(request: Request, path = new URL(request.url).pathname): Record<string, unknown> {
+  const route = selfHostHttpRoute(path);
+  const attrs: Record<string, unknown> = {
+    "http.request.method": request.method,
+    "http.route": route,
+  };
+  const eventName = request.headers.get("x-github-event")?.trim();
+  if (eventName && (route === "/v1/github/webhook" || route === "/v1/orb/relay" || route === "/v1/orb/webhook"))
+    attrs["github.webhook.event"] = eventName;
+  if (route === "/v1/github/webhook") attrs["selfhost.webhook.transport"] = "github";
+  else if (route === "/v1/orb/relay") attrs["selfhost.webhook.transport"] = "orb-relay";
+  else if (route === "/v1/orb/webhook") attrs["selfhost.webhook.transport"] = "orb";
+  return attrs;
+}
+
+export function selfHostHttpResponseAttributes(status: number): Record<string, unknown> {
+  return {
+    "http.response.status_code": status,
+    "http.response.status_class": `${Math.floor(status / 100)}xx`,
+  };
+}
+
 /** Initialize self-host OTEL traces. No global provider registration: Sentry can coexist when both are enabled. */
 export async function initOpenTelemetry(env: NodeJS.ProcessEnv): Promise<boolean> {
   const endpoint = resolveOtelTraceEndpoint(env);
@@ -107,13 +145,40 @@ function statusMessage(error: unknown): string {
   return exceptionFor(error).message.slice(0, MAX_ATTRIBUTE_LENGTH);
 }
 
+function activeContextFromTraceParent(traceParent: string | undefined): Context | undefined {
+  if (!traceParent || !Otel) return undefined;
+  const match = TRACEPARENT_RE.exec(traceParent.trim());
+  if (!match) return undefined;
+  return Otel.trace.setSpanContext(Otel.context.active(), {
+    traceId: match[1]!.toLowerCase(),
+    spanId: match[2]!.toLowerCase(),
+    traceFlags: Number.parseInt(match[3]!, 16) & 1,
+    isRemote: true,
+  });
+}
+
+export function currentOtelTraceParent(): string | undefined {
+  if (!active || !Otel) return undefined;
+  const spanContext = Otel.trace.getSpanContext(contextStore.getStore() ?? Otel.context.active());
+  if (!spanContext) return undefined;
+  const flags = (spanContext.traceFlags & 1).toString(16).padStart(2, "0");
+  return `00-${spanContext.traceId}-${spanContext.spanId}-${flags}`;
+}
+
+export function setCurrentOtelSpanAttributes(attributes: Record<string, unknown>): void {
+  if (!active || !Otel) return;
+  const span = Otel.trace.getSpan(contextStore.getStore() ?? Otel.context.active());
+  span?.setAttributes(otelSafeAttributes(attributes));
+}
+
 export async function withOtelSpan<T>(
   name: string,
   attributes: Record<string, unknown> | undefined,
   fn: () => T | Promise<T>,
+  options?: SpanOptions,
 ): Promise<T> {
   if (!active || !Otel || !tracer) return await fn();
-  const parentContext = contextStore.getStore() ?? Otel.context.active();
+  const parentContext = activeContextFromTraceParent(options?.parentTraceParent) ?? contextStore.getStore() ?? Otel.context.active();
   const span = tracer.startSpan(name, { attributes: otelSafeAttributes(attributes) }, parentContext);
   const childContext = Otel.trace.setSpan(parentContext, span);
   return await contextStore.run(childContext, async () => {

@@ -287,6 +287,7 @@ export function createSqliteQueue(
           "selfhost.queue.job",
           { "job.type": message.type, "queue.backend": "sqlite", "job.attempt": job.attempts + 1 },
           () => consume(message),
+          { parentTraceParent: message.type === "github-webhook" ? message.traceParent : undefined },
         );
         driver.query(`DELETE FROM ${TABLE} WHERE id=?`, [job.id]);
         recordQueueMetric(driver, "gittensory_jobs_processed_total");

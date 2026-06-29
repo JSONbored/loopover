@@ -1675,6 +1675,36 @@ describe("signal coverage edge cases", () => {
     expect(audit.findings.map((finding) => finding.code)).toContain("suspicious_configured_labels");
   });
 
+  it("matches configured glob label keys against observed and live labels, not literal strings (#1769)", () => {
+    // `type:*` is a wildcard multiplier key; `area:*` matches nothing in use; `bug` is a plain literal key.
+    const globRepo = repo("owner/glob-labels", { labelMultipliers: { "type:*": 1.3, "area:*": 1.2, bug: 1.1 }, trustedLabelPipeline: true });
+
+    // buildConfigQuality: a glob key with a matching cached label is "observed" (not flagged); one with no match is.
+    const quality = buildConfigQuality(
+      globRepo,
+      [issue(globRepo.fullName, 1, "Crash", { labels: ["type:bug-fix"] })],
+      [pr(globRepo.fullName, 2, "Fix", { labels: ["bug"] })],
+      globRepo.fullName,
+    );
+    expect(quality.notObservedConfiguredLabels).toEqual(["area:*"]);
+    expect(quality.notObservedConfiguredLabels).not.toContain("type:*");
+    expect(quality.findings.map((finding) => finding.code)).toContain("configured_labels_not_observed");
+
+    // buildLabelAudit: live `type:bug` satisfies the `type:*` glob; `area:*` has no live label → it alone is missing.
+    const liveLabels: RepoLabelRecord[] = [
+      { repoFullName: globRepo.fullName, name: "type:bug", isConfigured: true, observedCount: 2, payload: {}, lastSeenAt: "2026-05-25T00:00:00.000Z" },
+      { repoFullName: globRepo.fullName, name: "bug", isConfigured: true, observedCount: 1, payload: {}, lastSeenAt: "2026-05-25T00:00:00.000Z" },
+      { repoFullName: globRepo.fullName, name: "wontfix", isConfigured: false, observedCount: 1, payload: {}, lastSeenAt: "2026-05-25T00:00:00.000Z" },
+    ];
+    const audit = buildLabelAudit(globRepo, liveLabels, [], [], globRepo.fullName);
+    expect(audit.missingConfiguredLabels).toEqual(["area:*"]);
+    expect(audit.missingConfiguredLabels).not.toContain("type:*");
+    // `type:bug` is covered by the `type:*` glob (configured: true); the unrelated `wontfix` label is not (false).
+    const byName = new Map(audit.observedLabels.map((label) => [label.name, label.configured]));
+    expect(byName.get("type:bug")).toBe(true);
+    expect(byName.get("wontfix")).toBe(false);
+  });
+
   it("awards the personalFit language bonus only on a real repo-language match", () => {
     const targetRepo = repo("owner/lang-fit");
     const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);

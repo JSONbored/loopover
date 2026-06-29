@@ -10,6 +10,8 @@ export type JobMessage =
       // Set when the DLQ consumer re-drives a dead-lettered webhook back onto the lane (#1276). Bounds the
       // self-heal to a single re-drive so a genuinely-poison payload cannot loop the webhook DLQ forever.
       redriven?: boolean;
+      /** Self-host OTEL trace context for connecting ingress → queued review work. */
+      traceParent?: string;
     }
   | {
       // Delayed self-poll to re-capture a PR's before/after preview once its preview deploy is live — the first

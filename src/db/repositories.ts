@@ -164,6 +164,7 @@ import { normalizeContributorBlacklist } from "../settings/contributor-blacklist
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
+import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
 
 const MAX_STORED_BODY_CHARS = 4000;
 const SIGNAL_FRESHNESS_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
@@ -5312,7 +5313,9 @@ const PRODUCT_USAGE_SENSITIVE_KEY =
   /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
 const PRODUCT_USAGE_SENSITIVE_VALUE =
   /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
-const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/root|\/var|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
+// Compose from the canonical scrubber in redaction.ts so this surface cannot drift from the boundary;
+// it already covered /root/ and /var/, and now unifies the Windows form (also accepts `C:/Users/`).
+const PRODUCT_USAGE_LOCAL_PATH = PUBLIC_LOCAL_PATH_SCRUB_PATTERN;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
 

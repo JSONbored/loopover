@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildControlPanelAccessScope, buildControlPanelRoleSummary, loadControlPanelRoleSummary } from "../../src/services/control-panel-roles";
+import { __controlPanelRolesInternals, buildControlPanelAccessScope, buildControlPanelRoleSummary, loadControlPanelRoleSummary } from "../../src/services/control-panel-roles";
 import type { InstallationRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -67,6 +67,17 @@ describe("control panel role summaries", () => {
 
     expect(summary.roles).toEqual(["maintainer", "owner"]);
     expect(JSON.stringify(summary)).not.toMatch(/\/Users|github_pat|1234567890abcdef|wallet|hotkey/);
+  });
+
+  it("redacts all local-path roots including /root/, /var/, and forward-slash Windows paths (#1418)", () => {
+    const { sanitizeRoleText } = __controlPanelRolesInternals;
+    // /root/ and /var/ were previously missed by this surface's local copy of the path regex.
+    expect(sanitizeRoleText("clone at /root/work/repo/src")).toBe("clone at <redacted-path>");
+    expect(sanitizeRoleText("log at /var/log/app/run.log")).toBe("log at <redacted-path>");
+    expect(sanitizeRoleText("checkout C:/Users/alice/repo")).toBe("checkout <redacted-path>");
+    // Already-covered roots stay redacted (no regression).
+    expect(sanitizeRoleText("see /Users/me/repo")).toBe("see <redacted-path>");
+    expect(sanitizeRoleText("see C:\\Users\\me\\repo")).toBe("see <redacted-path>");
   });
 
   it("recognizes account installations even before an owned repo is cached", () => {

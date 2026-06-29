@@ -1,16 +1,5 @@
 import { describe, it, expect } from "vitest";
-
-// Test the parsePositiveInt function from src/api/routes.ts
-// This function is duplicated in src/github/webhook.ts and src/orb/webhook.ts
-// All three implementations should behave identically
-
-function parsePositiveInt(value: string | null | undefined): number | null {
-  if (!value) return null;
-  if (!/^\d+$/.test(value)) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
-}
+import { parsePositiveInt } from "../../src/utils/json";
 
 describe("parsePositiveInt", () => {
   it("returns null for null input", () => {

@@ -2898,7 +2898,7 @@ export function buildIssueQualityReport(
   const lane = buildLaneAdvice(repo, fullName);
   const collisions = prebuiltCollisions ?? buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
   const bountyByIssue = indexBountiesByIssue(bounties);
-  // Build per-issue indexes ONCE: the loop below runs over up to 100 open issues, and each previously re-scanned
+  // Build per-issue indexes ONCE: the loop below scores every open issue, and each previously re-scanned
   // the full PR list (up to 10k) twice plus every collision cluster. O(issues·PRs) → O(issues + PRs).
   const prsByLinkedIssue = indexPullRequestsByLinkedIssue(pullRequests);
   const prByNumber = new Map(pullRequests.map((pr) => [pr.number, pr] as const));
@@ -2908,7 +2908,6 @@ export function buildIssueQualityReport(
   const lifecycleByIssue = new Map(buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests).states.map((entry) => [entry.number, entry]));
   const reports = issues
     .filter((issue) => issue.state === "open")
-    .slice(0, 100)
     .map((issue) => {
       const linkedPrs = resolveLinkedPullRequests(issue, pullRequests, prsByLinkedIssue, prByNumber);
       const linkedMergedPrs = resolveLinkedPullRequests(issue, recentMergedPullRequests, mergedPrsByLinkedIssue, mergedPrByNumber);
@@ -2964,7 +2963,11 @@ export function buildIssueQualityReport(
               : "ready";
       return { number: issue.number, title: issue.title, lifecycle, linkage, bounty: bountyContext, status, score, reasons, warnings };
     })
-    .sort((left, right) => right.score - left.score || left.number - right.number);
+    // Rank-before-cap (#1773): score and sort EVERY open issue, then keep the top 100. Callers pass issues in
+    // updatedAt-desc order, so the old pre-score `.slice(0, 100)` silently dropped high-quality issues that were
+    // not among the 100 most-recently-updated — understating readyCount on repos with more than 100 open issues.
+    .sort((left, right) => right.score - left.score || left.number - right.number)
+    .slice(0, 100);
   return {
     repoFullName: fullName,
     generatedAt: nowIso(),

@@ -1062,6 +1062,48 @@ describe("world-class backend signals", () => {
     expect(quality.issues.length).toBeLessThanOrEqual(100);
   });
 
+  it("scores and ranks every open issue before capping to 100, keeping a high-quality issue past the first 100 (regression for #1773)", () => {
+    const discoveryRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "owner/issue-quality-rank",
+      registryConfig: { ...repo.registryConfig!, repo: "owner/issue-quality-rank", issueDiscoveryShare: 1 },
+    };
+    const recent = new Date().toISOString();
+    // 100 thin, lower-scoring filler issues come first in caller order (callers pass open issues updatedAt-desc)...
+    const fillers: IssueRecord[] = Array.from({ length: 100 }, (_, index) => ({
+      repoFullName: discoveryRepo.fullName,
+      number: index + 1,
+      title: `Filler issue ${index + 1}`,
+      state: "open" as const,
+      authorLogin: "reporter",
+      authorAssociation: "NONE" as const,
+      labels: ["bug"],
+      linkedPrs: [],
+      body: "thin",
+      updatedAt: recent,
+    }));
+    // ...and one genuinely high-quality issue sits AFTER the first 100 (least-recently-updated position).
+    const strongIssue: IssueRecord = {
+      repoFullName: discoveryRepo.fullName,
+      number: 500,
+      title: "High-quality discovery candidate beyond the first hundred",
+      state: "open",
+      authorLogin: "reporter",
+      authorAssociation: "NONE",
+      labels: ["bug", "feature"],
+      linkedPrs: [],
+      body: "x".repeat(240),
+      updatedAt: recent,
+    };
+    const report = buildIssueQualityReport(discoveryRepo, [...fillers, strongIssue], [], discoveryRepo.fullName);
+    // The cap still bounds output to 100, but it now keeps the top-ranked issues rather than the first 100 by order.
+    expect(report.issues.length).toBe(100);
+    const strong = report.issues.find((entry) => entry.number === 500);
+    expect(strong?.status).toBe("ready");
+    // The highest-quality issue ranks first even though it was last in caller order (pre-cap it was dropped).
+    expect(report.issues[0]?.number).toBe(500);
+  });
+
   it("covers contributor fit and label audit warning boundaries", () => {
     const noUsageAudit = buildLabelAudit(
       { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { feature: 1 } } },

@@ -1,18 +1,20 @@
 # AI review & BYOK (maintainer guide)
 
-Gittensory can post an AI maintainer review on pull requests. It runs on **free Cloudflare Workers AI
-by default**, and maintainers can optionally **bring their own (BYOK) Anthropic or OpenAI key** for a
-higher-quality advisory write-up. This page explains how it works and how to configure it.
+Gittensory can post an AI maintainer review on pull requests from the **self-hosted review engine**.
+The operator configures the default reviewer with `AI_PROVIDER` in the Docker stack, and maintainers can
+optionally **bring their own (BYOK) Anthropic or OpenAI key** for a repo-scoped advisory write-up. The
+Cloudflare API worker no longer runs hosted reviews or binds Workers AI for review execution.
 
 ## What the AI review does
 
 There are two independent layers:
 
 1. **Advisory write-up** (non-blocking) — a maintainer-style summary, suggestions, and risks. This is the
-   layer your BYOK key powers when you supply one; otherwise it uses the free Workers-AI model.
-2. **Consensus blocker** (opt-in, blocking) — only fires when **two free Workers-AI models independently
-   agree** on a high-confidence critical defect. **This always uses the free models and never your BYOK
-   key.** It only ever applies to *confirmed Gittensor contributors* — it will never block an outside
+   layer your BYOK key powers when you supply one; otherwise it uses the self-host instance's configured
+   reviewer.
+2. **Consensus blocker** (opt-in, blocking) — only fires when the configured reviewers independently agree on
+   a high-confidence critical defect. It never uses a maintainer BYOK key for the blocking consensus path.
+   It only ever applies to *confirmed Gittensor contributors* — it will never block an outside
    contributor's PR.
 
 Modes (`off` / `advisory` / `block`):
@@ -31,9 +33,9 @@ to your provider:
 - **Anthropic** → `POST https://api.anthropic.com/v1/messages` (your key in the `x-api-key` header)
 - **OpenAI** → `POST https://api.openai.com/v1/chat/completions` (your key as a `Bearer` token)
 
-These calls bill **your** provider account, do not run through Cloudflare Workers AI, and are **not**
-counted against Gittensory's free daily budget. If a BYOK call fails (bad key, rate limit, timeout) the
-review fails safe — you simply get no advisory note for that PR; nothing is ever blocked because of it.
+These calls bill **your** provider account and do not run through the instance's default reviewer. If a
+BYOK call fails (bad key, rate limit, timeout), the review fails safe — the deterministic review path and
+configured instance reviewer still decide the PR; nothing is ever blocked because a BYOK advisory failed.
 
 ### Key handling & security
 
@@ -74,4 +76,4 @@ Precedence: `.gittensory.yml` > dashboard settings > safe defaults.
 - The feature is **dormant by default** — it only runs when the operator has enabled the AI flags for the
   deployment **and** the repository sets a non-`off` mode.
 - If you declare a `provider` that doesn't match your stored key's provider, BYOK is skipped and the
-  review falls back to the free Workers-AI model (no error, no block).
+  review falls back to the self-host instance reviewer (no error, no block).

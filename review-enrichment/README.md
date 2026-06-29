@@ -62,8 +62,10 @@ Set these Railway service variables:
 | `SENTRY_ENVIRONMENT`        | Optional; defaults to Railway's environment name, then `production`.    |
 | `SENTRY_TRACES_SAMPLE_RATE` | Optional; defaults to `0`, so errors report without tracing.            |
 | `SENTRY_RELEASE`            | Optional override. Only set it when that exact REES bundle is uploaded. |
+| `SENTRY_URL`                | Optional Sentry API URL; defaults to `https://sentry.io`.               |
 | `SENTRY_REPOSITORY`         | Optional; defaults to `JSONbored/gittensory` for commit association.    |
 | `REES_SENTRY_UPLOAD_STRICT` | Optional. Set `true` to fail startup if source-map upload fails.        |
+| `REES_SENTRY_VALIDATE_RELEASE` | Optional. Set `false` only to disable post-upload release validation. |
 
 By default the release id is `gittensory-rees@<RAILWAY_GIT_COMMIT_SHA>`, using Railway's Git metadata. The Sentry
 GitHub code mapping should be:
@@ -78,10 +80,21 @@ Do **not** pass `SENTRY_AUTH_TOKEN` as a Docker build arg. Railway deploys this 
 can leak through image metadata. Keeping the upload at runtime means Sentry sees the same `dist/` files that the service
 executes, without exposing source maps over HTTP.
 
+After upload, startup validates the exact `gittensory-rees@<RAILWAY_GIT_COMMIT_SHA>` release through the Sentry API:
+the release must exist, be finalized, include the deployed commit, and include the Railway deploy id/environment. If
+`REES_SENTRY_UPLOAD_STRICT=true`, a failed upload or failed validation stops the Railway deployment; otherwise it logs a
+`rees_sentry_sourcemap_upload_failed` warning so the problem is visible without blocking startup.
+
+Analyzer failures are still fail-open: the `/v1/enrich` response marks the analyzer as `degraded` and returns a partial
+brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags for
+`analyzer`, `repo`, `pullNumber`, `headSha`, `release`, `environment`, and `timeoutMs`. Use those tags to spot a broken
+analyzer without exposing request bodies, diffs, tokens, or review content.
+
 If Sentry still shows frames such as `/app/dist/server.js`, check:
 
 1. The event's `release` is `gittensory-rees@<same Railway commit sha>` or your exact `SENTRY_RELEASE` override.
 2. The Sentry release has an artifact bundle uploaded for the REES project.
 3. Railway has `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` set on the REES service.
-4. The Sentry code mapping is `/app` → `review-enrichment` on branch `main`.
-5. `npm --prefix review-enrichment run validate:sourcemaps` passes locally.
+4. Startup logs include `sentry_release_validation_complete` for the same release id and Railway deployment id.
+5. The Sentry code mapping is `/app` → `review-enrichment` on branch `main`.
+6. `npm --prefix review-enrichment run validate:sourcemaps` passes locally.

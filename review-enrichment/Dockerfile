@@ -18,6 +18,7 @@ RUN useradd --create-home --uid 10001 rees
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build --chown=rees:rees /app/scripts ./scripts
 COPY --from=build --chown=rees:rees /app/dist ./dist
 COPY --from=build --chown=rees:rees /app/package.json ./package.json
 USER rees

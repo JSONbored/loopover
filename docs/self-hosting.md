@@ -286,13 +286,15 @@ The maintainer release workflow expects:
 | Secret `SENTRY_AUTH_TOKEN`  | Sentry auth token allowed to create releases and upload source maps    |
 | Variable `SENTRY_ORG`       | Sentry organization slug                                              |
 | Variable `SENTRY_PROJECT`   | Sentry project slug                                                   |
+| Variable `SENTRY_URL`       | Optional Sentry API URL; defaults to `https://sentry.io`               |
 | Sentry GitHub integration   | Installed for `JSONbored/gittensory`, with the code mapping above      |
 
 The workflow builds `dist/server.mjs` with `dist/server.mjs.map`, validates the `sourceMappingURL` and embedded
 `sourcesContent`, injects Sentry debug ids, creates release `gittensory-selfhost@<version>`, associates commits with
-`set-commits --auto`, uploads the source maps, and then builds the image from that injected `dist/server.mjs`.
-`dist/server.mjs.map` is **not** copied into the runtime image and is not served by the app; it only exists as a
-private Sentry release artifact.
+the tagged commit, uploads the source maps with Sentry validation/waiting enabled, finalizes the release, and then
+validates through the Sentry API that the exact release exists, is finalized, and includes the release commit. It then
+builds the image from that injected `dist/server.mjs`. `dist/server.mjs.map` is **not** copied into the runtime image
+and is not served by the app; it only exists as a private Sentry release artifact.
 
 For a custom image, source maps only work when the deployed JS bundle is the exact post-injection bundle whose map was
 uploaded. If you build locally and do not upload maps, leave `SENTRY_RELEASE` unset. Events still report to Sentry,
@@ -303,9 +305,10 @@ If a new event still shows `/app/dist/server.mjs`:
 1. Confirm the event's `release` exactly matches the release that has the uploaded artifact bundle.
 2. Confirm the image was built from the injected `dist/server.mjs`, not from a later Docker-internal rebuild.
 3. Confirm the Sentry code mapping is `/app` → `.` on branch `main`.
-4. Confirm `dist/server.mjs` had `//# sourceMappingURL=server.mjs.map` before upload and the map includes
+4. Confirm the release workflow's `Validate Sentry release` step passed for that exact `gittensory-selfhost@<version>`.
+5. Confirm `dist/server.mjs` had `//# sourceMappingURL=server.mjs.map` before upload and the map includes
    `sourcesContent`.
-5. Trigger a fresh event after the upload; old events may need reprocessing before they pick up newly uploaded maps.
+6. Trigger a fresh event after the upload; old events may need reprocessing before they pick up newly uploaded maps.
 
 ---
 
@@ -324,13 +327,16 @@ scale (`docker compose up --scale gittensory=3`). Postgres is **beta**: the migr
 paths are validated against a real Postgres, but report any dialect edge cases. RAG (the SQLite vector store)
 is **not** available on the Postgres backend yet — it degrades to no-context.
 
-## 8. What is not on self-host
+## 8. Cloudflare bindings not used by self-host
 
-These are Cloudflare-platform features; they degrade cleanly and the core reviewer is unaffected:
+The Cloudflare API worker keeps serving the public API + Orb broker. Review execution runs in the Docker stack,
+which uses self-host equivalents instead of Cloudflare review bindings:
 
-- **Visual PR capture** (Browser Rendering binding) — off; reviews run text-only.
+- **Visual PR capture** — use `INSTALL_VISUAL_REVIEW=true` plus `BROWSER_WS_ENDPOINT`; persist captures with
+  `REVIEW_AUDIT_DIR`. Without those, reviews run text-only.
 - **The `/mcp` server** (Durable-Object-backed Agents SDK) — returns `501`. The deterministic API + review
   path is unaffected; a native MCP-on-Node port is a follow-up.
-- **Distributed rate limiting** (RateLimiter Durable Object) — off by default; set `REDIS_URL` for a
-  Redis-backed fixed-window limiter (see §7). Otherwise put a reverse proxy / WAF in front.
-- **Vectorize-backed RAG** and **R2 audit storage** — inert unless you wire equivalent backends.
+- **Distributed rate limiting** — uses Redis through `REDIS_URL` instead of the Cloudflare RateLimiter Durable
+  Object.
+- **RAG and audit storage** — use Qdrant or the built-in sqlite vector store for RAG, and `REVIEW_AUDIT_DIR`
+  for audit/screenshot blobs instead of Cloudflare Vectorize/R2.

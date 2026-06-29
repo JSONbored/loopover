@@ -11,16 +11,15 @@ declare global {
      *  local/openai-compatible endpoint (ollama). Built at boot from AI_EMBED_BASE_URL/AI_EMBED_MODEL. Absent ⇒
      *  `createReviewAdapters` falls back to `env.AI` (byte-identical to before). */
     AI_EMBED?: Ai;
-    /** Convergence (infra): Vectorize index for codebase RAG retrieval (Layer C). Optional — the review is
-     *  fully fail-safe without it (absent ⇒ no RAG, review proceeds with no retrieved context). The index is
-     *  created with bge-m3's 1024 dimensions. Unused until the per-module RAG wiring chunk; an unbound deploy
-     *  is inert (`createReviewAdapters` degrades a missing binding to an unavailable vector adapter). */
+    /** Self-host RAG vector adapter. Cloudflare no longer binds Vectorize for hosted reviews; the Node runtime
+     *  injects Qdrant/sqlite/pg adapters here when configured. Absent ⇒ no RAG, review proceeds with no retrieved
+     *  context. */
     VECTORIZE?: Vectorize;
-    /** Convergence (infra): R2 bucket for review audit + visual-capture blobs. Optional — absent ⇒ no
-     *  audit/screenshot persistence. Unused until the per-module wiring chunk; an unbound deploy is inert. */
+    /** Optional self-host review audit + visual-capture blob store. The Node runtime injects a filesystem-backed
+     *  store when REVIEW_AUDIT_DIR is set; the Cloudflare API worker no longer binds the review R2 bucket. */
     REVIEW_AUDIT?: R2Bucket;
-    /** Convergence (infra): Browser Rendering binding for visual (before/after screenshot) capture. Optional —
-     *  absent ⇒ no visual capture. Unused until the per-module wiring chunk; an unbound deploy is inert. */
+    /** Optional visual capture binding. Self-host exposes this when BROWSER_WS_ENDPOINT is set; the Cloudflare API
+     *  worker no longer binds Browser Rendering for reviews. */
     BROWSER?: Fetcher;
     /** Self-host transient cache for short-lived coalescing/backpressure keys. */
     SELFHOST_TRANSIENT_CACHE?: {
@@ -40,8 +39,8 @@ declare global {
     /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
     AI_BYOK_DAILY_REPO_LIMIT?: string;
     AI_MAX_OUTPUT_TOKENS?: string;
-    /** Optional Cloudflare AI Gateway id. When set, free Workers-AI review calls route through the gateway
-     *  for caching, rate-limiting, request logging, and fallback. Unset = direct binding calls (unchanged). */
+    /** Optional Cloudflare AI Gateway id for legacy env.AI-compatible adapters. Self-host review execution should
+     *  prefer provider-specific AI_* configuration instead. */
     AI_GATEWAY_ID?: string;
     /** Self-host AI provider selection + dual-review config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
      *  providers (claude-code, codex, anthropic, ollama, …); `AI_COMBINE` picks single|consensus|synthesis (default
@@ -131,9 +130,9 @@ declare global {
     INTERNAL_JOB_TOKEN: string;
     /** Shared bearer secret required by the hosted Orb ingest collector. */
     ORB_INGEST_TOKEN?: string;
-    /** AES-256-GCM master secret for maintainer BYOK provider keys (encrypt/decrypt at rest). A Worker
-     *  secret (`wrangler secret put`), never a public var. When absent, BYOK is unavailable and the AI
-     *  review silently falls back to free Workers AI. */
+    /** AES-256-GCM master secret for maintainer BYOK provider keys (encrypt/decrypt at rest). A Worker/self-host
+     *  secret, never a public var. When absent, BYOK is unavailable and review uses the configured instance
+     *  reviewer when available. */
     TOKEN_ENCRYPTION_SECRET?: string;
     RATE_LIMIT_TRUSTED_PROXIES?: string;
     RATE_LIMIT_TRUSTED_PROXY_COUNT?: string;
@@ -154,12 +153,12 @@ declare global {
     /** Convergence (visual capture): when truthy, the review path captures a before/after screenshot for
      *  PRs that touch WEB-VISIBLE files (frontend pages / public OG images — see review/visual/paths.ts
      *  isVisualPath). "before" = production (PUBLIC_SITE_ORIGIN); "after" = the PR's preview deploy. Each shot
-     *  is rendered via the BROWSER (Browser Rendering) binding, stored in the REVIEW_AUDIT R2 bucket, and
-     *  embedded in the unified PR comment as a "Visual preview" table served from the PUBLIC /gittensory/shot
-     *  route. Needs the BROWSER + REVIEW_AUDIT bindings; degrades gracefully (placeholders / dashes) without
+     *  is rendered via the optional BROWSER binding, stored through REVIEW_AUDIT when configured, and embedded in
+     *  the unified PR comment as a "Visual preview" table served from the PUBLIC /gittensory/shot route. Self-host
+     *  equivalents are BROWSER_WS_ENDPOINT + REVIEW_AUDIT_DIR; degrades gracefully (placeholders / dashes) without
      *  them. Backend .ts/.md/.json/.py PRs NEVER trigger capture. Capture runs for a repo ONLY IF this flag is
      *  ON *AND* the repo is in GITTENSORY_REVIEW_REPOS (the per-repo cutover allowlist) — see
-     *  review/visual-wire.ts screenshotsAllowed. Default OFF — unset/false captures nothing (no render, no R2
+     *  review/visual-wire.ts screenshotsAllowed. Default OFF — unset/false captures nothing (no render, no audit
      *  write, no comment change) so the review path is byte-identical to today. */
     GITTENSORY_REVIEW_SCREENSHOTS?: string;
     /** Convergence (grounding): when truthy, the AI reviewer prompt is GROUNDED — the PR's finished CI status
@@ -188,8 +187,8 @@ declare global {
      *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference
      *  context, exactly like grounding (see review/rag-wire). Default OFF — unset/false performs NO retrieval,
      *  uses NO adapter, makes NO vector query, and keeps the reviewer prompt byte-identical (the new branch is
-     *  unreachable when off). Even when ON, retrieval is INERT until a vector index exists for the repo (a
-     *  cold/missing index degrades to no context) — the index-population job is a deploy-time follow-up. */
+     *  unreachable when off). Even when ON, retrieval is INERT until the self-host vector index is populated for
+     *  the repo (a cold/missing index degrades to no context). */
     GITTENSORY_REVIEW_RAG?: string;
     /** Convergence flag: the deterministic content/registry SURFACE LANE drives the gate for registry-submission
      *  PRs (metagraphed surfaces[]/providers/candidates). Truthy ON *AND* the repo in GITTENSORY_REVIEW_REPOS —
@@ -212,13 +211,12 @@ declare global {
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     GITTENSORY_REVIEW_SELFTUNE?: string;
     /** Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
-     *  through to the existing mention path, so the worker is byte-identical to today. When truthy, a MAINTAINER
-     *  comment of `@gittensory plan` on an issue generates an implementation plan from the issue text via Workers
-     *  AI and posts it as an issue comment. See src/review/planner.ts. */
+     *  through to the existing mention path, so the worker is byte-identical to today. Hosted planning is retired
+     *  with the Cloudflare AI binding; self-host can run planning through the configured AI provider. */
     GITTENSORY_REVIEW_PLANNER?: string;
     /** Proof of Power (#1059): when truthy, the unauthenticated `GET /v1/public/stats` endpoint serves the public
-     *  homepage counter — computed LIVE from gittensory's OWN review ledger (review_targets + review_audit) behind
-     *  a 60s cache, so it stays current as new reviews land. Default OFF — unset/false 404s the endpoint, so the
+     *  homepage counter — computed LIVE from the public review ledger behind a 60s cache, so it stays current as
+     *  new reviews land. Default OFF — unset/false 404s the endpoint, so the
      *  worker is byte-identical to today. Exposes review-disposition counts + a reversal-grounded accuracy
      *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
      *  See review/public-stats.ts. */

@@ -98,6 +98,34 @@ function runSentry(args: string[], options: RunOptions = {}): void {
   throw new Error(`sentry-cli ${args.join(" ")} failed (${result.status}): ${output.slice(0, 500)}`);
 }
 
+function shouldValidateRelease(): boolean {
+  return !/^(0|false|no|off)$/i.test(process.env.REES_SENTRY_VALIDATE_RELEASE ?? "");
+}
+
+function runReleaseValidation(release: string, fields: { sha?: string; deployName: string; environment: string }): void {
+  if (!shouldValidateRelease()) return;
+  const result = spawnSync(process.execPath, ["scripts/validate-sentry-release.mjs"], {
+    cwd: appDir,
+    env: {
+      ...process.env,
+      SENTRY_RELEASE: release,
+      SENTRY_COMMIT_SHA: fields.sha ?? "",
+      SENTRY_DEPLOY_NAME: fields.deployName,
+      SENTRY_ENVIRONMENT: fields.environment,
+      SENTRY_REQUIRE_COMMITS: "true",
+      SENTRY_REQUIRE_DEPLOY: "true",
+      SENTRY_REQUIRE_FINALIZED: "true",
+    },
+    encoding: "utf8",
+  });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+  if (result.status === 0) {
+    if (output) log("rees_sentry_release_validation", { output: output.slice(0, 500) });
+    return;
+  }
+  throw new Error(`Sentry release validation failed (${result.status}): ${output.slice(0, 500)}`);
+}
+
 async function main(): Promise<number> {
   const release = resolveReesSentryRelease(process.env);
   const required = {
@@ -156,6 +184,11 @@ async function main(): Promise<number> {
       nonBlank(process.env.RAILWAY_DEPLOYMENT_ID) ?? "railway",
     ]);
     runSentry(["releases", ...projectArgs, "finalize", release!]);
+    runReleaseValidation(release!, {
+      sha,
+      deployName: nonBlank(process.env.RAILWAY_DEPLOYMENT_ID) ?? "railway",
+      environment: resolveSentryEnvironment(process.env),
+    });
     log("rees_sentry_sourcemap_upload_complete", { release });
     return 0;
   } catch (error) {

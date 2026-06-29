@@ -8,13 +8,16 @@ describe("self-host Sentry release wiring", () => {
     const releaseWorkflow = read(".github/workflows/release-selfhost.yml");
     expect(releaseWorkflow).toContain('sourcemaps inject dist');
     expect(releaseWorkflow).toContain(
-      'sourcemaps upload --release="$SENTRY_RELEASE" dist',
+      'sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist',
     );
     expect(releaseWorkflow).toContain(
-      'releases set-commits "$SENTRY_RELEASE" --auto',
+      'releases set-commits "$SENTRY_RELEASE" --commit "$SENTRY_REPOSITORY@$SENTRY_COMMIT_SHA" --ignore-missing',
     );
     expect(releaseWorkflow).toContain('SENTRY_CLI_PACKAGE: "@sentry/cli@3.6.0"');
+    expect(releaseWorkflow).toContain('npx -y "$SENTRY_CLI_PACKAGE"');
     expect(releaseWorkflow).not.toContain("@sentry/cli@latest");
+    expect(releaseWorkflow).toContain("Validate Sentry release");
+    expect(releaseWorkflow).toContain('SENTRY_REQUIRE_FINALIZED: "true"');
 
     const edgeDeployScript = read("scripts/deploy-selfhost-prebuilt.sh");
     expect(edgeDeployScript).toContain(

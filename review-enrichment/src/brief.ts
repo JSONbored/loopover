@@ -21,8 +21,10 @@ import { scanSecretLog } from "./analyzers/secret-log.js";
 import { scanAssetWeight } from "./analyzers/asset-weight.js";
 import { scanTyposquat } from "./analyzers/typosquat.js";
 import { renderBrief } from "./render.js";
+import { captureAnalyzerDegradation } from "./sentry.js";
 
 type AnalyzerFn = (req: EnrichRequest, signal: AbortSignal) => Promise<unknown>;
+type AnalyzerRegistry = Partial<Record<keyof BriefFindings, AnalyzerFn>>;
 
 // The analyzer registry. More land behind this same shape: license (#1475), secret (#1476), static (#1477), history (#1478).
 const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
@@ -64,9 +66,12 @@ function runWithTimeout<T>(
   });
 }
 
-export async function buildBrief(req: EnrichRequest): Promise<ReviewBrief> {
+export async function buildBrief(
+  req: EnrichRequest,
+  analyzers: AnalyzerRegistry = ANALYZERS,
+): Promise<ReviewBrief> {
   const start = Date.now();
-  const all = Object.keys(ANALYZERS) as Array<keyof BriefFindings>;
+  const all = Object.keys(analyzers) as Array<keyof BriefFindings>;
   const requested = req.analyzers?.length
     ? all.filter((name) => req.analyzers!.includes(name))
     : all;
@@ -79,15 +84,24 @@ export async function buildBrief(req: EnrichRequest): Promise<ReviewBrief> {
   await Promise.all(
     requested.map(async (name) => {
       try {
+        const analyzer = analyzers[name];
+        if (!analyzer) throw new Error("analyzer_unregistered");
         const result = await runWithTimeout(
-          (signal) => ANALYZERS[name](req, signal),
+          (signal) => analyzer(req, signal),
           budgetMs,
         );
         findings[name] = result as never;
         analyzerStatus[name] = "ok";
-      } catch {
+      } catch (error) {
         analyzerStatus[name] = "degraded";
         partial = true;
+        captureAnalyzerDegradation(error, {
+          analyzer: name,
+          repoFullName: req.repoFullName,
+          prNumber: req.prNumber,
+          headSha: req.headSha,
+          timeoutMs: budgetMs,
+        });
       }
     }),
   );

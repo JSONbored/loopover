@@ -23,6 +23,7 @@ See `src/server.ts` for the `EnrichRequest` / `ReviewBrief` contract.
 - **#1474** dependency-diff + OSV.dev CVE
 - **#1502** lockfile-only transitive vulnerability drift via OSV.dev
 - **#1475** SPDX license policy
+- **#1511** package maintenance-health / deprecated-dep scorer
 - **#1476** gitleaks-grade secret scan (value-redacted)
 - **#1477** static analysis + complexity (lint/semgrep over the diff)
 - **#1478** history (author track record, similar past PRs, linked-issue alignment)

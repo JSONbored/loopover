@@ -11,6 +11,7 @@ import { scanDependencies } from "./analyzers/dependency-scan.js";
 import { scanLockfileDrift } from "./analyzers/lockfile-drift.js";
 import { scanSecrets } from "./analyzers/secret-scan.js";
 import { scanLicenses } from "./analyzers/license-check.js";
+import { scanMaintenanceHealth } from "./analyzers/maintenance-health.js";
 import { scanInstallScripts } from "./analyzers/install-scripts.js";
 import { scanActionPins } from "./analyzers/actions-pin.js";
 import { scanEol } from "./analyzers/eol-check.js";
@@ -32,6 +33,8 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   lockfileDrift: (req, signal) => scanLockfileDrift(req, fetch, { signal }),
   secret: (req) => scanSecrets(req),
   license: (req) => scanLicenses(req),
+  maintenanceHealth: (req, signal) =>
+    scanMaintenanceHealth(req, fetch, { signal }),
   installScript: (req) => scanInstallScripts(req),
   actionPin: (req) => scanActionPins(req),
   eol: (req) => scanEol(req),

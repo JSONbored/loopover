@@ -110,6 +110,38 @@ export function renderBrief(
     }
   }
 
+  const maintenanceHealth = findings.maintenanceHealth ?? [];
+  if (maintenanceHealth.length) {
+    lines.push(
+      "### Dependency maintenance-health risks (adoption and supply-chain durability)",
+    );
+    for (const item of maintenanceHealth) {
+      const details: string[] = [];
+      for (const reason of item.reasons) {
+        if (reason === "deprecated") {
+          details.push(
+            item.deprecatedMessage
+              ? `deprecated — ${promptText(item.deprecatedMessage)}`
+              : "deprecated",
+          );
+        } else if (reason === "yanked") {
+          details.push("yanked release");
+        } else if (reason === "stale-release") {
+          details.push(
+            item.lastReleaseDate
+              ? `no recent release since ${promptText(item.lastReleaseDate.slice(0, 10))}`
+              : "no recent releases",
+          );
+        } else if (reason === "sole-maintainer") {
+          details.push("single-maintainer package");
+        }
+      }
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${details.join("; ")}`,
+      );
+    }
+  }
+
   const installScripts = findings.installScript ?? [];
   if (installScripts.length) {
     lines.push(

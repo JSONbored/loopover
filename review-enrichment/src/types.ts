@@ -73,6 +73,23 @@ export interface LicenseFinding {
   classification: "copyleft" | "unknown";
 }
 
+/** A newly-added/upgraded direct dependency with maintenance-health risk signals. Keeps the signal public-safe:
+ *  package/version + generic risk reasons + coarse metadata only, never tokens, URLs, or unpublished details. */
+export interface MaintenanceHealthFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  reasons: Array<
+    | "deprecated"
+    | "yanked"
+    | "stale-release"
+    | "sole-maintainer"
+  >;
+  deprecatedMessage?: string | null;
+  lastReleaseDate?: string | null;
+  maintainers?: number | null;
+}
+
 /** A newly-added/upgraded npm dependency version that runs install lifecycle scripts (supply-chain risk). */
 export interface InstallScriptFinding {
   package: string;
@@ -168,6 +185,7 @@ export interface BriefFindings {
   lockfileDrift?: LockfileDriftFinding[];
   secret?: SecretFinding[];
   license?: LicenseFinding[];
+  maintenanceHealth?: MaintenanceHealthFinding[];
   actionPin?: ActionPinFinding[];
   installScript?: InstallScriptFinding[];
   eol?: EolFinding[];

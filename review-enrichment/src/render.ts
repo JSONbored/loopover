@@ -215,6 +215,22 @@ export function renderBrief(
     }
   }
 
+  const typosquats = findings.typosquat ?? [];
+  if (typosquats.length) {
+    lines.push(
+      "### Typosquat / dependency-confusion risks (verify the package name before merging)",
+    );
+    for (const item of typosquats) {
+      const detail =
+        item.kind === "typosquat"
+          ? `${item.reason} — likely typosquat of ${safeCodeSpan(item.similarTo ?? "")}`
+          : item.reason;
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${detail}`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

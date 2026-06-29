@@ -133,6 +133,22 @@ export interface AssetWeightFinding {
   status: "added" | "grown";
 }
 
+/** A newly-added dependency whose name is a near-miss of a popular package (typosquat) or an unscoped name that
+ *  is not published on the public registry and is therefore publicly claimable (dependency-confusion). Reports
+ *  the package name + the reason only — never the manifest contents. (#1501) */
+export interface TyposquatFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  kind: "typosquat" | "confusion";
+  /** The popular package the name is a near-miss of — set for `typosquat` findings. */
+  similarTo?: string;
+  /** Damerau-Levenshtein distance to `similarTo` — set for edit-distance `typosquat` findings (0 = homoglyph/separator). */
+  distance?: number;
+  /** Short, public-safe explanation of why the name was flagged. */
+  reason: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -146,6 +162,7 @@ export interface BriefFindings {
   codeowners?: CodeownersFinding[];
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
+  typosquat?: TyposquatFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

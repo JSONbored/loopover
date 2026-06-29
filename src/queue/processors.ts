@@ -3571,6 +3571,22 @@ export async function shouldStartAiReviewForAdvisory(
     skipAiReview?: boolean | undefined;
   },
 ): Promise<boolean> {
+  if (!shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
+  if (args.settings.aiReviewAllAuthors) return true;
+  return !(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName) && (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author })));
+}
+
+export function shouldRequirePublicAiReviewForAdvisory(
+  env: Env,
+  args: {
+    settings: RepositorySettings;
+    advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha">;
+    repoFullName: string;
+    author: string | null;
+    confirmedContributor: boolean;
+    skipAiReview?: boolean | undefined;
+  },
+): boolean {
   const packAllowsAnyAuthorBlockingReview =
     args.settings.gatePack === "oss-anti-slop" &&
     args.settings.aiReviewMode === "block";
@@ -3588,7 +3604,7 @@ export async function shouldStartAiReviewForAdvisory(
     !env.AI
   )
     return false;
-  return !(isReputationEnabled(env) && isConvergenceRepoAllowed(env, args.repoFullName) && (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author })));
+  return true;
 }
 
 export async function runAiReviewForAdvisory(

@@ -161,6 +161,10 @@ gate:
     # Workers-AI pair, so BYOK never changes who can be blocked.
     # Bool. Default: false.
     byok: false
+    # Review every PR author when AI review is enabled. Keep false to spend
+    # model calls only on the engine's default eligible authors.
+    # Bool. Default: false.
+    allAuthors: false
     # BYOK provider. anthropic | openai | null. Default: null (use the stored
     # key's own provider). Must match the stored key's provider or BYOK is
     # skipped (Workers-AI fallback). The key itself lives only in the encrypted

@@ -109,6 +109,7 @@ already-enabled gate.
 | First-time-contributor grace | `gate.firstTimeContributorGrace` | `firstTimeContributorGrace` | bool | `false` | When `true`, softens a would-be block to advisory for a genuine newcomer (0 merged PRs, < 3 closed-unmerged PRs). Repeat offenders and authors with merge history are gated normally. |
 | AI review | `gate.aiReview.mode` | `aiReviewMode` | `off`/`advisory`/`block` | `off` | `advisory` posts AI review notes only; `block` lets a dual-model high-confidence consensus defect become a blocker (confirmed-contributors only). |
 | AI review BYOK | `gate.aiReview.byok` | `aiReviewByok` | bool | `false` | When `true` and a provider key is configured, the *advisory* write-up uses the maintainer's frontier model. The consensus blocker always uses the free Workers-AI pair, so BYOK never changes who can be blocked. |
+| AI review all authors | `gate.aiReview.allAuthors` | `aiReviewAllAuthors` | bool | `false` | When `true`, an enabled AI review runs for every PR author instead of only the engine's default eligible authors. Use this for self-host repos where the selected model must produce the public review summary. |
 | AI review provider | `gate.aiReview.provider` | `aiReviewProvider` | `anthropic` / `openai` / `null` | `null` | `null` = use the stored key's own provider. Must match the stored key's provider or BYOK is skipped (Workers-AI fallback). The key itself is only in the encrypted key store. |
 | AI review model | `gate.aiReview.model` | `aiReviewModel` | string / `null` | `null` | Model override for the BYOK advisory write-up (e.g. `claude-3-5-sonnet-latest`). `null` = the key record's model, else a conservative per-provider default. |
 | AI close confidence | `gate.aiReview.closeConfidence` | `aiReviewCloseConfidence` | number 0–1 (nullable) | `null` (engine uses `0.9`) | Minimum **calibrated** AI-reviewer confidence for a consensus defect / split to **block** under `aiReview.mode: block`. Below-threshold AI defects stay advisory (visible, never close). Each reviewer rates its own confidence; consensus carries the weaker reviewer's. Config-as-code only (no dashboard/DB column). |
@@ -203,6 +204,7 @@ gate:
   aiReview:
     mode: advisory
     byok: true
+    allAuthors: true
     provider: anthropic
     model: claude-3-5-sonnet-latest
 

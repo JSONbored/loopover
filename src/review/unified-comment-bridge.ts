@@ -160,9 +160,11 @@ export function isBoilerplateNit(finding: AdvisoryFinding): boolean {
 
 /** Build the single AI reviewer note from gittensory's AI output: the composed advisory write-up (minus its nits)
  *  becomes the assessment; a consensus defect (recovered from the advisory findings) becomes a blocker; the AI's own
- *  nits AND the gate's non-blocking warnings become the collapsible nits. Returns `[]` when there is nothing
- *  reviewer-side to surface (no AI notes, no consensus defect) so the renderer hides the reviewer chip. The gate
- *  `decision` (passed separately) stays authoritative over `recommendation` — this is advisory framing only. */
+ *  nits AND the gate's non-blocking warnings become the collapsible nits. Deterministic warnings alone must NOT
+ *  manufacture a reviewer note: a final public comment may only claim an AI review when there is a real AI
+ *  assessment/defect. Returns `[]` when there is nothing reviewer-side to surface (no AI notes, no consensus defect,
+ *  no non-AI gate blocker) so the renderer hides the reviewer chip. The gate `decision` (passed separately) stays
+ *  authoritative over `recommendation` — this is advisory framing only. */
 export function buildDualReviewNotes(args: {
   aiReview?: { notes: string } | undefined;
   consensusDefect?: { title: string; detail: string } | undefined;
@@ -208,7 +210,7 @@ export function buildDualReviewNotes(args: {
     .map((line) => publicSafeNit(line))
     .filter((line): line is string => line !== null);
   const nits = [...aiNits, ...gateNits];
-  if (!assessment && blockers.length === 0 && nits.length === 0) return [];
+  if (!assessment && blockers.length === 0) return [];
   const notes: ReviewNotes = {
     assessment,
     suggestions: [],
@@ -353,7 +355,15 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   });
   // The gate already produced 0/1 reviewer notes from a synthesis of the model pair; reflect the caller's
   // actual reviewer count (for the chip + the "N reviewers, synthesized" evidence) without re-deriving it.
-  if (typeof args.reviewerCount === "number") input.reviewerCount = args.reviewerCount;
+  // A non-AI gate blocker can still be folded into the blocker list above, but it must not make the comment claim
+  // an AI reviewer ran. Without this guard, deterministic nits/warnings rendered as `1 AI reviewer` with no
+  // review summary.
+  input.reviewerCount =
+    args.aiReview !== undefined
+      ? typeof args.reviewerCount === "number"
+        ? args.reviewerCount
+        : input.reviewerCount
+      : 0;
 
   // Honor `.gittensory.yml review.fields` row visibility, exactly as the legacy panel does.
   const visibleRows = args.panelRows.filter((row) => args.reviewFields?.[row.key] !== false);

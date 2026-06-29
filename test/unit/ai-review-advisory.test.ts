@@ -105,6 +105,17 @@ describe("shouldStartAiReviewForAdvisory", () => {
     await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
     await expect(shouldStartAiReviewForAdvisory(env, base)).resolves.toBe(false);
   });
+
+  it("honors aiReviewAllAuthors as an explicit self-host review requirement even when reputation would skip", async () => {
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" });
+    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    await expect(
+      shouldStartAiReviewForAdvisory(env, {
+        ...base,
+        settings: { aiReviewMode: "advisory", gatePack: "gittensor", aiReviewAllAuthors: true } as RepositorySettings,
+      }),
+    ).resolves.toBe(true);
+  });
 });
 
 describe("runAiReviewForAdvisory", () => {

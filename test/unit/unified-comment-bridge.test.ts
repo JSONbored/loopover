@@ -211,6 +211,31 @@ describe("buildUnifiedCommentBody", () => {
     expect(body).toContain("> [!TIP]"); // success → ready → TIP alert
   });
 
+  it("does not claim an AI reviewer or synthesize a review from deterministic warnings alone", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "action_required",
+        summary: "Manual maintainer review required.",
+        warnings: [
+          {
+            code: "large_change",
+            severity: "warning",
+            title: "Large change — held for manual review",
+            detail: "Large change.",
+            action: "Split this into smaller PRs.",
+          },
+        ],
+      }),
+      panelRows,
+      readinessTotal: 55,
+      changedFiles: 5,
+      footerMarkdown: footer,
+    });
+    expect(body).not.toContain("AI reviewer");
+    expect(body).not.toContain("Review summary");
+    expect(body).toContain("No AI review summary");
+  });
+
   it("the gate conclusion drives the status: a gate failure blocks regardless of reviewer recs", () => {
     const failing = buildUnifiedCommentBody({
       gate: gate({
@@ -648,6 +673,7 @@ describe("buildDualReviewNotes — public-safe Nit scrub (privacy-critical, gate
   // mirrors src/rules/advisory.ts sanitizeForCheckRun + src/signals/engine.ts containsPrivatePublicTerm.
   it("scrubs a forbidden term from a Nit instead of leaking it verbatim", () => {
     const reviews = buildDualReviewNotes({
+      aiReview: { notes: "Reviewer assessment." },
       warnings: [{ code: "w", severity: "warning", title: "Adjust the estimated scores threshold", detail: "...", action: "Tune it." }],
       recommendation: "manual_review",
       verdict: "manual",
@@ -659,6 +685,7 @@ describe("buildDualReviewNotes — public-safe Nit scrub (privacy-critical, gate
 
   it("neutralizes a private internal in a Nit and leaves a benign Nit untouched", () => {
     const reviews = buildDualReviewNotes({
+      aiReview: { notes: "Reviewer assessment." },
       warnings: [
         // "trust score" is a forbidden term → scrubbed to "[context]"; the leak never reaches the comment.
         { code: "w1", severity: "warning", title: "Your trust score is low", detail: "...", action: "n/a" },
@@ -684,6 +711,7 @@ describe("buildDualReviewNotes — public-safe Nit scrub (privacy-critical, gate
     const dropTerms = ["reward", "payout", "farming", "wallet", "hotkey", "trust score", "raw trust", "estimated score", "scoreability", "reviewability3"];
     for (const term of dropTerms) {
       const reviews = buildDualReviewNotes({
+        aiReview: { notes: "Reviewer assessment." },
         warnings: [{ code: "w", severity: "warning", title: `Concern about ${term} here`, detail: "...", action: "n/a" }],
         recommendation: "manual_review",
         verdict: "manual",

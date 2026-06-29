@@ -571,6 +571,78 @@ describe("BYOK provider dispatch", () => {
     expect(run).not.toHaveBeenCalled(); // advisory mode + BYOK → no Workers AI call
   });
 
+  it("preserves public unstructured BYOK text as manual-review fallback diagnostics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  type: "text",
+                  text: "Looks safe overall, but please double-check the queue cache branch.",
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.inconclusive).toBe(true);
+    expect(result.status === "ok" && result.advisoryNotes).toContain(
+      "queue cache branch",
+    );
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        status: "unparseable_output",
+        responseChars: 67,
+        hasJsonObject: false,
+      }),
+    ]);
+  });
+
+  it("records empty BYOK output diagnostics without publishing fallback notes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ content: [{ type: "text", text: "" }] }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        status: "empty_output",
+        responseChars: 0,
+        hasJsonObject: false,
+      }),
+    ]);
+  });
+
   it("falls back to no notes when the provider returns a non-200 and records the failure reason", async () => {
     vi.stubGlobal(
       "fetch",
@@ -787,6 +859,41 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
     if (result.status !== "ok") throw new Error("expected ok");
     expect(result.consensusDefect?.title).toContain("Bug"); // the single Workers-AI/router reviewer's blocker decides
     expect(seen).toEqual(["claude-code"]); // the decision reviewer ran once; the advisory came from BYOK (fetch)
+  });
+
+  it("single + BYOK: drops unsafe provider fallback text but keeps public reviewer fallback text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  type: "text",
+                  text: "wallet secret should never become a fallback note",
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = planEnv(
+      { reviewers: [{ model: "claude-code" }], combine: "single" },
+      async () => ({
+        response: "Reviewer could not emit JSON, but recommends manual review.",
+      }),
+    );
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      mode: "block",
+      providerKey: { provider: "anthropic", key: "sk-ant" },
+    });
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.inconclusive).toBe(true);
+    expect(result.advisoryNotes).toContain("recommends manual review");
+    expect(result.advisoryNotes).not.toContain("wallet");
   });
 
   it("explicit input.reviewers/combine/onMerge override the env plan", async () => {

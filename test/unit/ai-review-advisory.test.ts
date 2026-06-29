@@ -504,6 +504,26 @@ describe("runAiReviewForAdvisory", () => {
     captureSpy.mockRestore();
   });
 
+  it("uses the non-cacheable block-mode inconclusive note when no reviewer returns public text", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result).toMatchObject({
+      reviewerCount: 0,
+      inlineFindings: [],
+      cacheable: false,
+      findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
+    });
+    expect(result?.notes).toContain("AI review could not be completed for this PR head");
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
+  });
+
   it("preserves public-safe unstructured AI text while holding the PR for manual review", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "Looks coherent, but please verify the new cache branch before merging." })), {

@@ -1353,7 +1353,7 @@ export function buildContributorOpportunities(
   issueQualityByRepo?: Map<string, IssueQualityReport>,
 ): ContributorOpportunity[] {
   const opportunities: ContributorOpportunity[] = [];
-  const touchedRepos = new Set(profile.registeredRepoActivity.reposTouched);
+  const touchedRepos = new Set(profile.registeredRepoActivity.reposTouched.map((repoFullName) => repoFullName.toLowerCase()));
   const labelHistory = new Set(profile.registeredRepoActivity.dominantLabels);
   const bountyByIssue = indexBountiesByIssue(bounties);
   const qualityByKey = issueQualityByRepo
@@ -1362,8 +1362,8 @@ export function buildContributorOpportunities(
 
   for (const repo of repositories.filter((candidate) => candidate.isRegistered)) {
     const lane = buildLaneAdvice(repo, repo.fullName);
-    const repoIssues = issues.filter((issue) => issue.repoFullName === repo.fullName && issue.state === "open");
-    const repoPullRequests = pullRequests.filter((pr) => pr.repoFullName === repo.fullName && pr.state === "open");
+    const repoIssues = issues.filter((issue) => sameRepo(issue.repoFullName, repo.fullName) && issue.state === "open");
+    const repoPullRequests = pullRequests.filter((pr) => sameRepo(pr.repoFullName, repo.fullName) && pr.state === "open");
     const linkedIssueNumbers = new Set(repoPullRequests.flatMap((pr) => pr.linkedIssues));
     const availableIssues = repoIssues.filter((issue) => issue.linkedPrs.length === 0 && !linkedIssueNumbers.has(issue.number));
     const queuePenalty = Math.min(20, repoPullRequests.length * 2);
@@ -1404,7 +1404,7 @@ export function buildContributorOpportunities(
       const maintainerWipPenalty = maintainerWip ? 45 : 0;
       const score = clamp(
         50 +
-          (touchedRepos.has(repo.fullName) ? 20 : 0) +
+          (touchedRepos.has(repo.fullName.toLowerCase()) ? 20 : 0) +
           labelFit * 5 +
           (lane.lane === "split" ? 8 : 0) +
           (lane.lane === "direct_pr" ? 5 : 0) -
@@ -1431,7 +1431,7 @@ export function buildContributorOpportunities(
         reasons: [
           lane.summary,
           ...(maintainerAuthored && !maintainerWip ? ["Maintainer-created issue — typically the highest contribution multiplier on Gittensor."] : []),
-          ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
+          ...(touchedRepos.has(repo.fullName.toLowerCase()) ? ["Contributor has prior activity in this registered repo."] : []),
           ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
           ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),

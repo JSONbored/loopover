@@ -141,7 +141,6 @@ import {
   buildPullRequestAdvisory,
   evaluateGateCheck,
   isTestPath,
-  reconcileGateEvaluationForGreenCi,
 } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
 import {
@@ -3701,6 +3700,7 @@ export async function runAiReviewForAdvisory(
   // neutral → false on any error).
   if (
     reputationActive &&
+    !args.settings.aiReviewAllAuthors &&
     (await shouldSkipAiForReputation(env, {
       project: args.repoFullName,
       submitter: args.author,
@@ -5124,17 +5124,9 @@ async function maybePublishPrPublicSurface(
           : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };
-      // CI-refutation for the PUBLIC comment (#ai-ci-refutation): when the gate FAILED solely on an AI-judgment
-      // blocker but the LIVE CI is GREEN, render the comment (headline + Gate panel row) as SUCCESS/advisory so it
-      // MATCHES the disposition (which merges such a PR) instead of a contradictory red "blocked/closed". Uses the
-      // SAME grounding+convergence gate as the disposition refutation (a single `aiCiRefutationActive` call so this
-      // site carries no branch), built AFTER the live CI is resolved and used for BOTH the panel rows and the
-      // comment body so the two never disagree. Gate OFF ⇒ commentGate === gateEvaluation (byte-identical comment).
-      const commentGate = reconcileGateEvaluationForGreenCi(
-        gateEvaluation,
-        ciState,
-        aiCiRefutationActive(env, repoFullName),
-      );
+      // The public comment must match the authoritative Gate check-run conclusion. Planner-level CI refutation can
+      // affect auto-actions, but it must never recolor the review comment green while the posted Gate is red.
+      const commentGate = gateEvaluation;
       // Observability (#reviews-dashboard): record the would-be gate verdict so the Grafana panel shows the
       // merge/close/hold mix — the "are we rubber-stamping?" signal — even in advisory/dryRun (this is the rendered verdict).
       incr("gittensory_gate_decisions_total", {
@@ -5266,7 +5258,6 @@ async function maybePublishPrPublicSurface(
           preflight,
           queueHealth,
           ...(reviewConfig !== undefined ? { review: reviewConfig } : {}),
-          ...(aiReview !== undefined ? { aiReview } : {}),
         }),
         footerMarkdown: gittensoryFooter({
           earnUrl: repo?.isRegistered

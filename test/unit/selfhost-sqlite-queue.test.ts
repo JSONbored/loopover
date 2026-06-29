@@ -526,7 +526,7 @@ describe("createSqliteQueue (durable #980)", () => {
         await gate;
         concurrent--;
       },
-      { concurrency: 3, pollIntervalMs: 100_000 },
+      { concurrency: 3, backgroundConcurrency: 3, pollIntervalMs: 100_000 },
     );
     try {
       q.start();
@@ -535,6 +535,47 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(maxConcurrent).toBe(3);
     } finally {
       release();
+      await q.stop();
+    }
+  });
+
+  it("caps background jobs so foreground review work keeps a worker slot", async () => {
+    const driver = makeDriver();
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    let blockedBackground = false;
+    const q = createSqliteQueue(
+      driver,
+      async (m) => {
+        const type = typeOf(m);
+        started.push(type);
+        if (type === "rag-index-repo" && !blockedBackground) {
+          blockedBackground = true;
+          await new Promise<void>((resolve) => {
+            releases.push(resolve);
+          });
+        }
+      },
+      { concurrency: 2, backgroundConcurrency: 1, pollIntervalMs: 100_000 },
+    );
+    try {
+      await q.binding.sendBatch([
+        { body: msg("rag-index-repo") },
+        { body: msg("rag-index-repo") },
+      ]);
+      for (let i = 0; i < 20 && releases.length === 0; i += 1)
+        await new Promise((r) => setTimeout(r, 10));
+
+      expect(started).toEqual(["rag-index-repo"]);
+
+      await q.binding.send(msg("agent-regate-pr"));
+      for (let i = 0; i < 20 && !started.includes("agent-regate-pr"); i += 1)
+        await new Promise((r) => setTimeout(r, 10));
+
+      expect(started).toContain("agent-regate-pr");
+      expect(started.filter((type) => type === "rag-index-repo")).toHaveLength(1);
+    } finally {
+      for (const release of releases) release();
       await q.stop();
     }
   });
@@ -659,7 +700,7 @@ describe("createSqliteQueue (durable #980)", () => {
       maxConcurrent = Math.max(maxConcurrent, concurrent);
       await new Promise((r) => setTimeout(r, 15));
       concurrent--;
-    }, { concurrency: 2, pollIntervalMs: 100_000 });
+    }, { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 });
     await q.binding.sendBatch([{ body: msg("a") }, { body: msg("b") }]);
     await new Promise((r) => setTimeout(r, 60));
     await q.stop();

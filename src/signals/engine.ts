@@ -30,6 +30,7 @@ import { hasLocalTestEvidence } from "./test-evidence";
 import { isDuplicateClusterWinner } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
+import { splitAiReviewNits } from "../review/ai-notes";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -4064,7 +4065,6 @@ type PublicSafeCollapsibleArgs = {
   preflight: PreflightResult;
   queueHealth: QueueHealth;
   review?: FocusManifestReviewConfig | undefined;
-  aiReview?: { notes: string } | undefined;
 };
 
 /** "Signal definitions" body — a static legend for the readiness signals. No inputs. */
@@ -4109,33 +4109,17 @@ function contributorNextStepsBody(nextSteps: string[]): string[] {
   return nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."];
 }
 
-/** "Review details" body — the optional AI maintainer-review notes (already public-safe upstream). Returns
- *  `[]` when there is no AI review, so the section is omitted entirely. Angle brackets are escaped as a final
- *  guard (a stray tag cannot break the panel) and the notes are length-capped, matching the legacy panel. */
-function reviewDetailsBody(aiReview: { notes: string } | undefined): string[] {
-  if (!aiReview) return [];
-  return [
-    "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
-    "",
-    aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
-  ];
-}
-
 /**
  * The public-safe collapsibles for the CONVERGED comment, as `UnifiedCollapsible[]`. Built from the SAME
- * bodies the legacy panel renders (above) so the two never diverge. Order mirrors the legacy panel's
- * (Review context · Contributor next steps · Signal definitions · Review details). Excludes "Maintainer
- * notes" (PRIVATE). "Review details" is omitted when there is no AI review (empty body → the renderer skips it).
+ * bodies the legacy panel renders (above) so the two never diverge. Excludes "Maintainer notes" (PRIVATE) and
+ * AI review notes, which the unified renderer owns as the prominent Review summary + Nits section.
  */
 export function buildPublicSafeCollapsibles(args: PublicSafeCollapsibleArgs): UnifiedCollapsible[] {
-  const collapsibles: UnifiedCollapsible[] = [
+  return [
     { title: "Review context", body: reviewContextBody(args).join("\n") },
     { title: "Contributor next steps", body: contributorNextStepsBody(publicSafeNextSteps(args)).join("\n") },
     { title: "Signal definitions", body: signalDefinitionsBody().join("\n") },
   ];
-  const reviewDetails = reviewDetailsBody(args.aiReview);
-  if (reviewDetails.length > 0) collapsibles.push({ title: "Review details", body: reviewDetails.join("\n") });
-  return collapsibles;
 }
 
 /** The deduped, public-safe "next steps" list — extracted so both the legacy panel and the converged
@@ -4248,20 +4232,28 @@ export function buildPublicPrIntelligenceComment(args: {
   if (!args.detection.detected) return buildMinimalInviteComment(args);
   const genericOssMode = args.settings.publicAudienceMode === "oss_maintainer";
   const hasPublicWarnings = publicFindings.some((finding) => finding.severity === "warning");
-  const alert = gateBlocking
-    ? gateConclusion === "action_required"
-      ? "IMPORTANT"
-      : missingLinkedIssue && args.settings.linkedIssueGateMode === "block"
+  const aiReview = args.aiReview ? splitAiReviewNits(args.aiReview.notes) : null;
+  const aiReviewHasBlockers = Boolean(aiReview?.main) && aiReviewMainHasBlockers(aiReview?.main ?? "");
+  const alert = aiReviewHasBlockers
+    ? "CAUTION"
+    : gateBlocking
+      ? gateConclusion === "action_required"
         ? "WARNING"
-        : "CAUTION"
-    : hasPublicWarnings || hasRelatedWork
-      ? "IMPORTANT"
-      : "TIP";
-  const panelTitle = gateBlocking
-    ? "Gittensory Gate is blocking merge"
-    : hasPublicWarnings || hasRelatedWork
-      ? "Gittensory found maintainer review notes"
-      : "Gittensory PR readiness looks good";
+        : missingLinkedIssue && args.settings.linkedIssueGateMode === "block"
+          ? "WARNING"
+          : "CAUTION"
+      : hasPublicWarnings || hasRelatedWork
+        ? "WARNING"
+        : "TIP";
+  const panelTitle = aiReviewHasBlockers
+    ? "Gittensory review found blockers"
+    : args.aiReview && !gateBlocking
+      ? "Gittensory review approved this PR"
+      : gateBlocking
+        ? "Gittensory Gate is blocking merge"
+        : hasPublicWarnings || hasRelatedWork
+          ? "Gittensory found maintainer review notes"
+          : "Gittensory PR readiness looks good";
   const panelSummary = gateBlocking
     ? args.gate?.summary ?? (gateConclusion === "action_required" ? "Gittensory cannot evaluate the repo state closely enough for the enabled gate." : "A repo-configured hard blocker was found.")
     : linkedDuplicatePrs.length > 0
@@ -4308,7 +4300,25 @@ export function buildPublicPrIntelligenceComment(args: {
     ...formatAlertBlock([
       `[!${alert}]`,
       `## ${panelTitle}`,
-      panelSummary,
+      ...(aiReview?.main
+        ? [
+            "**Review summary**",
+            escapeAiReviewMarkdown(aiReview.main),
+            ...(aiReview.nits.length > 0
+              ? [
+                  "",
+                  "<details>",
+                  `<summary>Nits (${aiReview.nits.length})</summary>`,
+                  "",
+                  ...aiReview.nits.map((nit) => `- ${escapeAiReviewMarkdown(nit)}`),
+                  "",
+                  "</details>",
+                ]
+              : []),
+            "",
+            panelSummary,
+          ]
+        : [panelSummary]),
       // Optional maintainer intro note (public-safe-validated at parse time; re-sanitized here).
       ...(args.review?.note ? ["", sanitizePanelText(args.review.note)] : []),
       "",
@@ -4355,24 +4365,6 @@ export function buildPublicPrIntelligenceComment(args: {
     ...(nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."]),
     "",
     "</details>",
-    // Optional AI maintainer review (advisory; public-safe text built upstream). The deterministic
-    // signals above remain authoritative — this is a second opinion, not an endorsement.
-    ...(args.aiReview
-      ? [
-          "",
-          "<details>",
-          "<summary>Gittensory AI review (advisory)</summary>",
-          "",
-          "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
-          "",
-          // Notes are already public-safe and markdown-neutralized (built via toPublicSafe upstream). Escape
-          // angle brackets as a final guard so a stray tag (e.g. </details> or an HTML comment marker) cannot
-          // break the panel structure while preserving the section/bullet layout we add ourselves.
-          args.aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
-          "",
-          "</details>",
-        ]
-      : []),
     "",
     `- [ ] ${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
     "",
@@ -4884,6 +4876,23 @@ function formatCollisionItemRef(item: CollisionItem): string {
 
 function formatAlertBlock(lines: string[]): string[] {
   return lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+}
+
+function aiReviewMainHasBlockers(main: string): boolean {
+  const marker = main.search(/\*\*Blockers\*\*/i);
+  if (marker === -1) return false;
+  const after = main.slice(marker).split(/\n(?=\*\*[^*]+\*\*)/)[0] ?? "";
+  return after
+    .split("\n")
+    .slice(1)
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .some((line) => line.length > 0 && !/^none\.?$/i.test(line));
+}
+
+function escapeAiReviewMarkdown(value: string): string {
+  return value
+    .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))
+    .slice(0, 4000);
 }
 
 function isPrivateBountyLifecycleFinding(code: string): boolean {

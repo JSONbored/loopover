@@ -134,6 +134,8 @@ describe("renderUnifiedReviewComment", () => {
     expect(md).toContain("| **Code review** | ✅ No blockers | 2 reviewers, synthesized |");
     expect(md).toContain("| Linked issue | ✅ Linked | #1372 |");
     expect(md).toContain("<details><summary><b>Nits</b> — 1 non-blocking</summary>");
+    expect(md.indexOf("**Review summary**")).toBeLessThan(md.indexOf("<details><summary><b>Nits</b>"));
+    expect(md.indexOf("<details><summary><b>Nits</b>")).toBeLessThan(md.indexOf("| Signal | Result | Evidence |"));
     expect(md).toContain("<details><summary><b>Signal definitions</b></summary>");
     expect(md).toContain("- [ ] Re-run Gittensory review");
     expect(md).toContain("Checked by Gittensory.");

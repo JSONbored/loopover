@@ -447,6 +447,9 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
 
   if (input.summary.trim()) blocks.push(`**Review summary**\n${escapePublicHtmlAngles(input.summary.trim())}`);
 
+  const nits = dedupeLines(input.nits ?? []);
+  if (nits.length) blocks.push(details("Nits", bullets(nits), `${nits.length} non-blocking`));
+
   const blockers = dedupeLines(input.blockers ?? []);
   if (blockers.length) {
     const heading = status === "blocked" ? "Why this is blocked" : "Concerns raised — review before merging";
@@ -460,9 +463,6 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   if (failingChecks) blocks.push(`**CI checks failing**\n${failingChecks}`);
 
   blocks.push(signalTable(input, ctx));
-
-  const nits = dedupeLines(input.nits ?? []);
-  if (nits.length) blocks.push(details("Nits", bullets(nits), `${nits.length} non-blocking`));
   for (const c of ctx.extraCollapsibles ?? []) {
     if (c.body.trim()) blocks.push(c.rawHtml ? detailsRaw(c.title, c.body.trim()) : details(c.title, c.body.trim()));
   }

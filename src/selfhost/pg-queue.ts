@@ -8,10 +8,12 @@ import { incr } from "./metrics";
 import { captureError } from "./sentry";
 import {
   deterministicJitterMs,
+  FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitRetryDelayMs,
   jobCoalesceKey,
   jobPriority,
   nonConsumingRetryDelayMs,
+  queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
   queueStartupJitterMinJobs,
@@ -59,6 +61,8 @@ interface JobRow {
   payload: string;
   attempts: number;
   job_key?: string | null;
+  priority: number | string;
+  backgroundSlotReserved?: boolean;
 }
 
 export interface PgQueueOptions {
@@ -69,6 +73,8 @@ export interface PgQueueOptions {
    *  (GitHub + AI awaits dominate), so overlapping a handful drains a PR burst far faster; FOR UPDATE SKIP LOCKED
    *  keeps claims race-free across the pool (and across replicas). Set QUEUE_CONCURRENCY=1 to force strict serial. */
   concurrency?: number;
+  /** Max background jobs (priority < 8) allowed to consume concurrent slots. Defaults to QUEUE_BACKGROUND_CONCURRENCY or 1. */
+  backgroundConcurrency?: number;
 }
 
 export function createPgQueue(
@@ -84,10 +90,15 @@ export function createPgQueue(
   const concurrency =
     opts.concurrency ??
     Math.max(1, Number(process.env.QUEUE_CONCURRENCY ?? "4"));
+  const backgroundConcurrency = queueBackgroundConcurrency(
+    concurrency,
+    opts.backgroundConcurrency,
+  );
   const processingTimeoutMs = queueProcessingTimeoutMs();
 
   let running = false;
   let active = 0;
+  let activeBackground = 0;
   const activeJobIds = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let githubRateLimitCooldownUntil = 0;
@@ -239,12 +250,35 @@ export function createPgQueue(
   async function claimNext(): Promise<JobRow | null> {
     if (Date.now() < githubRateLimitCooldownUntil) return null;
     const now = Date.now();
+    const foreground = await claimNextWhere(now, "priority >= $2");
+    if (foreground) return foreground;
+    if (activeBackground >= backgroundConcurrency) return null;
+    activeBackground++;
+    const background = await claimNextWhere(now, "priority < $2");
+    if (!background) {
+      activeBackground--;
+      return null;
+    }
+    return { ...background, backgroundSlotReserved: true };
+  }
+
+  async function claimNextWhere(
+    now: number,
+    priorityPredicate: string,
+  ): Promise<JobRow | null> {
     // Atomic, multi-instance-safe: lock + claim one due job, skipping rows another instance already locked.
     const res = await pool.query(
       `UPDATE ${TABLE} SET status='processing', run_after=$1
-       WHERE id = (SELECT id FROM ${TABLE} WHERE status='pending' AND run_after<=$1 ORDER BY priority DESC, run_after, id FOR UPDATE SKIP LOCKED LIMIT 1)
-       RETURNING id, payload, attempts, job_key`,
-      [now],
+       WHERE id = (
+         SELECT id
+           FROM ${TABLE}
+          WHERE status='pending' AND run_after<=$1 AND ${priorityPredicate}
+          ORDER BY priority DESC, run_after, id
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+       )
+       RETURNING id, payload, attempts, job_key, priority`,
+      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
     );
     return (res.rows[0] as JobRow | undefined) ?? null;
   }
@@ -411,6 +445,8 @@ export function createPgQueue(
       return true;
     } finally {
       activeJobIds.delete(job.id);
+      if (job.backgroundSlotReserved)
+        activeBackground = Math.max(0, activeBackground - 1);
     }
   }
 

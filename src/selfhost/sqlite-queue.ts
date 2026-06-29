@@ -9,10 +9,12 @@ import { incr } from "./metrics";
 import { captureError } from "./sentry";
 import {
   deterministicJitterMs,
+  FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitRetryDelayMs,
   jobCoalesceKey,
   jobPriority,
   nonConsumingRetryDelayMs,
+  queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
   queueStartupJitterMinJobs,
@@ -61,6 +63,8 @@ interface JobRow {
   payload: string;
   attempts: number;
   job_key?: string | null;
+  priority: number;
+  backgroundSlotReserved?: boolean;
 }
 
 export interface SqliteQueueOptions {
@@ -71,6 +75,8 @@ export interface SqliteQueueOptions {
    *  (GitHub + AI awaits dominate), so overlapping a handful drains a PR burst far faster while SQLite's WAL +
    *  busy_timeout absorb the short serialized write windows. Set QUEUE_CONCURRENCY=1 to force strict serial. */
   concurrency?: number;
+  /** Max background jobs (priority < 8) allowed to consume concurrent slots. Defaults to QUEUE_BACKGROUND_CONCURRENCY or 1. */
+  backgroundConcurrency?: number;
 }
 
 export function createSqliteQueue(
@@ -86,6 +92,10 @@ export function createSqliteQueue(
   const concurrency =
     opts.concurrency ??
     Math.max(1, Number(process.env.QUEUE_CONCURRENCY ?? "4"));
+  const backgroundConcurrency = queueBackgroundConcurrency(
+    concurrency,
+    opts.backgroundConcurrency,
+  );
   const processingTimeoutMs = queueProcessingTimeoutMs();
 
   driver.exec(DDL);
@@ -142,6 +152,7 @@ export function createSqliteQueue(
 
   let running = false;
   let active = 0; // number of concurrent pump() loops currently draining jobs
+  let activeBackground = 0;
   const activeJobIds = new Set<number>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let githubRateLimitCooldownUntil = 0;
@@ -180,9 +191,26 @@ export function createSqliteQueue(
   function claimNext(): JobRow | null {
     if (Date.now() < githubRateLimitCooldownUntil) return null;
     const now = Date.now();
+    const foreground = claimNextWhere(now, "priority>=?");
+    if (foreground) return foreground;
+    if (activeBackground >= backgroundConcurrency) return null;
+    activeBackground++;
+    const background = claimNextWhere(now, "priority<?");
+    if (!background) {
+      activeBackground--;
+      return null;
+    }
+    return { ...background, backgroundSlotReserved: true };
+  }
+
+  function claimNextWhere(now: number, priorityPredicate: string): JobRow | null {
     const { rows } = driver.query(
-      `SELECT id, payload, attempts, job_key FROM ${TABLE} WHERE status='pending' AND run_after<=? ORDER BY priority DESC, run_after, id LIMIT 1`,
-      [now],
+      `SELECT id, payload, attempts, job_key, priority
+         FROM ${TABLE}
+        WHERE status='pending' AND run_after<=? AND ${priorityPredicate}
+        ORDER BY priority DESC, run_after, id
+        LIMIT 1`,
+      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
     );
     const row = rows[0] as JobRow | undefined;
     if (!row) return null;
@@ -360,6 +388,8 @@ export function createSqliteQueue(
       return true;
     } finally {
       activeJobIds.delete(job.id);
+      if (job.backgroundSlotReserved)
+        activeBackground = Math.max(0, activeBackground - 1);
     }
   }
 

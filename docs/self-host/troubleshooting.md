@@ -88,7 +88,9 @@ curl -X POST localhost:8787/v1/internal/jobs/rag-index \
 **Cause:** CPU embedding (~1 chunk/s on `bge-m3`). It's a **one-time** cost — afterwards only changed files re-index
 on merge. Indexing runs on a **dedicated queue lane**, so a slow index never blocks live reviews / webhooks /
 sweeps (those drain on the main lane in parallel). Tune index parallelism with `QUEUE_INDEX_CONCURRENCY` (default 1)
-and the main lane with `QUEUE_CONCURRENCY`.
+and the main lane with `QUEUE_CONCURRENCY`. The durable queue also caps low-priority/background work with
+`QUEUE_BACKGROUND_CONCURRENCY` (default 1), so slow background jobs cannot occupy every worker slot while required
+PR gate checks are waiting to publish.
 
 ---
 

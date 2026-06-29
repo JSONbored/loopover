@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitRetryDelayMs,
+  isForegroundJobPriority,
   jobCoalesceKey,
   jobPriority,
   nonConsumingRetryDelayMs,
+  queueBackgroundConcurrency,
 } from "../../src/selfhost/queue-common";
 import { RetryableJobError } from "../../src/queue/retryable";
 
@@ -13,11 +16,25 @@ describe("self-host queue common helpers", () => {
   it("classifies job priority by job type and webhook sender", () => {
     expect(jobPriority(payload({ type: "github-webhook" }))).toBe(10);
     expect(jobPriority(payload({ type: "agent-regate-pr" }))).toBe(9);
+    expect(jobPriority(payload({ type: "agent-regate-pr", deliveryId: "manual-regate:owner/repo#1:123" }))).toBe(99);
     expect(jobPriority(payload({ type: "recapture-preview" }))).toBe(9);
     expect(jobPriority(payload({ type: "agent-regate-sweep" }))).toBe(8);
     expect(jobPriority(payload({ type: "rag-index-repo" }))).toBe(0);
     expect(jobPriority("{}")).toBe(0);
     expect(jobPriority("not-json")).toBe(0);
+  });
+
+  it("keeps foreground review work separate from capped background work", () => {
+    expect(FOREGROUND_QUEUE_PRIORITY_FLOOR).toBe(8);
+    expect(isForegroundJobPriority(10)).toBe(true);
+    expect(isForegroundJobPriority(8)).toBe(true);
+    expect(isForegroundJobPriority(7)).toBe(false);
+    expect(queueBackgroundConcurrency(4, undefined)).toBe(1);
+    expect(queueBackgroundConcurrency(4, "3")).toBe(3);
+    expect(queueBackgroundConcurrency(2, "9")).toBe(2);
+    expect(queueBackgroundConcurrency(4, "-1")).toBe(1);
+    expect(queueBackgroundConcurrency(4, "not-a-number")).toBe(1);
+    expect(queueBackgroundConcurrency(4, "0")).toBe(0);
   });
 
   it("demotes bot-authored issue-comment edit webhooks without demoting human reruns", () => {

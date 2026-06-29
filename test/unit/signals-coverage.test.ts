@@ -928,16 +928,39 @@ describe("signal coverage edge cases", () => {
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
       settings: gateSettings,
       review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false }, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
-      aiReview: { notes: "The change is focused.\n\n**Suggestions**\n- Add a test for the </details> edge case." },
+      aiReview: { notes: "The change is focused.\n\n**Nits (2)**\n- Add a test for the </details> edge case.\n- Keep the validator helper scoped." },
     });
     expect(customizedComment).toContain("Reviewed by the Acme maintainer bot."); // custom footer lead
     expect(customizedComment).toContain("register to start earning"); // mandatory attribution/earn link kept
     expect(customizedComment).toContain("Run npm test before pushing."); // intro note
     expect(customizedComment).not.toContain("| Related work |"); // hidden row
     expect(customizedComment).toContain("| Gate result |"); // non-hidden rows still rendered
-    expect(customizedComment).toContain("Gittensory AI review (advisory)"); // AI section rendered
+    expect(customizedComment).toContain("**Review summary**"); // AI summary is prominent, not buried
+    expect(customizedComment).toContain("<summary>Nits (2)</summary>"); // nits are directly below summary
+    expect(customizedComment).not.toContain("Gittensory AI review (advisory)"); // old bottom dropdown removed
     expect(customizedComment).toContain("&lt;/details&gt;"); // stray tags escaped, panel structure preserved
-    expect(customizedComment).toContain("- Add a test for the"); // markdown bullets preserved (not flattened)
+    const summaryIndex = customizedComment.indexOf("**Review summary**");
+    const nitsIndex = customizedComment.indexOf("<summary>Nits (2)</summary>");
+    const readinessIndex = customizedComment.indexOf("**Readiness score:");
+    expect(summaryIndex).toBeGreaterThan(-1);
+    expect(nitsIndex).toBeGreaterThan(summaryIndex);
+    expect(readinessIndex).toBeGreaterThan(nitsIndex);
+
+    const aiBlockedComment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },
+      profile,
+      detection,
+      queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
+      collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      aiReview: { notes: "The change is currently unsafe to merge.\n\n**Blockers**\n- `src/a.ts` has a syntax error.\n\n**Nits (1)**\n- Add a regression test." },
+    });
+    expect(aiBlockedComment).toContain("> [!CAUTION]");
+    expect(aiBlockedComment).toContain("Gittensory review found blockers");
+    expect(aiBlockedComment).toContain("`src/a.ts` has a syntax error.");
+    expect(aiBlockedComment.indexOf("**Review summary**")).toBeLessThan(aiBlockedComment.indexOf("**Readiness score:"));
 
     const advisoryOnlyComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -958,7 +981,7 @@ describe("signal coverage edge cases", () => {
       settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
     });
 
-    expect(advisoryOnlyComment).toContain("> [!IMPORTANT]");
+    expect(advisoryOnlyComment).toContain("> [!WARNING]");
     expect(advisoryOnlyComment).toContain("Gittensory found maintainer review notes");
     expect(advisoryOnlyComment).toContain("Validation note missing");
     expect(advisoryOnlyComment).toContain("> | Gate result | ⚠️ Advisory only | Advisory only. | No action. |");
@@ -979,7 +1002,7 @@ describe("signal coverage edge cases", () => {
       settings: gateSettings,
       gate: { conclusion: "action_required", summary: "Gittensory cannot evaluate this PR until installation state is repaired." },
     });
-    expect(actionRequiredComment).toContain("> [!IMPORTANT]");
+    expect(actionRequiredComment).toContain("> [!WARNING]");
     expect(actionRequiredComment).toContain("Gittensory cannot evaluate this PR until installation state is repaired.");
     expect(actionRequiredComment).toContain("> | Gate result | ⚠️ App action required | Install/config needs attention. | Fix app config. |");
 

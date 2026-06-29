@@ -122,6 +122,18 @@ describe("buildDualReviewNotes", () => {
     expect(reviews[0]?.notes?.nits).toEqual(["No test"]); // title only, no trailing " — "
   });
 
+  it("does not repeat the consensus defect detail when the gate title already embeds it", () => {
+    const reviews = buildDualReviewNotes({
+      consensusDefect: {
+        title: "AI reviewers agree on a likely critical defect: src/types.ts:111 leaves `Finding` unclosed",
+        detail: "src/types.ts:111 leaves `Finding` unclosed",
+      },
+      recommendation: "close",
+      verdict: "close",
+    });
+    expect(reviews[0]?.notes?.blockers).toEqual(["src/types.ts:111 leaves `Finding` unclosed"]);
+  });
+
   it("demotes self-host environmental/process warnings out of the nits, keeping real code nits (#review-accuracy)", () => {
     const reviews = buildDualReviewNotes({
       aiReview: { notes: "Looks fine." },

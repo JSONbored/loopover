@@ -6,6 +6,8 @@ const DEFAULT_STARTUP_JITTER_MS = 3 * 60_000;
 const DEFAULT_RECOVERY_JITTER_MS = 60_000;
 const DEFAULT_STARTUP_JITTER_MIN_JOBS = 8;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_BACKGROUND_CONCURRENCY = 1;
+export const FOREGROUND_QUEUE_PRIORITY_FLOOR = 8;
 
 // Webhook-driven work (a fresh PR -> its review) jumps ahead of heavy background jobs. Per-PR review refreshes
 // sit just below real webhooks, and sweep fan-out sits below those so stale surfaces are repaired during bursts.
@@ -19,7 +21,42 @@ const PRIORITY_BY_TYPE = new Map([
 export function jobPriority(payload: string): number {
   const type = extractPayloadType(payload) ?? "";
   if (type === "github-webhook") return githubWebhookPriority(payload);
+  if (type === "agent-regate-pr") return agentRegatePriority(payload);
   return PRIORITY_BY_TYPE.get(type) ?? 0;
+}
+
+function agentRegatePriority(payload: string): number {
+  try {
+    const message = JSON.parse(payload) as { deliveryId?: unknown };
+    const deliveryId =
+      typeof message.deliveryId === "string" ? message.deliveryId : "";
+    if (deliveryId.startsWith("manual-regate:")) return 99;
+  } catch {
+    return PRIORITY_BY_TYPE.get("agent-regate-pr") ?? 0;
+  }
+  return PRIORITY_BY_TYPE.get("agent-regate-pr") ?? 0;
+}
+
+export function isForegroundJobPriority(priority: number): boolean {
+  return priority >= FOREGROUND_QUEUE_PRIORITY_FLOOR;
+}
+
+export function queueBackgroundConcurrency(
+  totalConcurrency: number,
+  configured: unknown = process.env.QUEUE_BACKGROUND_CONCURRENCY,
+): number {
+  const total = Number.isFinite(totalConcurrency)
+    ? Math.max(0, Math.floor(totalConcurrency))
+    : 0;
+  const raw =
+    configured === undefined || configured === null || configured === ""
+      ? DEFAULT_BACKGROUND_CONCURRENCY
+      : Number(configured);
+  const parsed =
+    Number.isFinite(raw) && raw >= 0
+      ? Math.floor(raw)
+      : DEFAULT_BACKGROUND_CONCURRENCY;
+  return Math.min(parsed, total);
 }
 
 function githubWebhookPriority(payload: string): number {

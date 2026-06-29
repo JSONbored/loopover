@@ -237,6 +237,33 @@ describe("createPgQueue (durable #977)", () => {
     expect(seen).toEqual(["review"]);
   });
 
+  it("claims foreground work before falling back to the capped background lane", async () => {
+    const claimSql: string[] = [];
+    const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("SELECT id, payload, priority")) return { rows: [], rowCount: 0 };
+      if (q.includes("SELECT id, payload, job_key") && q.includes("status IN")) return { rows: [], rowCount: 0 };
+      if (q.includes("WHERE status='processing'")) return { rows: [], rowCount: 0 };
+      if (q.includes("UPDATE _selfhost_jobs SET status='processing'")) {
+        claimSql.push(q);
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const q = createPgQueue(
+      { query: fn } as unknown as Pool,
+      async () => undefined,
+      { backgroundConcurrency: 1 },
+    );
+
+    await q.init();
+    await q.drain();
+
+    expect(claimSql).toHaveLength(2);
+    expect(claimSql[0]).toContain("priority >= $2");
+    expect(claimSql[1]).toContain("priority < $2");
+  });
+
   it("dead-letters an unparseable payload (job_dead audit emitted)", async () => {
     const m = makePool();
     // Claim returns a row with bad payload.

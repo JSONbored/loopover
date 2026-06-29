@@ -37,8 +37,10 @@ import {
   type UnifiedSignalRow,
   type Verdict,
 } from "./unified-comment";
+import { splitAiReviewNits } from "./ai-notes";
 
 export { PR_PANEL_COMMENT_MARKER };
+export { splitAiReviewNits } from "./ai-notes";
 
 // ── Public-safe defense-in-depth (privacy-critical) ──────────────────────────────────────────────
 //
@@ -122,22 +124,6 @@ export function panelRowsToSignalRows(rows: PublicPrPanelSignalRow[]): UnifiedSi
   });
 }
 
-/** Split the composed AI advisory notes (#focused-reviews) into the prominent body (the assessment prose + any
- *  `**Blockers**` section — real problems stay headline) and the trailing `**Nits (N)**` bullet lines, so the renderer
- *  can DEMOTE nits into the collapsible Nits section instead of the headline assessment (nits are never blockers).
- *  When there is no Nits section the whole blob is the body and `nits` is empty (byte-identical to before). */
-export function splitAiReviewNits(notes: string): { main: string; nits: string[] } {
-  const marker = notes.indexOf("**Nits (");
-  if (marker === -1) return { main: notes.trim(), nits: [] };
-  const nits = notes
-    .slice(marker)
-    .split("\n")
-    .slice(1) // drop the "**Nits (N)**" header line itself
-    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
-    .filter(Boolean);
-  return { main: notes.slice(0, marker).trim(), nits };
-}
-
 /** Self-host environmental + process findings that are already represented in the signal table and are NOT code
  *  observations — keep them OUT of the Nits list so the nit count reflects real code review, not boilerplate that
  *  padded nearly every review (#review-accuracy). */
@@ -182,7 +168,9 @@ export function buildDualReviewNotes(args: {
   const { main: assessment, nits: aiNitLines } = splitAiReviewNits(
     args.aiReview?.notes?.trim() ?? "",
   );
-  const consensusBlocker = args.consensusDefect ? [`${args.consensusDefect.title}${args.consensusDefect.detail ? `: ${args.consensusDefect.detail}` : ""}`.trim()] : [];
+  const consensusBlocker = args.consensusDefect
+    ? [formatConsensusDefectBlocker(args.consensusDefect)]
+    : [];
   // FIX D1: fold the gate's own hard blockers into the reviewer blockers (so a non-AI gate failure populates
   // "Why this is blocked"). Exclude `ai_consensus_defect` (already surfaced via consensusDefect → appears once)
   // and scrub each through the same public-safe boundary as Nits, DROPPING any that still leaks a private term.
@@ -230,6 +218,20 @@ export function consensusDefectFromFindings(findings: AdvisoryFinding[] | undefi
   const found = (findings ?? []).find((finding) => finding.code === "ai_consensus_defect");
   if (!found) return undefined;
   return { title: found.title, detail: found.detail };
+}
+
+function formatConsensusDefectBlocker(defect: { title: string; detail: string }): string {
+  const title = defect.title.trim();
+  const detail = defect.detail.trim();
+  if (!detail) return title;
+  const normalizedTitle = normalizeConcernLine(title);
+  const normalizedDetail = normalizeConcernLine(detail);
+  if (normalizedTitle.includes(normalizedDetail)) return detail;
+  return `${title}: ${detail}`.trim();
+}
+
+function normalizeConcernLine(value: string): string {
+  return value.toLowerCase().replace(/[\s.,;:!?`]+/g, " ").trim();
 }
 
 export type UnifiedCommentBridgeArgs = {

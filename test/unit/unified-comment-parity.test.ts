@@ -117,7 +117,7 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
       reviewerCount: aiReview.reviewerCount,
       footerMarkdown: "💰 Earn for open-source contributions like this. Checked by Gittensory.",
       reRunLabel: "gittensory-pr-panel:retrigger Re-run Gittensory review",
-      extraCollapsibles: buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth, aiReview }),
+      extraCollapsibles: buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth }),
     });
 
     // The three public-safe sections the legacy panel carried must survive into the converged comment.
@@ -125,12 +125,12 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
     expect(body).toContain("Contributor next steps");
     expect(body).toContain("Signal definitions");
     // With an AI review present the converged comment also surfaces the optional Review-details section.
-    expect(body).toContain("Review details");
+    expect(body).not.toContain("Review details");
     // PRIVATE — the maintainer-notes / advisory-findings section must NEVER appear in the public converged comment.
     expect(body).not.toContain("Maintainer notes");
   });
 
-  it("omits the AI 'Review details' collapsible when there is no AI review (renderer skips the empty body)", () => {
+  it("never includes a duplicate AI 'Review details' collapsible", () => {
     const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
     const collapsibles = buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth });
     expect(collapsibles.map((section) => section.title)).toEqual(["Review context", "Contributor next steps", "Signal definitions"]);
@@ -144,12 +144,11 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
     const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
     const aiReview = { notes: "Looks reasonable. Add a regression test for reconnect.", reviewerCount: 2 };
     const legacy = buildPublicPrIntelligenceComment({ repo, pr: currentPr, profile, detection, queueHealth, collisions, preflight, settings, aiReview });
-    const collapsibles = buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth, aiReview });
+    const collapsibles = buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth });
 
     // Each shared collapsible body's individual lines must appear verbatim in the legacy panel so the two
     // renderers can never diverge on the public-safe content.
     for (const section of collapsibles) {
-      if (section.title === "Review details") continue; // Legacy renders this as "Gittensory AI review (advisory)".
       for (const line of section.body.split("\n")) {
         if (line.trim() === "") continue;
         expect(legacy).toContain(line);

@@ -68,6 +68,22 @@ export interface InstallScriptFinding {
   publishedAt: string | null;
 }
 
+/** A newly-added/upgraded npm package that is materially heavy but only directly imported/required a few times
+ *  in the changed lines. Size values are package-service bytes and are nullable when that service omits one. */
+export interface HeavyDependencyFinding {
+  ecosystem: "npm";
+  package: string;
+  version: string;
+  from: string | null;
+  direction: "add" | "change";
+  usageCount: number;
+  usageLocations: Array<{ file: string; line: number }>;
+  installSizeBytes: number | null;
+  bundleSizeBytes: number | null;
+  gzipSizeBytes: number | null;
+  dependencyCount: number | null;
+}
+
 /** A third-party GitHub Action referenced by a mutable tag/branch instead of a pinned commit SHA. */
 export interface ActionPinFinding {
   file: string;
@@ -140,6 +156,7 @@ export interface BriefFindings {
   license?: LicenseFinding[];
   actionPin?: ActionPinFinding[];
   installScript?: InstallScriptFinding[];
+  heavyDependency?: HeavyDependencyFinding[];
   eol?: EolFinding[];
   redos?: RedosFinding[];
   provenance?: ProvenanceFinding[];

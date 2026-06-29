@@ -2805,7 +2805,10 @@ function topItems(values: string[], limit: number): string[] {
 }
 
 function latestDate(values: Array<string | null | undefined>): string | undefined {
-  return values.filter(Boolean).sort().at(-1) ?? undefined;
+  // Drop unparseable values before the lexicographic max: a malformed/sentinel timestamp whose first char
+  // sorts after "2" (e.g. "bad-date", "pending") would otherwise outrank a real 2026-... ISO stamp and be
+  // persisted as lastActivityAt. Mirrors the guarded newest()/oldest() in signals/data-quality.ts.
+  return values.filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value)))).sort().at(-1) ?? undefined;
 }
 
 function daysSince(value: string): number {

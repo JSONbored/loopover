@@ -178,6 +178,20 @@ export interface TyposquatFinding {
   reason: string;
 }
 
+/** A static IaC / config misconfiguration introduced by the PR. Reports the location + rule only. */
+export interface IacMisconfigFinding {
+  file: string;
+  line: number;
+  kind:
+    | "wildcard-cors-credentials"
+    | "open-ingress"
+    | "public-bucket"
+    | "insecure-cookie"
+    | "tls-verification-disabled"
+    | "prod-debug"
+    | "hardcoded-service-url";
+}
+
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
  *  (PyPI sdist-only) — a hidden CI cold-start/install cost and a frequent cross-platform breakage source. Reports
  *  package@version + the factual build property only. (#1512) */
@@ -209,6 +223,7 @@ export interface BriefFindings {
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
+  iacMisconfig?: IacMisconfigFinding[];
   nativeBuild?: NativeBuildFinding[];
 }
 

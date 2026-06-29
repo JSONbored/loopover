@@ -281,6 +281,37 @@ export function renderBrief(
     }
   }
 
+  const iacMisconfigs = findings.iacMisconfig ?? [];
+  if (iacMisconfigs.length) {
+    const explain = (
+      kind: (typeof iacMisconfigs)[number]["kind"],
+    ): string => {
+      switch (kind) {
+        case "wildcard-cors-credentials":
+          return "allows wildcard CORS together with credentials; browsers can send authenticated cross-origin requests";
+        case "open-ingress":
+          return "opens ingress to `0.0.0.0/0`; verify the service is not world-accessible";
+        case "public-bucket":
+          return "makes object storage public; verify this bucket is intended for anonymous access";
+        case "insecure-cookie":
+          return "sets `SameSite=None` without `Secure=true`; browsers can send the cookie cross-site over insecure transport";
+        case "tls-verification-disabled":
+          return "disables TLS certificate verification; this permits man-in-the-middle interception";
+        case "prod-debug":
+          return "enables debug mode in production configuration; this can expose internals or sensitive data";
+        case "hardcoded-service-url":
+          return "hardcodes a service URL in config; prefer environment-specific injection or secrets-managed config";
+      }
+    };
+
+    lines.push("### IaC / config misconfigurations (review before merging)");
+    for (const item of iacMisconfigs) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+      );
+    }
+  }
+
   const nativeBuilds = findings.nativeBuild ?? [];
   if (nativeBuilds.length) {
     lines.push(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createOpaqueToken, hashToken, timingSafeEqual } from "../../src/auth/security";
-import { verifyGitHubSignature } from "../../src/utils/crypto";
+import { verifyGitHubSignature, timingSafeEqualHex } from "../../src/utils/crypto";
 
 describe("webhook signature verification", () => {
   it("accepts valid GitHub HMAC signatures and rejects tampering", async () => {
@@ -17,6 +17,16 @@ describe("webhook signature verification", () => {
     await expect(verifyGitHubSignature(body, null, secret)).resolves.toBe(false);
     await expect(verifyGitHubSignature(body, "bad-prefix", secret)).resolves.toBe(false);
     await expect(verifyGitHubSignature(body, `sha256=${signature}`, "")).resolves.toBe(false);
+    await expect(verifyGitHubSignature(body, "sha256=not-valid-hex", secret)).resolves.toBe(false);
+  });
+
+  it("rejects invalid hex operands in timingSafeEqualHex", () => {
+    expect(timingSafeEqualHex("zz", "yy")).toBe(false);
+    expect(timingSafeEqualHex("not-hex-a", "not-hex-b")).toBe(false);
+    expect(timingSafeEqualHex("abc", "abcd")).toBe(false);
+    expect(timingSafeEqualHex("", "00")).toBe(false);
+    expect(timingSafeEqualHex("00", "01")).toBe(false);
+    expect(timingSafeEqualHex("00", "00")).toBe(true);
   });
 
   it("uses timing-safe token comparisons and one-way token hashes", async () => {

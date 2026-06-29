@@ -14,6 +14,12 @@ const CACHE_TTL = 1000 * 60 * 10; // 10 min
 type RepoStats = { stargazers_count: number; forks_count: number };
 type Cached = { stats: RepoStats; ts: number };
 
+/** Normalize a GitHub count field — mirrors the backend's `finiteCount` so malformed/negative values
+ *  cannot render as odd compact numbers. */
+function finiteCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
+}
+
 function readCache(): Cached | null {
   if (typeof window === "undefined") return null;
   try {
@@ -43,12 +49,28 @@ async function fetchRepo(): Promise<RepoStats> {
       silentStatus: true, // GitHub failures shouldn't poison the Gittensory API status pill
     },
   );
-  if (!result.ok) {
-    throw new Error(result.message);
+  if (result.ok) {
+    const stats = {
+      stargazers_count: finiteCount(result.data?.stargazers_count),
+      forks_count: finiteCount(result.data?.forks_count),
+    };
+    writeCache(stats);
+    return stats;
   }
+  // Fallback: fetch directly from the GitHub API when the Worker proxy is unavailable (rate-limited, 503,
+  // network error). GitHub sends Access-Control-Allow-Origin: * for public repo endpoints, and each browser
+  // gets its own 60/hr unauthenticated budget — enough for this single chip. (#1754)
+  const ghResponse = await fetch(`https://api.github.com/repos/${REPO}`, {
+    headers: { accept: "application/vnd.github+json" },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!ghResponse.ok) {
+    throw new Error(`${result.message}; direct GitHub fallback failed (${ghResponse.status})`);
+  }
+  const body = (await ghResponse.json()) as { stargazers_count?: number; forks_count?: number };
   const stats = {
-    stargazers_count: result.data?.stargazers_count ?? 0,
-    forks_count: result.data?.forks_count ?? 0,
+    stargazers_count: finiteCount(body.stargazers_count),
+    forks_count: finiteCount(body.forks_count),
   };
   writeCache(stats);
   return stats;

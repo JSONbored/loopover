@@ -1,0 +1,152 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { Attributes, Context, Tracer } from "@opentelemetry/api";
+
+type OtelApi = typeof import("@opentelemetry/api");
+type OtelSdk = typeof import("@opentelemetry/sdk-trace-node");
+type OtelProvider = {
+  getTracer(name: string): Tracer;
+  forceFlush(): Promise<void>;
+  shutdown(): Promise<void>;
+};
+
+let Otel: OtelApi | undefined;
+let provider: OtelProvider | undefined;
+let tracer: Tracer | undefined;
+let active = false;
+
+const contextStore = new AsyncLocalStorage<Context>();
+const SECRET_KEY =
+  /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
+const MAX_ATTRIBUTE_LENGTH = 160;
+
+function nonBlank(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function traceExporterEnabled(env: NodeJS.ProcessEnv): boolean {
+  const exporters = nonBlank(env.OTEL_TRACES_EXPORTER);
+  return exporters?.split(",").map((part) => part.trim().toLowerCase()).includes("otlp") === true;
+}
+
+export function resolveOtelTraceEndpoint(env: NodeJS.ProcessEnv): string | undefined {
+  const explicit = nonBlank(env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT);
+  if (explicit) return explicit;
+  const base = nonBlank(env.OTEL_EXPORTER_OTLP_ENDPOINT);
+  if (!base) return undefined;
+  const trimmed = base.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1/traces") ? trimmed : `${trimmed}/v1/traces`;
+}
+
+function serviceAttributes(env: NodeJS.ProcessEnv): Attributes {
+  const attrs: Attributes = {
+    "service.name": nonBlank(env.OTEL_SERVICE_NAME) ?? "gittensory-selfhost",
+    "deployment.environment.name": nonBlank(env.OTEL_SERVICE_ENVIRONMENT) ?? nonBlank(env.SENTRY_ENVIRONMENT) ?? "selfhost",
+  };
+  const version = nonBlank(env.GITTENSORY_VERSION) ?? nonBlank(env.SENTRY_RELEASE);
+  if (version) attrs["service.version"] = version;
+  return attrs;
+}
+
+function ratioFromEnv(value: string | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function samplerFromEnv(env: NodeJS.ProcessEnv, sdk: OtelSdk) {
+  const sampler = (env.OTEL_TRACES_SAMPLER ?? "parentbased_always_on").trim().toLowerCase();
+  if (sampler === "always_off") return new sdk.AlwaysOffSampler();
+  if (sampler === "traceidratio") return new sdk.TraceIdRatioBasedSampler(ratioFromEnv(env.OTEL_TRACES_SAMPLER_ARG));
+  if (sampler === "parentbased_always_off") return new sdk.ParentBasedSampler({ root: new sdk.AlwaysOffSampler() });
+  if (sampler === "parentbased_traceidratio")
+    return new sdk.ParentBasedSampler({ root: new sdk.TraceIdRatioBasedSampler(ratioFromEnv(env.OTEL_TRACES_SAMPLER_ARG)) });
+  return new sdk.ParentBasedSampler({ root: new sdk.AlwaysOnSampler() });
+}
+
+export function otelSafeAttributes(input: Record<string, unknown> | undefined): Attributes {
+  const out: Attributes = {};
+  if (!input) return out;
+  for (const [key, value] of Object.entries(input)) {
+    if (SECRET_KEY.test(key) || value === null || value === undefined) continue;
+    if (typeof value === "string") out[key] = value.length > MAX_ATTRIBUTE_LENGTH ? `${value.slice(0, MAX_ATTRIBUTE_LENGTH - 3)}...` : value;
+    else if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+    else if (typeof value === "boolean") out[key] = value;
+  }
+  return out;
+}
+
+/** Initialize self-host OTEL traces. No global provider registration: Sentry can coexist when both are enabled. */
+export async function initOpenTelemetry(env: NodeJS.ProcessEnv): Promise<boolean> {
+  const endpoint = resolveOtelTraceEndpoint(env);
+  if (!endpoint || !traceExporterEnabled(env)) return false;
+  if (active) return true;
+  const [api, sdk, exporterNs, resources] = await Promise.all([
+    import("@opentelemetry/api"),
+    import("@opentelemetry/sdk-trace-node"),
+    import("@opentelemetry/exporter-trace-otlp-http"),
+    import("@opentelemetry/resources"),
+  ]);
+  const exporter = new exporterNs.OTLPTraceExporter({ url: endpoint });
+  provider = new sdk.NodeTracerProvider({
+    resource: resources.resourceFromAttributes(serviceAttributes(env)),
+    sampler: samplerFromEnv(env, sdk),
+    spanProcessors: [new sdk.BatchSpanProcessor(exporter)],
+  });
+  Otel = api;
+  tracer = provider.getTracer("gittensory-selfhost");
+  active = true;
+  return true;
+}
+
+function exceptionFor(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function statusMessage(error: unknown): string {
+  return exceptionFor(error).message.slice(0, MAX_ATTRIBUTE_LENGTH);
+}
+
+export async function withOtelSpan<T>(
+  name: string,
+  attributes: Record<string, unknown> | undefined,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  if (!active || !Otel || !tracer) return await fn();
+  const parentContext = contextStore.getStore() ?? Otel.context.active();
+  const span = tracer.startSpan(name, { attributes: otelSafeAttributes(attributes) }, parentContext);
+  const childContext = Otel.trace.setSpan(parentContext, span);
+  return await contextStore.run(childContext, async () => {
+    try {
+      const result = await fn();
+      span.setStatus({ code: Otel!.SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.recordException(exceptionFor(error));
+      span.setStatus({ code: Otel!.SpanStatusCode.ERROR, message: statusMessage(error) });
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
+
+export async function flushOpenTelemetry(): Promise<void> {
+  if (!active || !provider) return;
+  /* v8 ignore next -- NodeTracerProvider may absorb exporter forceFlush failures before this best-effort guard. */
+  await provider.forceFlush().catch(() => undefined);
+}
+
+export async function shutdownOpenTelemetry(): Promise<void> {
+  const current = provider;
+  provider = undefined;
+  tracer = undefined;
+  Otel = undefined;
+  active = false;
+  await current?.shutdown().catch(() => undefined);
+}
+
+/** Test-only: reset module state between cases. */
+export async function resetOpenTelemetryForTest(): Promise<void> {
+  await shutdownOpenTelemetry();
+}

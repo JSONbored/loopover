@@ -4,7 +4,7 @@
   "tags": ["gittensory", "maintainer"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "editable": false,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -28,7 +28,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS prs FROM review_targets", "rawQueryText": "SELECT count(*) AS prs FROM review_targets" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS prs FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS prs FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
       "type": "stat",
@@ -38,7 +38,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS merged FROM review_targets WHERE status='merged'", "rawQueryText": "SELECT count(*) AS merged FROM review_targets WHERE status='merged'" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS merged FROM review_targets WHERE status='merged' AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS merged FROM review_targets WHERE status='merged' AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
       "type": "stat",
@@ -48,7 +48,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS closed FROM review_targets WHERE status='closed'", "rawQueryText": "SELECT count(*) AS closed FROM review_targets WHERE status='closed'" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS closed FROM review_targets WHERE status='closed' AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS closed FROM review_targets WHERE status='closed' AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
       "type": "stat",
@@ -58,7 +58,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "orange" }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS manual FROM review_targets WHERE status='manual' OR verdict='manual'", "rawQueryText": "SELECT count(*) AS manual FROM review_targets WHERE status='manual' OR verdict='manual'" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS manual FROM review_targets WHERE (status='manual' OR verdict='manual') AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS manual FROM review_targets WHERE (status='manual' OR verdict='manual') AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
       "type": "stat",
@@ -68,7 +68,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS commented FROM review_targets WHERE status='commented'", "rawQueryText": "SELECT count(*) AS commented FROM review_targets WHERE status='commented'" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS commented FROM review_targets WHERE status='commented' AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS commented FROM review_targets WHERE status='commented' AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
       "type": "stat",
@@ -78,7 +78,7 @@
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS ignored FROM review_targets WHERE status='ignored' OR verdict='ignore'", "rawQueryText": "SELECT count(*) AS ignored FROM review_targets WHERE status='ignored' OR verdict='ignore'" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT count(*) AS ignored FROM review_targets WHERE (status='ignored' OR verdict='ignore') AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}", "rawQueryText": "SELECT count(*) AS ignored FROM review_targets WHERE (status='ignored' OR verdict='ignore') AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds}" }]
     },
     {
       "type": "table",
@@ -112,7 +112,7 @@
         ]
       },
       "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false }, "sortBy": [{ "displayName": "updated_at", "desc": true }] },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT repo, number, submitter AS author, status, verdict, title, updated_at FROM review_targets ORDER BY updated_at DESC LIMIT 1000", "rawQueryText": "SELECT repo, number, submitter AS author, status, verdict, title, updated_at FROM review_targets ORDER BY updated_at DESC LIMIT 1000" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT repo, number, submitter AS author, status, verdict, title, updated_at FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} ORDER BY updated_at DESC LIMIT 1000", "rawQueryText": "SELECT repo, number, submitter AS author, status, verdict, title, updated_at FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} ORDER BY updated_at DESC LIMIT 1000" }]
     },
     {
       "type": "timeseries",
@@ -122,7 +122,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1, "showPoints": "never", "stacking": { "mode": "none" } }, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "time series", "timeColumns": ["time"], "queryText": "SELECT date(created_at) AS time, count(*) AS reviews FROM review_targets GROUP BY date(created_at) ORDER BY time", "rawQueryText": "SELECT date(created_at) AS time, count(*) AS reviews FROM review_targets GROUP BY date(created_at) ORDER BY time" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "time series", "timeColumns": ["time"], "queryText": "SELECT date(updated_at) AS time, count(*) AS reviews FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY date(updated_at) ORDER BY time", "rawQueryText": "SELECT date(updated_at) AS time, count(*) AS reviews FROM review_targets WHERE unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY date(updated_at) ORDER BY time" }]
     },
     {
       "type": "piechart",
@@ -132,7 +132,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "right", "showLegend": true, "values": ["value", "percent"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true }, "tooltip": { "mode": "single", "sort": "none" } },
-      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL GROUP BY verdict ORDER BY c DESC", "rawQueryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL GROUP BY verdict ORDER BY c DESC" }]
+      "targets": [{ "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" }, "refId": "A", "queryType": "table", "queryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY verdict ORDER BY c DESC", "rawQueryText": "SELECT verdict, count(*) AS c FROM review_targets WHERE verdict IS NOT NULL AND unixepoch(updated_at) >= ${__from:date:seconds} AND unixepoch(updated_at) < ${__to:date:seconds} GROUP BY verdict ORDER BY c DESC" }]
     }
   ]
 }

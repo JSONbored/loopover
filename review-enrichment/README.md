@@ -38,6 +38,7 @@ read CODEOWNERS and blob sizes. The engine prefers a short-lived installation to
 | `secretLog`     | Secrets, PII, or request/session objects written to logs/stdout.             | Pure local.                                                  |
 | `assetWeight`   | Heavy binary assets added or grown.                                          | Calls GitHub API; needs headSha, baseSha for growth, and token for private repos. |
 | `typosquat`     | New dependency names that look squatted or publicly claimable.               | Uses bundled popular-package lists plus npm/PyPI lookups.    |
+| `iacMisconfig`  | Risky IaC/config changes like public buckets, open ingress, or insecure CORS. | Pure local.                                                 |
 
 The engine can send `analyzers: ["secret", "actionPin"]` to run a subset. If the field is omitted, REES runs the
 full registry. An explicit empty array runs no analyzers; the engine uses that fail-closed shape when an

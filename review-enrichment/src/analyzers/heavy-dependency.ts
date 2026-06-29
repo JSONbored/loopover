@@ -151,9 +151,10 @@ export async function scanHeavyDependencies(
   options: ScanOptions = {},
 ): Promise<HeavyDependencyFinding[]> {
   const findings: HeavyDependencyFinding[] = [];
-  const changes = extractDependencyChanges(req.files ?? [])
-    .filter((change) => change.ecosystem === "npm")
-    .slice(0, MAX_WEIGHT_LOOKUPS);
+  const changes = extractDependencyChanges(req.files ?? []).filter(
+    (change) => change.ecosystem === "npm",
+  );
+  let weightLookups = 0;
 
   for (const change of changes) {
     if (options.signal?.aborted || findings.length >= MAX_FINDINGS) break;
@@ -161,6 +162,8 @@ export async function scanHeavyDependencies(
 
     const usage = countPackagePatchUsages(req.files ?? [], change.package);
     if (usage.usageCount < 1 || usage.usageCount > TRIVIAL_USAGE_MAX) continue;
+    if (weightLookups >= MAX_WEIGHT_LOOKUPS) break;
+    weightLookups += 1;
 
     const weight = await queryPackageWeight(
       change.package,

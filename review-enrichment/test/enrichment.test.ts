@@ -691,6 +691,47 @@ test("scanHeavyDependencies: flags heavy npm deps used trivially and skips non-t
   ]);
 });
 
+test("scanHeavyDependencies: lookup budget ignores unused dependency changes", async () => {
+  const unusedDeps = Array.from(
+    { length: 20 },
+    (_, i) => `+    "unused-${i}": "1.0.0",`,
+  );
+  let lookups = 0;
+  const findings = await scanHeavyDependencies(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          patch: [...unusedDeps, '+    "late-heavy": "1.0.0",'].join("\n"),
+        },
+        {
+          path: "src/app.ts",
+          patch: '@@ -1,0 +1,1 @@\n+import heavy from "late-heavy";',
+        },
+      ],
+    },
+    async (url) => {
+      lookups += 1;
+      assert.match(String(url), /late-heavy%401\.0\.0/);
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 90_000,
+          gzip: 30_000,
+          dependencyCount: 3,
+        }),
+      };
+    },
+  );
+
+  assert.equal(lookups, 1);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "late-heavy");
+});
+
 test("renderBrief: renders the heavy-dependency block with size evidence", () => {
   const r = renderBrief({
     heavyDependency: [

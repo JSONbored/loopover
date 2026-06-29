@@ -18,6 +18,8 @@ await esbuild.build({
   format: "esm",
   target: "node22",
   outfile: resolve(root, "dist/server.mjs"),
+  sourcemap: true,
+  sourcesContent: true,
   // External: nothing (bundle all) vs every package (external). node: builtins are always external on node.
   ...(bundleAll ? {} : { packages: "external" }),
   // Bundling CJS deps into an ESM output needs require/__dirname/__filename shimmed (some deps call them).

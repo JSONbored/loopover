@@ -85,7 +85,20 @@ See [ai-providers.md](./ai-providers.md) for the full provider/model/effort/time
 | `AI_EMBED_BASE_URL` / `_MODEL` / `_PROVIDER` | Dedicated RAG embed provider                                                          |
 | `GITTENSORY_REPO_CONFIG_DIR`                 | Container-private per-repo config dir                                                 |
 
+## Sentry environment variables
+
+Sentry is optional and self-host-only. Unset `SENTRY_DSN` means no SDK import, no events, and no runtime overhead.
+
+| Var                         | Purpose                                                                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN`                | Enables self-host error reporting. Keep it in `.env` or a mounted secret.                                                                     |
+| `SENTRY_ENVIRONMENT`        | Environment name, default `production`.                                                                                                       |
+| `SENTRY_TRACES_SAMPLE_RATE` | Trace sampling, default `0`; errors still report when tracing is off.                                                                         |
+| `SENTRY_RELEASE`            | Custom images only, and only when source maps for that exact built bundle were uploaded under the same release id.                             |
+| `GITTENSORY_VERSION`        | Baked into future official images as `gittensory-selfhost@<version>` and used as the Sentry release when `SENTRY_RELEASE` is not explicitly set. |
+
 ## Secrets — never commit them
 
-`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `INTERNAL_JOB_TOKEN`, `TOKEN_ENCRYPTION_SECRET`, the App private
-key, and the webhook secret live in `.env` / mounted files **only** — keep your deploy directory out of any repo.
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `INTERNAL_JOB_TOKEN`, `TOKEN_ENCRYPTION_SECRET`,
+`SENTRY_DSN`, the App private key, and the webhook secret live in `.env` / mounted files **only** — keep your
+deploy directory out of any repo.

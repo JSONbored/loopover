@@ -27,6 +27,7 @@ import {
   flushSentry,
   forwardStructuredLogToSentry,
   installStructuredLogForwarding,
+  resolveSentryRelease,
   scrubEvent,
   resetSentryForTest,
 } from "../../src/selfhost/sentry";
@@ -87,6 +88,22 @@ describe("disabled when SENTRY_DSN is unset (modular opt-out → complete no-op)
 });
 
 describe("enabled when SENTRY_DSN is set", () => {
+  it("resolves the Sentry release from explicit env, then the baked image version, ignoring blanks", () => {
+    expect(
+      resolveSentryRelease({
+        SENTRY_RELEASE: " custom-release ",
+        GITTENSORY_VERSION: "gittensory-selfhost@0.1.0",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe("custom-release");
+    expect(
+      resolveSentryRelease({
+        SENTRY_RELEASE: "  ",
+        GITTENSORY_VERSION: " gittensory-selfhost@0.1.0 ",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe("gittensory-selfhost@0.1.0");
+    expect(resolveSentryRelease({} as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+  });
+
   it("returns true and wires init with defaults (?? right-hand branches) + the scrubber as beforeSend", async () => {
     expect(
       await initSentry({
@@ -96,6 +113,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.init).toHaveBeenCalledTimes(1);
     const opts = mocks.init.mock.calls[0]![0];
     expect(opts.environment).toBe("production");
+    expect(opts.release).toBeUndefined();
     expect(opts.tracesSampleRate).toBe(0);
     expect(
       opts.beforeSend({ extra: { sessionToken: "s" } }).extra.sessionToken,
@@ -115,6 +133,16 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(opts.release).toBe("v9");
     expect(opts.tracesSampleRate).toBe(0.5);
     expect(opts.serverName).toBe("https://self.host");
+  });
+
+  it("uses the baked image version as the runtime release when SENTRY_RELEASE is unset", async () => {
+    await initSentry({
+      SENTRY_DSN: "d",
+      GITTENSORY_VERSION: "gittensory-selfhost@0.1.0",
+    } as unknown as NodeJS.ProcessEnv);
+    expect(mocks.init.mock.calls[0]![0].release).toBe(
+      "gittensory-selfhost@0.1.0",
+    );
   });
 
   it("captureError sends with context, and without context skips setContext", async () => {

@@ -1,7 +1,8 @@
 # Keep the build context lean — deps are installed fresh (npm ci) and the bundle is built in the image.
 node_modules
 **/node_modules
-dist
+dist/*
+!dist/server.mjs
 dist-ssr
 .output
 .nitro

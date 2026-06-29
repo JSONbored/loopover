@@ -65,6 +65,7 @@ import {
   GITTENSORY_GATE_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
 } from "../review/check-names";
+import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
 
 type GitHubLabelPayload = {
@@ -1943,13 +1944,10 @@ export type LiveCiAggregate = {
   // than ciState: a non-required pending check must not fail the gate, but review execution should still wait
   // until every visible CI signal has settled.
   hasPending: boolean;
-  // Checks that FAIL the gate: every failing check when required contexts are unknown, else only the failing
-  // REQUIRED contexts. These drive ciState === "failed" and the disposition (no-merge / close / request-changes).
+  // Checks that FAIL the gate. Any completed red check/status is adverse, required or not; required contexts are
+  // still used for absent/pending detection so missing required CI cannot silently pass.
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
-  // RC2: checks that are RED but NOT in branch-protection's required set (e.g. codecov/patch, codecov/project).
-  // Surfaced to the contributor but they do NOT fail the gate, block merge/approve, or force request_changes.
-  // Empty when required contexts are unknown (best-effort fetch failed / no protection) — then every red check
-  // stays in failingDetails (byte-identical to pre-RC2).
+  // Historical compatibility: non-required red checks are now folded into failingDetails so this stays empty.
   nonRequiredFailingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
 };
 
@@ -1985,20 +1983,17 @@ export async function fetchRequiredStatusContexts(env: Env, repoFullName: string
  * reviewbot `getAllChecksState` parity that the converged auto-maintain path needs: codecov (codecov/patch,
  * codecov/project) and many other tools post a classic COMMIT-STATUS, not a check-run — fetching only
  * `/check-runs` (what the backfill sync does) misses them entirely, which is why a red codecov was reported as
- * "CI green". When branch-protection required contexts are known, only those trusted contexts gate review or
- * automation; non-required failures are reported separately. When required contexts cannot be determined, we
- * conservatively fold all checks/statuses into the gate so required red checks are not silently ignored.
- * Best-effort: a fetch error degrades that source to empty.
+ * "CI green". Any completed red check/status is adverse and fails the aggregate, required or not. Branch
+ * protection contexts are still used for required-context absence/pending detection. Best-effort: a fetch error
+ * degrades that source to empty.
  */
 export async function fetchLiveCiAggregate(
   env: Env,
   repoFullName: string,
   headSha: string | null | undefined,
   token: string | undefined,
-  // Branch-protection REQUIRED contexts are the trust boundary for CI gate authority. Non-required checks may be
-  // influenced by PR authors or third-party actors, so they are surfaced as advisory details but must not defer
-  // review, fail the merge gate, or drive automated close decisions. If required contexts are unavailable, fall
-  // back to gating on all contexts to avoid silently passing an unknown required failure.
+  // Branch-protection REQUIRED contexts are the trust boundary for required-context absence/pending detection.
+  // Completed red checks/statuses still fail the aggregate even when they are not branch-protection-required.
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
   if (!headSha) return { ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] };
@@ -2046,8 +2041,7 @@ export async function fetchLiveCiAggregate(
       const status = (run.status ?? "").toLowerCase();
       if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
         const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
-        const detail = { name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) };
-        (isRequired(run.name) ? failingDetails : nonRequiredFailingDetails).push(detail);
+        failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
       } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
         // concluded and not failing → passing
       } else {
@@ -2085,8 +2079,7 @@ export async function fetchLiveCiAggregate(
     const state = (ctx.state ?? "").toLowerCase();
     if (state === "failure" || state === "error") {
       const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
-      const detail = { name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) };
-      (isRequired(name) ? failingDetails : nonRequiredFailingDetails).push(detail);
+      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
     } else if (state === "success") {
       // passing
     } else {
@@ -2136,9 +2129,8 @@ export async function fetchLiveCiAggregate(
     }
   }
 
-  // ciState reflects ONLY gate-failing (required, or all-when-unknown) checks. A repo whose only red check is a
-  // non-required codecov/* therefore reports "passed" and is eligible to merge/approve, with the codecov
-  // failure riding along in nonRequiredFailingDetails for the contributor to see.
+  // ciState reflects every completed red check/status. Required contexts additionally prevent absent or pending
+  // required checks from being treated as passed.
   let ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
   // Fail CLOSED on incomplete visibility: if either CI source could not be fully read, we cannot certify the
   // commit as passed/clean — hold (pending) so the gate waits and re-evaluates on the next sweep instead of
@@ -2229,6 +2221,91 @@ export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName:
   const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
   const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(env, query, token).catch(() => undefined);
   return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
+}
+
+type GitHubReviewThreadResponse = {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          nodes?: Array<{
+            isResolved?: boolean | null;
+            isOutdated?: boolean | null;
+            path?: string | null;
+            line?: number | null;
+            comments?: {
+              nodes?: Array<{
+                body?: string | null;
+                url?: string | null;
+                author?: { login?: string | null } | null;
+              } | null> | null;
+            } | null;
+          } | null> | null;
+        } | null;
+      } | null;
+    } | null;
+  };
+};
+
+/** Fetch unresolved GitHub review threads that should block merge readiness. GraphQL is required because REST
+ *  review comments do not expose thread resolution; if GraphQL is unavailable this fails open to [] rather than
+ *  guessing. Own gittensory-authored inline-comment threads are ignored so the bot never blocks on itself. */
+export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<ReviewThreadBlocker[]> {
+  if (!token) return [];
+  const [owner, name] = repoFullName.split("/");
+  if (!owner || !name) return [];
+  const query = `query GittensoryPullRequestReviewThreads {
+    repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
+      pullRequest(number: ${prNumber}) {
+        reviewThreads(first: 50) {
+          nodes {
+            isResolved
+            isOutdated
+            path
+            line
+            comments(first: 20) {
+              nodes {
+                body
+                url
+                author { login }
+              }
+            }
+          }
+        }
+      }
+    }
+  }`;
+  const result = await githubGraphQl<GitHubReviewThreadResponse>(env, query, token).catch(() => undefined);
+  const threads = result?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+  if (!threads) return [];
+  const blockers: ReviewThreadBlocker[] = [];
+  for (const thread of threads) {
+    if (!thread || thread.isResolved !== false || thread.isOutdated === true) continue;
+    const comments = (thread.comments?.nodes ?? [])
+      .flatMap((comment) =>
+        comment
+          ? [
+              {
+                body: comment.body,
+                url: comment.url,
+                authorLogin: comment.author?.login,
+              },
+            ]
+          : [],
+      )
+      .filter((comment) => !isOwnReviewThreadAuthor(comment.authorLogin));
+    const blocker = buildReviewThreadBlocker({
+      path: thread.path,
+      line: thread.line,
+      comments,
+    });
+    if (blocker) blockers.push(blocker);
+  }
+  return blockers;
+}
+
+function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
+  return /\bgittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
 }
 
 /** The deterministic linked-issue facts the hard-rule evaluator needs (labels / assignees / open-state). */

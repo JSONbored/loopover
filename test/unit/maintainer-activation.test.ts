@@ -171,8 +171,11 @@ describe("buildMaintainerActivationPreview", () => {
       repoFullName: repo.fullName,
       repo,
       settings: settings(),
-      // Two OPEN PRs link the same issue (#42) → a duplicate cluster. Winner = lowest open number = #1.
-      pullRequests: [pr(1, { linkedIssues: [42] }), pr(2, { linkedIssues: [42] })],
+      // Two OPEN PRs link the same issue (#42) → a duplicate cluster. Winner = earliest observed claim = #1.
+      pullRequests: [
+        pr(1, { linkedIssues: [42], linkedIssueClaimedAt: "2026-06-14T00:00:00.000Z" }),
+        pr(2, { linkedIssues: [42], linkedIssueClaimedAt: "2026-06-14T00:01:00.000Z" }),
+      ],
       generatedAt: "2026-06-14T00:00:00.000Z",
       duplicateWinnerEnabled: true,
     });
@@ -187,7 +190,10 @@ describe("buildMaintainerActivationPreview", () => {
       repoFullName: repo.fullName,
       repo,
       settings: settings(),
-      pullRequests: [pr(1, { linkedIssues: [42] }), pr(2, { linkedIssues: [42] })],
+      pullRequests: [
+        pr(1, { linkedIssues: [42], linkedIssueClaimedAt: "2026-06-14T00:00:00.000Z" }),
+        pr(2, { linkedIssues: [42], linkedIssueClaimedAt: "2026-06-14T00:01:00.000Z" }),
+      ],
       generatedAt: "2026-06-14T00:00:00.000Z",
     });
     expect(preview.findingCodeCounts).toContainEqual({ code: "duplicate_pr_risk", count: 2 });
@@ -199,7 +205,10 @@ describe("buildMaintainerActivationPreview", () => {
       repo,
       settings: settings(),
       // The only other PR linking #42 is CLOSED → not a live duplicate, so the open winner stays clean.
-      pullRequests: [pr(1, { linkedIssues: [42] }), pr(2, { state: "closed", linkedIssues: [42] })],
+      pullRequests: [
+        pr(1, { linkedIssues: [42], linkedIssueClaimedAt: "2026-06-14T00:00:00.000Z" }),
+        pr(2, { state: "closed", linkedIssues: [42], linkedIssueClaimedAt: "2026-06-14T00:01:00.000Z" }),
+      ],
       generatedAt: "2026-06-14T00:00:00.000Z",
       duplicateWinnerEnabled: true,
     });

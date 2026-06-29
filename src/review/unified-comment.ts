@@ -277,12 +277,11 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // PR that won't actually merge). Applied LAST so it only ever downgrades an otherwise-ready status — a real
   // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
   if (status === "ready" && ctx.heldForReview) return "held";
-  // Held-vs-closed disposition parity (#8/#9): a gate "close" verdict does NOT always close the PR. An
-  // owner/automation-bot author is NEVER auto-closed, and a guarded-path PR is held for owner review. Failed CI
-  // returned the red blocked status above, so the remaining close/held cases are green-or-pending manual holds.
+  // Held-vs-closed disposition parity (#8/#9): owner/automation-bot authors may be exempt from auto-close, so a
+  // close verdict on those authors is rendered as held. Guardrail holds are handled above only for otherwise-ready
+  // PRs; they must not downgrade a blocker/close verdict to manual review.
   if (input.decision === "close") {
     if (ctx.neverClosed) return "held";
-    if (ctx.heldForReview) return "held";
   }
   return status;
 }

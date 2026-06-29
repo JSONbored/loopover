@@ -1,5 +1,5 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
-import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
+import type { GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
@@ -68,21 +68,19 @@ export type PlannedAgentAction = {
 export type AgentActionPlanInput = {
   conclusion: GateCheckConclusion;
   blockerTitles: string[];
-  // The gate's blocking finding CODES (parallel to blockerTitles). Used by the CI-refutation rule
-  // (#ai-ci-refutation): when the gate FAILED solely because of AI-judgment blockers and CI is green, the
-  // AI claim is refuted by the deterministic validator. Optional/absent ⇒ the refutation is a no-op.
+  // The gate's blocking finding CODES (parallel to blockerTitles). Retained for compatibility/telemetry; blocker
+  // findings remain blocking and are not refuted by green CI in the disposition planner.
   gateBlockerCodes?: string[] | undefined;
-  // Whether the AI CI-refutation is ACTIVE for this repo (the caller's grounding + convergence gate, passed as a
-  // single boolean so the refutation condition is fully unit-testable here and the processor carries no branch).
-  // Absent/false ⇒ the refutation never fires and the verdict is byte-identical to the raw gate.
+  // Historical compatibility flag for the removed green-CI AI refutation path. Ignored by the planner; a configured
+  // blocker remains a blocker regardless of this value.
   aiCiRefutationEnabled?: boolean | undefined;
   autonomy: AutonomyPolicy | null | undefined;
   // Optional so the trigger can pass raw repo settings; both fall back to conservative defaults here.
   autoMaintain?: AutoMaintainPolicy | undefined;
   slopGateMinScore?: number | null | undefined;
   // Convergence safety (hard-guardrail port, #4196 incident class): the PR's changed paths + the repo's
-  // hard-guardrail globs. Any changed path matching a guardrail glob forces MANUAL review — gittensory will
-  // neither auto-merge, auto-approve, nor auto-close such a PR; it falls through to a human.
+  // hard-guardrail globs. Any changed path matching a guardrail glob forces MANUAL review only for otherwise
+  // review-good PRs; blockers, red CI, and base conflicts still close for close-eligible contributors.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
@@ -107,9 +105,8 @@ export type AgentActionPlanInput = {
   // The names of the failing checks, surfaced in the close/request-changes reason so the contributor knows
   // WHY (e.g. "codecov/patch"). Empty unless ciState === "failed".
   failingCheckNames?: string[] | undefined;
-  // True only when the caller proved the failing CI names are required branch-protection contexts. When required
-  // contexts are unavailable, ciState conservatively folds in all red checks; that fallback must not bypass hard
-  // guardrails because an optional or third-party check may be the only red signal.
+  // Historical compatibility field. Red CI now closes close-eligible contributors regardless of branch-protection
+  // membership because any visible completed red check/status is adverse.
   ciRequiredContextsVerified?: boolean | undefined;
   // Linked-issue HARD-RULE result (#linked-issue-hard-rules). A DETERMINISTIC verdict about the issue(s) this PR
   // links (owner-assigned / missing point-label / maintainer-only), pre-computed by the trigger. When
@@ -121,7 +118,7 @@ export type AgentActionPlanInput = {
   // Contributor blacklist (#1425, anti-abuse): when the PR author is on the resolved blacklist (per-repo ∪
   // global), the disposition SHORT-CIRCUITS to a deterministic close ahead of ALL merit/CI/AI analysis — the
   // banned account never gets merit-reviewed or auto-merged. Zero-hallucination (not an AI judgment), so its
-  // close is EXEMPT from the AI-refutation breaker (closeKind "blacklist"). Fires for a CONTRIBUTOR only
+  // close is tagged separately (closeKind "blacklist"). Fires for a CONTRIBUTOR only
   // (owner/automation bots are never auto-closed). `reason` is private maintainer metadata used only for matching
   // context; the public close comment intentionally uses static copy. Absent / not-matched ⇒ no effect.
   blacklistMatch?: { matched: boolean; reason: string | null | undefined } | undefined;
@@ -260,8 +257,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // Contributor blacklist (#1425): a banned author's PR is a DETERMINISTIC short-circuit — it SHORT-CIRCUITS to a
   // label + close AHEAD of all merit/CI/gate/AI analysis (this returns before any of it), so a blocked account is
   // never merit-reviewed or auto-merged. Fires for a CONTRIBUTOR only (owner/automation bots are NEVER auto-closed,
-  // the standing rule). Zero-hallucination, so its close is `closeKind: "blacklist"` — exempt from the AI-refutation
-  // breaker like the linked-issue hard rule. The `acting`/`approval` gates here + the executor's pause/dry-run/
+  // the standing rule). Zero-hallucination, so its close is `closeKind: "blacklist"`, separate from heuristic
+  // closes. The `acting`/`approval` gates here + the executor's pause/dry-run/
   // kill-switch gate make it dry-run-able and approval-gated exactly like every other action. The close comment is
   // static by construction so private maintainer metadata from the blacklist entry cannot leak.
   const blacklistContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
@@ -287,30 +284,16 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // Settle-before-decide: never approve / merge / close on a half-finished CI run.
   if (input.ciState === "pending") return actions;
 
-  // CI-refutation of an AI-judgment-only failure (#ai-ci-refutation). When the gate FAILED *solely* because the
-  // dual-model AI reviewer flagged a defect (ai_consensus_defect / ai_review_split) but the deterministic CI is
-  // GREEN, the AI claim is refuted by the real validator → downgrade the verdict to SUCCESS for the disposition so
-  // a clean+green PR MERGES instead of being false-closed on a model hallucination. Requires EVERY blocker to be an
-  // AI-judgment code (a mixed failure with any deterministic blocker — duplicate / secret / slop / missing-issue /
-  // manifest — keeps `failure` and still closes) AND CI === passed (a red/unverified CI is the real signal and is
-  // never overridden). Empty/absent codes (the rule gated OFF at the boundary, or a non-AI failure) ⇒ no-op, so the
-  // verdict is byte-identical. The effective `conclusion` drives every gate-verdict decision below; the AI concern
-  // still surfaces in the review comment (an advisory finding), it just no longer auto-closes a green PR.
-  // Resolve the blocker codes ONCE (so the nullish fallback is exercised for both a present and an absent list,
-  // and the checks below carry no further `??` branch). Absent ⇒ [] ⇒ no AI-judgment-only failure.
-  const gateBlockerCodes = input.gateBlockerCodes ?? [];
-  const aiJudgmentOnlyFailure =
-    input.aiCiRefutationEnabled === true && input.conclusion === "failure" && gateBlockerCodes.length > 0 && gateBlockerCodes.every((code) => AI_JUDGMENT_BLOCKER_CODES.has(code));
-  // The refutation only fires on a GREEN CI (the deterministic validator that overrules the AI). A red/unverified
-  // CI is the real signal and is never overridden, so the verdict stays as the raw gate `failure`.
-  const refuteAiFailureOnGreenCi = aiJudgmentOnlyFailure && ciPassed;
-  const conclusion: GateCheckConclusion = refuteAiFailureOnGreenCi ? "success" : input.conclusion;
+  // The gate verdict is authoritative. Green CI is still required for merge/approve, but it does not rewrite an AI
+  // or review-thread blocker into success once the gate has classified it as blocking.
+  const conclusion: GateCheckConclusion = input.conclusion;
 
   // Only SUCCESS earns the review-good auto-merge. A NEUTRAL gate flows (no longer silently returns []) but is
   // NOT auto-merged — it falls through to a HELD + labeled state for review. (Auto-merging a neutral / grace
   // PR is a separate trust/policy decision, deliberately NOT bundled into the harm-stop.) (#harm-stop)
   const gatePassing = conclusion === "success";
-  // A changed path matching a hard guardrail forces manual review (suppresses auto-MERGE / auto-approve / auto-close).
+  // A changed path matching a hard guardrail forces manual review only when the PR is otherwise review-good
+  // (suppresses auto-MERGE / auto-approve). It must never downgrade blockers/conflicts/red CI to manual review.
   // Fail SAFE on UNKNOWN paths (#1062): when guardrails are configured but the changed-file set is empty (cache
   // not yet / no longer populated), we cannot prove the PR doesn't touch a guarded path, so treat it as a hit —
   // never auto-merge, auto-approve, or auto-close a PR whose diff we don't know. Repos with no guardrails
@@ -326,7 +309,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
   // one-shot CLOSE (taopedia model: resolve + open a fresh PR). The guardrail is handled SEPARATELY: it converts
-  // every would-approve/would-merge/would-close disposition into a manual hold (owner safety review).
+  // would-approve/would-merge dispositions into a manual hold.
   const ciUnverified = input.ciState === "unverified";
   const reviewGood = gatePassing && ciPassed;
   const isContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
@@ -346,21 +329,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // approve may fire again. Absent approved-head SHA (never approved by the bot) ⇒ not idempotent-skipped.
   const alreadyApprovedThisHead = input.pr.approvedHeadSha != null && input.pr.headSha != null && input.pr.approvedHeadSha === input.pr.headSha;
   const canMerge = reviewGood && !heldForManualReview && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
-  // A guarded/CRUCIAL path (CI, the review engine, visual) → ALWAYS held for the owner, never auto-actioned —
-  // not auto-approved, not auto-merged, AND not auto-closed. Operator decision (#hold-crucial-on-reject): a
-  // hallucinated reject on a crucial PR must NOT auto-close a good change (the #1528 near-miss); the owner
-  // verifies and closes/merges. The BULK (non-guarded) contributor PRs still auto-close one-shot on a bad
-  // verdict / conflict — only the small crucial set is held. Owner/automation PRs are never closed regardless.
-  // CLOSE a contributor PR ONLY on a REAL adverse signal — a confirmed gate FAILURE, a red required CI, or a base
+  // CLOSE a contributor PR ONLY on a REAL adverse signal — a confirmed gate FAILURE, red CI, or a base
   // CONFLICT. NEVER close merely because CI is UNVERIFIED (a fork whose Actions await approval, or unreadable
   // checks) or otherwise not-yet-mergeable — those are HELD for review, not killed (#harm-stop fork-false-close).
-  // Owner/automation PRs are never closed (isContributor). A guarded path is HELD for the AI/gate VERDICT and for
-  // a base conflict (don't kill a crucial change on an AI call or a rebaseable conflict). A red CI may close a
-  // guarded path only after the caller proves required-context data was available; otherwise the live aggregate may
-  // have folded in optional / third-party checks and must keep the hard-guardrail manual hold.
+  // Owner/automation PRs are never closed unless owner-close is explicitly enabled. Guardrails do not soften
+  // blockers/conflicts/red CI; they hold only otherwise-ready PRs for manual review.
   // (Rebase-if-behind already ran above, so a red CI here is on the latest base — not a stale-base artifact.) (#ci-fail-closes-guarded)
-  const redVerifiedRequiredCi = ciFailed && input.ciRequiredContextsVerified === true;
-  const willClose = closeEligible && acting("close") && (redVerifiedRequiredCi || (!guardrailHit && (ciFailed || conclusion === "failure" || isConflict)));
+  const willClose = closeEligible && acting("close") && (ciFailed || conclusion === "failure" || isConflict);
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
   // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
   // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR
@@ -495,8 +470,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
     });
   } else if (willClose) {
-    // Contributor PR that is NOT review-good (gate blockers / red / unverified CI) OR conflicts with base →
-    // CLOSE one-shot when no hard guardrail requires manual review. Cite the concrete reasons.
+    // Contributor PR that is NOT review-good (gate blockers / red CI) OR conflicts with base → CLOSE one-shot.
+    // Guardrails hold otherwise-ready changes only; they do not downgrade blockers into manual review.
     const closeReasons: string[] = [];
     if (ciFailed) closeReasons.push(ciReason);
     if (isConflict) closeReasons.push("conflicts with the base branch — resolve and open a fresh PR");

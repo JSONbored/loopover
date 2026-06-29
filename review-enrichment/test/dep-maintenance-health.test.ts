@@ -37,32 +37,42 @@ const throwingFetch = async () => {
 const freshNpmTime = { "1.0.0": iso(NOW - 30 * 24 * 60 * 60 * 1000) };
 const freshPypiReleases = { "1.0.0": [{ upload_time_iso_8601: iso(NOW - 30 * 24 * 60 * 60 * 1000) }] };
 
-test("npmHealth: a non-empty deprecated STRING is flagged deprecated with its reason", () => {
-  const hit = npmHealth({ deprecated: "use foo instead", time: freshNpmTime }, STALE_MS, NOW);
+test("npmHealth: a non-empty deprecated STRING on the queried version is flagged with its reason", () => {
+  const hit = npmHealth({ versions: { "1.0.0": { deprecated: "use foo instead" } }, time: freshNpmTime }, "1.0.0", STALE_MS, NOW);
   assert.equal(hit?.kind, "deprecated");
   assert.match(hit.reason, /use foo instead/);
 });
 
+test("npmHealth: a top-level deprecated STRING is accepted as a fallback", () => {
+  const hit = npmHealth({ deprecated: "gone", time: freshNpmTime }, "1.0.0", STALE_MS, NOW);
+  assert.equal(hit?.kind, "deprecated");
+  assert.match(hit.reason, /gone/);
+});
+
+test("npmHealth: deprecation on a DIFFERENT version is not attributed to the queried version", () => {
+  assert.equal(npmHealth({ versions: { "0.9.0": { deprecated: "old" } }, time: freshNpmTime }, "1.0.0", STALE_MS, NOW), null);
+});
+
 test("npmHealth: deprecated false/boolean/empty/whitespace is NOT a deprecation (fail safe)", () => {
-  assert.equal(npmHealth({ deprecated: false, time: freshNpmTime }, STALE_MS, NOW), null);
-  assert.equal(npmHealth({ deprecated: true, time: freshNpmTime }, STALE_MS, NOW), null);
-  assert.equal(npmHealth({ deprecated: "", time: freshNpmTime }, STALE_MS, NOW), null);
-  assert.equal(npmHealth({ deprecated: "   ", time: freshNpmTime }, STALE_MS, NOW), null);
+  assert.equal(npmHealth({ versions: { "1.0.0": { deprecated: false } }, time: freshNpmTime }, "1.0.0", STALE_MS, NOW), null);
+  assert.equal(npmHealth({ versions: { "1.0.0": { deprecated: true } }, time: freshNpmTime }, "1.0.0", STALE_MS, NOW), null);
+  assert.equal(npmHealth({ versions: { "1.0.0": { deprecated: "" } }, time: freshNpmTime }, "1.0.0", STALE_MS, NOW), null);
+  assert.equal(npmHealth({ deprecated: "   ", time: freshNpmTime }, "1.0.0", STALE_MS, NOW), null);
 });
 
 test("npmHealth: a package with no release in >2y is flagged stale", () => {
-  const hit = npmHealth({ time: { "1.0.0": iso(NOW - 3 * YEAR_MS) } }, STALE_MS, NOW);
+  const hit = npmHealth({ time: { "1.0.0": iso(NOW - 3 * YEAR_MS) } }, "1.0.0", STALE_MS, NOW);
   assert.equal(hit?.kind, "stale");
   assert.match(hit.reason, /no release in ~3y/);
 });
 
 test("npmHealth: a recently-published healthy package yields no finding", () => {
-  assert.equal(npmHealth({ time: freshNpmTime }, STALE_MS, NOW), null);
+  assert.equal(npmHealth({ time: freshNpmTime }, "1.0.0", STALE_MS, NOW), null);
 });
 
 test("npmHealth: missing time / no parseable date fails safe (no stale finding)", () => {
-  assert.equal(npmHealth({}, STALE_MS, NOW), null);
-  assert.equal(npmHealth({ time: { "1.0.0": "not-a-date" } }, STALE_MS, NOW), null);
+  assert.equal(npmHealth({}, "1.0.0", STALE_MS, NOW), null);
+  assert.equal(npmHealth({ time: { "1.0.0": "not-a-date" } }, "1.0.0", STALE_MS, NOW), null);
 });
 
 test("newestNpmPublishMs: ignores created/modified and unparseable timestamps", () => {

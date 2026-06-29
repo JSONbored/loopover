@@ -1,4 +1,5 @@
-// Per-repo hard-guardrail path globs (paths that force MANUAL review — no auto-merge / no auto-close).
+// Per-repo hard-guardrail path globs. These force MANUAL review only for otherwise-ready PRs: no auto-merge /
+// no auto-approve, but blockers, red CI, and base conflicts still close for close-eligible contributors.
 //
 // Self-host note: hosted reviews and hosted policy storage are retired. Review execution uses the container-private
 // `.gittensory.yml` path for repo policy; these hard guardrails remain built-in invariants so a missing private
@@ -7,7 +8,7 @@ export const DEFAULT_CRUCIAL_GUARDRAIL_GLOBS = [".github/workflows/**", "scripts
 
 // The gate's OWN policy files, guarded for EVERY repo regardless of private config. A PR that edits the
 // config-as-code that defines the gate or coverage policy (the `.gittensory.*` focus manifest the loader
-// reads, or `codecov.yml`) must always be HELD for the owner — otherwise one auto-merged config-only PR
+// reads, or `codecov.yml`) must always be HELD when otherwise-ready — otherwise one auto-merged config-only PR
 // could weaken the gate repo-wide before any subsequent PR is evaluated against the new policy. The
 // manifest filenames mirror signals/focus-manifest-loader's candidates; this only ever WIDENS the guard.
 export const CONFIG_AS_CODE_GUARDRAIL_GLOBS = [
@@ -25,7 +26,7 @@ export const CONFIG_AS_CODE_GUARDRAIL_GLOBS = [
 // The review engine's OWN decision + safety code — its crown jewels — guarded for EVERY repo regardless of
 // private config. A contributor PR that edits how the gate decides a verdict, how a merge or close executes, the
 // action-mode kill-switch, scoring, auth, the CI aggregate the gate reads, or the guardrail itself must be HELD
-// for the owner: the engine must never auto-merge a change to the very code that governs its own autonomy.
+// when otherwise-ready: the engine must never auto-merge a change to the very code that governs its own autonomy.
 // These are gittensory engine-specific paths, so they never match an unrelated reviewed repo's PR (e.g.
 // metagraphed has no src/rules/** or agent-action-executor.ts); like the config-as-code set above, this only
 // ever WIDENS the guard.

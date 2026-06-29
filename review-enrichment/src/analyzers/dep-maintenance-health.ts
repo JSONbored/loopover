@@ -63,19 +63,30 @@ export function newestNpmPublishMs(time: Record<string, string> | undefined): nu
  *  registries have historically also emitted `true`/`false` — both non-string forms are handled defensively. */
 export interface NpmPackument {
   deprecated?: unknown;
+  versions?: Record<string, { deprecated?: unknown } | undefined>;
   time?: Record<string, string>;
 }
 
-/** Pure: classify an npm package from its packument. A non-empty `deprecated` STRING ⇒ deprecated (with its
- *  reason); otherwise stale when the newest real publish is older than `staleAgeMs`. `now` injected for tests. */
+/** Pure: classify an npm package from its packument for the QUERIED version. npm exposes deprecation per version
+ *  under `versions[<version>].deprecated` (the reason string); a top-level `deprecated` is also accepted as a
+ *  fallback. Otherwise stale when the newest real publish is older than `staleAgeMs`. `now` injected for tests. */
 export function npmHealth(
   meta: NpmPackument,
+  version: string,
   staleAgeMs: number,
   now: number,
 ): Health | null {
-  // `deprecated` is the reason string; a boolean/empty/whitespace value is NOT a deprecation (fail safe).
-  if (typeof meta.deprecated === "string" && meta.deprecated.trim() !== "") {
-    return { kind: "deprecated", reason: `deprecated by maintainer — ${tidyReason(meta.deprecated)}` };
+  // Deprecation lives on the queried version first, then the top level; a boolean/empty/whitespace value is NOT
+  // a deprecation (fail safe). Only a non-empty reason string flags.
+  const versionDeprecated = meta.versions?.[version]?.deprecated;
+  const deprecatedReason =
+    typeof versionDeprecated === "string" && versionDeprecated.trim() !== ""
+      ? versionDeprecated
+      : typeof meta.deprecated === "string" && meta.deprecated.trim() !== ""
+        ? meta.deprecated
+        : null;
+  if (deprecatedReason !== null) {
+    return { kind: "deprecated", reason: `deprecated by maintainer — ${tidyReason(deprecatedReason)}` };
   }
   const newest = newestNpmPublishMs(meta.time);
   if (newest !== null && now - newest > staleAgeMs) {
@@ -168,7 +179,7 @@ export async function scanDepMaintenanceHealth(
         `https://registry.npmjs.org/${encodeURIComponent(change.package)}`,
         options.signal,
       )) as NpmPackument | null;
-      const health = data && npmHealth(data, staleAgeMs, now);
+      const health = data && npmHealth(data, change.to, staleAgeMs, now);
       if (health) {
         findings.push({
           ecosystem: change.ecosystem,

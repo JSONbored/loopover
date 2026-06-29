@@ -495,6 +495,7 @@ async function main(): Promise<void> {
     "gittensory_jobs_failed_total",
     "gittensory_jobs_dead_total",
     "gittensory_jobs_rate_limited_total",
+    "gittensory_jobs_rate_limit_deferred_total",
     "gittensory_jobs_deferred_total",
     "gittensory_jobs_coalesced_total",
   ]) {
@@ -512,6 +513,7 @@ async function main(): Promise<void> {
     "gittensory_jobs_processed_total",
     "gittensory_jobs_failed_total",
     "gittensory_jobs_dead_total",
+    "gittensory_jobs_rate_limit_deferred_total",
     "gittensory_webhook_dedup_total",
     "gittensory_qdrant_queries_total",
     "gittensory_qdrant_upserts_total",

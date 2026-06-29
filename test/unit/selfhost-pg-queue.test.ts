@@ -195,6 +195,33 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("opens a shared cooldown after GitHub rate limits so the pump does not claim the next due job", async () => {
+    const m = makePool();
+    m.enqueueJob("1", { type: "github-webhook" }, 0);
+    m.enqueueJob("2", { type: "agent-regate-pr" }, 0);
+    let calls = 0;
+    const rateLimit = new Error("API rate limit exceeded for installation ID 123");
+    Object.assign(rateLimit, {
+      status: 403,
+      response: { headers: { "retry-after": "120" } },
+    });
+    const q = createPgQueue(
+      m.pool,
+      async () => {
+        calls += 1;
+        throw rateLimit;
+      },
+      { maxRetries: 1, backoffMs: () => 0 },
+    );
+    await q.init();
+    await q.drain();
+    expect(calls).toBe(1);
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT id, payload, job_key FROM _selfhost_jobs WHERE status='pending' AND run_after<=$1"),
+      expect.arrayContaining([expect.any(Number)]),
+    );
+  });
+
   it("reschedules retryable incomplete review jobs without consuming the dead-letter budget", async () => {
     const m = makePool();
     m.enqueueJob("1", { type: "agent-regate-pr" }, 4);

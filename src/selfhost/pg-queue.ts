@@ -87,6 +87,7 @@ export function createPgQueue(
   let running = false;
   let active = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let githubRateLimitCooldownUntil = 0;
 
   async function init(): Promise<void> {
     await pool.query(DDL);
@@ -231,6 +232,7 @@ export function createPgQueue(
   }
 
   async function claimNext(): Promise<JobRow | null> {
+    if (Date.now() < githubRateLimitCooldownUntil) return null;
     // Atomic, multi-instance-safe: lock + claim one due job, skipping rows another instance already locked.
     const res = await pool.query(
       `UPDATE ${TABLE} SET status='processing'
@@ -287,7 +289,23 @@ export function createPgQueue(
       const nonConsumingDelayMs = nonConsumingRetryDelayMs(error);
       if (nonConsumingDelayMs !== null) {
         const rateLimited = githubRateLimitRetryDelayMs(error) !== null;
-        const retryAfter = Date.now() + (rateLimited ? rateLimitRetryDelayWithJitter(nonConsumingDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`) : nonConsumingDelayMs);
+        const now = Date.now();
+        const retryAfter = now + (rateLimited ? rateLimitRetryDelayWithJitter(nonConsumingDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`) : nonConsumingDelayMs);
+        if (rateLimited) {
+          githubRateLimitCooldownUntil = Math.max(githubRateLimitCooldownUntil, now + nonConsumingDelayMs);
+          const deferred = await deferPendingJobsForRateLimit(nonConsumingDelayMs, now);
+          if (deferred) {
+            await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total", deferred);
+            console.warn(
+              JSON.stringify({
+                level: "warn",
+                event: "selfhost_queue_rate_limit_cooldown",
+                deferred,
+                cooldown_until: githubRateLimitCooldownUntil,
+              }),
+            );
+          }
+        }
         if (job.job_key && (await mergeRescheduledJobIntoPending(job, retryAfter, errMsg))) {
           await recordQueueMetric("gittensory_jobs_coalesced_total");
         } else {
@@ -433,6 +451,26 @@ export function createPgQueue(
     },
   };
 
+  async function deferPendingJobsForRateLimit(
+    delayMs: number,
+    now: number,
+  ): Promise<number> {
+    const res = await pool.query(
+      `SELECT id, payload, job_key FROM ${TABLE} WHERE status='pending' AND run_after<=$1`,
+      [now + delayMs],
+    );
+    let changed = 0;
+    for (const row of res.rows as Array<{ id: string; payload: string; job_key?: string | null }>) {
+      const runAfter = now + rateLimitRetryDelayWithJitter(delayMs, `${row.job_key ?? ""}:${row.id}:${row.payload}`);
+      const update = await pool.query(
+        `UPDATE ${TABLE} SET run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3 AND status='pending'`,
+        [runAfter, "github rate-limit cooldown", row.id],
+      );
+      changed += update.rowCount ?? 0;
+    }
+    return changed;
+  }
+
   async function mergeRescheduledJobIntoPending(
     job: JobRow,
     runAfter: number,
@@ -454,12 +492,12 @@ export function createPgQueue(
     return true;
   }
 
-  async function recordQueueMetric(name: string): Promise<void> {
-    incr(name);
+  async function recordQueueMetric(name: string, by = 1): Promise<void> {
+    incr(name, undefined, by);
     await pool.query(
-      `INSERT INTO ${STATS_TABLE} (name, value) VALUES ($1, 1)
-       ON CONFLICT(name) DO UPDATE SET value=${STATS_TABLE}.value+1`,
-      [name],
+      `INSERT INTO ${STATS_TABLE} (name, value) VALUES ($1, $2)
+       ON CONFLICT(name) DO UPDATE SET value=${STATS_TABLE}.value+$2`,
+      [name, by],
     );
   }
 

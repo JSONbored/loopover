@@ -351,6 +351,53 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(row.last_error).toContain("API rate limit exceeded");
   });
 
+  it("defers the due backlog and stops claiming when GitHub is rate-limited", async () => {
+    const driver = makeDriver();
+    let calls = 0;
+    const rateLimit = new Error("API rate limit exceeded for installation ID 123");
+    Object.assign(rateLimit, {
+      status: 403,
+      response: { headers: { "retry-after": "120" } },
+    });
+    const q = createSqliteQueue(
+      driver,
+      async () => {
+        calls += 1;
+        throw rateLimit;
+      },
+      { maxRetries: 1, backoffMs: () => 0 },
+    );
+    const before = Date.now();
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 0)",
+      [JSON.stringify(msg("github-webhook"))],
+    );
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 0)",
+      [JSON.stringify(msg("agent-regate-pr"))],
+    );
+
+    await q.drain();
+
+    const rows = driver.query(
+      "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ status: string; attempts: number; run_after: number; last_error: string }>;
+    expect(calls).toBe(1);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.status === "pending")).toBe(true);
+    expect(rows.every((row) => row.attempts === 0)).toBe(true);
+    expect(rows.every((row) => row.run_after > before)).toBe(true);
+    expect(rows.map((row) => row.last_error)).toEqual([
+      "API rate limit exceeded for installation ID 123",
+      "github rate-limit cooldown",
+    ]);
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_rate_limited_total: 1,
+      gittensory_jobs_rate_limit_deferred_total: 1,
+    });
+  });
+
   it("reschedules retryable incomplete review jobs without consuming the dead-letter budget", async () => {
     const driver = makeDriver();
     let calls = 0;

@@ -139,6 +139,7 @@ export function createSqliteQueue(
   let running = false;
   let active = 0; // number of concurrent pump() loops currently draining jobs
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let githubRateLimitCooldownUntil = 0;
 
   function enqueue(message: JobMessage, delaySeconds: number): void {
     const now = Date.now();
@@ -172,6 +173,7 @@ export function createSqliteQueue(
   }
 
   function claimNext(): JobRow | null {
+    if (Date.now() < githubRateLimitCooldownUntil) return null;
     const { rows } = driver.query(
       `SELECT id, payload, attempts, job_key FROM ${TABLE} WHERE status='pending' AND run_after<=? ORDER BY priority DESC, run_after, id LIMIT 1`,
       [Date.now()],
@@ -232,7 +234,23 @@ export function createSqliteQueue(
       const nonConsumingDelayMs = nonConsumingRetryDelayMs(error);
       if (nonConsumingDelayMs !== null) {
         const rateLimited = githubRateLimitRetryDelayMs(error) !== null;
-        const retryAfter = Date.now() + (rateLimited ? rateLimitRetryDelayWithJitter(nonConsumingDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`) : nonConsumingDelayMs);
+        const now = Date.now();
+        const retryAfter = now + (rateLimited ? rateLimitRetryDelayWithJitter(nonConsumingDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`) : nonConsumingDelayMs);
+        if (rateLimited) {
+          githubRateLimitCooldownUntil = Math.max(githubRateLimitCooldownUntil, now + nonConsumingDelayMs);
+          const deferred = deferPendingJobsForRateLimit(driver, nonConsumingDelayMs, now);
+          if (deferred) {
+            recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total", deferred);
+            console.warn(
+              JSON.stringify({
+                level: "warn",
+                event: "selfhost_queue_rate_limit_cooldown",
+                deferred,
+                cooldown_until: githubRateLimitCooldownUntil,
+              }),
+            );
+          }
+        }
         if (job.job_key && mergeRescheduledJobIntoPending(driver, job, retryAfter, errMsg)) {
           recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
         } else {
@@ -453,6 +471,27 @@ function spreadDueJobsOnStartup(driver: SqliteDriver): number {
   return due.length;
 }
 
+function deferPendingJobsForRateLimit(
+  driver: SqliteDriver,
+  delayMs: number,
+  now: number,
+): number {
+  const { rows } = driver.query(
+    `SELECT id, payload, job_key FROM ${TABLE} WHERE status='pending' AND run_after<=?`,
+    [now + delayMs],
+  );
+  let changed = 0;
+  for (const row of rows as Array<{ id: number; payload: string; job_key?: string | null }>) {
+    const runAfter = now + rateLimitRetryDelayWithJitter(delayMs, `${row.job_key ?? ""}:${row.id}:${row.payload}`);
+    const { changes } = driver.query(
+      `UPDATE ${TABLE} SET run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=? AND status='pending'`,
+      [runAfter, "github rate-limit cooldown", row.id],
+    );
+    changed += changes;
+  }
+  return changed;
+}
+
 function mergeRescheduledJobIntoPending(
   driver: SqliteDriver,
   job: JobRow,
@@ -473,12 +512,12 @@ function mergeRescheduledJobIntoPending(
   return true;
 }
 
-function recordQueueMetric(driver: SqliteDriver, name: string): void {
-  incr(name);
+function recordQueueMetric(driver: SqliteDriver, name: string, by = 1): void {
+  incr(name, undefined, by);
   driver.query(
-    `INSERT INTO ${STATS_TABLE} (name, value) VALUES (?, 1)
-     ON CONFLICT(name) DO UPDATE SET value=value+1`,
-    [name],
+    `INSERT INTO ${STATS_TABLE} (name, value) VALUES (?, ?)
+     ON CONFLICT(name) DO UPDATE SET value=value+?`,
+    [name, by, by],
   );
 }
 

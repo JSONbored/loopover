@@ -178,6 +178,24 @@ export interface TyposquatFinding {
   reason: string;
 }
 
+/** A head commit whose signature/author provenance warrants scrutiny: an unsigned/unverified-signature head, an
+ *  author/committer login mismatch, or a never-before-seen committer in a repo that otherwise has verified history
+ *  — supply-chain/impersonation signals the no-checkout reviewer cannot derive. Surfaces ONLY the public GitHub
+ *  verification verdict (`verified` + `reason`) and boolean provenance flags — never tokens, emails, or identities
+ *  beyond the public commit author login GitHub already exposes. (#1517) */
+export interface CommitSignatureFinding {
+  /** GitHub's signature verification verdict for the head commit. */
+  verified: boolean;
+  /** GitHub's machine-readable verification reason (e.g. `unsigned`, `valid`, `unknown_key`). Public-safe string. */
+  reason: string;
+  /** The head commit author's GitHub login, when GitHub resolves one — public, already shown on the PR. */
+  authorLogin?: string;
+  /** True when the commit author login differs from the committer login (a potential authorship mismatch). */
+  authorMismatch: boolean;
+  /** True when the author login has no prior verified commit in a repo that otherwise carries verified history. */
+  newCommitter: boolean;
+}
+
 /** A static IaC / config misconfiguration introduced by the PR. Reports the location + rule only. */
 export interface IacMisconfigFinding {
   file: string;
@@ -223,6 +241,7 @@ export interface BriefFindings {
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
+  commitSignature?: CommitSignatureFinding[];
   iacMisconfig?: IacMisconfigFinding[];
   nativeBuild?: NativeBuildFinding[];
 }

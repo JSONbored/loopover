@@ -344,6 +344,7 @@ export function createPgQueue(
           "selfhost.queue.job",
           { "job.type": message.type, "queue.backend": "postgres", "job.attempt": Number(job.attempts) + 1 },
           () => consume(message),
+          { parentTraceParent: message.type === "github-webhook" ? message.traceParent : undefined },
         );
         await pool.query(`DELETE FROM ${TABLE} WHERE id=$1`, [job.id]);
         await recordQueueMetric("gittensory_jobs_processed_total");

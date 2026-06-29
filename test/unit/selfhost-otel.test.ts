@@ -21,13 +21,22 @@ vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
 }));
 
 import {
+  currentOtelTraceParent,
   flushOpenTelemetry,
   initOpenTelemetry,
   otelSafeAttributes,
   resetOpenTelemetryForTest,
   resolveOtelTraceEndpoint,
+  selfHostHttpRequestAttributes,
+  selfHostHttpResponseAttributes,
+  setCurrentOtelSpanAttributes,
   withOtelSpan,
 } from "../../src/selfhost/otel";
+import {
+  clearSelfHostRequestTraceParent,
+  getSelfHostRequestTraceParent,
+  setSelfHostRequestTraceParent,
+} from "../../src/selfhost/trace-context";
 
 const env = (values: Record<string, string>): NodeJS.ProcessEnv => values as unknown as NodeJS.ProcessEnv;
 
@@ -53,6 +62,8 @@ describe("self-host OpenTelemetry", () => {
     expect(await initOpenTelemetry(env({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318" }))).toBe(false);
     await flushOpenTelemetry();
     await expect(withOtelSpan("off", { "job.type": "x" }, () => 42)).resolves.toBe(42);
+    expect(currentOtelTraceParent()).toBeUndefined();
+    setCurrentOtelSpanAttributes({ ignored: true });
     expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
   });
 
@@ -133,6 +144,101 @@ describe("self-host OpenTelemetry", () => {
     expect(child.events.map((event: { name: string }) => event.name)).toContain("exception");
     expect(child.attributes.secretToken).toBeUndefined();
     expect(child.parentSpanContext.spanId).toBe(parent.spanContext().spanId);
+  });
+
+  it("injects traceparent context and resumes later spans from it", async () => {
+    await initOpenTelemetry(env({
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector/v1/traces",
+    }));
+    expect(currentOtelTraceParent()).toBeUndefined();
+    setCurrentOtelSpanAttributes({ ignored: true });
+    let traceParent: string | undefined;
+    await withOtelSpan("selfhost.http.request", undefined, () => {
+      traceParent = currentOtelTraceParent();
+      setCurrentOtelSpanAttributes({
+        "http.response.status_code": 202,
+        secretHeader: "drop",
+      });
+    });
+    expect(traceParent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/);
+
+    await withOtelSpan("selfhost.queue.job", { "job.type": "github-webhook" }, () => undefined, { parentTraceParent: traceParent });
+    await withOtelSpan("invalid-parent", undefined, () => undefined, { parentTraceParent: "not-a-traceparent" });
+    await flushOpenTelemetry();
+
+    const root = otelMocks.exportedSpans.find((span) => span.name === "selfhost.http.request");
+    const child = otelMocks.exportedSpans.find((span) => span.name === "selfhost.queue.job");
+    const invalid = otelMocks.exportedSpans.find((span) => span.name === "invalid-parent");
+    expect(root.attributes).toMatchObject({ "http.response.status_code": 202 });
+    expect(root.attributes.secretHeader).toBeUndefined();
+    expect(child.parentSpanContext.spanId).toBe(root.spanContext().spanId);
+    expect(invalid.parentSpanContext).toBeUndefined();
+  });
+
+  it("builds low-cardinality self-host HTTP span attributes", () => {
+    expect(
+      selfHostHttpRequestAttributes(
+        new Request("https://self.example/v1/github/webhook", {
+          method: "POST",
+          headers: { "x-github-event": "pull_request" },
+        }),
+      ),
+    ).toEqual({
+      "http.request.method": "POST",
+      "http.route": "/v1/github/webhook",
+      "github.webhook.event": "pull_request",
+      "selfhost.webhook.transport": "github",
+    });
+    expect(
+      selfHostHttpRequestAttributes(
+        new Request("https://self.example/v1/orb/relay", {
+          method: "POST",
+          headers: { "x-github-event": "check_run" },
+        }),
+      ),
+    ).toMatchObject({
+      "http.route": "/v1/orb/relay",
+      "github.webhook.event": "check_run",
+      "selfhost.webhook.transport": "orb-relay",
+    });
+    expect(
+      selfHostHttpRequestAttributes(
+        new Request("https://self.example/v1/orb/webhook", {
+          method: "POST",
+          headers: { "x-github-event": "installation" },
+        }),
+      ),
+    ).toMatchObject({
+      "http.route": "/v1/orb/webhook",
+      "selfhost.webhook.transport": "orb",
+    });
+    expect(selfHostHttpRequestAttributes(new Request("https://self.example/v1/internal/jobs/refresh-registry"))).toMatchObject({
+      "http.route": "/v1/internal/*",
+    });
+    expect(selfHostHttpRequestAttributes(new Request("https://self.example/v1/repos/acme/widgets"))).toMatchObject({
+      "http.route": "/v1/*",
+    });
+    expect(selfHostHttpRequestAttributes(new Request("https://self.example/favicon.ico"))).toMatchObject({
+      "http.route": "other",
+    });
+    expect(selfHostHttpResponseAttributes(204)).toEqual({
+      "http.response.status_code": 204,
+      "http.response.status_class": "2xx",
+    });
+  });
+
+  it("stores request trace context only for the exact Request object", () => {
+    const request = new Request("https://self.example/v1/github/webhook");
+    const other = new Request("https://self.example/v1/github/webhook");
+    setSelfHostRequestTraceParent(request, "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01");
+    expect(getSelfHostRequestTraceParent(request)).toBe("00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01");
+    expect(getSelfHostRequestTraceParent(other)).toBeUndefined();
+    setSelfHostRequestTraceParent(request, undefined);
+    expect(getSelfHostRequestTraceParent(request)).toBeUndefined();
+    setSelfHostRequestTraceParent(request, "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01");
+    clearSelfHostRequestTraceParent(request);
+    expect(getSelfHostRequestTraceParent(request)).toBeUndefined();
   });
 
   it("uses safe defaults and captures non-Error failures", async () => {

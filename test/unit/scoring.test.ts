@@ -1850,4 +1850,45 @@ NOVELTY_BONUS_SCALAR = 3
       ).toEqual([]);
     });
   });
+
+  describe("documented scoring config bounds (#1744)", () => {
+    const saturationBase = (scale: number): number =>
+      buildScorePreview({
+        repo,
+        snapshot: { ...snapshot, activeModel: "pending_saturation_model" as const, constants: { ...snapshot.constants, SRC_TOK_SATURATION_SCALE: scale } },
+        input: { repoFullName: repo.fullName, sourceTokenScore: 30, totalTokenScore: 30, sourceLines: 30, openPrCount: 0, credibility: 1 },
+      }).scoreEstimate.baseScore;
+
+    it("clamps a fixed_base_score above the documented ceiling to 100", () => {
+      const preview = buildScorePreview({
+        repo: { ...repo, registryConfig: { ...repo.registryConfig!, fixedBaseScore: 150 } },
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 100, totalTokenScore: 200, sourceLines: 10, openPrCount: 0, credibility: 1 },
+      });
+      // Before the fix this previewed baseScore = 150 (API schema is `.min(0)` only; registry normalization
+      // accepts any finite value), minting a base component above the documented [0, 100] ceiling.
+      expect(preview.scoreEstimate.baseScore).toBe(100);
+    });
+
+    it("clamps a negative fixed_base_score (via the API input path) to 0", () => {
+      const preview = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, fixedBaseScore: -5, sourceTokenScore: 100, totalTokenScore: 200, sourceLines: 10, openPrCount: 0, credibility: 1 },
+      });
+      expect(preview.scoreEstimate.baseScore).toBe(0);
+    });
+
+    it("clamps SRC_TOK_SATURATION_SCALE below the documented floor (10) before the saturation curve", () => {
+      // A scale of 3 is below the documented [10, 500] band, so it must score identically to the clamped
+      // floor of 10 — and differently from the in-band default 58 (the prior Math.max(...,1) left 3 in play).
+      expect(saturationBase(3)).toBe(saturationBase(10));
+      expect(saturationBase(3)).not.toBe(saturationBase(58));
+    });
+
+    it("clamps SRC_TOK_SATURATION_SCALE above the documented ceiling (500)", () => {
+      expect(saturationBase(1000)).toBe(saturationBase(500));
+      expect(saturationBase(1000)).not.toBe(saturationBase(400));
+    });
+  });
 });

@@ -254,6 +254,32 @@ export function renderBrief(
     }
   }
 
+  const commitSignatures = findings.commitSignature ?? [];
+  if (commitSignatures.length) {
+    lines.push(
+      "### Head-commit signature / author provenance (verify before merging)",
+    );
+    for (const item of commitSignatures) {
+      const status = item.verified
+        ? "signature **verified**"
+        : "signature **unverified**";
+      const flags: string[] = [];
+      if (item.authorMismatch)
+        flags.push("commit author and committer logins differ");
+      if (item.newCommitter)
+        flags.push(
+          "author has no verified history in a repo that otherwise carries verified commits",
+        );
+      const who = item.authorLogin
+        ? ` by ${safeCodeSpan(item.authorLogin)}`
+        : "";
+      const detail = flags.length ? ` — ${flags.join("; ")}` : "";
+      lines.push(
+        `- head commit${who}: ${status} (${safeCodeSpan(item.reason)})${detail}`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

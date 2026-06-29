@@ -21,8 +21,19 @@ export interface EnrichRequest {
   diff?: string;
   /** Optional GitHub read token for GitHub-backed analyzers. Never logged. */
   githubToken?: string;
+  /** The PR's linked issue, resolved engine-side and passed in the envelope so the history analyzer can judge
+   *  whether the diff covers the issue's stated requirement without an extra fetch. Absent ⇒ alignment omitted. (#1478) */
+  linkedIssue?: EnrichLinkedIssue;
   budget?: { timeoutMs?: number; maxBriefChars?: number };
   analyzers?: string[];
+}
+
+/** A PR's linked issue, as carried in the request envelope. `title`/`body` hold the stated requirement the history
+ *  analyzer measures the diff against; only the number is mandatory. (#1478) */
+export interface EnrichLinkedIssue {
+  number: number;
+  title?: string;
+  body?: string;
 }
 
 /** A known vulnerability for a dependency version, sourced from OSV.dev. */
@@ -193,6 +204,35 @@ export interface NativeBuildFinding {
   reason: string;
 }
 
+/** Public-safe historical context the no-checkout reviewer is blind to and the engine deliberately does NOT compute:
+ *  the author's track record IN THIS repo, past PRs that already changed the same files (with their outcome), and
+ *  whether the diff covers the linked issue's stated requirement. Surfaced as a single block (0-or-1 element array).
+ *  Carries ONLY public GitHub facts — never the engine's internal submitter reputation, trust, reward, or score. (#1478) */
+export interface HistoryFinding {
+  /** Author track record in THIS repo. `null` when no token/author was available to query the GitHub API. */
+  author: {
+    priorMergedInRepo: number;
+    priorClosedInRepo: number;
+    accountAgeDays: number | null;
+    firstTimeContributor: boolean;
+  } | null;
+  /** Past PRs that already changed the same files, with the outcome of each and the overlapping paths. */
+  similarPastPrs: Array<{
+    number: number;
+    title: string;
+    outcome: "merged" | "reverted";
+    overlapPaths: string[];
+  }>;
+  /** Whether the diff covers the linked issue's stated requirement. `null` when the PR has no linked issue. */
+  linkedIssueAlignment: {
+    issue: number;
+    statedRequirement: string;
+    diffCovers: "full" | "partial" | "none";
+  } | null;
+  /** True when a GitHub sub-query was skipped (no token) or degraded (rate-limit/error), so the block is incomplete. */
+  partial: boolean;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -210,6 +250,7 @@ export interface BriefFindings {
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
   nativeBuild?: NativeBuildFinding[];
+  history?: HistoryFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

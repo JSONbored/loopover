@@ -1516,7 +1516,8 @@ describe("queue processors", () => {
     expect(commentBodies[0]).toContain("is reviewing");
     const finalComment = commentBodies.find((body) => !body.includes("is reviewing"));
     expect(finalComment).toContain("Gittensory review needs maintainer review");
-    expect(finalComment).toContain("The AI reviewer returned public review text but not the expected structured verdict");
+    expect(finalComment).toContain("AI review could not be completed for this PR head");
+    expect(finalComment).not.toContain("The AI reviewer returned public review text but not the expected structured verdict");
     const cached = await env.DB.prepare("select count(*) as n from ai_review_cache where repo_full_name = ? and pull_number = ?")
       .bind("JSONbored/gittensory", 48)
       .first<{ n: number }>();

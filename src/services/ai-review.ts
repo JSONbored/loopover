@@ -539,7 +539,6 @@ async function runWorkersOpinion(
   // Track the last provider error so we can fail-LOUD once ALL models × attempts are exhausted (below). Per-attempt
   // logs are warn (noisy retries, skipped by the central Sentry forwarder); the exhausted summary is error (#26).
   let lastError: unknown;
-  let lastUnstructuredText = "";
   let lastUnparseable:
     | { model: string; attempt: number; responseChars: number; hasJsonObject: boolean }
     | undefined;
@@ -570,7 +569,6 @@ async function runWorkersOpinion(
         const status = text.trim() ? "unparseable_output" : "empty_output";
         diagnostics.push({ model, attempt, status, responseChars: text.length, hasJsonObject });
         if (text.trim()) {
-          lastUnstructuredText = text;
           lastUnparseable = { model, attempt, responseChars: text.length, hasJsonObject };
           console.warn(
             JSON.stringify({
@@ -629,10 +627,7 @@ async function runWorkersOpinion(
       }),
     );
   }
-  return {
-    review: null,
-    ...(lastUnstructuredText ? { fallbackNote: lastUnstructuredText } : {}),
-  };
+  return { review: null };
 }
 
 const PROVIDER_DEFAULT_MODEL: Record<AiReviewProviderKey["provider"], string> =
@@ -740,7 +735,6 @@ async function runProviderReview(
   const review = textValue ? parseModelReview(textValue) : null;
   return {
     review,
-    ...(textValue && !review ? { fallbackNote: textValue } : {}),
     diagnostic: {
       model,
       attempt: 0,
@@ -1206,7 +1200,11 @@ export async function runGittensoryAiReview(
   const reviewsForNotes = [advisoryReview, secondReview].filter(
     (r): r is ModelReview => Boolean(r),
   );
-  if (fallbackNotes.length > 0 && reviewsForNotes.length === 0)
+  if (
+    reviewsForNotes.length === 0 &&
+    (fallbackNotes.length > 0 ||
+      reviewDiagnostics.some((diagnostic) => diagnostic.status === "unparseable_output"))
+  )
     inconclusive = true;
   const advisoryNotes =
     reviewsForNotes.length > 0

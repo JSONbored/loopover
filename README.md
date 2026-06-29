@@ -37,14 +37,14 @@ Gittensory CI and gittensory review score, gate, and comment on pull requests. T
 - **Unified review comment** — renders the public PR feedback as one in-place comment instead of multiple panels.
 - **Per-repo activation** — capabilities roll forward (and back) one flag and one repo at a time via the `GITTENSORY_REVIEW_REPOS` allowlist.
 
-See [Review configuration](https://gittensory.aethereal.dev/docs/review-configuration) for the full flag, setting, and `.gittensory.yml` reference.
+See [Tuning your reviews](https://gittensory.aethereal.dev/docs/tuning) for the full flag, setting, and `.gittensory.yml` reference.
 
 ## Start Here
 
 | Audience                  | Start                                                                    | Useful next links                                                                                                                                                                                                 |
 | ------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Miners and contributors   | [Quickstart](https://gittensory.aethereal.dev/docs/quickstart)           | [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients), [Miner workflow](https://gittensory.aethereal.dev/docs/miner-workflow), [Scoreability](https://gittensory.aethereal.dev/docs/scoreability) |
-| Maintainers               | [GitHub App](https://gittensory.aethereal.dev/docs/github-app)           | [Maintainer workflow](https://gittensory.aethereal.dev/docs/maintainer-workflow), [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-security)                                                  |
+| Maintainers               | [GitHub App](https://gittensory.aethereal.dev/docs/github-app)           | [Maintainer workflow](https://gittensory.aethereal.dev/docs/maintainer-workflow), [Self-host reviews](https://gittensory.aethereal.dev/docs/maintainer-self-hosting), [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-security)                         |
 | Repo owners and operators | [Beta onboarding](https://gittensory.aethereal.dev/docs/beta-onboarding) | [Upstream drift](https://gittensory.aethereal.dev/docs/upstream-drift), [Troubleshooting](https://gittensory.aethereal.dev/docs/troubleshooting), [Roadmap](https://gittensory.aethereal.dev/roadmap)             |
 | Agent authors             | [Agents](https://gittensory.aethereal.dev/agents)                        | [API browser](https://gittensory.aethereal.dev/api), [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients)                                                                                        |
 

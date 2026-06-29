@@ -41,6 +41,7 @@ describe("Gittensory repo focus manifest", () => {
     const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toContain("src/");
+    expect(manifest.wantedPaths).toContain("review-enrichment/");
     expect(manifest.wantedPaths).toContain("apps/gittensory-ui/");
     expect(manifest.blockedPaths).toContain("site/");
     expect(manifest.blockedPaths).not.toContain("apps/gittensory-ui/");

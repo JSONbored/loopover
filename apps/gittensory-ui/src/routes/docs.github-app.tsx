@@ -12,13 +12,13 @@ export const Route = createFileRoute("/docs/github-app")({
       {
         name: "description",
         content:
-          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Gate check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional Gate enforcement.",
+          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
       { property: "og:title", content: "GitHub App setup — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Gate check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional Gate enforcement.",
+          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
       { property: "og:url", content: "/docs/github-app" },
     ],
@@ -36,10 +36,11 @@ function GithubApp() {
     >
       <p>
         Once installed, the <strong>gittensory app reviews every pull request</strong> on the repos
-        you select. Each review produces two surfaces: the <strong>Gittensory Gate</strong> check
-        run (and the advisory <strong>Gittensory Context</strong> check), and a single review
-        comment posted by <code>gittensory[bot]</code> that updates in place as the PR evolves.
-        Everything on this page configures that review.
+        you select. Each review produces two surfaces: the{" "}
+        <strong>Gittensory Orb Review Agent</strong> check run (and the advisory{" "}
+        <strong>Gittensory Context</strong> check), and a single review comment posted by{" "}
+        <code>gittensory[bot]</code> that updates in place as the PR evolves. Everything on this
+        page configures that review.
       </p>
 
       <h2>Install</h2>
@@ -57,8 +58,8 @@ function GithubApp() {
         </li>
         <li>
           Approve <code>Metadata: read</code>, <code>Pull requests: read</code>, and{" "}
-          <code>Issues: write</code>. Enable <code>Checks: write</code> when Context or Gate check
-          runs are enabled.
+          <code>Issues: write</code>. Enable <code>Checks: write</code> when Context or review-agent
+          check runs are enabled.
         </li>
         <li>
           Keep webhook events enabled for <code>issues</code>, <code>issue_comment</code>,{" "}
@@ -92,16 +93,16 @@ GET /v1/installations/:id/repair`}
         </li>
         <li>
           Leave <strong>Gittensory Context</strong> advisory while you tune copy and settings. Make{" "}
-          <strong>Gittensory Gate</strong> required only after the repo explicitly enables blocking
-          rules.
+          <strong>Gittensory Orb Review Agent</strong> required only after the repo explicitly
+          enables blocking rules.
         </li>
       </ol>
 
       <h2>Default posture</h2>
       <p>
-        Gittensory is advisory-first. Public comments, labels, the Context check, and the Gate check
-        are controlled per repo. Missing issue links, non-Gittensor contributors, busy queues, and
-        weak overlap signals do not block merge by default.
+        Gittensory is advisory-first. Public comments, labels, the Context check, and the
+        review-agent check are controlled per repo. Missing issue links, non-Gittensor contributors,
+        busy queues, and weak overlap signals do not block merge by default.
       </p>
 
       <h2>PR panel</h2>
@@ -123,22 +124,23 @@ GET /v1/installations/:id/repair`}
 
       <h2>Checks</h2>
       <p>
-        The gittensory app publishes its review as check runs. <strong>Gittensory Gate</strong> is
-        the gate result; <strong>Gittensory Context</strong> is the advisory companion. Both are
-        controlled per repo by <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>),
-        with <code>checkRunDetailLevel</code> choosing <code>minimal</code>, <code>standard</code>,
-        or <code>deep</code> output.
+        The gittensory app publishes its review as check runs.{" "}
+        <strong>Gittensory Orb Review Agent</strong> is the gate result;{" "}
+        <strong>Gittensory Context</strong> is the advisory companion. Both are controlled per repo
+        by <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>), with{" "}
+        <code>checkRunDetailLevel</code> choosing <code>minimal</code>, <code>standard</code>, or{" "}
+        <code>deep</code> output.
       </p>
       <p>
         <strong>Gittensory Context</strong> is advisory and should not be required in branch
-        protection. <strong>Gittensory Gate</strong> is opt-in and can be made required after a repo
-        owner chooses blocking rules.
+        protection. <strong>Gittensory Orb Review Agent</strong> is opt-in and can be made required
+        after a repo owner chooses blocking rules.
       </p>
       <p>
-        Branch protection should require <strong>Gittensory Gate</strong> only after the repo has
-        verified installation health, previewed the public panel, and configured at least one{" "}
-        <code>block</code> rule. Do not require <strong>Gittensory Context</strong>; it is there to
-        inform reviewers, not stop merges.
+        Branch protection should require <strong>Gittensory Orb Review Agent</strong> only after the
+        repo has verified installation health, previewed the public panel, and configured at least
+        one <code>block</code> rule. Do not require <strong>Gittensory Context</strong>; it is there
+        to inform reviewers, not stop merges.
       </p>
 
       <h2>Gate modes</h2>
@@ -147,8 +149,9 @@ GET /v1/installations/:id/repair`}
         <code>gateCheckMode</code> (<code>off</code> / <code>enabled</code>); each dimension then
         refines an already-enabled gate with a tri-state mode — <code>off</code> (not evaluated),{" "}
         <code>advisory</code> (surfaced, never blocks), or <code>block</code> (can become a hard{" "}
-        <strong>Gittensory Gate</strong> blocker). Blocking is always confirmed-contributor-gated:
-        the mode chooses which deterministic checks are active, never <em>who</em> can be blocked.
+        <strong>Gittensory Orb Review Agent</strong> blocker). Blocking is always
+        confirmed-contributor-gated: the mode chooses which deterministic checks are active, never{" "}
+        <em>who</em> can be blocked.
       </p>
       <ul>
         <li>
@@ -205,14 +208,14 @@ GET /v1/installations/:id/repair`}
         lang="yaml"
         code={`# Repository settings as code — any dashboard toggle:
 settings:
-  gateCheckMode: enabled        # the Gate on/off
+  gateCheckMode: enabled        # review-agent check on/off
   checkRunMode: enabled         # the advisory Context check on/off
   commentMode: detected_contributors_only
   publicSurface: comment_only
 
 # Friendly gate alias (wins over settings: for gate fields):
 gate:
-  enabled: true                 # Gate on/off
+  enabled: true                 # review-agent check on/off
   linkedIssue: advisory         # block | advisory | off
   duplicates: block
   readiness: { mode: advisory, minScore: 60 }
@@ -319,7 +322,7 @@ GITTENSORY_REVIEW_REPOS="JSONbored/gittensory"`}
         For repos like <code>JSONbored/gittensory</code> and <code>awesome-claude</code>, enable PR
         comments, labels, Context, and Gate together to test the full product surface. If another
         maintainer agent can merge quickly, configure that agent to wait for{" "}
-        <code>Gittensory Gate</code> before merge or close.
+        <code>Gittensory Orb Review Agent</code> before merge or close.
       </p>
 
       <h2>Install diagnostics</h2>

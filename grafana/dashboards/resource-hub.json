@@ -37,6 +37,14 @@
       "url": "http://localhost:8787/metrics",
       "icon": "external link",
       "targetBlank": true
+    },
+    {
+      "title": "Sentry — errors",
+      "type": "link",
+      "url": "https://jsonbored.sentry.io/projects/gittensory/",
+      "icon": "bolt",
+      "targetBlank": true,
+      "tooltip": "Crash & error tracking (uncaught, dead-letter jobs, review failures)"
     }
   ],
   "panels": [
@@ -47,7 +55,7 @@
       "gridPos": { "h": 13, "w": 12, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "## 🧠 AI providers\n- **Claude Code / Codex** — subscription CLIs, the review brain. Health: app boot log `selfhost_ai_provider`.\n- **Ollama** — embeddings (`bge-m3`) for RAG · [API root](http://localhost:11434) · `docker exec gittensory-ollama-1 ollama list`\n\n## 🔎 Vector store (RAG)\n- **Qdrant** — [Dashboard](http://localhost:6333/dashboard) · [Collections API](http://localhost:6333/collections)\n- Embeddings indexed per repo; see the *RAG indexing* doc.\n\n## ⚙️ Engine / API\n- **gittensory app** — [/ ](http://localhost:8787/) · [/ready](http://localhost:8787/ready) · [/metrics](http://localhost:8787/metrics)\n- Internal jobs: `POST /v1/internal/jobs/rag-index` (bearer `INTERNAL_JOB_TOKEN`)\n\n## 💾 Data\n- **SQLite** (default) at `/data/gittensory.sqlite` — not mounted into Grafana; use an explicitly redacted reporting database for dashboard analytics.\n- **Postgres/pgvector** (optional `--profile postgres`).\n\n> Links assume the default published ports on the Docker host. If you run Grafana on a remote host, replace `localhost` with that host, and publish the service `ports:` you want to reach."
+        "content": "## 🧠 AI providers\n- **Claude Code / Codex** — subscription CLIs, the review brain. Health: app boot log `selfhost_ai_provider`.\n- **Ollama** — embeddings (`bge-m3`) for RAG · [API root](http://localhost:11434) · `docker exec gittensory-ollama-1 ollama list`\n\n## 🔎 Vector store (RAG)\n- **Qdrant** — [Dashboard](http://localhost:6333/dashboard) · [Collections API](http://localhost:6333/collections)\n- Embeddings indexed per repo; see the *RAG indexing* doc.\n\n## ⚙️ Engine / API\n- **gittensory app** — [/ ](http://localhost:8787/) · [/ready](http://localhost:8787/ready) · [/metrics](http://localhost:8787/metrics)\n- Internal jobs: `POST /v1/internal/jobs/rag-index` (bearer `INTERNAL_JOB_TOKEN`)\n\n## 💾 Data\n- **SQLite** (default) at `/data/gittensory.sqlite` — private to the app/exporter. Grafana reads `/reporting/gittensory-reporting.sqlite`, a redacted reporting snapshot.\n- **Postgres/pgvector** (optional `--profile postgres`).\n\n> Links assume the default published ports on the Docker host. If you run Grafana on a remote host, replace `localhost` with that host, and publish the service `ports:` you want to reach."
       }
     },
 
@@ -58,7 +66,7 @@
       "gridPos": { "h": 13, "w": 12, "x": 12, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "## 📊 Dashboards\n- **[Upstream PRs & issues (GitHub)](/d/gittensory-github)** — live, accurate census + open-PR triage (GitHub API).\n- **[Reviews & PRs (maintainer)](/d/gittensory-maintainer)** — gittensory's own review activity + reviewed-PR log.\n- **[Claude usage (OTEL)](/d/gittensory-claude)** — cost / tokens / model / effort from the review CLI.\n- **[Gittensory (infra)](/d/gittensory)** — AI usage & cost, queue, jobs, HTTP.\n\n## 📈 Metrics & logs\n- **Prometheus** — [targets](http://localhost:9090/targets) · [graph](http://localhost:9090)\n- **Alertmanager** — [alerts](http://localhost:9093)\n- **Loki** — query in [Explore](/explore) (pick the *Loki* datasource), e.g. `{compose_service=\"gittensory\"}`\n\n## 🩺 Quick health checks\n| What | Where |\n|---|---|\n| App serving | `GET /ready` → 200 |\n| AI wired | boot log `selfhost_ai_provider` |\n| Embeds wired | boot log `selfhost_embed_provider` |\n| Vectors wired | boot log `selfhost_vectorize` |\n| Token spend | infra dashboard → *AI Usage & Cost* |\n\n## 📚 Docs\n- `docs/self-host/` — configuration, ai-providers, rag-indexing, review-modes, troubleshooting."
+        "content": "## 📊 Dashboards\n- **[Upstream PRs & issues (GitHub)](/d/gittensory-github)** — live, accurate census + open-PR triage (GitHub API).\n- **[Reviews & PRs (maintainer)](/d/gittensory-maintainer)** — gittensory's own review activity + reviewed-PR log.\n- **[Claude usage (OTEL)](/d/gittensory-claude)** — cost / tokens / model / effort from the review CLI.\n- **[Codex usage (self-host)](/d/gittensory-codex)** — Codex review counts, token counters, and durable AI usage rows.\n- **[Gittensory (infra)](/d/gittensory)** — AI usage & cost, queue, jobs, HTTP.\n\n## 📈 Metrics & logs\n- **Prometheus** — [targets](http://localhost:9090/targets) · [graph](http://localhost:9090)\n- **Alertmanager** — [alerts](http://localhost:9093)\n- **Loki** — query in [Explore](/explore) (pick the *Loki* datasource), e.g. `{compose_service=\"gittensory\"}`\n- **Sentry** — release/source-map enriched errors. Edit the dashboard link if your project URL differs.\n\n## 🩺 Quick health checks\n| What | Where |\n|---|---|\n| App serving | `GET /ready` → 200 |\n| AI wired | boot log `selfhost_ai_provider` |\n| Embeds wired | boot log `selfhost_embed_provider` |\n| Vectors wired | boot log `selfhost_vectorize` |\n| Token spend | infra dashboard → *AI Usage & Cost* |\n\n## 📚 Docs\n- [Maintainer self-hosting](https://gittensory.aethereal.dev/docs/maintainer-self-hosting) — setup, configuration, AI, REES, RAG, operations, and troubleshooting."
       }
     }
   ]

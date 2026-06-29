@@ -20,6 +20,7 @@ const docsMenu = [
   { to: "/docs/quickstart", label: "Quickstart", hint: "Install MCP + first run" },
   { to: "/docs/mcp-clients", label: "MCP clients", hint: "Codex · Claude · Cursor" },
   { to: "/docs/github-app", label: "GitHub App", hint: "Quiet maintainer setup" },
+  { to: "/docs/maintainer-self-hosting", label: "Self-host", hint: "Run the review service" },
   { to: "/docs/scoreability", label: "Scoreability", hint: "How projections work" },
   { to: "/docs/upstream-drift", label: "Upstream drift", hint: "Snapshot freshness" },
   { to: "/docs/troubleshooting", label: "Troubleshooting", hint: "Common errors" },

@@ -12,12 +12,15 @@ import type {
 import type { CollisionCluster, CollisionReport } from "../signals/engine";
 import { isDuplicateClusterWinner } from "../signals/duplicate-winner";
 import { nowIso } from "../utils/json";
+import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
 
 export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
 
 export type GateCheckPolicy = {
   linkedIssueGateMode?: GateRuleMode | undefined;
   duplicatePrGateMode?: GateRuleMode | undefined;
+  /** Historical readiness-score mode. Retained for config compatibility, but readiness is informational only:
+   *  a low readiness score may be surfaced as an advisory warning and must never fail the Gate check. */
   qualityGateMode?: GateRuleMode | undefined;
   qualityGateMinScore?: number | null | undefined;
   /** When `block`, a dual-model AI consensus defect (`ai_consensus_defect` finding) becomes a hard
@@ -25,7 +28,7 @@ export type GateCheckPolicy = {
   aiReviewGateMode?: GateRuleMode | undefined;
   /** Minimum calibrated confidence (0-1) for an AI-judgment defect (`ai_consensus_defect` / `ai_review_split`) to
    *  BLOCK under `aiReviewGateMode: block` (#7). The finding blocks only when its `confidence >= this`; below-threshold
-   *  AI defects hold for human review instead of passing or auto-closing. `null`/undefined ⇒ the 0.9 default. A finding
+   *  AI defects hold for human review instead of passing or auto-closing. `null`/undefined ⇒ the 0.93 default. A finding
    *  with no confidence (deterministic, or a graceful-fallback AI defect) is treated as 1.0 and always clears the floor
    *  — matching the historical always-block behavior. */
   aiReviewCloseConfidence?: number | null | undefined;
@@ -37,12 +40,12 @@ export type GateCheckPolicy = {
   slopRisk?: number | null | undefined;
   /** Master "merge-readiness" composite (#551). When set (advisory/block) it OVERRIDES all four sub-gates —
    *  linked-issue, duplicate, quality/readiness, slop — to its mode, so a maintainer flips ONE switch instead
-   *  of four and `Gittensory Gate` stays the single required check. `off` = sub-gates use their own modes. */
+   *  of four and the review-agent check stays the single required check. `off` = sub-gates use their own modes. */
   mergeReadinessGateMode?: GateRuleMode | undefined;
-  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy findings —
-   *  `manifest_blocked_path`, `manifest_linked_issue_required`, `manifest_missing_tests` — become hard
-   *  blockers. An INDEPENDENT dimension, deliberately NOT folded into the merge-readiness composite so #555
-   *  stays focused. `off`/`advisory` = the findings stay advisory (never block). Default off. */
+  /** Focus-manifest policy gate (#555). When `block`, linked-issue/test policy findings become hard blockers;
+   *  blocked-path findings become manual-review holds because guardrailed paths should be reviewed, not closed.
+   *  An INDEPENDENT dimension, deliberately NOT folded into the merge-readiness composite so #555 stays focused.
+   *  `off`/`advisory` = the findings stay advisory (never block). Default off. */
   manifestPolicyGateMode?: GateRuleMode | undefined;
   /** Self-authored linked-issue gate. When `block`, a `self_authored_linked_issue` finding — raised when
    *  the PR author also filed the linked issue — becomes a hard blocker. Defaults to `advisory` — the
@@ -120,7 +123,7 @@ export function reconcileGateEvaluationForGreenCi(evaluation: GateCheckEvaluatio
   return {
     ...evaluation,
     conclusion: "success",
-    title: "Gittensory Gate passed",
+    title: `${GITTENSORY_GATE_CHECK_NAME} passed`,
     summary: "The AI review raised a concern, but the deterministic checks (CI) are green — the concern is advisory, not blocking.",
     blockers: [],
   };
@@ -438,6 +441,27 @@ function buildGuardrailHoldFinding(): AdvisoryFinding {
   };
 }
 
+function buildManifestBlockedPathHoldFinding(
+  findings: AdvisoryFinding[],
+  policy: GateCheckPolicy,
+): AdvisoryFinding | null {
+  if (gateMode(policy.manifestPolicyGateMode ?? "off") !== "block")
+    return null;
+  const blocked = findings.find(
+    (finding) => finding.code === "manifest_blocked_path",
+  );
+  if (!blocked) return null;
+  return {
+    code: "manifest_blocked_path",
+    severity: "warning",
+    title: "Touches a maintainer-blocked path — held for manual review",
+    detail:
+      "This PR changes a maintainer-blocked path, so it is held for a maintainer to review and merge manually.",
+    action: "A maintainer must review and merge this change.",
+    ...(blocked.publicText !== undefined ? { publicText: blocked.publicText } : {}),
+  };
+}
+
 /** Dry-run disposition (#gate-dryrun): promote every `advisory` sub-gate mode to `block` so the core eval yields the
  *  would-be conclusion. `off`/`block`/unset modes are untouched; non-mode policy (grace, size HOLD, guardrail) is
  *  preserved as-is, so the would-be verdict still honours newcomer grace and the manual-review holds. PURE. */
@@ -474,19 +498,20 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     return {
       enabled: true,
       conclusion: "neutral",
-      title: "Gittensory Gate — not evaluated yet",
+      title: `${GITTENSORY_GATE_CHECK_NAME} — not evaluated yet`,
       summary: "Gittensory has not finished syncing this repo/PR. The gate stays advisory and re-evaluates automatically; no action is needed.",
       blockers: [],
       warnings,
     };
   }
-  // Merge-readiness composite (#551): when set, escalate every sub-gate to its mode so they roll into one
-  // pass/fail. When off, this is a no-op and each sub-gate keeps its own mode.
+  // Merge-readiness composite (#551): when set, escalate enforceable sub-gates to its mode so they roll into one
+  // pass/fail. Readiness/quality stays advisory-only.
   const effective = applyMergeReadinessGate(policy);
   const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding, effective));
-  const qualityBlocker = buildQualityGateBlocker(effective);
+  const qualityWarning = buildQualityGateWarning(effective);
   const slopBlocker = buildSlopGateBlocker(effective);
-  const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : []), ...(slopBlocker ? [slopBlocker] : [])];
+  const blockers = [...configuredBlockers, ...(slopBlocker ? [slopBlocker] : [])];
+  const gateWarnings = qualityWarning ? [...warnings, qualityWarning] : warnings;
   const lowConfidenceAiHolds = advisoryResult.findings.filter((finding) => isLowConfidenceAiReviewHold(finding, effective));
   // Non-confirmed contributors are gated NORMALLY (real blockers → failure → one-shot close; clean → success →
   // merge), the SAME as confirmed contributors: the review + CI + guardrail vet every PR, and confirmed-status
@@ -506,10 +531,10 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     return {
       enabled: true,
       conclusion: "neutral",
-      title: "Gittensory Gate — first-contribution grace",
+      title: `${GITTENSORY_GATE_CHECK_NAME} — first-contribution grace`,
       summary: "This is a first-time contribution to this repo, so the gate stays advisory rather than blocking. The findings remain visible, and the gate will apply normally once this author has merge history here.",
       blockers: [],
-      warnings,
+      warnings: gateWarnings,
     };
   }
   if (blockers.length === 0) {
@@ -517,10 +542,10 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       return {
         enabled: true,
         conclusion: "neutral",
-        title: "Gittensory Gate — held for human review",
+        title: `${GITTENSORY_GATE_CHECK_NAME} — held for human review`,
         summary: "The AI review flagged a possible must-fix defect below the automatic close-confidence floor, so the gate is held for a human reviewer instead of passed automatically.",
         blockers: [],
-        warnings: [...warnings, ...lowConfidenceAiHolds],
+        warnings: [...gateWarnings, ...lowConfidenceAiHolds],
       };
     }
     // Fail-CLOSED AI hold (#ai-fail-closed, #audit-3.5): with NO deterministic blocker, a block-mode AI review
@@ -532,10 +557,10 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
       return {
         enabled: true,
         conclusion: "neutral",
-        title: "Gittensory Gate — held for human review",
+        title: `${GITTENSORY_GATE_CHECK_NAME} — held for human review`,
         summary: "The AI review could not be completed for this change, so the gate is held for a human reviewer rather than passed automatically. It re-evaluates on the next update.",
         blockers: [],
-        warnings,
+        warnings: gateWarnings,
       };
     }
     // Manual-review HOLD (#gate-size / #gate-guardrail): a PR that would otherwise PASS but is oversized or touches
@@ -543,26 +568,30 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     // so neutral never blocks the merge (dry-run/advisory friendly) and a contributor PR is never auto-closed for size.
     const sizeHold = buildSizeHoldFinding(effective);
     const guardrailHold = effective.guardrailHit ? buildGuardrailHoldFinding() : null;
-    const holds = [sizeHold, guardrailHold].filter(
+    const manifestBlockedPathHold = buildManifestBlockedPathHoldFinding(
+      advisoryResult.findings,
+      effective,
+    );
+    const holds = [sizeHold, guardrailHold, manifestBlockedPathHold].filter(
       (f): f is AdvisoryFinding => f !== null,
     );
     if (holds.length > 0) {
       return {
         enabled: true,
         conclusion: "neutral",
-        title: "Gittensory Gate — held for manual review",
+        title: `${GITTENSORY_GATE_CHECK_NAME} — held for manual review`,
         summary: holds.map((h) => sanitizeForCheckRun(h.title)).join("; "),
         blockers: [],
-        warnings: [...warnings, ...holds],
+        warnings: [...gateWarnings, ...holds],
       };
     }
     return {
       enabled: true,
       conclusion: "success",
-      title: "Gittensory Gate passed",
+      title: `${GITTENSORY_GATE_CHECK_NAME} passed`,
       summary: "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
       blockers,
-      warnings,
+      warnings: gateWarnings,
     };
   }
   // Name the exact blocker(s) + fix in the title so the contributor sees WHY at a glance.
@@ -571,12 +600,12 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
   return {
     enabled: true,
     conclusion: "failure",
-    title: `Gittensory Gate: ${titleDetail}`,
+    title: `${GITTENSORY_GATE_CHECK_NAME}: ${titleDetail}`,
     summary: blockers
       .map((finding) => `${sanitizeForCheckRun(finding.title)}${finding.action ? ` — ${sanitizeForCheckRun(finding.action)}` : ""}`)
       .join("; "),
     blockers,
-    warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning" && !blockers.includes(finding)),
+    warnings: [...advisoryResult.findings.filter((finding) => finding.severity === "warning" && !blockers.includes(finding)), ...(qualityWarning ? [qualityWarning] : [])],
   };
 }
 
@@ -584,7 +613,7 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
   if (gate.conclusion === "success") {
     return {
       title: gate.title,
-      summary: "Gittensory Gate is advisory-first. This PR has no configured hard blocker.",
+      summary: `${GITTENSORY_GATE_CHECK_NAME} is advisory-first. This PR has no configured hard blocker.`,
       text: "No configured hard blocker was found. Advisory signals remain visible in the PR panel when comments are enabled.",
     };
   }
@@ -604,7 +633,7 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
     // An unbounded title (e.g. when failing-check names are appended) threw a 422 that aborted the ENTIRE
     // review before the comment, audit, and auto-action — so red-CI PRs were never reviewed or closed.
     title: gate.title.slice(0, 255),
-    summary: "Gittensory Gate found a repo-configured hard blocker.",
+    summary: `${GITTENSORY_GATE_CHECK_NAME} found a repo-configured hard blocker.`,
     text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.",
   };
 }
@@ -722,9 +751,9 @@ function addPullRequestFindings(
     findings.push({
       code: "busy_pr_queue",
       severity: "info",
-      title: "Open PR queue is busy",
+      title: "Review queue is busy",
       detail: `Gittensory has ${otherOpenPullRequests.length} other open pull requests cached for this repository.`,
-      publicText: "This repo has a busy open PR queue in the local Gittensory cache.",
+      publicText: "This repo has a busy review queue in the local Gittensory cache.",
     });
   }
   const repoMultipliers = repo?.registryConfig?.labelMultipliers ?? {};
@@ -828,8 +857,8 @@ function isEvaluationBlocker(code: string): boolean {
 }
 
 // Default minimum calibrated confidence for an AI defect to BLOCK (#7) — used when the repo set `aiReview: block`
-// without a `closeConfidence`. 0.9 = block only on a high-confidence AI defect; below that stays advisory.
-const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.9;
+// without a `closeConfidence`. 0.93 = block only on a high-confidence AI defect; below that stays advisory.
+const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
 
 function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
   const code = finding.code;
@@ -861,9 +890,9 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // when the maintainer configured an enforced check). The advisory variant (`pre_merge_check_failed`) is a plain
   // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
   if (code === "pre_merge_check_required") return true;
-  // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer
-  // opts into manifestPolicy: block. Default off/advisory keeps them advisory-only.
-  if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {
+  // Focus-manifest policy (#555): linked-issue/test policy findings block ONLY when the maintainer opts into
+  // manifestPolicy: block. Blocked paths are guardrails, so they are handled as manual-review holds above.
+  if (code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {
     return gateMode(policy.manifestPolicyGateMode ?? "off") === "block";
   }
   // Self-authored linked-issue gate: blocks only when the maintainer opts in with `block`. Defaults to
@@ -879,8 +908,8 @@ function isLowConfidenceAiReviewHold(finding: AdvisoryFinding, policy: GateCheck
   return confidence < (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
 }
 
-function buildQualityGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
-  if (gateMode(policy.qualityGateMode) !== "block") return null;
+function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | null {
+  if (gateMode(policy.qualityGateMode) === "off") return null;
   const score = normalizeScore(policy.readinessScore);
   const minScore = normalizeScore(policy.qualityGateMinScore);
   if (score === null || minScore === null || score >= minScore) return null;
@@ -889,7 +918,7 @@ function buildQualityGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | nul
     severity: "warning",
     title: "Readiness score is below the configured threshold",
     detail: `The public readiness score is ${score}/100, below the repository threshold of ${minScore}/100.`,
-    action: "Address the short explicit PR panel actions, then re-run the gate.",
+    action: "Use the readiness panel as advisory maintainer context; the score does not block this PR.",
   };
 }
 
@@ -916,8 +945,9 @@ function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
 }
 
 // #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it
-// OVERRIDES the four sub-gates to its mode so they roll into one pass/fail; when off, the policy is returned
-// unchanged and each sub-gate keeps its own mode.
+// OVERRIDES the enforceable sub-gates to its mode so they roll into one pass/fail; when off, the policy is
+// returned unchanged and each sub-gate keeps its own mode. Readiness/quality is intentionally excluded:
+// readiness is always advisory/informational, even if an older config still says `readiness: block`.
 function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
   const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
   if (composite === "off") return policy;
@@ -925,7 +955,6 @@ function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
     ...policy,
     linkedIssueGateMode: composite,
     duplicatePrGateMode: composite,
-    qualityGateMode: composite,
     slopGateMode: composite,
   };
 }

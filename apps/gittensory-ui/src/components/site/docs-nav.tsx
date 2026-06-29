@@ -17,11 +17,32 @@ export const docsNav: DocsGroup[] = [
   },
   {
     title: "Workflows",
+    items: [{ to: "/docs/miner-workflow", label: "Miner workflow" }],
+  },
+  {
+    title: "Maintainers",
     items: [
-      { to: "/docs/miner-workflow", label: "Miner workflow" },
       { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
       { to: "/docs/github-app", label: "GitHub App" },
       { to: "/docs/maintainer-install-trust", label: "Maintainer install & trust" },
+    ],
+  },
+  {
+    title: "Self-hosting",
+    items: [
+      { to: "/docs/maintainer-self-hosting", label: "Overview" },
+      { to: "/docs/self-hosting-quickstart", label: "Quickstart" },
+      { to: "/docs/self-hosting-configuration", label: "Configuration" },
+      { to: "/docs/self-hosting-github-app", label: "GitHub App & Orb" },
+      { to: "/docs/self-hosting-ai-providers", label: "AI providers" },
+      { to: "/docs/self-hosting-rees", label: "REES enrichment" },
+      { to: "/docs/self-hosting-rees-analyzers", label: "REES analyzers" },
+      { to: "/docs/self-hosting-rag", label: "RAG indexing" },
+      { to: "/docs/self-hosting-operations", label: "Operations" },
+      { to: "/docs/self-hosting-backup-scaling", label: "Backup & scaling" },
+      { to: "/docs/self-hosting-releases", label: "Releases & images" },
+      { to: "/docs/self-hosting-security", label: "Security" },
+      { to: "/docs/self-hosting-troubleshooting", label: "Troubleshooting" },
     ],
   },
   {

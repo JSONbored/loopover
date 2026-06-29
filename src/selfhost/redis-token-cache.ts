@@ -1,4 +1,4 @@
-// Redis-backed installation-token store (#perf). Optional: when REDIS_URL is set, the self-host backs
+// Redis-backed installation-token store (#perf). The self-host runtime requires REDIS_URL and backs
 // github/app.ts's installation-token cache with Redis so warm tokens SURVIVE restarts/deploys. The default
 // in-isolate Map dies on every restart, so a brokered self-host re-mints a token (an Orb round-trip) on the
 // next call after each cold start — wasteful when the container restarts often. Keyed by installation id, with

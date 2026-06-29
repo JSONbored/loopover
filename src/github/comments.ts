@@ -1,4 +1,4 @@
-import { createInstallationToken } from "./app";
+import { withInstallationTokenRetry } from "./app";
 import { makeInstallationOctokit } from "./client";
 import type { AgentActionMode } from "../settings/agent-execution";
 
@@ -53,46 +53,47 @@ async function createOrUpdateIssueCommentWithMarker(
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
 
-  const token = await createInstallationToken(env, installationId);
-  // Non-live mode suppresses the comment create/update writes; the GET marker-search probe below still runs.
-  const octokit = makeInstallationOctokit(env, token, options.mode ?? "live");
-  const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
-  const markers = markerAliases(marker);
-  let existing: IssueComment | undefined;
-  for (let page = 1; !existing && page <= COMMENT_SEARCH_PAGE_LIMIT; page += 1) {
-    const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+  return await withInstallationTokenRetry(env, installationId, async (token) => {
+    // Non-live mode suppresses the comment create/update writes; the GET marker-search probe below still runs.
+    const octokit = makeInstallationOctokit(env, token, options.mode ?? "live");
+    const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
+    const markers = markerAliases(marker);
+    let existing: IssueComment | undefined;
+    for (let page = 1; !existing && page <= COMMENT_SEARCH_PAGE_LIMIT; page += 1) {
+      const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+        owner,
+        repo,
+        issue_number: issueNumber,
+        per_page: 100,
+        page,
+      });
+      const batch = response.data as IssueComment[];
+      existing = batch.find((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate)));
+      if (batch.length < 100) break;
+    }
+    if (existing) {
+      // Idempotency (#4): skip the PATCH when the rendered body is byte-identical to what's already posted. The
+      // re-gate sweep re-renders the same surface every cycle for an unchanged PR; without this, every cycle PATCHes
+      // GitHub (a write + rate-limit cost) for no visible change. Defense-in-depth alongside the head_sha publish
+      // marker — also collapses a duplicate webhook delivery for the same commit.
+      if (existing.body === body) return { id: existing.id, ...(existing.html_url !== undefined ? { html_url: existing.html_url } : {}) };
+      const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+        owner,
+        repo,
+        comment_id: existing.id,
+        body,
+      });
+      return response.data as { id: number; html_url?: string };
+    }
+    if (options.createIfMissing === false) return null;
+    const response = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
       owner,
       repo,
       issue_number: issueNumber,
-      per_page: 100,
-      page,
-    });
-    const batch = response.data as IssueComment[];
-    existing = batch.find((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate)));
-    if (batch.length < 100) break;
-  }
-  if (existing) {
-    // Idempotency (#4): skip the PATCH when the rendered body is byte-identical to what's already posted. The
-    // re-gate sweep re-renders the same surface every cycle for an unchanged PR; without this, every cycle PATCHes
-    // GitHub (a write + rate-limit cost) for no visible change. Defense-in-depth alongside the head_sha publish
-    // marker — also collapses a duplicate webhook delivery for the same commit.
-    if (existing.body === body) return { id: existing.id, ...(existing.html_url !== undefined ? { html_url: existing.html_url } : {}) };
-    const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
-      owner,
-      repo,
-      comment_id: existing.id,
       body,
     });
     return response.data as { id: number; html_url?: string };
-  }
-  if (options.createIfMissing === false) return null;
-  const response = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
-    owner,
-    repo,
-    issue_number: issueNumber,
-    body,
   });
-  return response.data as { id: number; html_url?: string };
 }
 
 function isGittensoryBotComment(comment: IssueComment, botLogin: string): boolean {

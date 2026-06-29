@@ -14,7 +14,8 @@ import type { JobMessage, JsonValue } from "../types";
  * the webhook lane — bounded to a single attempt by the `redriven` marker so a genuinely-poison payload
  * cannot loop the DLQ forever. Maintenance jobs are cron-self-healing, so they are audited-and-dropped.
  */
-export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {
+export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env, options: { redriveWebhooks?: boolean } = {}): Promise<void> {
+  const redriveWebhooks = options.redriveWebhooks ?? true;
   for (const message of batch.messages) {
     const body = message.body as { type?: string } | null | undefined;
     const jobType = body?.type ?? "unknown";
@@ -38,14 +39,14 @@ export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env)
       metadata: { messageId: message.id, jobType, redriven: webhook?.redriven === true } satisfies Record<string, JsonValue>,
     }).catch(() => undefined);
     // Self-heal a recoverable webhook: re-drive ONCE (not already re-driven, and not already processed).
-    if (webhook && webhook.redriven !== true && webhook.deliveryId) {
+    if (redriveWebhooks && webhook && webhook.redriven !== true && webhook.deliveryId) {
       const event = await getWebhookEvent(env, webhook.deliveryId).catch(() => null);
       if (event?.status !== "processed") {
         // If the webhook dead-lettered because the shared GitHub REST budget was exhausted, re-drive it AFTER the
         // reset (retry-until-recovered) rather than immediately re-failing it. (#audit-rate-headroom)
         const resetAt = await shouldWaitForGitHubRateLimit(env).catch(() => undefined);
         const options = resetAt ? { delaySeconds: delayUntil(resetAt) } : undefined;
-        await env.WEBHOOKS.send({ type: "github-webhook", deliveryId: webhook.deliveryId, eventName: webhook.eventName, payload: webhook.payload, redriven: true }, options).catch(() => undefined);
+        await env.WEBHOOKS?.send({ type: "github-webhook", deliveryId: webhook.deliveryId, eventName: webhook.eventName, payload: webhook.payload, redriven: true }, options).catch(() => undefined);
       }
     }
     message.ack();

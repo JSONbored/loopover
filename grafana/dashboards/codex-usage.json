@@ -1,0 +1,171 @@
+{
+  "uid": "gittensory-codex",
+  "title": "Gittensory - Codex usage (self-host)",
+  "tags": ["gittensory", "codex", "ai"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "description": "Codex review observability for the self-hosted stack. Prometheus panels are subscription-CLI attempt counters for the selected range; durable review records come from ai_usage_events and must be read with their status. USD cost appears only when the Codex CLI emits a cost field.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Summary",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Reported cost",
+      "description": "USD cost reported by Codex JSON/JSONL output in the selected range, if available. Subscription CLIs may not emit this.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "justifyMode": "center" },
+      "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase(gittensory_ai_cost_usd_total{provider=\"codex\"}[$__range])) or vector(0)" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "CLI attempts",
+      "description": "Codex CLI attempts in the selected range. Failed or timed-out attempts can still appear here.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "justifyMode": "center" },
+      "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase(gittensory_ai_requests_total{provider=\"codex\"}[$__range])) or vector(0)" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Reported CLI tokens",
+      "description": "Tokens reported by Codex CLI output in the selected range. This is not billing-grade cost accounting.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "justifyMode": "center" },
+      "targets": [{ "refId": "A", "instant": true, "expr": "sum(increase(gittensory_ai_total_tokens_total{provider=\"codex\"}[$__range])) or (sum(increase(gittensory_ai_input_tokens_total{provider=\"codex\"}[$__range])) + sum(increase(gittensory_ai_output_tokens_total{provider=\"codex\"}[$__range]))) or vector(0)" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Successful review records",
+      "description": "Durable Codex-attributed ai_review_pr records with status=ok.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT count(*) AS reviews FROM ai_usage_events WHERE feature = 'ai_review_pr' AND status = 'ok' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%')",
+          "rawQueryText": "SELECT count(*) AS reviews FROM ai_usage_events WHERE feature = 'ai_review_pr' AND status = 'ok' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%')"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Live counters",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "CLI attempts by model and effort",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1, "stacking": { "mode": "none" } } } },
+      "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (model, effort) (increase(gittensory_ai_requests_total{provider=\"codex\"}[$__rate_interval]))",
+          "legendFormat": "{{model}} / {{effort}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Reported tokens by direction",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1, "stacking": { "mode": "normal" } } } },
+      "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind) (increase(gittensory_ai_input_tokens_total{provider=\"codex\"}[$__rate_interval]))",
+          "legendFormat": "input {{kind}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (kind) (increase(gittensory_ai_output_tokens_total{provider=\"codex\"}[$__rate_interval]))",
+          "legendFormat": "output {{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Durable review records (status-aware)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Estimated neuron usage by day",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1 } } },
+      "options": { "legend": { "showLegend": true, "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "time series",
+          "timeColumns": ["time"],
+          "queryText": "SELECT date(created_at) AS time, sum(estimated_neurons) AS estimated_neurons FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%') GROUP BY date(created_at) ORDER BY time",
+          "rawQueryText": "SELECT date(created_at) AS time, sum(estimated_neurons) AS estimated_neurons FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%') GROUP BY date(created_at) ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "piechart",
+      "title": "Review record status",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "pieType": "donut", "legend": { "showLegend": true, "placement": "right", "values": ["percent", "value"] }, "reduceOptions": { "calcs": ["lastNotNull"] }, "displayLabels": ["percent"] },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT status, count(*) AS count FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%') GROUP BY status ORDER BY count DESC",
+          "rawQueryText": "SELECT status, count(*) AS count FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%') GROUP BY status ORDER BY count DESC"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Recent Codex-attributed review events",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
+      "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "created_at", "desc": true }] },
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "queryText": "SELECT created_at, model, status, estimated_neurons, detail, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%') ORDER BY created_at DESC LIMIT 100",
+          "rawQueryText": "SELECT created_at, model, status, estimated_neurons, detail, json_extract(metadata_json, '$.repoFullName') AS repo, json_extract(metadata_json, '$.pullNumber') AS pr FROM ai_usage_events WHERE feature = 'ai_review_pr' AND (('+' || model || '+') LIKE '%+codex+%' OR ('+' || model || '+') LIKE '%+codex:%') ORDER BY created_at DESC LIMIT 100"
+        }
+      ]
+    }
+  ]
+}

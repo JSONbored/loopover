@@ -20,6 +20,7 @@ const cols = [
       { to: "/docs/quickstart", label: "Quickstart" },
       { to: "/docs/mcp-clients", label: "MCP clients" },
       { to: "/docs/github-app", label: "GitHub App" },
+      { to: "/docs/maintainer-self-hosting", label: "Self-host reviews" },
       { to: "/docs/privacy-security", label: "Privacy & security" },
     ],
   },

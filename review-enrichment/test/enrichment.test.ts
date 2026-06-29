@@ -16,6 +16,12 @@ import { scanPatch, scanSecrets } from "../dist/analyzers/secret-scan.js";
 import { scanLicenses } from "../dist/analyzers/license-check.js";
 import { scanInstallScripts } from "../dist/analyzers/install-scripts.js";
 import {
+  countPackagePatchUsages,
+  isHeavyPackageWeight,
+  queryPackageWeight,
+  scanHeavyDependencies,
+} from "../dist/analyzers/heavy-dependency.js";
+import {
   scanWorkflowPins,
   scanActionPins,
 } from "../dist/analyzers/actions-pin.js";
@@ -940,6 +946,255 @@ test("buildBrief: install-script analyzer runs alongside the others", async () =
     assert.equal(brief.analyzerStatus.installScript, "ok");
     assert.equal(brief.findings.installScript.length, 1);
     assert.match(brief.promptSection, /supply-chain risk/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("countPackagePatchUsages: line-cites import, require, dynamic import, and subpath usage", () => {
+  const usage = countPackagePatchUsages(
+    [
+      {
+        path: "src/app.ts",
+        patch: [
+          "@@ -10,0 +10,4 @@",
+          '+import get from "lodash/get";',
+          '+const fp = require("lodash/fp");',
+          '+const x = await import("lodash");',
+          '+import other from "left-pad";',
+        ].join("\n"),
+      },
+    ],
+    "lodash",
+  );
+
+  assert.equal(usage.usageCount, 3);
+  assert.deepEqual(usage.usageLocations, [
+    { file: "src/app.ts", line: 10 },
+    { file: "src/app.ts", line: 11 },
+  ]);
+});
+
+test("queryPackageWeight: maps bundlephobia size fields and degrades on non-ok", async () => {
+  const weight = await queryPackageWeight("lodash", "4.17.21", async () => ({
+    ok: true,
+    json: async () => ({
+      installSize: 1_400_000,
+      size: 72_000,
+      gzip: 25_500,
+      dependencyCount: 1,
+    }),
+  }));
+
+  assert.deepEqual(weight, {
+    installSizeBytes: 1_400_000,
+    bundleSizeBytes: 72_000,
+    gzipSizeBytes: 25_500,
+    dependencyCount: 1,
+  });
+  assert.equal(
+    await queryPackageWeight("x", "1.0.0", async () => ({
+      ok: false,
+      json: async () => ({}),
+    })),
+    null,
+  );
+});
+
+test("isHeavyPackageWeight: flags install, bundle, or gzip threshold hits", () => {
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: 500_000,
+      bundleSizeBytes: null,
+      gzipSizeBytes: null,
+      dependencyCount: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: null,
+      bundleSizeBytes: 80_000,
+      gzipSizeBytes: null,
+      dependencyCount: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: null,
+      bundleSizeBytes: null,
+      gzipSizeBytes: 25_000,
+      dependencyCount: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: 100_000,
+      bundleSizeBytes: 10_000,
+      gzipSizeBytes: 2_000,
+      dependencyCount: 0,
+    }),
+    false,
+  );
+});
+
+test("scanHeavyDependencies: flags heavy npm deps used trivially and skips non-trivial usage", async () => {
+  const controller = new AbortController();
+  const findings = await scanHeavyDependencies(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          patch: [
+            '+    "lodash": "4.17.21",',
+            '+    "tiny": "1.0.0",',
+            '+    "many": "2.0.0",',
+          ].join("\n"),
+        },
+        {
+          path: "src/app.ts",
+          patch: [
+            "@@ -1,0 +1,6 @@",
+            '+import get from "lodash/get";',
+            '+import tiny from "tiny";',
+            '+import one from "many/one";',
+            '+import two from "many/two";',
+            '+import three from "many/three";',
+          ].join("\n"),
+        },
+      ],
+    },
+    async (url, init) => {
+      assert.ok(init?.signal instanceof AbortSignal);
+      const u = String(url);
+      if (u.includes("tiny"))
+        return { ok: true, json: async () => ({ installSize: 10_000 }) };
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 72_000,
+          gzip: 25_500,
+          dependencyCount: 1,
+        }),
+      };
+    },
+    { signal: controller.signal },
+  );
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "lodash");
+  assert.equal(findings[0].usageCount, 1);
+  assert.deepEqual(findings[0].usageLocations, [
+    { file: "src/app.ts", line: 1 },
+  ]);
+});
+
+test("scanHeavyDependencies: lookup budget ignores unused dependency changes", async () => {
+  const unusedDeps = Array.from(
+    { length: 20 },
+    (_, i) => `+    "unused-${i}": "1.0.0",`,
+  );
+  let lookups = 0;
+  const findings = await scanHeavyDependencies(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          patch: [...unusedDeps, '+    "late-heavy": "1.0.0",'].join("\n"),
+        },
+        {
+          path: "src/app.ts",
+          patch: '@@ -1,0 +1,1 @@\n+import heavy from "late-heavy";',
+        },
+      ],
+    },
+    async (url) => {
+      lookups += 1;
+      assert.match(String(url), /late-heavy%401\.0\.0/);
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 90_000,
+          gzip: 30_000,
+          dependencyCount: 3,
+        }),
+      };
+    },
+  );
+
+  assert.equal(lookups, 1);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "late-heavy");
+});
+
+test("renderBrief: renders the heavy-dependency block with size evidence", () => {
+  const r = renderBrief({
+    heavyDependency: [
+      {
+        ecosystem: "npm",
+        package: "lodash",
+        version: "4.17.21",
+        from: null,
+        direction: "add",
+        usageCount: 1,
+        usageLocations: [{ file: "src/app.ts", line: 1 }],
+        installSizeBytes: 1_400_000,
+        bundleSizeBytes: 72_000,
+        gzipSizeBytes: 25_500,
+        dependencyCount: 1,
+      },
+    ],
+  });
+
+  assert.match(r.promptSection, /Heavy dependencies used trivially/);
+  assert.match(r.promptSection, /`lodash@4\.17\.21` \(npm\)/);
+  assert.match(r.promptSection, /`src\/app\.ts:1`/);
+  assert.match(r.promptSection, /install 1\.4 MB, bundle 72 KB, gzip 26 KB/);
+});
+
+test("buildBrief: heavy-dependency analyzer runs alongside the others", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("bundlephobia"))
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 72_000,
+          gzip: 25_500,
+          dependencyCount: 1,
+        }),
+      };
+    if (u.includes("deps.dev"))
+      return { ok: true, json: async () => ({ licenses: ["MIT"] }) };
+    if (u.includes("attestations"))
+      return { ok: true, json: async () => ({ attestations: [{}] }) };
+    return { ok: true, json: async () => ({ vulns: [], versions: {} }) };
+  };
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        { path: "package.json", patch: '+    "lodash": "4.17.21",' },
+        {
+          path: "src/app.ts",
+          patch: '@@ -1,0 +1,1 @@\n+import get from "lodash/get";',
+        },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.heavyDependency, "ok");
+    assert.equal(brief.findings.heavyDependency.length, 1);
+    assert.match(brief.promptSection, /Heavy dependencies used trivially/);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -2186,14 +2441,16 @@ test("buildBrief: provenance analyzer runs, flags binary file and missing npm at
     const brief = await buildBrief({
       repoFullName: "o/r",
       prNumber: 1,
+      analyzers: ["provenance"],
       files: [
         { path: "native/tool.exe", status: "added" },
         { path: "package.json", patch: '+    "no-attest": "1.0.0",' },
       ],
     });
     assert.equal(brief.analyzerStatus.provenance, "ok");
-    assert.ok(brief.findings.provenance.length >= 2);
+    assert.equal(brief.findings.provenance.length, 2);
     assert.match(brief.promptSection, /provenance/);
+    assert.match(brief.promptSection, /Binary files committed/);
   } finally {
     globalThis.fetch = realFetch;
   }

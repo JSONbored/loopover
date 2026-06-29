@@ -224,7 +224,7 @@ describe("advisory rules", () => {
     expect(gate.conclusion).toBe("success");
     expect(gate.blockers).toEqual([]);
     expect(gate.warnings.map((finding) => finding.code)).not.toContain("busy_pr_queue");
-    expect(output.title).toBe("Gittensory Gate passed");
+    expect(output.title).toBe("Gittensory Orb Review Agent passed");
     expect(output.text).toContain("No configured hard blocker");
   });
 
@@ -238,7 +238,7 @@ describe("advisory rules", () => {
     expect(advisory.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["repo_not_registered", "pr_not_cached"]));
     expect(gate.conclusion).toBe("neutral");
     expect(gate.blockers).toEqual([]);
-    expect(output.title).toBe("Gittensory Gate — not evaluated yet");
+    expect(output.title).toBe("Gittensory Orb Review Agent — not evaluated yet");
     expect(output.summary).toContain("re-evaluates automatically");
     expect(output.text).toBe("Gittensory did not create a contributor-facing failure for this event.");
   });
@@ -311,7 +311,7 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(splitAdvisory).conclusion).toBe("success");
   });
 
-  it("only enforces readiness score when quality gate mode is block", () => {
+  it("keeps readiness score advisory even when legacy config says block", () => {
     const advisory = buildPullRequestAdvisory(repo, {
       repoFullName: repo.fullName,
       number: 24,
@@ -330,17 +330,17 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: null }).conclusion).toBe("success");
     expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 90 }).conclusion).toBe("success");
 
-    const failingGate = evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 89.4 });
-    const output = formatGateCheckOutput(failingGate);
+    const advisoryGate = evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 89.4 });
 
-    expect(failingGate.conclusion).toBe("failure");
-    expect(failingGate.blockers.map((finding) => finding.code)).toEqual(["readiness_score_below_threshold"]);
-    expect(output.text).toContain("Readiness score is below the configured threshold");
-    expect(output.text).toContain("Action: Address the short explicit PR panel actions");
+    expect(advisoryGate.conclusion).toBe("success");
+    expect(advisoryGate.blockers).toEqual([]);
+    expect(advisoryGate.warnings.map((finding) => finding.code)).toEqual(["readiness_score_below_threshold"]);
+    expect(formatGateCheckOutput(advisoryGate).text).not.toContain("Readiness score is below the configured threshold");
 
-    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 101, readinessScore: -5 }).blockers[0]?.detail).toContain("0/100");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 101, readinessScore: -5 }).warnings[0]?.detail).toContain("0/100");
     expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 99, readinessScore: 102 }).conclusion).toBe("success");
     expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: Number.NaN, readinessScore: 10 }).conclusion).toBe("success");
+    expect(evaluateGateCheck(advisory, { mergeReadinessGateMode: "block", qualityGateMinScore: 90, readinessScore: 10 }).conclusion).toBe("success");
   });
 
   it("summarizes multiple configured hard blockers without swallowing advisory warnings", () => {
@@ -350,7 +350,7 @@ describe("advisory rules", () => {
         findings: [
           { code: "missing_linked_issue", title: "No linked issue detected", severity: "warning", detail: "No linked issue." },
           { code: "duplicate_pr_risk", title: "Linked issue overlaps another open PR", severity: "warning", detail: "Duplicate." },
-          { code: "busy_pr_queue", title: "Open PR queue is busy", severity: "warning", detail: "Queue context." },
+          { code: "busy_pr_queue", title: "Review queue is busy", severity: "warning", detail: "Queue context." },
         ],
       },
       { linkedIssueGateMode: "block", duplicatePrGateMode: "block", qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 42 },
@@ -358,12 +358,12 @@ describe("advisory rules", () => {
 
     expect(gate.conclusion).toBe("failure");
     // Title names the blocker count; summary enumerates every active blocker with its fix.
-    expect(gate.title).toBe("Gittensory Gate: 3 blockers");
+    expect(gate.title).toBe("Gittensory Orb Review Agent: 2 blockers");
     expect(gate.summary).toContain("No linked issue detected");
     expect(gate.summary).toContain("Linked issue overlaps another open PR");
-    expect(gate.summary).toContain("Readiness score is below the configured threshold — Address the short explicit PR panel actions");
-    expect(gate.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue", "duplicate_pr_risk", "readiness_score_below_threshold"]);
-    expect(gate.warnings.map((finding) => finding.code)).toEqual(["busy_pr_queue"]);
+    expect(gate.summary).not.toContain("Readiness score is below the configured threshold");
+    expect(gate.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue", "duplicate_pr_risk"]);
+    expect(gate.warnings.map((finding) => finding.code)).toEqual(["busy_pr_queue", "readiness_score_below_threshold"]);
   });
 
   it("gates NON-confirmed contributors normally — a real blocker closes them like a confirmed author (#gate-nonconfirmed)", () => {
@@ -376,7 +376,7 @@ describe("advisory rules", () => {
     // neutral/held state. Confirmed-status affects only on-chain scoring, never the gate verdict. (#gate-nonconfirmed)
     const nonConfirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: false });
     expect(nonConfirmed.conclusion).toBe("failure");
-    expect(nonConfirmed.title).toBe("Gittensory Gate: Linked issue overlaps another open PR");
+    expect(nonConfirmed.title).toBe("Gittensory Orb Review Agent: Linked issue overlaps another open PR");
     expect(nonConfirmed.blockers.map((finding) => finding.code)).toEqual(["duplicate_pr_risk"]);
 
     // Confirmed author with the same blocker: identical verdict.
@@ -394,7 +394,7 @@ describe("advisory rules", () => {
       const output = formatGateCheckOutput({
         enabled: true,
         conclusion,
-        title: conclusion === "skipped" ? "Gittensory Gate skipped" : "Gittensory Gate neutral",
+        title: conclusion === "skipped" ? "Gittensory Orb Review Agent skipped" : "Gittensory Orb Review Agent neutral",
         summary: "PR closed before full evaluation.",
         blockers: [],
         warnings: [],
@@ -409,7 +409,7 @@ describe("advisory rules", () => {
     const output = formatGateCheckOutput({
       enabled: true,
       conclusion: "failure",
-      title: "Gittensory Gate is blocking merge",
+      title: "Gittensory Orb Review Agent is blocking merge",
       summary: "A configured merge-blocking issue was found.",
       blockers: [],
       warnings: [],
@@ -729,7 +729,7 @@ describe("advisory rules", () => {
           title: "Queue pressure",
           severity: "warning" as const,
           detail: "Private detail",
-          publicText: "Open PR queue is elevated; keep changes focused.",
+          publicText: "Review queue is elevated; keep changes focused.",
         },
       ],
     };
@@ -1083,7 +1083,7 @@ describe("CI-refutation of the public comment gate (#ai-ci-refutation)", () => {
   const failure = (codes: string[]): import("../../src/rules/advisory").GateCheckEvaluation => ({
     enabled: true,
     conclusion: "failure",
-    title: "Gittensory Gate: blocked",
+    title: "Gittensory Orb Review Agent: blocked",
     summary: "A hard blocker was found.",
     blockers: codes.map(finding),
     warnings: [],
@@ -1106,7 +1106,7 @@ describe("CI-refutation of the public comment gate (#ai-ci-refutation)", () => {
     const out = reconcileGateEvaluationForGreenCi(failure(["ai_consensus_defect"]), "passed", true);
     expect(out.conclusion).toBe("success");
     expect(out.blockers).toEqual([]);
-    expect(out.title).toBe("Gittensory Gate passed");
+    expect(out.title).toBe("Gittensory Orb Review Agent passed");
     expect(out.summary).toContain("advisory, not blocking");
   });
 

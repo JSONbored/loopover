@@ -59,6 +59,9 @@ function defectJson() {
 function notesOnlyJson() {
   return JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: ["Add a test."], suggestions: ["Add a test."] });
 }
+function nitsWithoutAssessmentJson() {
+  return JSON.stringify({ assessment: "", blockers: [], nits: ["Add a test."], suggestions: ["Add a test."] });
+}
 
 function aiEnv(run: () => Promise<unknown>, flags = true) {
   return createTestEnv({
@@ -101,6 +104,17 @@ describe("shouldStartAiReviewForAdvisory", () => {
     const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" });
     await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
     await expect(shouldStartAiReviewForAdvisory(env, base)).resolves.toBe(false);
+  });
+
+  it("honors aiReviewAllAuthors as an explicit self-host review requirement even when reputation would skip", async () => {
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_REPOS: "acme/widgets" });
+    await env.DB.prepare("INSERT INTO submitter_stats (project, submitter, submissions, merged, closed, manual, last_seen) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").bind("acme/widgets", "alice", 8, 0, 8, 0).run();
+    await expect(
+      shouldStartAiReviewForAdvisory(env, {
+        ...base,
+        settings: { aiReviewMode: "advisory", gatePack: "gittensor", aiReviewAllAuthors: true } as RepositorySettings,
+      }),
+    ).resolves.toBe(true);
   });
 });
 
@@ -148,12 +162,42 @@ describe("runAiReviewForAdvisory", () => {
     // usage event must attribute the ACTUAL configured reviewer — not the hardcoded Workers-AI ids that hid the
     // silent outage. Exercises runWorkersOpinion's now-logging catch + reviewerModelLabel's provider arm.
     const env = aiEnv(async () => { throw new Error("claude CLI not found"); });
-    (env as unknown as { AI_PROVIDER: string; AI_MODEL: string }).AI_PROVIDER = "claude-code";
-    (env as unknown as { AI_PROVIDER: string; AI_MODEL: string }).AI_MODEL = "claude-sonnet-4-6";
+    (env as unknown as { AI_PROVIDER: string; CLAUDE_AI_MODEL: string }).AI_PROVIDER = "claude-code";
+    (env as unknown as { AI_PROVIDER: string; CLAUDE_AI_MODEL: string }).CLAUDE_AI_MODEL = "claude-sonnet-4-6";
     const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
-    expect(result).toBeUndefined(); // provider threw → no usable output, degraded not crashed
+    expect(result).toMatchObject({
+      cacheable: false,
+      findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
+    }); // provider threw → manual-review hold, degraded not crashed
     const usage = await env.DB.prepare("SELECT model FROM ai_usage_events WHERE feature = 'ai_review_pr' ORDER BY created_at DESC LIMIT 1").first<{ model: string }>();
     expect(usage?.model).toBe("claude-code:claude-sonnet-4-6");
+  });
+
+  it("records explicit self-host reviewer labels when models are omitted or providers are unknown", async () => {
+    const env = aiEnv(async () => { throw new Error("codex unavailable"); });
+    (env as unknown as { AI_PROVIDER: string }).AI_PROVIDER = " CODEX , unknown-provider ";
+    const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
+    expect(result).toMatchObject({
+      cacheable: false,
+      findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
+    });
+    const usage = await env.DB.prepare("SELECT model FROM ai_usage_events WHERE feature = 'ai_review_pr' ORDER BY created_at DESC LIMIT 1").first<{ model: string }>();
+    expect(usage?.model).toBe("codex");
+  });
+
+  it("records the resolved self-host reviewer plan instead of raw AI_PROVIDER entries", async () => {
+    const env = aiEnv(async () => { throw new Error("ollama unavailable"); });
+    Object.assign(env as unknown as Record<string, unknown>, {
+      AI_PROVIDER: "anthropic,ollama",
+      AI_REVIEW_PLAN: { reviewers: [{ model: "ollama" }], combine: "single" },
+    });
+    const result = await runAiReviewForAdvisory(env, { settings: { aiReviewMode: "advisory" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", confirmedContributor: true });
+    expect(result).toMatchObject({
+      cacheable: false,
+      findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
+    });
+    const usage = await env.DB.prepare("SELECT model FROM ai_usage_events WHERE feature = 'ai_review_pr' ORDER BY created_at DESC LIMIT 1").first<{ model: string }>();
+    expect(usage?.model).toBe("ollama");
   });
 
   it("no-ops for a non-confirmed contributor under the gittensor pack and when there is no head SHA", async () => {
@@ -246,14 +290,22 @@ describe("runAiReviewForAdvisory", () => {
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
     expect(result?.notes).toBeDefined(); // the single parseable opinion still produces advisory notes
     // The unproducible review is reported to Sentry with PR context so the maintainer can SEE it (#1468).
-    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), {
-      kind: "review",
-      reason: "ai_review_inconclusive",
-      owner: "acme",
-      repo: "acme/widgets",
-      pr: 3,
-      head_sha: "sha3",
-    });
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        kind: "review",
+        reason: "ai_review_inconclusive",
+        owner: "acme",
+        repo: "acme/widgets",
+        pr: 3,
+        head_sha: "sha3",
+        public_notes: true,
+        reviewer_count: 1,
+        review_diagnostics: expect.arrayContaining([
+          expect.objectContaining({ status: "unparseable_output" }),
+        ]),
+      }),
+    );
     captureSpy.mockRestore();
   });
 
@@ -417,8 +469,79 @@ describe("runAiReviewForAdvisory", () => {
     expect(adv.findings).toEqual([]);
   });
 
-  it("returns undefined when the model produces no parseable notes", async () => {
-    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "not json" })), {
+  it("holds for manual review when the AI provider produces no public notes", async () => {
+    const adv = advisory();
+    const captureSpy = vi.spyOn(sentryModule, "captureReviewFailure");
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result).toMatchObject({
+      reviewerCount: 0,
+      cacheable: false,
+      findings: [
+        expect.objectContaining({ code: "ai_review_inconclusive" }),
+      ],
+    });
+    expect(result?.notes).toContain("AI review is unavailable");
+    expect(adv.findings.map((f) => f.code)).toEqual([
+      "ai_review_inconclusive",
+    ]);
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        reason: "ai_review_public_summary_missing",
+        repo: "acme/widgets",
+        pr: 3,
+        head_sha: "sha3",
+        reviewer_count: 0,
+      }),
+    );
+    captureSpy.mockRestore();
+  });
+
+  it("uses the non-cacheable block-mode inconclusive note when no reviewer returns public text", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "" })), {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result).toMatchObject({
+      reviewerCount: 0,
+      inlineFindings: [],
+      cacheable: false,
+      findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
+    });
+    expect(result?.notes).toContain("AI review could not be completed for this PR head");
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
+  });
+
+  it("preserves public-safe unstructured AI text while holding the PR for manual review", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "Looks coherent, but please verify the new cache branch before merging." })), {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result?.reviewerCount).toBe(1);
+    expect(result?.notes).toContain("returned public review text but not the expected structured verdict");
+    expect(result?.notes).toContain("Looks coherent");
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
+  });
+
+  it("preserves model nits when the model omits the assessment summary", async () => {
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: nitsWithoutAssessmentJson() })), {
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: advisory(),
       repoFullName: "acme/widgets",
@@ -426,7 +549,8 @@ describe("runAiReviewForAdvisory", () => {
       author: "alice",
       confirmedContributor: true,
     });
-    expect(result).toBeUndefined();
+    expect(result?.notes).toContain("did not include a separate narrative summary");
+    expect(result?.notes).toContain("Add a test.");
   });
 
   it("does not use the maintainer's BYOK key for non-confirmed oss-anti-slop blocking reviews", async () => {

@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# Build and deploy the self-host runtime from a prebuilt bundle without relying on host Node/npm.
+#
+# Defaults are intentionally operator-friendly:
+#   ./scripts/deploy-selfhost-prebuilt.sh
+#
+# Optional knobs:
+#   SENTRY_RELEASE=gittensory-selfhost@edge-abc123 ./scripts/deploy-selfhost-prebuilt.sh
+#   SELFHOST_COMPOSE_FILES="docker-compose.yml docker-compose.override.yml" ./scripts/deploy-selfhost-prebuilt.sh
+#   SELFHOST_SKIP_SENTRY_UPLOAD=1 ./scripts/deploy-selfhost-prebuilt.sh
+set -euo pipefail
+
+ENV_FILE="${SELFHOST_ENV_FILE:-.env}"
+NODE_IMAGE="${SELFHOST_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}"
+SERVICE="${SELFHOST_SERVICE:-gittensory}"
+SKIP_SENTRY_UPLOAD="${SELFHOST_SKIP_SENTRY_UPLOAD:-0}"
+SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "error: required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+env_get() {
+  local key="$1"
+  local file="${2:-$ENV_FILE}"
+
+  [ -f "$file" ] || return 1
+
+  awk -v key="$key" '
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (line !~ "^" key "[[:space:]]*=") {
+        next
+      }
+      sub(/^[^=]*=/, "", line)
+      sub(/^[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      if (length(line) >= 2) {
+        first = substr(line, 1, 1)
+        last = substr(line, length(line), 1)
+        if ((first == "\"" && last == "\"") || (first == "'\''" && last == "'\''")) {
+          line = substr(line, 2, length(line) - 2)
+        }
+      }
+      print line
+      found = 1
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  ' "$file"
+}
+
+env_put() {
+  local key="$1"
+  local value="$2"
+  local file="${3:-$ENV_FILE}"
+  local tmp
+
+  touch "$file"
+  tmp="$(mktemp)"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { written = 0 }
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (line ~ "^" key "[[:space:]]*=") {
+        print key "=" value
+        written = 1
+      } else {
+        print $0
+      }
+    }
+    END {
+      if (!written) {
+        print key "=" value
+      }
+    }
+  ' "$file" >"$tmp"
+  cat "$tmp" >"$file"
+  rm -f "$tmp"
+}
+
+compose_file_args() {
+  local files=()
+  local file
+
+  if [ -n "${SELFHOST_COMPOSE_FILES:-}" ]; then
+    # shellcheck disable=SC2206
+    files=(${SELFHOST_COMPOSE_FILES})
+  else
+    files=(docker-compose.yml)
+    [ -f docker-compose.override.yml ] && files+=(docker-compose.override.yml)
+  fi
+
+  for file in "${files[@]}"; do
+    if [ ! -f "$file" ]; then
+      echo "error: compose file not found: $file" >&2
+      exit 1
+    fi
+    printf '%s\n' -f "$file"
+  done
+}
+
+run_node_build() {
+  local uid gid
+  uid="$(id -u)"
+  gid="$(id -g)"
+
+  echo "selfhost deploy: building bundle with Dockerized Node"
+  docker run --rm \
+    --user "$uid:$gid" \
+    -e HOME=/tmp \
+    -e npm_config_cache=/tmp/.npm \
+    -v "$PWD:/work" \
+    -w /work \
+    "$NODE_IMAGE" \
+    sh -lc 'npm ci --ignore-scripts && node scripts/build-selfhost.mjs --all && node scripts/validate-selfhost-sourcemap.mjs'
+}
+
+run_sentry_upload() {
+  local auth_token org project uid gid
+
+  auth_token="${SENTRY_AUTH_TOKEN:-$(env_get SENTRY_AUTH_TOKEN || true)}"
+  org="${SENTRY_ORG:-$(env_get SENTRY_ORG || true)}"
+  project="${SENTRY_PROJECT:-$(env_get SENTRY_PROJECT || true)}"
+
+  if [ "$SKIP_SENTRY_UPLOAD" = "1" ]; then
+    echo "selfhost deploy: skipping Sentry upload (SELFHOST_SKIP_SENTRY_UPLOAD=1)"
+    return 0
+  fi
+
+  if [ -z "$auth_token" ] || [ -z "$org" ] || [ -z "$project" ]; then
+    echo "selfhost deploy: skipping Sentry upload (SENTRY_AUTH_TOKEN, SENTRY_ORG, or SENTRY_PROJECT is missing)"
+    return 0
+  fi
+
+  uid="$(id -u)"
+  gid="$(id -g)"
+
+  echo "selfhost deploy: injecting and uploading Sentry source maps for $SENTRY_RELEASE"
+  docker run --rm \
+    -e HOME=/tmp \
+    -e npm_config_cache=/tmp/.npm \
+    -e SENTRY_LOAD_DOTENV=0 \
+    -e SENTRY_RELEASE \
+    -e SENTRY_AUTH_TOKEN="$auth_token" \
+    -e SENTRY_ORG="$org" \
+    -e SENTRY_PROJECT="$project" \
+    -e SENTRY_CLI_PACKAGE="$SENTRY_CLI_PACKAGE" \
+    -e HOST_UID="$uid" \
+    -e HOST_GID="$gid" \
+    -v "$PWD:/work" \
+    -w /work \
+    "$NODE_IMAGE" \
+    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates git >/dev/null && git config --global --add safe.directory /work && (npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE" >/tmp/gittensory-sentry-release-new.log 2>&1 || true) && npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --auto && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist && node scripts/validate-selfhost-sourcemap.mjs && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" dist && npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
+}
+
+run_compose_deploy() {
+  local override_file
+  local -a compose_args
+
+  override_file="$(mktemp)"
+  SELFHOST_GENERATED_COMPOSE_FILE="$override_file"
+  trap 'rm -f "${SELFHOST_GENERATED_COMPOSE_FILE:-}"' EXIT
+
+  cat >"$override_file" <<YAML
+services:
+  $SERVICE:
+    build:
+      target: runtime-prebuilt
+      args:
+        GITTENSORY_VERSION: "\${SENTRY_RELEASE}"
+        INSTALL_AI_CLIS: "\${INSTALL_AI_CLIS:-true}"
+        INSTALL_VISUAL_REVIEW: "\${INSTALL_VISUAL_REVIEW:-false}"
+    environment:
+      SENTRY_RELEASE: "\${SENTRY_RELEASE}"
+      GITTENSORY_VERSION: "\${SENTRY_RELEASE}"
+YAML
+
+  mapfile -t compose_args < <(compose_file_args)
+  compose_args+=(-f "$override_file")
+
+  echo "selfhost deploy: building $SERVICE runtime-prebuilt image"
+  docker compose "${compose_args[@]}" build "$SERVICE"
+
+  echo "selfhost deploy: restarting $SERVICE"
+  docker compose "${compose_args[@]}" up -d --no-deps "$SERVICE"
+}
+
+require_cmd docker
+docker compose version >/dev/null
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "error: run this script from the gittensory git checkout" >&2
+  exit 1
+fi
+
+SENTRY_RELEASE="${SENTRY_RELEASE:-$(env_get SENTRY_RELEASE || true)}"
+SENTRY_RELEASE="${SENTRY_RELEASE:-gittensory-selfhost@$(git rev-parse --short=8 HEAD)}"
+export SENTRY_RELEASE
+
+env_put SENTRY_RELEASE "$SENTRY_RELEASE"
+env_put GITTENSORY_VERSION "$SENTRY_RELEASE"
+
+run_node_build
+run_sentry_upload
+run_compose_deploy
+
+echo "selfhost deploy: complete ($SENTRY_RELEASE)"

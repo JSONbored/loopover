@@ -48,7 +48,7 @@ export async function loadContributorRepoOpenPrSignalRecords(
   pullRequests: PullRequestRecord[],
 ): Promise<{ pullRequestReviews: PullRequestReviewRecord[]; pullRequestChecks: CheckSummaryRecord[] }> {
   const open = pullRequests.filter(
-    (pr) => pr.repoFullName === repoFullName && pr.state === "open" && sameLogin(pr.authorLogin, login),
+    (pr) => sameRepoFullName(pr.repoFullName, repoFullName) && pr.state === "open" && sameLogin(pr.authorLogin, login),
   );
   const signals = await loadContributorRepoOpenPrSignals(env, repoFullName, open);
   return {
@@ -62,14 +62,14 @@ export async function loadContributorRepoOpenPrSignals(
   repoFullName: string,
   pullRequests: PullRequestRecord[],
 ): Promise<ContributorRepoOpenPrSignals> {
-  const open = pullRequests.filter((pr) => pr.repoFullName === repoFullName && pr.state === "open");
+  const open = pullRequests.filter((pr) => sameRepoFullName(pr.repoFullName, repoFullName) && pr.state === "open");
   const reviewsByPullNumber = new Map<number, PullRequestReviewRecord[]>();
   const checksByPullNumber = new Map<number, CheckSummaryRecord[]>();
   await Promise.all(
     open.map(async (pr) => {
       const [reviews, checks] = await Promise.all([
-        listPullRequestReviews(env, repoFullName, pr.number),
-        listCheckSummaries(env, repoFullName, pr.number),
+        listPullRequestReviews(env, pr.repoFullName, pr.number),
+        listCheckSummaries(env, pr.repoFullName, pr.number),
       ]);
       reviewsByPullNumber.set(pr.number, reviews);
       checksByPullNumber.set(pr.number, checks);
@@ -113,7 +113,7 @@ export function detectPendingPrScenario(args: {
   const excluded = new Set(args.excludePullNumbers ?? []);
   const contributorOpen = args.pullRequests.filter(
     (pr) =>
-      pr.repoFullName === args.repoFullName &&
+      sameRepoFullName(pr.repoFullName, args.repoFullName) &&
       pr.state === "open" &&
       sameLogin(pr.authorLogin, args.login) &&
       !excluded.has(pr.number),
@@ -227,6 +227,10 @@ function isDraftPullRequest(pr: PullRequestRecord): boolean {
   if (pr.isDraft) return true;
   if (DRAFT_TITLE_PATTERN.test(pr.title.trim())) return true;
   return pr.labels.some((label) => label.toLowerCase() === "draft" || label.toLowerCase() === "wip");
+}
+
+function sameRepoFullName(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function sameLogin(value: string | null | undefined, login: string): boolean {

@@ -176,7 +176,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "gittensory_jobs_processed_total",
+          "expr": "gittensory_jobs_processed_persisted_total",
           "legendFormat": "processed"
         }
       ]
@@ -366,22 +366,22 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_processed_total[2m])",
+          "expr": "rate(gittensory_jobs_processed_persisted_total[2m])",
           "legendFormat": "processed/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_enqueued_total[2m])",
+          "expr": "rate(gittensory_jobs_enqueued_persisted_total[2m])",
           "legendFormat": "enqueued/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_failed_total[2m])",
+          "expr": "rate(gittensory_jobs_failed_persisted_total[2m])",
           "legendFormat": "failed/s"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_dead_total[2m])",
+          "expr": "rate(gittensory_jobs_dead_persisted_total[2m])",
           "legendFormat": "dead/s"
         }
       ]
@@ -412,7 +412,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(gittensory_jobs_failed_total[5m]) / (rate(gittensory_jobs_processed_total[5m]) + rate(gittensory_jobs_failed_total[5m]) + 0.0001)",
+          "expr": "rate(gittensory_jobs_failed_persisted_total[5m]) / (rate(gittensory_jobs_processed_persisted_total[5m]) + rate(gittensory_jobs_failed_persisted_total[5m]) + 0.0001)",
           "legendFormat": "failure %"
         }
       ]

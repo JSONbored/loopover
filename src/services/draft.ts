@@ -675,7 +675,11 @@ export async function processSubmitDraft(env: Env, draftId: string): Promise<voi
     .bind(draftId)
     .first<{ encrypted_token: string; expires_at: string; consumed_at: string | null }>();
   const { encKey } = draftSecrets(env);
-  if (!tokenRow || tokenRow.consumed_at || new Date(tokenRow.expires_at).getTime() < Date.now() || !encKey) {
+  // Fail closed on an unparseable expiry: new Date(...).getTime() -> NaN makes `NaN < Date.now()` false,
+  // which would otherwise treat a token whose stored expires_at is malformed/empty as never expired.
+  // Mirrors src/auth/security.ts' Number.isFinite(expiresAtMs) session-expiry guard.
+  const expiresAtMs = tokenRow ? Date.parse(tokenRow.expires_at) : NaN;
+  if (!tokenRow || tokenRow.consumed_at || !Number.isFinite(expiresAtMs) || expiresAtMs < Date.now() || !encKey) {
     await env.DB.prepare(`UPDATE submission_drafts SET status = 'error', last_error = 'token_unavailable', updated_at = ? WHERE id = ?`)
       .bind(new Date().toISOString(), draftId)
       .run();

@@ -96,11 +96,15 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
     await recordWebhookEvent(env, { ...eventRow, status: "processed" });
     return "ignored";
   }
+  if (!env.WEBHOOKS) {
+    await recordWebhookEvent(env, { ...eventRow, status: "error" });
+    return "enqueue_failed";
+  }
+
   await recordWebhookEvent(env, { ...eventRow, status: "queued" });
 
   const message: JobMessage = { type: "github-webhook", deliveryId, eventName, payload };
   try {
-    if (!env.WEBHOOKS) return "enqueue_failed";
     // Send to the dedicated WEBHOOKS lane (not the shared JOBS queue) so a maintenance burst on JOBS can never
     // starve real GitHub events into the DLQ. (#audit-webhook-queue)
     await env.WEBHOOKS.send(message);

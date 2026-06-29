@@ -224,6 +224,27 @@ describe("worker entrypoint", () => {
     expect(sent).toEqual([]);
   });
 
+  it("keeps broker-only Cloudflare maintenance cheap on :30 ticks", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    delete env.SELFHOST_TRANSIENT_CACHE;
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual([
+      { type: "repair-data-fidelity", requestedBy: "schedule" },
+      { type: "refresh-installation-health", requestedBy: "schedule" },
+    ]);
+  });
+
   it("THROTTLES the sweep when the GitHub REST budget is at/below the maintenance headroom (#6 backpressure)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

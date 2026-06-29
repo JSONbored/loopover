@@ -40,6 +40,37 @@ describe("github webhook body reader edge cases", () => {
 });
 
 describe("github webhook enqueue failure (#786)", () => {
+  it("flags the event 'error' when the WEBHOOKS binding is missing", async () => {
+    const env = createTestEnv();
+    delete env.WEBHOOKS;
+    const rawBody = JSON.stringify({ action: "opened", repository: { full_name: "JSONbored/gittensory" }, installation: { id: 1 } });
+    const signature = await signWebhook(rawBody, env.GITHUB_WEBHOOK_SECRET);
+    const request = new Request("https://example.com/webhook", { method: "POST", body: rawBody });
+    const headers: Record<string, string> = {
+      "x-github-delivery": "enqueue-missing-binding-1",
+      "x-github-event": "pull_request",
+      "x-hub-signature-256": signature,
+    };
+    const context = {
+      req: {
+        raw: request,
+        header(name: string) {
+          return headers[name.toLowerCase()] ?? null;
+        },
+      },
+      env,
+      json(payload: unknown, status?: number) {
+        return Response.json(payload, status === undefined ? undefined : { status });
+      },
+    } as unknown as Context<{ Bindings: Env }>;
+
+    const response = await handleGitHubWebhook(context);
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: "enqueue_failed" });
+    const event = await getWebhookEvent(env, "enqueue-missing-binding-1");
+    expect(event?.status).toBe("error");
+  });
+
   it("flags the event 'error' and returns 500 when the queue send fails", async () => {
     const env = createTestEnv();
     env.WEBHOOKS = {

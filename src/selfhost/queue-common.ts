@@ -119,7 +119,7 @@ export function githubRateLimitRetryDelayMs(
   }
 
   if (
-    (status === 403 || status === 429 || status === null) &&
+    (status === 403 || status === 429) &&
     /secondary rate limit|\babuse\b|api rate limit exceeded|rate limit/i.test(
       message,
     )

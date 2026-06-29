@@ -269,6 +269,11 @@ describe("self-host queue common helpers", () => {
         message: "secondary rate limit",
       }),
     ).toBe(300_000);
+    expect(
+      githubRateLimitRetryDelayMs(
+        new Error("openai api rate limit exceeded"),
+      ),
+    ).toBeNull();
   });
 
   it("keeps only GitHub rate limits on the non-consuming retry path", () => {
@@ -287,6 +292,7 @@ describe("self-host queue common helpers", () => {
         }),
       ),
     ).toBeNull();
+    expect(nonConsumingRetryDelayMs(new Error("openai rate limit"))).toBeNull();
   });
 
   it("uses RetryableJobError delays on the bounded consuming retry path", () => {

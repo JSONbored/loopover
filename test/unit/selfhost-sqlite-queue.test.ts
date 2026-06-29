@@ -381,6 +381,38 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(row.last_error).toContain("API rate limit exceeded");
   });
 
+  it("does not put status-less provider rate limits on the global GitHub cooldown path", async () => {
+    const driver = makeDriver();
+    let calls = 0;
+    const q = createSqliteQueue(
+      driver,
+      async () => {
+        calls += 1;
+        throw new Error("openai api rate limit exceeded");
+      },
+      { maxRetries: 2, backoffMs: () => 0 },
+    );
+
+    await q.binding.send(msg("github-webhook"));
+    await q.drain();
+
+    const row = driver.query(
+      "SELECT status, attempts, last_error FROM _selfhost_jobs",
+      [],
+    ).rows[0] as { status: string; attempts: number; last_error: string };
+    expect(calls).toBe(2);
+    expect(row).toMatchObject({
+      status: "dead",
+      attempts: 2,
+      last_error: "openai api rate limit exceeded",
+    });
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_failed_total: 2,
+      gittensory_jobs_dead_total: 1,
+    });
+    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limited_total");
+  });
+
   it("defers the due backlog and stops claiming when GitHub is rate-limited", async () => {
     const driver = makeDriver();
     let calls = 0;

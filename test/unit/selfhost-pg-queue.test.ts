@@ -315,6 +315,39 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("does not put status-less provider rate limits on the global GitHub cooldown path", async () => {
+    const m = makePool();
+    m.enqueueJob("1", { type: "github-webhook" }, 0);
+    m.enqueueJob("1", { type: "github-webhook" }, 1);
+    let calls = 0;
+    const q = createPgQueue(
+      m.pool,
+      async () => {
+        calls += 1;
+        throw new Error("openai api rate limit exceeded");
+      },
+      { maxRetries: 2, backoffMs: () => 0 },
+    );
+
+    await q.init();
+    await q.drain();
+    await q.drain();
+
+    expect(calls).toBe(2);
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status='pending', attempts=$1"),
+      expect.arrayContaining([1, expect.any(Number), "openai api rate limit exceeded", "1"]),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status='dead', attempts=$1"),
+      [2, "openai api rate limit exceeded", "1"],
+    );
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("gittensory_jobs_rate_limited_total"),
+      expect.anything(),
+    );
+  });
+
   it("defers due jobs and coalesces a keyed rate-limit retry into the pending duplicate", async () => {
     const oldJitter = process.env.QUEUE_STARTUP_JITTER_MS;
     process.env.QUEUE_STARTUP_JITTER_MS = "0";

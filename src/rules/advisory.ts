@@ -10,9 +10,10 @@ import type {
   RepositoryRecord,
 } from "../types";
 import type { CollisionCluster, CollisionReport } from "../signals/engine";
-import { isDuplicateClusterWinner } from "../signals/duplicate-winner";
+import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { nowIso } from "../utils/json";
 import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
+import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
 
 export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
 
@@ -26,11 +27,9 @@ export type GateCheckPolicy = {
   /** When `block`, a dual-model AI consensus defect (`ai_consensus_defect` finding) becomes a hard
    *  blocker. Defaults to advisory — AI never blocks unless the maintainer opts in. */
   aiReviewGateMode?: GateRuleMode | undefined;
-  /** Minimum calibrated confidence (0-1) for an AI-judgment defect (`ai_consensus_defect` / `ai_review_split`) to
-   *  BLOCK under `aiReviewGateMode: block` (#7). The finding blocks only when its `confidence >= this`; below-threshold
-   *  AI defects hold for human review instead of passing or auto-closing. `null`/undefined ⇒ the 0.93 default. A finding
-   *  with no confidence (deterministic, or a graceful-fallback AI defect) is treated as 1.0 and always clears the floor
-   *  — matching the historical always-block behavior. */
+  /** Minimum calibrated confidence (0-1) configured for AI close calibration. AI defect findings still block under
+   *  `aiReviewGateMode: block` even when below this floor; the floor remains configurable context, never a guardrail
+   *  that downgrades a blocker to manual review. `null`/undefined ⇒ the 0.93 default. */
   aiReviewCloseConfidence?: number | null | undefined;
   readinessScore?: number | null | undefined;
   /** When `block`, the deterministic slop score becomes a hard blocker once `slopRisk >= slopGateMinScore`
@@ -67,7 +66,7 @@ export type GateCheckPolicy = {
   /** PR-size HOLD (#gate-size). When set (advisory/block), a PR with >= sizeGateMaxFiles changed files OR
    *  >= sizeGateMaxLines changed (added+deleted) lines that would OTHERWISE pass is HELD for manual review — a
    *  neutral gate → "manual" verdict, never auto-merged and never a hard failure. Defaults off; thresholds default
-   *  to 10 files / 500 lines. This is a HOLD (advisory dry-run friendly), not a close. */
+   *  to 10 files / 1000 lines. This is a HOLD (advisory dry-run friendly), not a close. */
   sizeGateMode?: GateRuleMode | undefined;
   /** Aggregate change size, threaded from the resolved file list (changedLineCount = additions + deletions). */
   changedFileCount?: number | null | undefined;
@@ -95,38 +94,26 @@ export type GateCheckEvaluation = {
   warnings: AdvisoryFinding[];
 };
 
-// AI-JUDGMENT blocker codes (#ai-ci-refutation): a gate failure driven SOLELY by these is the dual-model AI
-// reviewer's OPINION, not a deterministic fact. Shared by the disposition refutation (agent-actions) and the
-// public-comment reconciliation so the merge/close ACTION and the rendered comment always agree.
+// AI-JUDGMENT blocker codes. Kept distinct from deterministic blockers for telemetry and regression tests; the old
+// green-CI refutation path is intentionally disabled, so these still block when `aiReviewGateMode` is `block`.
 // `ai_review_inconclusive` is deliberately EXCLUDED — that is a "could not review" HOLD, not a false defect.
 export const AI_JUDGMENT_BLOCKER_CODES = new Set<string>(["ai_consensus_defect", "ai_review_split"]);
 
 /** True when the gate FAILED *solely* because of AI-judgment blockers (every blocker is an AI-judgment code).
- *  An empty blocker list is NOT an AI-judgment-only failure (there is nothing to refute). PURE. */
+ *  An empty blocker list is NOT an AI-judgment-only failure. PURE. */
 export function isAiJudgmentOnlyFailure(evaluation: GateCheckEvaluation): boolean {
   return evaluation.conclusion === "failure" && evaluation.blockers.length > 0 && evaluation.blockers.every((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
 }
 
 /**
- * Reconcile a gate evaluation with the deterministic CI for the PUBLIC review comment (#ai-ci-refutation).
- * When the gate FAILED solely on an AI-judgment blocker (ai_consensus_defect / ai_review_split) but the real CI
- * is GREEN, the AI claim is refuted by the validator — so the comment must render SUCCESS (advisory), matching
- * the disposition (planAgentMaintenanceActions merges such a PR) instead of a contradictory red "blocked/closed"
- * headline + Gate row. The AI concern stays VISIBLE without double-listing: the specific consensus defect still
- * surfaces from the advisory findings as a raised concern under the green verdict, so we only clear the gate's
- * hard blockers here. `enabled` is the caller's grounding+convergence gate (passed in so this stays a PURE,
- * unit-testable function and the processor carries no branch); `enabled` false, `ciState !== "passed"`, or a
- * non-AI-only failure ⇒ the evaluation is returned UNCHANGED.
+ * Historical compatibility shim for the old green-CI AI refutation path. The gate verdict is now authoritative:
+ * if an AI review finding is configured as blocking, green CI cannot rewrite it to success. This keeps the public
+ * comment, check-run, and disposition aligned with the "blockers always block" rule.
  */
 export function reconcileGateEvaluationForGreenCi(evaluation: GateCheckEvaluation, ciState: "passed" | "failed" | "unverified", enabled: boolean): GateCheckEvaluation {
-  if (!enabled || ciState !== "passed" || !isAiJudgmentOnlyFailure(evaluation)) return evaluation;
-  return {
-    ...evaluation,
-    conclusion: "success",
-    title: `${GITTENSORY_GATE_CHECK_NAME} passed`,
-    summary: "The AI review raised a concern, but the deterministic checks (CI) are green — the concern is advisory, not blocking.",
-    blockers: [],
-  };
+  void ciState;
+  void enabled;
+  return evaluation;
 }
 
 export function buildRepositoryAdvisory(repo: RepositoryRecord | null, fullName: string): Advisory {
@@ -408,7 +395,7 @@ export function formatCheckRunOutput(
 }
 
 const SIZE_HOLD_DEFAULT_MAX_FILES = 10;
-const SIZE_HOLD_DEFAULT_MAX_LINES = 500;
+const SIZE_HOLD_DEFAULT_MAX_LINES = 1000;
 
 /** Oversized-PR manual-review HOLD finding (#gate-size), or null when the size gate is off or the PR is within both
  *  thresholds. A HOLD (→ neutral gate → "manual" verdict), never a hard blocker, so it is dry-run/advisory friendly. */
@@ -463,8 +450,8 @@ function buildManifestBlockedPathHoldFinding(
 }
 
 /** Dry-run disposition (#gate-dryrun): promote every `advisory` sub-gate mode to `block` so the core eval yields the
- *  would-be conclusion. `off`/`block`/unset modes are untouched; non-mode policy (grace, size HOLD, guardrail) is
- *  preserved as-is, so the would-be verdict still honours newcomer grace and the manual-review holds. PURE. */
+ *  would-be conclusion. `off`/`block`/unset modes are untouched; non-mode policy (size HOLD, guardrail) is
+ *  preserved as-is, so the would-be verdict still honours manual-review holds. PURE. */
 function promoteAdvisoryToBlock(policy: GateCheckPolicy): GateCheckPolicy {
   // #disposition-redesign: the dry-run "would-be" verdict must reflect the REAL disposition model — a CLOSE is driven by
   // the AI reviewer's confidence + genuine hard blockers (secret/CI/banned) ONLY. The advisory signals — missing linked
@@ -512,42 +499,14 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
   const slopBlocker = buildSlopGateBlocker(effective);
   const blockers = [...configuredBlockers, ...(slopBlocker ? [slopBlocker] : [])];
   const gateWarnings = qualityWarning ? [...warnings, qualityWarning] : warnings;
-  const lowConfidenceAiHolds = advisoryResult.findings.filter((finding) => isLowConfidenceAiReviewHold(finding, effective));
   // Non-confirmed contributors are gated NORMALLY (real blockers → failure → one-shot close; clean → success →
   // merge), the SAME as confirmed contributors: the review + CI + guardrail vet every PR, and confirmed-status
   // affects only on-chain SCORING, never the merge/close decision. (#gate-nonconfirmed) The old blanket
   // "never block a non-confirmed contributor" forced every non-confirmed PR with a blocker to a neutral → HELD
-  // state, burying the maintainer in manual review. Genuine newcomers stay protected by the opt-in first-time-
-  // contributor grace immediately below; everyone else is auto-merged/closed so the queue stays automated.
-  // First-time-contributor grace (#552): when the maintainer opted in, a genuine newcomer (0 merged PRs in
-  // this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs) gets a neutral, non-blocking gate even
-  // when blockers fired — they keep the advisory findings without the hard block. Repeat offenders, authors
-  // with merge history, and repos with the setting off are gated normally below. Public-safe: this only
-  // expresses advisory-vs-block, never any reward/trust internals.
-  const isNewcomer = (effective.authorMergedPrCount ?? 0) === 0;
-  const isRepeatOffender = (effective.authorClosedUnmergedPrCount ?? 0) >= 3;
-  const graceApplies = effective.firstTimeContributorGrace === true && isNewcomer && !isRepeatOffender;
-  if (graceApplies && blockers.length > 0) {
-    return {
-      enabled: true,
-      conclusion: "neutral",
-      title: `${GITTENSORY_GATE_CHECK_NAME} — first-contribution grace`,
-      summary: "This is a first-time contribution to this repo, so the gate stays advisory rather than blocking. The findings remain visible, and the gate will apply normally once this author has merge history here.",
-      blockers: [],
-      warnings: gateWarnings,
-    };
-  }
+  // state, burying the maintainer in manual review. The old first-time-contributor grace path also softened
+  // blockers; that is intentionally no longer applied because blocker findings must remain closure/rejection
+  // outcomes for normal contributors. Owner/automation close exemptions live in the disposition planner instead.
   if (blockers.length === 0) {
-    if (lowConfidenceAiHolds.length > 0) {
-      return {
-        enabled: true,
-        conclusion: "neutral",
-        title: `${GITTENSORY_GATE_CHECK_NAME} — held for human review`,
-        summary: "The AI review flagged a possible must-fix defect below the automatic close-confidence floor, so the gate is held for a human reviewer instead of passed automatically.",
-        blockers: [],
-        warnings: [...gateWarnings, ...lowConfidenceAiHolds],
-      };
-    }
     // Fail-CLOSED AI hold (#ai-fail-closed, #audit-3.5): with NO deterministic blocker, a block-mode AI review
     // that could not return a usable verdict HOLDS the gate (neutral) for a human rather than passing
     // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
@@ -715,12 +674,11 @@ function addPullRequestFindings(
     const overlappingPrs = otherOpenPullRequests.filter((otherPr) =>
       otherPr.linkedIssues.some((issueNumber) => pr.linkedIssues.includes(issueNumber)),
     );
-    // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the cluster winner (the
-    // lowest open sibling number), SKIP the duplicate finding — suppressing it suppresses the gate failure, so
-    // the winner survives while the losers (which still see overlap > 0 and a lower sibling) keep the finding.
-    // `overlappingPrs` is derived from the OPEN-only `otherOpenPullRequests`, so the numbers are open siblings.
+    // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
+    // linked-issue claimant, SKIP the duplicate finding — suppressing it suppresses the gate failure, so the
+    // winner survives while later claimants keep the finding. Unknown claim time keeps the blocker.
     // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
-    if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinner(pr.number, overlappingPrs.map((otherPr) => otherPr.number)))) {
+    if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(pr, overlappingPrs))) {
       findings.push({
         code: "duplicate_pr_risk",
         severity: "warning",
@@ -856,8 +814,8 @@ function isEvaluationBlocker(code: string): boolean {
   return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved";
 }
 
-// Default minimum calibrated confidence for an AI defect to BLOCK (#7) — used when the repo set `aiReview: block`
-// without a `closeConfidence`. 0.93 = block only on a high-confidence AI defect; below that stays advisory.
+// Default configured close-confidence floor (#7) retained for settings compatibility and public calibration text.
+// It must not be used to downgrade an AI defect blocker into manual review.
 const DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE = 0.93;
 
 function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
@@ -870,15 +828,13 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // most conservative AI signal (two independent models) but still confirmed-contributor gated by
   // evaluateGateCheck, and advisory by default.
   // A consensus defect (both reviewers) OR a SPLIT (one reviewer flagged a blocker the other did not) both block
-  // when aiReviewGateMode is `block` AND the finding's CALIBRATED confidence clears the close-confidence floor (#7).
-  // Below-floor AI defects are handled as a neutral human-review HOLD in evaluateGateCheckCore: the LLM-provided
-  // confidence must never turn a concrete AI defect into an auto-mergeable passing gate. A finding with no confidence
-  // (graceful fallback) is treated as 1.0 and always clears the floor — byte-identical to today's behavior. (#ai-review-split)
+  // when aiReviewGateMode is `block`. The configured close-confidence floor remains calibration context; it does
+  // not turn a blocker into a manual hold for normal contributors. (#ai-review-split)
   if (code === "ai_consensus_defect" || code === "ai_review_split") {
-    if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
-    const confidence = finding.confidence ?? 1;
-    return confidence >= (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
+    void (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
+    return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
   }
+  if (code === REVIEW_THREAD_BLOCKER_CODE) return true;
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
   // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
   // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
@@ -899,13 +855,6 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
   if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory") === "block";
   return false;
-}
-
-function isLowConfidenceAiReviewHold(finding: AdvisoryFinding, policy: GateCheckPolicy): boolean {
-  if (!AI_JUDGMENT_BLOCKER_CODES.has(finding.code)) return false;
-  if (gateMode(policy.aiReviewGateMode ?? "advisory") !== "block") return false;
-  const confidence = finding.confidence ?? 1;
-  return confidence < (policy.aiReviewCloseConfidence ?? DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
 }
 
 function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | null {

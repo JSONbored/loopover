@@ -25,6 +25,7 @@ import { scanCommitSignature } from "./analyzers/commit-signature.js";
 import { scanIacMisconfig } from "./analyzers/iac-misconfig.js";
 import { scanNativeBuild } from "./analyzers/native-build.js";
 import { scanCallerImpact } from "./analyzers/caller-impact.js";
+import { scanHistory } from "./analyzers/history.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
@@ -52,6 +53,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   iacMisconfig: (req, signal) => scanIacMisconfig(req, signal),
   nativeBuild: (req, signal) => scanNativeBuild(req, fetch, { signal }),
   callerImpact: (req, signal) => scanCallerImpact(req, fetch, { signal }),
+  history: (req, signal) => scanHistory(req, fetch, { signal }),
 };
 
 function runWithTimeout<T>(

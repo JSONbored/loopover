@@ -374,6 +374,51 @@ export function renderBrief(
     }
   }
 
+  const history = findings.history ?? [];
+  for (const item of history) {
+    const entries: string[] = [];
+    if (item.author) {
+      const a = item.author;
+      let record: string;
+      if (
+        a.firstTimeContributor === null ||
+        a.priorMergedInRepo === null ||
+        a.priorClosedInRepo === null
+      ) {
+        record = "prior PR history unavailable";
+      } else if (a.firstTimeContributor) {
+        record = "first-time contributor to this repo";
+      } else {
+        record = `${a.priorMergedInRepo} merged / ${a.priorClosedInRepo} closed prior PRs here`;
+      }
+      const age =
+        a.accountAgeDays === null
+          ? "account age unknown"
+          : `account ${a.accountAgeDays}d old`;
+      entries.push(`- Author: ${record}; ${age}`);
+    }
+    for (const pr of item.similarPastPrs) {
+      const paths = pr.overlapPaths.length
+        ? pr.overlapPaths.map((p) => safeCodeSpan(p)).join(", ")
+        : "unknown paths";
+      entries.push(
+        `- This area was previously changed in #${pr.number} (${pr.outcome}): ${promptText(pr.title)} — overlaps ${paths}`,
+      );
+    }
+    if (item.linkedIssueAlignment) {
+      const al = item.linkedIssueAlignment;
+      entries.push(
+        `- Linked issue #${al.issue} coverage: **${al.diffCovers}** — ${promptText(al.statedRequirement)}`,
+      );
+    }
+    if (entries.length) {
+      lines.push("### Author & change-area history (public GitHub record)");
+      if (item.partial)
+        lines.push("- _(partial — some history could not be retrieved)_");
+      lines.push(...entries);
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

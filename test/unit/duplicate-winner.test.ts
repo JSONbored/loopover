@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDuplicateClusterWinner } from "../../src/signals/duplicate-winner";
+import { isDuplicateClusterWinner, isDuplicateClusterWinnerByClaim } from "../../src/signals/duplicate-winner";
 import { dupWinnerLinkedDuplicateCount, linkedIssueDuplicatePullRequestsForGate } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
 import { listOtherOpenPullRequests, upsertPullRequestFromGitHub } from "../../src/db/repositories";
@@ -35,22 +35,74 @@ describe("isDuplicateClusterWinner (#dup-winner)", () => {
   });
 });
 
+describe("isDuplicateClusterWinnerByClaim (#dup-winner claim election)", () => {
+  const claim = (number: number, linkedIssueClaimedAt: string | null) => ({ number, linkedIssueClaimedAt });
+
+  it("elects the earliest observed linked-issue claimant, not the lowest PR number", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(13, "2026-06-29T10:00:00.000Z"), [claim(12, "2026-06-29T10:05:00.000Z")])).toBe(true);
+  });
+
+  it("blocks an older PR that edits in the same issue after a newer PR already claimed it", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:05:00.000Z"), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(false);
+  });
+
+  it("falls back to PR number only for equal known claim timestamps", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:00:00.000Z"), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(true);
+    expect(isDuplicateClusterWinnerByClaim(claim(13, "2026-06-29T10:00:00.000Z"), [claim(12, "2026-06-29T10:00:00.000Z")])).toBe(false);
+  });
+
+  it("fails closed when any duplicate claimant has an unknown or invalid claim timestamp", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(12, null), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(false);
+    expect(isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:00:00.000Z"), [claim(13, "not-a-date")])).toBe(false);
+  });
+});
+
 describe("dupWinnerLinkedDuplicateCount (#dup-winner close-reason seam)", () => {
   it("winner + flag ON ⇒ 0 (close reason omits the duplicate cause)", () => {
-    expect(dupWinnerLinkedDuplicateCount([13, 14], 12, true)).toBe(0);
+    expect(
+      dupWinnerLinkedDuplicateCount(
+        [
+          { number: 13, linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" },
+          { number: 14, linkedIssueClaimedAt: "2026-06-29T10:02:00.000Z" },
+        ],
+        12,
+        "2026-06-29T10:00:00.000Z",
+        true,
+      ),
+    ).toBe(0);
   });
 
   it("loser + flag ON ⇒ real sibling count (close reason includes the duplicate cause)", () => {
-    expect(dupWinnerLinkedDuplicateCount([12, 13], 14, true)).toBe(2);
+    expect(
+      dupWinnerLinkedDuplicateCount(
+        [
+          { number: 12, linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" },
+          { number: 13, linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" },
+        ],
+        14,
+        "2026-06-29T10:02:00.000Z",
+        true,
+      ),
+    ).toBe(2);
   });
 
   it("flag OFF ⇒ real sibling count even for a would-be winner (byte-identical)", () => {
-    expect(dupWinnerLinkedDuplicateCount([13, 14], 12, false)).toBe(2);
+    expect(
+      dupWinnerLinkedDuplicateCount(
+        [
+          { number: 13, linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" },
+          { number: 14, linkedIssueClaimedAt: "2026-06-29T10:02:00.000Z" },
+        ],
+        12,
+        "2026-06-29T10:00:00.000Z",
+        false,
+      ),
+    ).toBe(2);
   });
 
   it("no siblings ⇒ 0 regardless of the flag", () => {
-    expect(dupWinnerLinkedDuplicateCount([], 12, true)).toBe(0);
-    expect(dupWinnerLinkedDuplicateCount([], 12, false)).toBe(0);
+    expect(dupWinnerLinkedDuplicateCount([], 12, "2026-06-29T10:00:00.000Z", true)).toBe(0);
+    expect(dupWinnerLinkedDuplicateCount([], 12, "2026-06-29T10:00:00.000Z", false)).toBe(0);
   });
 });
 

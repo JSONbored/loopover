@@ -27,7 +27,7 @@ import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
-import { isDuplicateClusterWinner } from "./duplicate-winner";
+import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
@@ -54,6 +54,7 @@ export type CollisionItem = {
   htmlUrl?: string | null | undefined;
   labels?: string[] | undefined;
   linkedIssues?: number[] | undefined;
+  linkedIssueClaimedAt?: string | null | undefined;
   changedFiles?: string[] | undefined;
   body?: string | null | undefined;
 };
@@ -4186,14 +4187,15 @@ export function buildPublicPrIntelligenceComment(args: {
   review?: FocusManifestReviewConfig | undefined;
   /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
   aiReview?: { notes: string } | undefined;
-  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest open
-   *  sibling number among `linkedDuplicatePrs`), the hard-duplicate panel block is suppressed so the winner's
-   *  panel does not show a blocking duplicate. Default/false ⇒ byte-identical to today. */
+  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the earliest observed linked-issue
+   *  claimant among `linkedDuplicatePrs`, the hard-duplicate panel block is suppressed so the winner's panel
+   *  does not show a blocking duplicate. Default/false ⇒ byte-identical to today. */
   duplicateWinnerEnabled?: boolean | undefined;
 }): string {
   const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
-  const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
+  const linkedDuplicatePrItems = linkedIssueDuplicatePullRequestItems(args.pr, prCollisionClusters);
+  const linkedDuplicatePrs = linkedDuplicatePrItems.map((item) => item.number);
   const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
   const scopedOverlapCount = scopedOverlapClusters.length;
   const hasRelatedWork = linkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
@@ -4217,13 +4219,13 @@ export function buildPublicPrIntelligenceComment(args: {
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
-  // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the cluster winner (the
-  // lowest open sibling number), do NOT hard-block it as a duplicate — only the losers block. `linkedDuplicatePrs`
-  // is open-only (collision clusters exclude closed PRs). Flag-OFF (default) short-circuits ⇒ byte-identical.
+  // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
+  // linked-issue claimant, do NOT hard-block it as a duplicate — only the losers block. `linkedDuplicatePrs` is
+  // open-only (collision clusters exclude closed PRs). Unknown claim time keeps the blocker.
   const hardDuplicateBlock =
     args.settings.duplicatePrGateMode === "block" &&
     linkedDuplicatePrs.length > 0 &&
-    !(args.duplicateWinnerEnabled && isDuplicateClusterWinner(args.pr.number, linkedDuplicatePrs));
+    !(args.duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(args.pr, linkedDuplicatePrItems));
   const fallbackGateConclusion = !gateEnabled
     ? "success"
     : !args.repo
@@ -4437,13 +4439,14 @@ export function buildPublicPrPanelSignalRows(args: {
   preflight: PreflightResult;
   settings: RepositorySettings;
   gate?: PublicPrPanelGateEvaluation | undefined;
-  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest open
-   *  sibling number among `linkedDuplicatePrs`), the hard-duplicate block is suppressed. Default/false ⇒
-   *  byte-identical to today. Matches `buildPublicPrIntelligenceComment` so both panels agree. */
+  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the earliest observed linked-issue
+   *  claimant among `linkedDuplicatePrs`, the hard-duplicate block is suppressed. Default/false ⇒ byte-identical
+   *  to today. Matches `buildPublicPrIntelligenceComment` so both panels agree. */
   duplicateWinnerEnabled?: boolean | undefined;
 }): { rows: PublicPrPanelSignalRow[]; readinessTotal: number } {
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
-  const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
+  const linkedDuplicatePrItems = linkedIssueDuplicatePullRequestItems(args.pr, prCollisionClusters);
+  const linkedDuplicatePrs = linkedDuplicatePrItems.map((item) => item.number);
   const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
   const scopedOverlapCount = scopedOverlapClusters.length;
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
@@ -4451,12 +4454,12 @@ export function buildPublicPrPanelSignalRows(args: {
   const relatedWorkResult = relatedWorkPanelResult(linkedDuplicatePrs, scopedOverlapCount);
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
-  // Duplicate-winner adjudication (#dup-winner): suppress the winner's hard-duplicate block (see the comment
-  // builder). `linkedDuplicatePrs` is open-only; flag-OFF (default) short-circuits ⇒ byte-identical to today.
+  // Duplicate-winner adjudication (#dup-winner): suppress the earliest known claimant's hard-duplicate block
+  // (see the comment builder). Unknown claim time keeps the blocker; flag-OFF keeps legacy behavior.
   const hardDuplicateBlock =
     args.settings.duplicatePrGateMode === "block" &&
     linkedDuplicatePrs.length > 0 &&
-    !(args.duplicateWinnerEnabled && isDuplicateClusterWinner(args.pr.number, linkedDuplicatePrs));
+    !(args.duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(args.pr, linkedDuplicatePrItems));
   const fallbackGateConclusion = !gateEnabled ? "success" : !args.repo ? "neutral" : hardLinkedIssueBlock || hardDuplicateBlock ? "failure" : "success";
   const gateConclusion = args.gate?.conclusion ?? fallbackGateConclusion;
   const confirmedMiner = isOfficialContributorDetection(args.detection);
@@ -4496,15 +4499,19 @@ export function unionScopedOverlapClusters(
 }
 
 function linkedIssueDuplicatePullRequests(pr: PullRequestRecord, clusters: CollisionCluster[]): number[] {
+  return linkedIssueDuplicatePullRequestItems(pr, clusters).map((item) => item.number);
+}
+
+function linkedIssueDuplicatePullRequestItems(pr: PullRequestRecord, clusters: CollisionCluster[]): CollisionItem[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
   const duplicates = clusters.flatMap((cluster) =>
     cluster.items.flatMap((item) => {
       if (item.type !== "pull_request" || item.number === pr.number) return [];
-      return (item.linkedIssues ?? []).some((issue) => linkedIssues.has(issue)) ? [item.number] : [];
+      return (item.linkedIssues ?? []).some((issue) => linkedIssues.has(issue)) ? [item] : [];
     }),
   );
-  return [...new Set(duplicates)].sort((left, right) => left - right);
+  return [...new Map(duplicates.map((item) => [item.number, item])).values()].sort((left, right) => left.number - right.number);
 }
 
 function linkedIssuePanelResult(pr: PullRequestRecord): { result: string; evidence: string; action: string } {
@@ -5034,6 +5041,7 @@ function prItem(pr: PullRequestRecord): CollisionItem {
     htmlUrl: pr.htmlUrl,
     labels: pr.labels,
     linkedIssues: pr.linkedIssues,
+    linkedIssueClaimedAt: pr.linkedIssueClaimedAt,
     body: pr.body,
   };
 }

@@ -773,9 +773,19 @@ describe("signal coverage edge cases", () => {
   it("#dup-winner: panel hard-duplicate block is suppressed for the winner, kept for the loser, byte-identical when flag OFF", () => {
     const directRepo = repo("owner/dupwin");
     const dupIssue = issue(directRepo.fullName, 42, "Cache invalidation race");
-    // Two open PRs on the same issue: 70 is the lowest open number (the winner), 88 is the loser.
-    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", { authorLogin: "miner", linkedIssues: [42], body: "Fixes #42" });
-    const loserPr = pr(directRepo.fullName, 88, "Also fixes the cache race", { authorLogin: "other", linkedIssues: [42], body: "Fixes #42" });
+    // Two open PRs on the same issue: 70 claimed the issue first (the winner), 88 is the later claimant.
+    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", {
+      authorLogin: "miner",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
+      body: "Fixes #42",
+    });
+    const loserPr = pr(directRepo.fullName, 88, "Also fixes the cache race", {
+      authorLogin: "other",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z",
+      body: "Fixes #42",
+    });
     const collisions = buildCollisionReport(directRepo.fullName, [dupIssue], [winnerPr, loserPr]);
     const queueHealth = buildQueueHealth(directRepo, [dupIssue], [winnerPr, loserPr], collisions);
     const blockSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const };

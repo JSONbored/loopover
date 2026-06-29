@@ -7310,6 +7310,7 @@ describe("queue processors", () => {
     });
     // The shared issue + the HIGHER-numbered open sibling (#92) → forms the same-issue duplicate cluster.
     await upsertIssueFromGitHub(env, "JSONbored/gittensory", { number: 1, title: "Cache the registry sync", state: "open", user: { login: "maintainer" }, author_association: "OWNER", body: "We should cache the registry fetch." });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 91, title: "Fix the cache", state: "open", user: { login: "contributor" }, author_association: "CONTRIBUTOR", head: { sha: "win91" }, labels: [], body: "Fixes #1\n\nValidation: npm test" });
     await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 92, title: "Also fix the cache", state: "open", user: { login: "other" }, author_association: "CONTRIBUTOR", head: { sha: "sib92" }, labels: [], body: "Fixes #1" });
 
     let gatePatchBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};

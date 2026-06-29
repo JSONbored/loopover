@@ -11,6 +11,9 @@ RUN npm run build && npm run validate:sourcemaps && npm prune --omit=dev
 
 FROM node:22-slim AS runtime
 # Least privilege: run as a non-root user.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 rees
 WORKDIR /app
 ENV NODE_ENV=production

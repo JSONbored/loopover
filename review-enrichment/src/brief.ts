@@ -22,6 +22,7 @@ import { scanSecretLog } from "./analyzers/secret-log.js";
 import { scanAssetWeight } from "./analyzers/asset-weight.js";
 import { scanTyposquat } from "./analyzers/typosquat.js";
 import { scanNativeBuild } from "./analyzers/native-build.js";
+import { scanCallerImpact } from "./analyzers/caller-impact.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
@@ -46,6 +47,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   assetWeight: (req, signal) => scanAssetWeight(req, fetch, { signal }),
   typosquat: (req, signal) => scanTyposquat(req, fetch, { signal }),
   nativeBuild: (req, signal) => scanNativeBuild(req, fetch, { signal }),
+  callerImpact: (req, signal) => scanCallerImpact(req, fetch, { signal }),
 };
 
 function runWithTimeout<T>(

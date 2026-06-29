@@ -193,6 +193,16 @@ export interface NativeBuildFinding {
   reason: string;
 }
 
+/** An exported top-level symbol the PR removes / renames / changes the signature of while it still has live callers
+ *  in files the PR did NOT touch (a hidden cross-file compile/runtime break), or a newly-exported symbol referenced
+ *  nowhere in the PR (dead-on-arrival). Reports the symbol name + the unchanged caller files only — never source. (#1509) */
+export interface CallerImpactFinding {
+  symbol: string;
+  kind: "removed-with-callers" | "changed-with-callers" | "dead-on-arrival";
+  /** Unchanged files (outside the PR's diff) that still reference the symbol. Empty for `dead-on-arrival`. */
+  callerFiles: string[];
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -210,6 +220,7 @@ export interface BriefFindings {
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
   nativeBuild?: NativeBuildFinding[];
+  callerImpact?: CallerImpactFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

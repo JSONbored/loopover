@@ -293,6 +293,30 @@ export function renderBrief(
     }
   }
 
+  const callerImpact = findings.callerImpact ?? [];
+  if (callerImpact.length) {
+    lines.push(
+      "### Cross-file API impact (callers in unchanged files / dead exports)",
+    );
+    for (const item of callerImpact) {
+      if (item.kind === "dead-on-arrival") {
+        lines.push(
+          `- ${safeCodeSpan(item.symbol)} is exported but referenced nowhere in this PR (dead-on-arrival) — wire it up, or drop the export`,
+        );
+        continue;
+      }
+      const verb =
+        item.kind === "removed-with-callers"
+          ? "removed/renamed but still referenced in"
+          : "signature-changed but still referenced in";
+      const files = item.callerFiles.map((f) => safeCodeSpan(f)).join(", ");
+      const count = item.callerFiles.length;
+      lines.push(
+        `- ${safeCodeSpan(item.symbol)} ${verb} ${count} unchanged file${count === 1 ? "" : "s"}: ${files} — update the callers or keep a compatibility shim`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

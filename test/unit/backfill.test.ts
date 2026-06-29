@@ -33,6 +33,7 @@ import {
   enrichInstallationHealth,
   fetchAndStorePullRequestFilesForReview,
   fetchLiveCiAggregate,
+  fetchLiveReviewThreadBlockers,
   fetchRequiredStatusContexts,
   isRateLimitedGitHubFailure,
   refreshContributorActivity,
@@ -2839,7 +2840,7 @@ describe("GitHub backfill", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it("keeps non-required failing and pending statuses advisory when required contexts are known", async () => {
+    it("fails completed non-required red checks while still reporting optional pending visibility", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -2866,10 +2867,10 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["trusted-required-ci"]));
 
-      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.ciState).toBe("failed");
       expect(aggregate.hasPending).toBe(true);
-      expect(aggregate.failingDetails).toEqual([]);
-      expect(aggregate.nonRequiredFailingDetails.map((detail) => detail.name).sort()).toEqual(["attacker/non-required-check", "attacker/non-required-status"]);
+      expect(aggregate.failingDetails.map((detail) => detail.name).sort()).toEqual(["attacker/non-required-check", "attacker/non-required-status"]);
+      expect(aggregate.nonRequiredFailingDetails).toEqual([]);
     });
 
     it("treats a visible required classic status that is still pending as pending CI", async () => {
@@ -3284,6 +3285,99 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "ci/overflow" })]);
     });
 
+  });
+
+  describe("fetchLiveReviewThreadBlockers", () => {
+    it("returns unresolved non-outdated scanner review threads as blockers", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() === "https://api.github.com/graphql") {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      {
+                        isResolved: false,
+                        isOutdated: false,
+                        path: "src/signals/redaction.ts",
+                        line: 30,
+                        comments: {
+                          nodes: [
+                            {
+                              body: "<!-- brin-pr-finding -->\n**P1:** PUBLIC_LOCAL_PATH_INLINE regex fails to match Windows backslash paths",
+                              url: "https://github.example/thread",
+                              author: { login: "superagent-security[bot]" },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const blockers = await fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1748, "public-token");
+
+      expect(blockers).toEqual([
+        expect.objectContaining({
+          title: "PUBLIC_LOCAL_PATH_INLINE regex fails to match Windows backslash paths",
+          priority: "P1",
+          path: "src/signals/redaction.ts",
+          line: 30,
+          authorLogin: "superagent-security[bot]",
+          url: "https://github.example/thread",
+          scannerFinding: true,
+        }),
+      ]);
+    });
+
+    it("ignores resolved, outdated, own-bot, and empty review threads", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() === "https://api.github.com/graphql") {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      { isResolved: true, isOutdated: false, path: "a.ts", line: 1, comments: { nodes: [{ body: "resolved", author: { login: "scanner[bot]" } }] } },
+                      { isResolved: false, isOutdated: true, path: "b.ts", line: 2, comments: { nodes: [{ body: "outdated", author: { login: "scanner[bot]" } }] } },
+                      { isResolved: false, isOutdated: false, path: "c.ts", line: 3, comments: { nodes: [{ body: "own bot", author: { login: "gittensory-orb[bot]" } }] } },
+                      { isResolved: false, isOutdated: false, path: "d.ts", line: 4, comments: { nodes: [{ body: "   ", author: { login: "scanner[bot]" } }, null] } },
+                      null,
+                    ],
+                  },
+                },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1, "public-token")).resolves.toEqual([]);
+    });
+
+    it("fails open without a token, malformed repo name, or GraphQL response", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const fetchSpy = vi.fn(async () => new Response("boom", { status: 500 }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1, undefined)).resolves.toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      await expect(fetchLiveReviewThreadBlockers(env, "malformed", 1, "public-token")).resolves.toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1, "public-token")).resolves.toEqual([]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("fetchRequiredStatusContexts", () => {

@@ -74,8 +74,7 @@ describe("deriveUnifiedStatus", () => {
   it("a guarded-path hold downgrades a would-be-ready PR to held — never 'safe to merge' (#guarded-hold-comment)", () => {
     // A clean+green PR that touches a hard-guardrail path is HELD for owner review, so the comment says held.
     expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { heldForReview: true })).toBe("held");
-    // A guarded close with RED required CI still closes (the red check overrides the guardrail hold), so the
-    // headline stays "blocked"/Closed. The held-vs-closed nuance for non-red guarded closes is covered below.
+    // A guarded close still closes; guardrails hold only otherwise-ready PRs.
     expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { heldForReview: true })).toBe("blocked");
     // Without the hold flag, the same clean+green PR is ready.
     expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { heldForReview: false })).toBe("ready");
@@ -85,10 +84,10 @@ describe("deriveUnifiedStatus", () => {
     // #9: an owner / automation-bot author is NEVER auto-closed → a gate "close" verdict renders held while CI is green/unknown.
     expect(deriveUnifiedStatus({ ...base, decision: "close" }, { neverClosed: true })).toBe("held");
     expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { neverClosed: true })).toBe("blocked");
-    // #8: a guarded-path close is the disposition's HOLD (owner review) unless a red required check forces it.
-    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "passed" } }, { heldForReview: true })).toBe("held");
-    expect(deriveUnifiedStatus({ ...base, decision: "close" }, { heldForReview: true })).toBe("held"); // CI not yet reported → held
-    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { heldForReview: true })).toBe("blocked"); // red required CI → real close
+    // Guardrails do not downgrade a close/blocker verdict to held.
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "passed" } }, { heldForReview: true })).toBe("blocked");
+    expect(deriveUnifiedStatus({ ...base, decision: "close" }, { heldForReview: true })).toBe("blocked");
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } }, { heldForReview: true })).toBe("blocked");
     // A genuine contributor close (no guard, not owner/bot) still headlines Closed/blocked.
     expect(deriveUnifiedStatus({ ...base, decision: "close" })).toBe("blocked");
     expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "failed" } })).toBe("blocked");

@@ -30,12 +30,8 @@ export function isGroundingEnabled(env: { GITTENSORY_REVIEW_GROUNDING?: string |
   return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_GROUNDING ?? "");
 }
 
-/** True when the AI CI-refutation (#ai-ci-refutation) is ACTIVE for this repo: grounding is ON (the converged AI
- *  review feeds the finished CI status to the reviewer, so enforcing that ground truth is coherent) AND the repo
- *  is convergence-allowlisted. Centralized so the disposition refutation (agent-actions) and the public-comment
- *  reconciliation gate on the SAME condition — the merge/close action and the rendered comment can never disagree.
- *  A single call (not an inline `&&` at the call sites) so the processor carries no branch and this is the one
- *  place the condition is unit-tested. */
+/** Historical compatibility helper for the removed AI CI-refutation path. Grounding still feeds CI/full-file truth
+ *  into the reviewer prompt, but green CI no longer rewrites a configured AI blocker into success. */
 export function aiCiRefutationActive(env: Env, repoFullName: string): boolean {
   return isGroundingEnabled(env) && isConvergenceRepoAllowed(env, repoFullName);
 }

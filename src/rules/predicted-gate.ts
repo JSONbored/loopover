@@ -222,8 +222,8 @@ export function buildPredictedGateVerdict(args: {
   const pack: GatePolicyPack = gate.pack ?? "gittensor";
   const effectiveConfirmedContributor = pack === "oss-anti-slop" ? undefined : args.confirmedContributor;
 
-  // Case-insensitive author match so the PREDICTOR agrees with the live gate (which matches case-insensitively);
-  // otherwise a contributor could see false first-time-grace optimism before a one-shot loss. (#audit-§4)
+  // Case-insensitive author match so the PREDICTOR agrees with the live gate (which matches case-insensitively).
+  // First-time grace is retained as compatibility context, but blocker findings are no longer softened by it.
   const contributorLoginLc = input.contributorLogin?.toLowerCase();
   const authorHistory = pullRequests.filter((pr) => pr.repoFullName === input.repoFullName && pr.authorLogin?.toLowerCase() === contributorLoginLc);
 

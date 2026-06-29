@@ -24,9 +24,8 @@ import { METAGRAPHED_LANE_SPEC } from "./content-lane/registry-logic";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
 import { makeGithubFileFetcher } from "./grounding-wire";
 
-// Deterministic surface-lane finding codes. DELIBERATELY NOT in AI_JUDGMENT_BLOCKER_CODES — a deterministic
-// surface close is a FACT, so the green-CI refutation (reconcileGateEvaluationForGreenCi) must never flip it to
-// a merge. Regression-asserted in the test suite.
+// Deterministic surface-lane finding codes. DELIBERATELY NOT in AI_JUDGMENT_BLOCKER_CODES; surface closes are
+// facts, and blocker findings must never be flipped to merge by green CI.
 const SURFACE_REJECT_CODE = "surface_lane_reject";
 const SURFACE_MANUAL_CODE = "surface_lane_manual";
 const SURFACE_TITLE = "Registry surface review";

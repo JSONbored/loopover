@@ -88,7 +88,7 @@ describe("isGroundingEnabled", () => {
   });
 });
 
-describe("aiCiRefutationActive (#ai-ci-refutation gate)", () => {
+describe("aiCiRefutationActive compatibility helper", () => {
   const env = (grounding: string, repos: string) => ({ GITTENSORY_REVIEW_GROUNDING: grounding, GITTENSORY_REVIEW_REPOS: repos }) as unknown as Env;
   const REPO = "JSONbored/metagraphed";
 

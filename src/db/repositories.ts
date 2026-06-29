@@ -304,7 +304,21 @@ export async function upsertPullRequestFromGitHub(
 ): Promise<PullRequestRecord> {
   const record = toPullRequestRecord(repoFullName, pr);
   const db = getDb(env.DB);
-  const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? nowIso()) : null;
+  const syncedAt = nowIso();
+  const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? syncedAt) : null;
+  const linkedIssuesJson = jsonString(record.linkedIssues);
+  const observedLinkedIssueClaimedAt = record.linkedIssues.length > 0 ? syncedAt : null;
+  const existingClaimRows = await db
+    .select({ linkedIssuesJson: pullRequests.linkedIssuesJson, linkedIssueClaimedAt: pullRequests.linkedIssueClaimedAt })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
+    .limit(1);
+  const linkedIssueClaimedAt =
+    record.linkedIssues.length === 0
+      ? null
+      : existingClaimRows[0]?.linkedIssuesJson === linkedIssuesJson
+        ? (existingClaimRows[0].linkedIssueClaimedAt ?? observedLinkedIssueClaimedAt)
+        : observedLinkedIssueClaimedAt;
   await db
     .insert(pullRequests)
     .values({
@@ -321,10 +335,11 @@ export async function upsertPullRequestFromGitHub(
       mergedAt: pr.merged_at ?? undefined,
       htmlUrl: pr.html_url,
       labelsJson: jsonString(record.labels),
-      linkedIssuesJson: jsonString(record.linkedIssues),
+      linkedIssuesJson,
+      linkedIssueClaimedAt,
       lastSeenOpenAt,
       payloadJson: jsonString(compactGitHubPayload(pr)),
-      updatedAt: nowIso(),
+      updatedAt: syncedAt,
     })
     .onConflictDoUpdate({
       target: [pullRequests.repoFullName, pullRequests.number],
@@ -339,13 +354,17 @@ export async function upsertPullRequestFromGitHub(
         mergedAt: pr.merged_at ?? undefined,
         htmlUrl: pr.html_url,
         labelsJson: jsonString(record.labels),
-        linkedIssuesJson: jsonString(record.linkedIssues),
+        linkedIssuesJson,
+        linkedIssueClaimedAt:
+          record.linkedIssues.length === 0
+            ? null
+            : sql`CASE WHEN ${pullRequests.linkedIssuesJson} = ${linkedIssuesJson} THEN COALESCE(${pullRequests.linkedIssueClaimedAt}, ${observedLinkedIssueClaimedAt}) ELSE ${observedLinkedIssueClaimedAt} END`,
         lastSeenOpenAt,
         payloadJson: jsonString(compactGitHubPayload(pr)),
-        updatedAt: nowIso(),
+        updatedAt: syncedAt,
       },
     });
-  return record;
+  return { ...record, linkedIssueClaimedAt };
 }
 
 export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issue: GitHubIssuePayload, options: { seenOpenAt?: string } = {}): Promise<IssueRecord> {
@@ -4201,6 +4220,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
     closedAt: payload.closed_at,
+    linkedIssueClaimedAt: row.linkedIssueClaimedAt,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,

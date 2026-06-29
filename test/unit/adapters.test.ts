@@ -124,6 +124,24 @@ describe("small adapters and normalizers", () => {
     await expect(fetchPublicContributorProfile("missing")).resolves.toMatchObject({ login: "missing", source: "unavailable", topLanguages: [] });
   });
 
+  it("normalizes non-numeric public_repos/followers from the users API to 0 (finiteCount)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      // GitHub can return null/absent counts for some account shapes, or a BYOK proxy may malform them;
+      // these must degrade to a finite 0 instead of propagating null/string onto the evidence surface.
+      if (url.endsWith("/users/nullcounts")) {
+        return Response.json({ login: "nullcounts", public_repos: null, followers: "42", created_at: "2026-01-01T00:00:00Z" });
+      }
+      if (url.includes("/users/nullcounts/repos?")) {
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("nullcounts");
+    expect(profile).toMatchObject({ login: "nullcounts", source: "github", publicRepos: 0, followers: 0 });
+  });
+
   it("paginates past 100 repos so contributors with large portfolios get accurate topLanguages", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();

@@ -2,14 +2,17 @@
 // `claude --print` reviewer (which only sees the diff) is blind to:
 //   1. An exported top-level symbol the PR removes / renames / changes the signature of that STILL has live callers
 //      in files the PR did NOT touch — a hidden compile/runtime break. Callers are resolved on the repo's default
-//      branch via the GitHub Code Search API, which is exactly where the pre-existing (about-to-break) callers live.
+//      branch via the GitHub Code Search API (text-match), which is exactly where the pre-existing (about-to-break)
+//      callers live. A hit only counts when it is in a CODE file AND the matched fragment uses the symbol as a real
+//      reference (not a doc/markdown match, comment, or string mention) — Code Search alone is a plain text search.
 //   2. A newly-exported symbol referenced nowhere in the PR — dead-on-arrival. Code Search indexes the DEFAULT
 //      branch only, so a brand-new symbol is invisible to it; this case is therefore judged from the diff (the new
-//      export is dead if no added line outside its own declaration references it), and entrypoint files (index.*,
-//      *.d.ts) are skipped because public API is intentionally unused internally.
+//      export is dead if no added CODE line — comments/strings excluded — outside its own declaration references it),
+//      and entrypoint files (index.*, *.d.ts) are skipped because public API is intentionally unused internally.
 //
-// Reports symbol names + unchanged caller file paths only — never source. Uses the request's short-lived githubToken
-// for Code Search; fail-safe: returns [] without a token, and a failed/rate-limited search drops that symbol only.
+// Reports symbol names + unchanged caller file paths only — never source. The Code-Search path uses the request's
+// short-lived githubToken; the diff-only dead-on-arrival path needs neither token nor network. Fail-safe: a failed /
+// rate-limited search drops that symbol only.
 import type { EnrichRequest, CallerImpactFinding } from "../types.js";
 
 const GITHUB_API = "https://api.github.com";
@@ -21,6 +24,8 @@ const CODE_SEARCH_PER_PAGE = 20;
 
 const REPO_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const ENTRYPOINT_RE = /(^|\/)index\.[cm]?[jt]sx?$|\.d\.ts$/; // public-API files: skip dead-on-arrival here
+// Only a code file can be a real "caller"; a match in a doc/markdown/text/config file is never a compile/runtime dep.
+const CODE_FILE_RE = /\.(?:m?[jt]sx?|cts|mts|vue|svelte)$/i;
 
 interface ScanOptions {
   signal?: AbortSignal;
@@ -53,6 +58,36 @@ function githubHeaders(token: string): Record<string, string> {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Strip line/block comments and string/template-literal CONTENT from a single line, so a symbol that appears only in
+ *  a comment or string is not mistaken for a real code reference. Best-effort single-line scrub (this analyzer is
+ *  advisory): a comment-only line (`//…`, JSDoc `*…`, `/*…`) is dropped entirely. */
+export function stripCommentsAndStrings(line: string): string {
+  const trimmed = line.trim();
+  if (
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("*") ||
+    trimmed.startsWith("/*")
+  ) {
+    return "";
+  }
+  return line
+    .replace(/\/\*.*?\*\//g, " ") // inline block comment
+    .replace(/\/\/.*$/, " ") // trailing line comment
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""') // double-quoted string content
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''") // single-quoted string content
+    .replace(/`(?:[^`\\]|\\.)*`/g, "``"); // template-literal content
+}
+
+/** True when `symbol` appears as a real code reference (a whole identifier in non-comment, non-string code) somewhere
+ *  in `code` — used to confirm a Code Search hit / a diff line is an actual usage, not a doc/comment/string mention. */
+export function referencesSymbol(code: string, symbol: string): boolean {
+  const re = new RegExp(`(?<![\\w$])${escapeRegExp(symbol)}(?![\\w$])`);
+  for (const rawLine of code.split("\n")) {
+    if (re.test(stripCommentsAndStrings(rawLine))) return true;
+  }
+  return false;
 }
 
 /** Exported top-level identifier(s) declared on a single source line. Handles `export function|class|const|let|var|
@@ -113,6 +148,36 @@ interface DiffExports {
 
 const norm = (line: string): string => line.trim().replace(/\s+/g, " ");
 
+/** Parse exported symbol names from a sequence of source lines (diff markers already stripped), joining a multiline
+ *  `export { … }` block that spans several lines into one statement. Returns one entry per export statement. */
+export function extractExports(
+  lines: string[],
+): Array<{ names: string[]; declText: string }> {
+  const out: Array<{ names: string[]; declText: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    // A `export {` / `export type {` that does not close its brace on the same line — accumulate until `}` (bounded).
+    if (/^export\s+(?:type\s+)?\{/.test(trimmed) && !trimmed.includes("}")) {
+      const parts = [line];
+      let j = i + 1;
+      while (j < lines.length && j - i <= 50) {
+        parts.push(lines[j]!);
+        if (lines[j]!.includes("}")) break;
+        j++;
+      }
+      const joined = norm(parts.join(" "));
+      const names = parseExportedNames(joined);
+      if (names.length) out.push({ names, declText: joined });
+      i = j;
+      continue;
+    }
+    const names = parseExportedNames(line);
+    if (names.length) out.push({ names, declText: norm(line) });
+  }
+  return out;
+}
+
 /** Collect the PR's exported-symbol churn from every file patch. */
 export function collectDiffExports(files: NonNullable<EnrichRequest["files"]>): DiffExports {
   const removed = new Map<string, string>();
@@ -123,13 +188,13 @@ export function collectDiffExports(files: NonNullable<EnrichRequest["files"]>): 
   for (const file of files) {
     if (!file.patch) continue;
     const { added: addedSrc, removed: removedSrc } = splitPatch(file.patch);
-    for (const src of removedSrc) {
-      for (const name of parseExportedNames(src)) removed.set(name, norm(src));
+    for (const { names, declText } of extractExports(removedSrc)) {
+      for (const name of names) removed.set(name, declText);
     }
-    for (const src of addedSrc) {
-      addedLines.push(src);
-      for (const name of parseExportedNames(src)) {
-        added.set(name, norm(src));
+    for (const src of addedSrc) addedLines.push(src);
+    for (const { names, declText } of extractExports(addedSrc)) {
+      for (const name of names) {
+        added.set(name, declText);
         if (!addedExportFile.has(name)) addedExportFile.set(name, file.path);
       }
     }
@@ -142,9 +207,9 @@ export function collectDiffExports(files: NonNullable<EnrichRequest["files"]>): 
 export function isReferencedInDiff(symbol: string, addedLines: string[]): boolean {
   const re = new RegExp(`(?<![\\w$])${escapeRegExp(symbol)}(?![\\w$])`);
   for (const line of addedLines) {
-    if (!re.test(line)) continue;
     if (parseExportedNames(line).includes(symbol)) continue; // the export declaration itself
-    return true;
+    // A mention only in a comment or string is NOT a real reference, so it must not suppress a dead-on-arrival find.
+    if (re.test(stripCommentsAndStrings(line))) return true;
   }
   return false;
 }
@@ -162,13 +227,25 @@ async function searchExternalCallers(
   try {
     const query = `"${symbol}" repo:${owner}/${repo}`;
     const url = `${GITHUB_API}/search/code?q=${encodeURIComponent(query)}&per_page=${CODE_SEARCH_PER_PAGE}`;
-    const res = await fetchImpl(url, { headers: githubHeaders(token), signal });
+    // text-match media type returns the matched fragments, so a hit can be confirmed as a real reference rather than
+    // a doc/comment/string mention (Code Search itself is a plain text search).
+    const res = await fetchImpl(url, {
+      headers: { ...githubHeaders(token), Accept: "application/vnd.github.text-match+json" },
+      signal,
+    });
     if (!res.ok) return null;
-    const json = (await res.json()) as { items?: Array<{ path?: string }> };
+    const json = (await res.json()) as {
+      items?: Array<{ path?: string; text_matches?: Array<{ fragment?: string }> }>;
+    };
     const files = new Set<string>();
     for (const item of json.items ?? []) {
-      if (typeof item.path === "string" && !changed.has(item.path)) {
-        files.add(item.path);
+      const path = item.path;
+      // A caller must be an UNCHANGED CODE file whose matched fragment uses the symbol as a real reference.
+      if (typeof path !== "string" || changed.has(path) || !CODE_FILE_RE.test(path)) {
+        continue;
+      }
+      if ((item.text_matches ?? []).some((m) => referencesSymbol(m.fragment ?? "", symbol))) {
+        files.add(path);
       }
     }
     return [...files].slice(0, MAX_CALLER_FILES);
@@ -187,7 +264,7 @@ export async function scanCallerImpact(
   const token = req.githubToken;
   const repo = parseRepo(req.repoFullName);
   const files = req.files ?? [];
-  if (!token || !repo || files.length === 0) return [];
+  if (!repo || files.length === 0) return [];
 
   const { removed, added, addedLines, addedExportFile } = collectDiffExports(files);
   if (removed.size === 0 && added.size === 0) return [];
@@ -200,21 +277,24 @@ export async function scanCallerImpact(
 
   const findings: CallerImpactFinding[] = [];
 
-  // Removed / renamed / signature-changed exports → look for callers in unchanged files (bounded Code Search budget).
-  let searched = 0;
-  for (const [symbol, removedText] of removed) {
-    if (searched >= MAX_SYMBOLS_SEARCHED) break;
-    const addedText = added.get(symbol);
-    // Present on both sides with an IDENTICAL declaration ⇒ moved/reformatted, not a real change ⇒ skip.
-    if (addedText !== undefined && addedText === removedText) continue;
-    searched++;
-    const callerFiles = await searchExternalCallers(symbol, repo.owner, repo.repo, changed, token, fetchImpl, options.signal);
-    if (!callerFiles || callerFiles.length === 0) continue;
-    findings.push({
-      symbol,
-      kind: addedText === undefined ? "removed-with-callers" : "changed-with-callers",
-      callerFiles: callerFiles.sort(),
-    });
+  // Removed / renamed / signature-changed exports → callers in unchanged files. Needs the token for Code Search;
+  // skipped without one. Bounded by the Code Search rate budget.
+  if (token) {
+    let searched = 0;
+    for (const [symbol, removedText] of removed) {
+      if (searched >= MAX_SYMBOLS_SEARCHED) break;
+      const addedText = added.get(symbol);
+      // Present on both sides with an IDENTICAL declaration ⇒ moved/reformatted, not a real change ⇒ skip.
+      if (addedText !== undefined && addedText === removedText) continue;
+      searched++;
+      const callerFiles = await searchExternalCallers(symbol, repo.owner, repo.repo, changed, token, fetchImpl, options.signal);
+      if (!callerFiles || callerFiles.length === 0) continue;
+      findings.push({
+        symbol,
+        kind: addedText === undefined ? "removed-with-callers" : "changed-with-callers",
+        callerFiles: callerFiles.sort(),
+      });
+    }
   }
 
   // Dead-on-arrival: newly-exported symbols (not also removed) referenced nowhere in the diff. Diff-only — Code

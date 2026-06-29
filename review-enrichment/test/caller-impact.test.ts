@@ -5,8 +5,10 @@ import assert from "node:assert/strict";
 import {
   parseRepo,
   parseExportedNames,
+  extractExports,
   collectDiffExports,
   isReferencedInDiff,
+  referencesSymbol,
   scanCallerImpact,
 } from "../dist/analyzers/caller-impact.js";
 import { renderBrief } from "../dist/render.js";
@@ -88,11 +90,40 @@ test("parseRepo rejects unsafe names", () => {
   assert.equal(parseRepo("../x"), null);
 });
 
+test("referencesSymbol counts real code references, not comments or strings", () => {
+  assert.equal(referencesSymbol("import { foo } from './x';", "foo"), true);
+  assert.equal(referencesSymbol("bar(foo);", "foo"), true);
+  assert.equal(referencesSymbol("// uses foo here", "foo"), false); // line comment
+  assert.equal(referencesSymbol(" * @param foo the thing", "foo"), false); // JSDoc continuation
+  assert.equal(referencesSymbol("const s = 'foo';", "foo"), false); // string literal
+  assert.equal(referencesSymbol("const t = `foo`;", "foo"), false); // template literal
+  assert.equal(referencesSymbol("notfoo + foobar", "foo"), false); // substring only
+});
+
+test("extractExports joins a multiline export { } block", () => {
+  assert.deepEqual(
+    extractExports(["export {", "  alpha,", "  beta,", "};"]).flatMap((e) => e.names),
+    ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    extractExports(["export const single = 1;"]).flatMap((e) => e.names),
+    ["single"],
+  );
+});
+
 // ── scanCallerImpact ──────────────────────────────────────────────────────────
 
 test("scanCallerImpact: a removed export with external callers is flagged; changed files are excluded", async () => {
   const fetchImpl = router([
-    ["%22foo%22", res({ items: [{ path: "src/caller.ts" }, { path: "src/lib.ts" }] })],
+    [
+      "%22foo%22",
+      res({
+        items: [
+          { path: "src/caller.ts", text_matches: [{ fragment: "import { foo } from './lib';\nfoo();" }] },
+          { path: "src/lib.ts", text_matches: [{ fragment: "export function foo() {}" }] },
+        ],
+      }),
+    ],
   ]);
   const out = await scanCallerImpact(
     {
@@ -111,7 +142,7 @@ test("scanCallerImpact: a removed export with external callers is flagged; chang
 
 test("scanCallerImpact: a signature change with external callers is flagged as changed-with-callers", async () => {
   const fetchImpl = router([
-    ["%22bar%22", res({ items: [{ path: "src/caller.ts" }] })],
+    ["%22bar%22", res({ items: [{ path: "src/caller.ts", text_matches: [{ fragment: "bar(1);" }] }] })],
   ]);
   const out = await scanCallerImpact(
     {
@@ -227,6 +258,56 @@ test("scanCallerImpact: an unsafe repoFullName is rejected before any fetch", as
     throwingFetch,
   );
   assert.deepEqual(out, []);
+});
+
+test("scanCallerImpact: a hit only in a comment, string, or markdown is NOT counted as a caller", async () => {
+  const fetchImpl = router([
+    [
+      "%22foo%22",
+      res({
+        items: [
+          { path: "src/comment.ts", text_matches: [{ fragment: "// foo is documented here" }] },
+          { path: "docs/readme.md", text_matches: [{ fragment: "the foo helper is great" }] },
+          { path: "src/strings.ts", text_matches: [{ fragment: "const label = 'foo';" }] },
+        ],
+      }),
+    ],
+  ]);
+  const out = await scanCallerImpact(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      githubToken: "t",
+      files: [{ path: "src/lib.ts", patch: "@@ -1,1 +0,0 @@\n-export function foo(): void;" }],
+    },
+    fetchImpl,
+  );
+  assert.deepEqual(out, []); // comment-only, markdown, and string-only matches are not real callers
+});
+
+test("scanCallerImpact: a comment mention does not suppress dead-on-arrival", async () => {
+  const out = await scanCallerImpact(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      githubToken: "t",
+      files: [{ path: "src/util.ts", patch: "@@ -0,0 +1,2 @@\n+export const newThing = 1;\n+// TODO wire newThing later" }],
+    },
+    throwingFetch,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, "dead-on-arrival");
+  assert.equal(out[0].symbol, "newThing");
+});
+
+test("scanCallerImpact: dead-on-arrival runs without a token (diff-only, no network)", async () => {
+  const out = await scanCallerImpact(
+    { repoFullName: "o/r", prNumber: 1, files: [{ path: "src/util.ts", patch: "@@ -0,0 +1,1 @@\n+export const orphan = 1;" }] },
+    throwingFetch, // no token ⇒ no network; must not be called
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, "dead-on-arrival");
+  assert.equal(out[0].symbol, "orphan");
 });
 
 // ── render ──────────────────────────────────────────────────────────────────────

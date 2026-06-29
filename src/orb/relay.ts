@@ -294,11 +294,12 @@ export async function forwardOrbEvent(
   // issueOrbEnrollment INSERTs a new row per enrollment without revoking prior enrolled rows for the same
   // installation_id. Without ORDER BY, .first() is nondeterministic — a stale row (no relay / old URL) can win
   // after re-enrollment (#1783). Prefer enrollments with a registered relay (SQLite sorts NULL first on DESC),
-  // then the newest relay registration, then the newest enrollment, with created_at/enroll_id tie-breakers when
-  // SQLite CURRENT_TIMESTAMP ties at second resolution (#1783).
+  // then the newest relay registration, then the newest enrollment. The final tie-break is the implicit rowid
+  // (monotonic insertion order) — enroll_id is a random opaque token, and CURRENT_TIMESTAMP ties at second
+  // resolution, so rowid is the only stable "most recently inserted" key when those collide (#1783).
   const row = await env.DB
     .prepare(
-      "SELECT relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC, created_at DESC, enroll_id DESC",
+      "SELECT relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC, rowid DESC",
     )
     .bind(args.installationId)
     .first<{ relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();

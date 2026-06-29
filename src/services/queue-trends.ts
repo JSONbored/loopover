@@ -96,7 +96,7 @@ function buildWindow(windowDays: 7 | 14 | 30, totals: RepoGithubTotalsSnapshotRe
   const stalePullRequestRate = latestQueue ? staleRate(latestQueue) : null;
   const baselineStaleRate = baselineQueue ? staleRate(baselineQueue) : null;
   const duplicateTrend = latestQueue && baselineQueue ? latestQueue.collisionClusters - baselineQueue.collisionClusters : null;
-  const reviewVelocityPerDay = computeReviewVelocityPerDay(mergedPullRequests, closedUnmergedPullRequests, observedDays);
+  const reviewVelocityPerDay = round((mergedPullRequests + closedUnmergedPullRequests) / Math.max(observedDays, 1));
   const pullRequestGrowth = latest.openPullRequestsTotal - baseline.openPullRequestsTotal;
   return {
     windowDays,
@@ -112,14 +112,8 @@ function buildWindow(windowDays: 7 | 14 | 30, totals: RepoGithubTotalsSnapshotRe
     stalePullRequestRate,
     stalePullRequestRateDelta: stalePullRequestRate !== null && baselineStaleRate !== null ? round(stalePullRequestRate - baselineStaleRate) : null,
     duplicateTrend,
-    summary: `${windowDays}d trend: PR queue ${signed(pullRequestGrowth)}, review velocity ${reviewVelocityPerDay === null ? "n/a" : `${reviewVelocityPerDay}/day`}.`,
+    summary: `${windowDays}d trend: PR queue ${signed(pullRequestGrowth)}, review velocity ${reviewVelocityPerDay}/day.`,
   };
-}
-
-/** Returns null when the observation window spans zero days (avoids divide-by-zero / Infinity). */
-export function computeReviewVelocityPerDay(mergedPullRequests: number, closedUnmergedPullRequests: number, observedDays: number): number | null {
-  if (observedDays === 0) return null;
-  return round((mergedPullRequests + closedUnmergedPullRequests) / observedDays);
 }
 
 function trendWarnings(windows: QueueTrendWindow[]): string[] {

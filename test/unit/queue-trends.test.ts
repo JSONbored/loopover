@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getRepoQueueTrendSnapshot, persistRepoGithubTotalsSnapshot, persistSignalSnapshot, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { generateSignalSnapshots } from "../../src/queue/processors";
-import { buildQueueTrendReport, buildUnavailableQueueTrendReport, computeReviewVelocityPerDay, type QueueTrendReport } from "../../src/services/queue-trends";
+import { buildQueueTrendReport, buildUnavailableQueueTrendReport, type QueueTrendReport } from "../../src/services/queue-trends";
 import type { RepoGithubTotalsSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -55,9 +55,30 @@ describe("queue trend windows", () => {
     expect(report.warnings).toEqual(expect.arrayContaining([expect.stringContaining("stale PR rate"), expect.stringContaining("duplicate cluster")]));
   });
 
-  it("returns null review velocity when observedDays is zero", () => {
-    expect(computeReviewVelocityPerDay(7, 3, 0)).toBeNull();
-    expect(computeReviewVelocityPerDay(7, 3, 7)).toBe(1.43);
+  it("does not emit Infinity review velocity when latest totals snapshots share fetchedAt", () => {
+    const sharedAt = atDaysAgo(0);
+    const report = buildQueueTrendReport({
+      repoFullName: "owner/repo",
+      totalsSnapshots: [
+        totals(7, { openIssues: 10, openPrs: 5, merged: 10, closed: 4 }),
+        { ...totals(0, { openIssues: 8, openPrs: 3, merged: 11, closed: 4 }), id: "totals-dup-a", fetchedAt: sharedAt },
+        { ...totals(0, { openIssues: 8, openPrs: 3, merged: 17, closed: 7 }), id: "totals-dup-b", fetchedAt: sharedAt },
+      ],
+    });
+
+    expect(report.status).toBe("ready");
+    for (const window of report.windows.filter((entry) => entry.status === "ready")) {
+      expect(window.reviewVelocityPerDay).not.toBe(Infinity);
+      expect(window.summary).not.toContain("Infinity");
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
+    }
+    expect(report.windows[0]).toMatchObject({
+      windowDays: 7,
+      mergedPullRequests: 7,
+      closedUnmergedPullRequests: 3,
+      reviewVelocityPerDay: 1.43,
+      summary: expect.stringContaining("review velocity 1.43/day"),
+    });
   });
 
   it("returns clear unavailable windows when history is missing", () => {

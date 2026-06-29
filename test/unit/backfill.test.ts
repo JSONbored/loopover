@@ -34,6 +34,7 @@ import {
   fetchAndStorePullRequestFilesForReview,
   fetchLiveCiAggregate,
   fetchRequiredStatusContexts,
+  isRateLimitedGitHubFailure,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -1304,6 +1305,43 @@ describe("GitHub backfill", () => {
     expect(await listLatestGitHubRateLimitObservations(env)).toEqual(
       expect.arrayContaining([expect.objectContaining({ repoFullName: "JSONbored/gittensory", resource: "rest", remaining: 0, statusCode: 403 })]),
     );
+  });
+
+  it("treats a permission 403 (x-ratelimit-remaining > 0, no Retry-After) as an error, not a rate-limit wait (#1746)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({
+          name: "gittensory",
+          full_name: "JSONbored/gittensory",
+          private: false,
+          default_branch: "main",
+          language: "TypeScript",
+          owner: { login: "JSONbored" },
+        });
+      }
+      if (url.includes("/labels?") || url.includes("/pulls?")) return Response.json([]);
+      if (url.includes("/issues?")) {
+        // A genuine permission failure: the bucket is NOT exhausted and there is no Retry-After or
+        // secondary-limit body, so it must NOT be misclassified as a rate limit (previously every 403 was).
+        return new Response("Resource not accessible by integration", {
+          status: 403,
+          headers: { "x-ratelimit-limit": "5000", "x-ratelimit-remaining": "4999" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRegisteredRepositories(env, { force: true });
+
+    const [repoResult] = result.repos;
+    expect(repoResult?.status).not.toBe("rate_limited");
+    expect(repoResult?.dataQuality?.rateLimited).toBe(false);
+    const segments = await listRepoSyncSegments(env, "JSONbored/gittensory");
+    expect(segments.find((segment) => segment.segment === "open_issues")?.status).toBe("error");
+    expect(segments.every((segment) => segment.status !== "rate_limited")).toBe(true);
   });
 
   it("queues resumable repo segments without wiping previous usable counts", async () => {
@@ -3274,6 +3312,37 @@ describe("GitHub backfill", () => {
       (env as Env & { GITTENSORY_REQUIRED_CI_CONTEXTS?: string }).GITTENSORY_REQUIRED_CI_CONTEXTS = "stale-required-context";
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+    });
+  });
+
+  describe("isRateLimitedGitHubFailure", () => {
+    it("does not treat a bare permission 403 (remaining > 0, no Retry-After, no secondary body) as a rate limit", () => {
+      expect(
+        isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: null, remaining: "4999", body: "Resource not accessible by integration" }),
+      ).toBe(false);
+    });
+
+    it("treats a 403 with an exhausted x-ratelimit-remaining as a rate limit", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: null, remaining: "0", body: "" })).toBe(true);
+    });
+
+    it("treats a 403 or 429 carrying a Retry-After header as a rate limit", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: "60", remaining: "100", body: "" })).toBe(true);
+      expect(isRateLimitedGitHubFailure({ statusCode: 429, retryAfter: "1", remaining: null, body: "" })).toBe(true);
+    });
+
+    it("treats a secondary-limit / abuse body as a rate limit", () => {
+      expect(
+        isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: null, remaining: "100", body: "You have exceeded a secondary rate limit" }),
+      ).toBe(true);
+    });
+
+    it("does not treat a 429 without any rate-limit signal as a rate limit", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 429, retryAfter: null, remaining: "100", body: "" })).toBe(false);
+    });
+
+    it("does not treat a non-403/429 failure as a rate limit even with a matching body", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 500, retryAfter: null, remaining: null, body: "secondary rate limit" })).toBe(false);
     });
   });
 

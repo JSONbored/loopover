@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { getWebhookEvent, recordWebhookEvent } from "../db/repositories";
 import type { GitHubWebhookPayload, JobMessage } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
+import { parsePositiveInt } from "../utils/json";
 import { relayVerify } from "../orb/relay";
 import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { isSelfAuthoredWebhookNoise } from "./self-authored";
@@ -135,13 +136,6 @@ export async function handleOrbRelay(c: Context<{ Bindings: Env }>): Promise<Res
     return c.json({ error: "invalid_signature" }, 401);
   }
   return enqueueVerifiedWebhook(c, deliveryId, eventName, rawBody);
-}
-
-function parsePositiveInt(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
 }
 
 async function readBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {

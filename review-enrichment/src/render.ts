@@ -40,6 +40,13 @@ function formatBytes(n: number): string {
   return `${n} B`;
 }
 
+function bytesLabel(value: number | null): string {
+  if (value === null) return "unknown";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)} KB`;
+  return `${value} B`;
+}
+
 /** Build the `promptSection` (verbatim splice) + a one-line `systemSuffix` from the findings. Empty when nothing found. */
 export function renderBrief(
   findings: BriefFindings,
@@ -121,6 +128,26 @@ export function renderBrief(
         : "";
       lines.push(
         `- \`${promptText(dep.package)}@${promptText(dep.version)}\` runs ${promptText(dep.hooks.join("/"))} on install${when}`,
+      );
+    }
+  }
+
+  const heavyDependencies = findings.heavyDependency ?? [];
+  if (heavyDependencies.length) {
+    lines.push(
+      "### Heavy dependencies used trivially (consider native code or a small helper)",
+    );
+    for (const dep of heavyDependencies) {
+      const locations = dep.usageLocations
+        .map((location) => safeCodeSpan(`${location.file}:${location.line}`))
+        .join(", ");
+      const dependencyCount =
+        dep.dependencyCount === null
+          ? "unknown deps"
+          : `${dep.dependencyCount} deps`;
+      const sizes = `install ${bytesLabel(dep.installSizeBytes)}, bundle ${bytesLabel(dep.bundleSizeBytes)}, gzip ${bytesLabel(dep.gzipSizeBytes)}`;
+      lines.push(
+        `- ${safeCodeSpan(`${dep.package}@${dep.version}`)} (${dep.ecosystem}): used ${dep.usageCount} time${dep.usageCount === 1 ? "" : "s"} at ${locations}; ${sizes}, ${dependencyCount}`,
       );
     }
   }
@@ -281,6 +308,18 @@ export function renderBrief(
     for (const item of iacMisconfigs) {
       lines.push(
         `- ${safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+      );
+    }
+  }
+
+  const nativeBuilds = findings.nativeBuild ?? [];
+  if (nativeBuilds.length) {
+    lines.push(
+      "### Native-build / install-cost dependencies (CI cold-start + cross-platform build cost)",
+    );
+    for (const item of nativeBuilds) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${item.reason}`,
       );
     }
   }

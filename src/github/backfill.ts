@@ -2288,7 +2288,7 @@ async function fetchPullRequestDetailsFromGraphQl(
   }`;
   const response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token);
   const pullRequest = response.data?.repository?.pullRequest;
-  if (!pullRequest) throw new GitHubApiError(`GitHub GraphQL failed for ${repoFullName} pull request #${pullNumber}: pull request not found`, 404, null, null);
+  if (!pullRequest) throw new GitHubApiError(`GitHub GraphQL failed for ${repoFullName} pull request #${pullNumber}: pull request not found`, 404, null, null, null, "");
   const files: GitHubFilePayload[] = (pullRequest.files?.nodes ?? []).flatMap((file) => {
     if (!file?.path) return [];
     const additions = Number(file.additions ?? 0);
@@ -2523,6 +2523,8 @@ async function githubJsonWithHeaders<T>(
       response.status,
       response.headers.get("x-ratelimit-reset"),
       response.headers.get("x-ratelimit-remaining"),
+      response.headers.get("retry-after"),
+      body,
     );
   }
   return {
@@ -2561,6 +2563,8 @@ async function githubGraphQl<T>(env: Env, query: string, token: string): Promise
       response.status,
       response.headers.get("x-ratelimit-reset"),
       response.headers.get("x-ratelimit-remaining"),
+      response.headers.get("retry-after"),
+      body,
     );
   }
   return (await response.json()) as T;
@@ -2721,14 +2725,32 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper:
   return results;
 }
 
+// Mirror of app.ts's isRateLimitedResponse, reconstructed from the status, rate-limit headers, and body that
+// a backfill REST/GraphQL failure carries. A 403/429 signals a rate limit ONLY when it has a Retry-After
+// header, an exhausted x-ratelimit-remaining, or a secondary-limit/abuse body. A bare 403 — "Resource not
+// accessible by integration", a missing scope, branch protection — is a real permission/other error: it must
+// surface as an error (or partial) rather than being recorded as a rate-limit wait and triggering backoff.
+// Exported for tests.
+export function isRateLimitedGitHubFailure(args: {
+  statusCode: number;
+  retryAfter: string | null;
+  remaining: string | null;
+  body: string;
+}): boolean {
+  if (args.statusCode !== 403 && args.statusCode !== 429) return false;
+  if (args.retryAfter != null) return true;
+  if (args.remaining === "0") return true;
+  return /secondary rate limit|\babuse\b|api rate limit exceeded/i.test(args.body);
+}
+
 class GitHubApiError extends Error {
   readonly rateLimitResetAt: string | undefined;
   readonly rateLimited: boolean;
 
-  constructor(message: string, readonly statusCode: number, resetHeader: string | null, remainingHeader: string | null) {
+  constructor(message: string, readonly statusCode: number, resetHeader: string | null, remainingHeader: string | null, retryAfterHeader: string | null, body: string) {
     super(message);
     this.name = "GitHubApiError";
-    this.rateLimited = statusCode === 403 || statusCode === 429 || remainingHeader === "0";
+    this.rateLimited = isRateLimitedGitHubFailure({ statusCode, retryAfter: retryAfterHeader, remaining: remainingHeader, body });
     this.rateLimitResetAt = resetHeader && Number.isFinite(Number(resetHeader)) ? new Date(Number(resetHeader) * 1000).toISOString() : undefined;
   }
 }

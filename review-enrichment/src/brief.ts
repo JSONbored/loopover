@@ -12,6 +12,7 @@ import { scanLockfileDrift } from "./analyzers/lockfile-drift.js";
 import { scanSecrets } from "./analyzers/secret-scan.js";
 import { scanLicenses } from "./analyzers/license-check.js";
 import { scanInstallScripts } from "./analyzers/install-scripts.js";
+import { scanHeavyDependencies } from "./analyzers/heavy-dependency.js";
 import { scanActionPins } from "./analyzers/actions-pin.js";
 import { scanEol } from "./analyzers/eol-check.js";
 import { scanRedos } from "./analyzers/redos.js";
@@ -21,6 +22,7 @@ import { scanSecretLog } from "./analyzers/secret-log.js";
 import { scanAssetWeight } from "./analyzers/asset-weight.js";
 import { scanTyposquat } from "./analyzers/typosquat.js";
 import { scanIacMisconfig } from "./analyzers/iac-misconfig.js";
+import { scanNativeBuild } from "./analyzers/native-build.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
@@ -34,6 +36,8 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   secret: (req) => scanSecrets(req),
   license: (req) => scanLicenses(req),
   installScript: (req) => scanInstallScripts(req),
+  heavyDependency: (req, signal) =>
+    scanHeavyDependencies(req, fetch, { signal }),
   actionPin: (req) => scanActionPins(req),
   eol: (req) => scanEol(req),
   redos: (req) => scanRedos(req),
@@ -43,6 +47,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   assetWeight: (req, signal) => scanAssetWeight(req, fetch, { signal }),
   typosquat: (req, signal) => scanTyposquat(req, fetch, { signal }),
   iacMisconfig: (req, signal) => scanIacMisconfig(req, signal),
+  nativeBuild: (req, signal) => scanNativeBuild(req, fetch, { signal }),
 };
 
 function runWithTimeout<T>(

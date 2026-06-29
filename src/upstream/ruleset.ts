@@ -1077,14 +1077,14 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
   }
 }
 
-function parseGitHubIssueUrl(issueUrl: string): { owner: string; name: string; number: number } | null {
+export export function parseGitHubIssueUrl(issueUrl: string): { owner: string; name: string; number: number } | null {
   try {
     const url = new URL(issueUrl);
     if (url.hostname.toLowerCase() !== "github.com") return null;
     const [owner, name, issues, issueNumber, ...rest] = url.pathname.split("/").filter(Boolean);
     if (!issueNumber || !/^\d+$/.test(issueNumber)) return null;
     const number = Number(issueNumber);
-    if (!owner || !name || issues !== "issues" || rest.length > 0 || !Number.isInteger(number) || number <= 0) return null;
+    if (!owner || !name || issues !== "issues" || rest.length > 0 || !Number.isSafeInteger(number) || number <= 0) return null;
     return { owner, name, number };
   } catch {
     return null;

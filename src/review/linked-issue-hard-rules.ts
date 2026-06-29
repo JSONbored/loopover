@@ -1,4 +1,3 @@
-import type { JsonValue } from "../types";
 import { fetchLinkedIssueFacts } from "../github/backfill";
 import { extractLinkedIssueNumbersWithOverflow } from "../db/repositories";
 
@@ -39,12 +38,9 @@ export type LinkedIssueHardRulesConfig = {
   closeDelaySeconds: number;
 };
 
-// Fail-SAFE default: every mode OFF, empty label lists, NOT a default-label repo. An unconfigured (or
-// KV-unbound, or KV-faulting) repo must never auto-close a contributor PR for a linked-issue rule. The default
-// point/maintainer label lists are only used when a repo turns the corresponding rule ON without listing its
-// own; an OFF rule never reads them.
-const DEFAULT_POINT_BEARING_LABELS = ["gittensor:bug", "gittensor:feature", "gittensor:priority"];
-const DEFAULT_MAINTAINER_ONLY_LABELS = ["maintainer-only"];
+// Fail-SAFE default: every mode OFF, empty label lists, NOT a default-label repo. With hosted reviews retired,
+// this loader no longer reads external policy storage; deterministic linked-issue auto-closes stay off
+// unless/until they are wired through self-host repo config.
 
 // The namespaced label that marks a PR as flagged-for-closure by the linked-issue hard rule (Pass 1). Its
 // presence + a persisting violation on the next evaluation is the verification trigger (Pass 2 → close). Cleared
@@ -53,8 +49,6 @@ export const AGENT_LABEL_PENDING_CLOSURE = "gittensory:pending-closure";
 
 // Default verification delay (seconds) — how long until the second-pass close. Clamped to this range on load.
 const DEFAULT_CLOSE_DELAY_SECONDS = 30;
-const MIN_CLOSE_DELAY_SECONDS = 0;
-const MAX_CLOSE_DELAY_SECONDS = 300;
 
 export const DEFAULT_LINKED_ISSUE_HARD_RULES: LinkedIssueHardRulesConfig = {
   ownerAssignedClose: "off",
@@ -68,65 +62,13 @@ export const DEFAULT_LINKED_ISSUE_HARD_RULES: LinkedIssueHardRulesConfig = {
   closeDelaySeconds: DEFAULT_CLOSE_DELAY_SECONDS,
 };
 
-/** Clamp a KV-provided close delay to a sane range, falling back to the default for a non-finite / absent value. */
-function clampCloseDelaySeconds(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CLOSE_DELAY_SECONDS;
-  return Math.min(MAX_CLOSE_DELAY_SECONDS, Math.max(MIN_CLOSE_DELAY_SECONDS, Math.trunc(value)));
-}
-
-function asMode(value: unknown): LinkedIssueHardRulesMode | null {
-  return value === "block" || value === "off" ? value : null;
-}
-
-function asStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value)) return null;
-  const out = value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-  return out.length > 0 ? out : null;
-}
-
-type LinkedIssueHardRulesKvShape = {
-  ownerAssignedClose?: JsonValue;
-  missingPointLabelClose?: JsonValue;
-  maintainerOnlyLabelClose?: JsonValue;
-  pointBearingLabels?: JsonValue;
-  maintainerOnlyLabels?: JsonValue;
-  defaultLabelRepo?: JsonValue;
-  verifyBeforeClose?: JsonValue;
-  closeDelaySeconds?: JsonValue;
-};
-
 /**
- * Resolve a repo's linked-issue hard-rule config from the shared REVIEW_CONFIG KV (key = repo slug, owner
- * stripped — same convention as loadHardGuardrailGlobs). Reads the `linkedIssueHardRules` field. NEVER throws
- * (the auto-maintain trigger is best-effort) and ALWAYS fail-SAFE: an absent binding / key / field, a partial
- * config, OR a THROWN KV read (outage) all resolve to the all-OFF default so a deterministic close can never
- * fire on an unconfigured repo or a KV fault. Partial KV objects are merged OVER the default (any field a repo
- * omits keeps its safe default).
+ * Resolve a repo's linked-issue hard-rule config. Kept async to avoid touching the processor call graph, but this
+ * no longer reads external policy storage; the fail-safe all-off default ensures deterministic linked-issue closes
+ * cannot fire from stale hosted-review configuration.
  */
-export async function loadLinkedIssueHardRules(env: Env, repoFullName: string): Promise<LinkedIssueHardRulesConfig> {
-  if (!env.REVIEW_CONFIG) return DEFAULT_LINKED_ISSUE_HARD_RULES;
-  const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
-  try {
-    const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { linkedIssueHardRules?: LinkedIssueHardRulesKvShape } | null;
-    const raw = config?.linkedIssueHardRules;
-    if (!raw || typeof raw !== "object") return DEFAULT_LINKED_ISSUE_HARD_RULES;
-    return {
-      ownerAssignedClose: asMode(raw.ownerAssignedClose) ?? DEFAULT_LINKED_ISSUE_HARD_RULES.ownerAssignedClose,
-      missingPointLabelClose: asMode(raw.missingPointLabelClose) ?? DEFAULT_LINKED_ISSUE_HARD_RULES.missingPointLabelClose,
-      maintainerOnlyLabelClose: asMode(raw.maintainerOnlyLabelClose) ?? DEFAULT_LINKED_ISSUE_HARD_RULES.maintainerOnlyLabelClose,
-      pointBearingLabels: asStringArray(raw.pointBearingLabels) ?? DEFAULT_POINT_BEARING_LABELS,
-      maintainerOnlyLabels: asStringArray(raw.maintainerOnlyLabels) ?? DEFAULT_MAINTAINER_ONLY_LABELS,
-      defaultLabelRepo: raw.defaultLabelRepo === true,
-      // Default ON: only an explicit `false` disables the flag-then-close double-check.
-      verifyBeforeClose: raw.verifyBeforeClose !== false,
-      closeDelaySeconds: clampCloseDelaySeconds(raw.closeDelaySeconds),
-    };
-  } catch {
-    // A KV outage must NEVER let a deterministic close fire — fail safe to all-off (the opposite of the
-    // guardrail loader, which fails CLOSED: there a fault widens the manual-hold surface, here a fault must
-    // not manufacture a close).
-    return DEFAULT_LINKED_ISSUE_HARD_RULES;
-  }
+export async function loadLinkedIssueHardRules(_env: Env, _repoFullName: string): Promise<LinkedIssueHardRulesConfig> {
+  return DEFAULT_LINKED_ISSUE_HARD_RULES;
 }
 
 export type LinkedIssueFacts = {

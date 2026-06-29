@@ -124,7 +124,8 @@ gittensory-mcp preflight --login your-login --json`}
         <li>
           <strong>Preview the public surface.</strong> Dry-run what would be written to GitHub
           without mutating state. Keep <strong>Gittensory Context</strong> advisory; require{" "}
-          <strong>Gittensory Gate</strong> only after blocking rules are explicitly configured.
+          <strong>Gittensory Orb Review Agent</strong> only after blocking rules are explicitly
+          configured.
           <CodeBlock
             lang="http"
             code={`POST /v1/repos/:owner/:repo/settings-preview

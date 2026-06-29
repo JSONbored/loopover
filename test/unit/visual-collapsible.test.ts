@@ -8,7 +8,7 @@ function gate(over: Partial<GateCheckEvaluation> = {}): GateCheckEvaluation {
   return {
     enabled: true,
     conclusion: "success",
-    title: "Gittensory Gate passed",
+    title: "Gittensory Orb Review Agent passed",
     summary: "No configured hard blocker was found.",
     blockers: [],
     warnings: [],

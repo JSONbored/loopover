@@ -12,6 +12,7 @@ import { scanLockfileDrift } from "./analyzers/lockfile-drift.js";
 import { scanSecrets } from "./analyzers/secret-scan.js";
 import { scanLicenses } from "./analyzers/license-check.js";
 import { scanInstallScripts } from "./analyzers/install-scripts.js";
+import { scanHeavyDependencies } from "./analyzers/heavy-dependency.js";
 import { scanActionPins } from "./analyzers/actions-pin.js";
 import { scanEol } from "./analyzers/eol-check.js";
 import { scanRedos } from "./analyzers/redos.js";
@@ -20,19 +21,22 @@ import { scanCodeowners } from "./analyzers/codeowners.js";
 import { scanSecretLog } from "./analyzers/secret-log.js";
 import { scanAssetWeight } from "./analyzers/asset-weight.js";
 import { scanTyposquat } from "./analyzers/typosquat.js";
+import { scanNativeBuild } from "./analyzers/native-build.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
 type AnalyzerFn = (req: EnrichRequest, signal: AbortSignal) => Promise<unknown>;
 type AnalyzerRegistry = Partial<Record<keyof BriefFindings, AnalyzerFn>>;
 
-// The analyzer registry. More land behind this same shape: license (#1475), secret (#1476), static (#1477), history (#1478).
+// The analyzer registry. Each key is the exact name accepted by the engine's REES_ANALYZERS setting.
 const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   dependency: (req, signal) => scanDependencies(req, fetch, { signal }),
   lockfileDrift: (req, signal) => scanLockfileDrift(req, fetch, { signal }),
   secret: (req) => scanSecrets(req),
   license: (req) => scanLicenses(req),
   installScript: (req) => scanInstallScripts(req),
+  heavyDependency: (req, signal) =>
+    scanHeavyDependencies(req, fetch, { signal }),
   actionPin: (req) => scanActionPins(req),
   eol: (req) => scanEol(req),
   redos: (req) => scanRedos(req),
@@ -41,6 +45,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   secretLog: (req, signal) => scanSecretLog(req, signal),
   assetWeight: (req, signal) => scanAssetWeight(req, fetch, { signal }),
   typosquat: (req, signal) => scanTyposquat(req, fetch, { signal }),
+  nativeBuild: (req, signal) => scanNativeBuild(req, fetch, { signal }),
 };
 
 function runWithTimeout<T>(
@@ -72,7 +77,7 @@ export async function buildBrief(
 ): Promise<ReviewBrief> {
   const start = Date.now();
   const all = Object.keys(analyzers) as Array<keyof BriefFindings>;
-  const requested = req.analyzers?.length
+  const requested = Array.isArray(req.analyzers)
     ? all.filter((name) => req.analyzers!.includes(name))
     : all;
   const budgetMs = req.budget?.timeoutMs ?? 8000;

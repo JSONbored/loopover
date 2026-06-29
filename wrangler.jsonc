@@ -38,23 +38,11 @@
     "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
     "PUBLIC_API_ORIGIN": "https://gittensory-api.aethereal.dev",
     "PUBLIC_SITE_ORIGIN": "https://gittensory.aethereal.dev",
-    "AI_SUMMARIES_ENABLED": "true",
-    "AI_PUBLIC_COMMENTS_ENABLED": "true",
-    "WORKERS_AI_SUMMARY_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-    // Enterprise Workers AI plan: the daily neuron budget is a runaway-loop BACKSTOP, not a free-tier cap.
-    // The old "10000" starved EVERY dual-AI review (~573 neurons each) into quota_exceeded. Account headroom is
-    // ~hundreds of k/day; 2,000,000 never blocks normal review volume while still capping an infinite-loop bug.
-    "AI_DAILY_NEURON_BUDGET": "2000000",
-    "AI_BYOK_DAILY_REPO_LIMIT": "25",
-    // Enterprise: give the reviewer real room for a THOROUGH finding-by-finding review (assessment + suggestions
-    // + risks). 1024 forced a shallow "no blockers" scorecard on large diffs; 4096 lets the dual-AI produce a
-    // substantive review. (#extensive-reviews — the clamp in ai-review.ts allows up to 8192.)
-    "AI_MAX_OUTPUT_TOKENS": "4096",
-    "AI_GATEWAY_ID": "",
     "ADMIN_GITHUB_LOGINS": "JSONbored",
-    // Convergence (Stage D): render the public PR comment via the unified-comment bridge. Default OFF —
-    // flag-OFF keeps the legacy buildPublicPrIntelligenceComment panel byte-identical.
-    "GITTENSORY_REVIEW_UNIFIED_COMMENT": "true",
+    // Hosted reviews are retired. Cloudflare now serves the public API + Orb broker only; review execution runs
+    // in the self-host container, where Redis-backed transient state is mandatory. The Cloudflare API worker no
+    // longer binds Workers AI, Vectorize, R2 review audit storage, or Browser Rendering for review execution.
+    "GITTENSORY_REVIEW_UNIFIED_COMMENT": "false",
     // Inline comments (#inline-comments): leave quiet, non-blocking inline comments on changed lines, on top of
     // the decision summary. Requires the repo in GITTENSORY_REVIEW_REPOS AND review.inline_comments in its
     // .gittensory.yml. Default OFF — flag-OFF the model is never asked for inline findings (byte-identical).
@@ -62,21 +50,21 @@
     // Convergence (safety): run the ported safety scan in the review path — defang untrusted PR
     // title/body/diff before the AI reviewer sees it, and surface a secret-leak blocker from the diff.
     // Default OFF — flag-OFF keeps the review path byte-identical.
-    "GITTENSORY_REVIEW_SAFETY": "true",
-    // Convergence (visual capture): capture a before/after screenshot for PRs touching WEB-VISIBLE files
-    // (frontend pages / public OG images). Needs the BROWSER + REVIEW_AUDIT bindings; runs only when this is
-    // ON AND the repo is in GITTENSORY_REVIEW_REPOS. DEFAULT OFF — flag-OFF captures nothing (byte-identical).
-    "GITTENSORY_REVIEW_SCREENSHOTS": "true",
+    "GITTENSORY_REVIEW_SAFETY": "false",
+    // Convergence (visual capture): capture a before/after screenshot for PRs touching WEB-VISIBLE files.
+    // Self-host equivalents are BROWSER_WS_ENDPOINT + REVIEW_AUDIT_DIR; Cloudflare no longer binds these review
+    // resources. DEFAULT OFF — flag-OFF captures nothing (byte-identical).
+    "GITTENSORY_REVIEW_SCREENSHOTS": "false",
     // Convergence (grounding): ground the AI reviewer prompt with the PR's finished CI status + the full
     // post-change content of the changed files, so a non-frontier model verifies claims instead of guessing.
     // Default OFF — flag-OFF keeps the reviewer prompt byte-identical and makes no extra GitHub fetch.
-    "GITTENSORY_REVIEW_GROUNDING": "true",
+    "GITTENSORY_REVIEW_GROUNDING": "false",
     // Convergence (reputation): factor the INTERNAL-only ported submitter-reputation signal into the AI-spend
     // gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review (AI neurons
     // skipped), and the per-(project, submitter) outcome is recorded after the gate decides. The reputation is
     // NEVER surfaced publicly. Default OFF — flag-OFF reads nothing, records nothing, and leaves the AI-spend
     // gate byte-identical.
-    "GITTENSORY_REVIEW_REPUTATION": "true",
+    "GITTENSORY_REVIEW_REPUTATION": "false",
     // Convergence (ops / observability): drive two OPERATOR surfaces off gittensory's own review-outcome data
     // — (1) a cron-tick anomaly scan over the gate-block ledger + recommendation/slop calibration that emits a
     // structured `ops_anomaly` log on drift, and (2) a bearer-gated GET /v1/internal/ops/stats outcome
@@ -87,9 +75,9 @@
     // related to the PR's changed files and append a RELEVANT EXISTING CODE / DOCS section to the reviewer
     // prompt — additive reference context (callers, related modules, conventions), exactly like grounding.
     // Default OFF — flag-OFF performs no retrieval, uses no adapter, makes no vector query, and keeps the
-    // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
-    // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
-    "GITTENSORY_REVIEW_RAG": "true",
+    // reviewer prompt byte-identical. Self-host injects a Qdrant/sqlite/pg vector adapter; Cloudflare no longer
+    // binds Vectorize for review execution.
+    "GITTENSORY_REVIEW_RAG": "false",
     // Convergence (content/registry SURFACE LANE): when truthy AND the repo is in GITTENSORY_REVIEW_REPOS, the
     // deterministic, AI-FREE surface review drives the gate for registry-submission PRs (metagraphed). Default
     // OFF (false): the processor takes no new branch + resolves no files, so the gate disposition is byte-
@@ -104,8 +92,8 @@
     // follow-up — see src/review/selftune-wire.ts.
     "GITTENSORY_REVIEW_SELFTUNE": "false",
     // Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
-    // through to the existing mention path (byte-identical). ON → a MAINTAINER comment of `@gittensory plan` on
-    // an issue generates an implementation plan from the issue text via Workers AI and posts it as a comment.
+    // through to the existing mention path (byte-identical). Hosted planning is retired with the Cloudflare AI
+    // binding; self-host can run planning through the configured self-host AI provider.
     "GITTENSORY_REVIEW_PLANNER": "false",
     // Convergence (port): public OAuth draft-submission flow ported from reviewbot. Default OFF — every
     // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
@@ -123,9 +111,9 @@
     // rolls forward one repo at a time (e.g. "JSONbored/gittensory,JSONbored/awesome-claude"). Default "" →
     // NO repos converged → the per-PR converged path stays dormant for every repo regardless of the global
     // flags (byte-identical to today). The cron/endpoint flags (ops/selftune/parity/draft) stay global.
-    "GITTENSORY_REVIEW_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
+    "GITTENSORY_REVIEW_REPOS": "",
     // Proof of Power (#1059): serve the public homepage stats counter at GET /v1/public/stats, computed LIVE
-    // from the review ledger (review_targets + review_audit) behind a 60s cache. ON — the above-the-fold band
+    // from the public review ledger (audit_events + pull_requests plus Orb aggregates) behind a 60s cache. ON — the above-the-fold band
     // shows PRs reviewed / filtered-without-merge % / maintainer time saved / decision accuracy for the
     // reviewed repos. Flag-OFF the endpoint 404s and the homepage band renders nothing (counts only, no PR
     // content/authors/scores/rewards). See src/review/public-stats.ts.
@@ -145,49 +133,12 @@
       "custom_domain": true,
     },
   ],
-  "ai": {
-    "binding": "AI",
-  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "gittensory",
       "database_id": "b2c79dd6-7771-4b1f-aa6b-085d5f3e9528",
       "migrations_dir": "migrations",
-    },
-  ],
-  // Convergence (infra): inert bindings for the ported review modules. Each is OPTIONAL in `Env` and the
-  // review path is NOT wired to them yet (per-module wiring lands in later chunks), so a deploy without the
-  // resource provisioned is byte-identical to today — `createReviewAdapters` degrades each absent binding to a
-  // no-op/"unavailable" adapter (fail-safe to no-context), never throwing.
-  //
-  // RAG codebase retrieval (Layer C). The index MUST be created with bge-m3's `--dimensions=1024`
-  // (`--metric=cosine`). Absent ⇒ no RAG (review proceeds with no retrieved context).
-  "vectorize": [
-    {
-      "binding": "VECTORIZE",
-      "index_name": "gittensory-review-rag",
-    },
-  ],
-  // Review audit / visual-capture blob store. Absent ⇒ no audit/screenshot persistence.
-  "r2_buckets": [
-    {
-      "binding": "REVIEW_AUDIT",
-      "bucket_name": "gittensory-review-audit",
-    },
-  ],
-  // Browser Rendering for visual (before/after screenshot) capture. Absent ⇒ no visual capture.
-  "browser": {
-    "binding": "BROWSER",
-  },
-  // Convergence: the shared REVIEW_CONFIG KV (reviewbot's per-repo config, keyed by repo slug). The converged
-  // auto-maintain path reads each repo's hardGuardrailGlobs from it so guarded paths (scoring / auth / CI /
-  // policy scripts) force MANUAL review — never auto-merge/auto-close. Absent ⇒ DEFAULT_CRUCIAL_GUARDRAIL_GLOBS
-  // fallback (CI workflows + scripts still guarded). This KV survives reviewbot's decommission.
-  "kv_namespaces": [
-    {
-      "binding": "REVIEW_CONFIG",
-      "id": "aed9890dbd3f4f73bf46b43d7d0478d7",
     },
   ],
   // TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) so concurrent
@@ -214,28 +165,11 @@
         "binding": "JOBS",
         "queue": "gittensory-jobs",
       },
-      {
-        // Dedicated lane for incoming github-webhook jobs so a burst of heavy maintenance work (the re-gate
-        // sweep, backfills, rag-index, snapshots) on the shared `gittensory-jobs` queue can never starve real
-        // GitHub events into the DLQ. Webhooks get their own consumer concurrency + retry budget. (#audit-webhook-queue)
-        "binding": "WEBHOOKS",
-        "queue": "gittensory-webhooks",
-      },
     ],
     "consumers": [
       {
-        // Webhook lane: small/fast batches so a real PR event is dispatched promptly, isolated from the
-        // maintenance lane's throughput. Its own DLQ keeps a failing webhook observable + replayable (PR2).
-        "queue": "gittensory-webhooks",
-        "max_batch_size": 5,
-        "max_batch_timeout": 1,
-        "max_retries": 3,
-        "dead_letter_queue": "gittensory-webhooks-dlq",
-      },
-      {
-        // Maintenance lane: the re-gate sweep, backfills, rag-index, snapshots. Webhooks have their own lane
-        // (above), so this lane is bounded to keep a heavy/retrying batch from re-saturating the consumer and
-        // amplifying GitHub-rate pressure (the metagraphed-dry-run overload). (#audit-bound-lane)
+        // API/broker maintenance lane. Review execution jobs are ignored unless the self-host Redis-backed
+        // runtime binding exists; the deployed Cloudflare worker does not bind it.
         //  - max_batch_size 5 (was 10): one batch can't bundle as many heavy sweep/backfill jobs at once.
         //  - max_concurrency 3: bounded fan-out — enough to drain metagraphed's worst sweep within the 2-min
         //    cron interval, but not so wide it floods the shared GitHub installation rate bucket. (A follow-up
@@ -262,23 +196,11 @@
         "max_batch_timeout": 30,
         "max_retries": 0,
       },
-      {
-        // Webhook-lane DLQ consumer (#1276): a dead-lettered github-webhook carries a real GitHub event that
-        // GitHub will not redeliver, so processDlqBatch audits it AND re-drives it once onto the webhook lane
-        // (bounded by the `redriven` marker). max_retries: 0 — a DLQ message must never re-loop the DLQ.
-        "queue": "gittensory-webhooks-dlq",
-        "max_batch_size": 10,
-        "max_batch_timeout": 30,
-        "max_retries": 0,
-      },
     ],
   },
   "triggers": {
-    // Tick every 2 minutes. The light auto-maintain/recovery sweep (agent-regate-sweep) runs on EVERY tick so an
-    // approved+clean PR merges and a red-CI / stuck PR is handled within ~2 min (see src/index.ts). Heavy sync/
-    // health jobs stay on their own cadence inside the handler via `minute % 30` (30-min) and `isHourly` (hourly),
-    // so they are unaffected by the faster tick. (Was "*/30": the sweep the code intends to run every ~2 min was
-    // actually firing only every 30 min, starving the recovery rail.)
+    // Broker/API maintenance tick. The self-host container runs the review sweep; Cloudflare does not execute
+    // hosted reviews.
     "crons": ["*/2 * * * *"],
   },
 }

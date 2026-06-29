@@ -55,9 +55,9 @@ describe("change-guardrail glob matching", () => {
   });
 });
 
-// #flood-readiness: the LIVE gittensory KV globs must guard crucial files that live OUTSIDE the dir-prefix
+// #flood-readiness: the live hard-guardrail globs must guard crucial files that live OUTSIDE the dir-prefix
 // guards (the awesome-claude #4196 class — a weakened sensitive file slipping through because its folder
-// wasn't covered), while leaving clean non-crucial PRs auto-mergeable. Mirrors REVIEW_CONFIG["gittensory"].
+// wasn't covered), while leaving clean non-crucial PRs auto-mergeable.
 describe("hard-guardrail covers content-crucial files outside the dir-prefix guards", () => {
   const GITTENSORY_GLOBS = [
     ".github/**", "scripts/**", "packages/**", "apps/gittensory-ui/**",
@@ -86,7 +86,7 @@ describe("hard-guardrail covers content-crucial files outside the dir-prefix gua
     expect(changedPathsHittingGuardrail(nonCrucial, GITTENSORY_GLOBS)).toEqual([]);
   });
 
-  it("the fail-closed sentinel ['**'] guards every path (KV-outage hold-all)", () => {
+  it("the hold-all sentinel ['**'] guards every path", () => {
     for (const p of ["src/utils/json.ts", "README.md", "anything/at/all.txt"]) {
       expect(matchesAny(p, ["**"])).toBe(true);
     }

@@ -135,14 +135,31 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(opts.serverName).toBe("https://self.host");
   });
 
-  it("uses the baked image version as the runtime release when SENTRY_RELEASE is unset", async () => {
+  it("uses the image-baked version as the release fallback and ignores blank overrides", async () => {
+    expect(
+      resolveSentryRelease({
+        SENTRY_RELEASE: "  ",
+        GITTENSORY_VERSION: " gittensory-selfhost@0.1.0 ",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe("gittensory-selfhost@0.1.0");
+
     await initSentry({
       SENTRY_DSN: "d",
+      SENTRY_RELEASE: "",
       GITTENSORY_VERSION: "gittensory-selfhost@0.1.0",
     } as unknown as NodeJS.ProcessEnv);
     expect(mocks.init.mock.calls[0]![0].release).toBe(
       "gittensory-selfhost@0.1.0",
     );
+  });
+
+  it("prefers an explicit nonblank SENTRY_RELEASE over GITTENSORY_VERSION", () => {
+    expect(
+      resolveSentryRelease({
+        SENTRY_RELEASE: "custom@sha",
+        GITTENSORY_VERSION: "gittensory-selfhost@0.1.0",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe("custom@sha");
   });
 
   it("captureError sends with context, and without context skips setContext", async () => {
@@ -261,6 +278,27 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(mocks.scope.setTag).toHaveBeenCalledWith("installationId", "143010787");
     // Recurrences of one failure group into a single issue by event.
     expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-log", "orb_broker_unavailable"]);
+  });
+
+  it("indexes self-host AI provider dimensions as Sentry tags", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_ai_provider_failed",
+        provider: "codex",
+        model: "gpt-5.5",
+        effort: "high",
+        timeoutMs: 240000,
+        error: "subscription_cli_timeout",
+      }),
+    );
+    expect(lastCapturedError().name).toBe("selfhost_ai_provider_failed");
+    expect(lastCapturedError().message).toBe("subscription_cli_timeout");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("provider", "codex");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("model", "gpt-5.5");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("effort", "high");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("timeoutMs", "240000");
   });
 
   it("forwards a level:fatal log titled by message (no event ⇒ no tag)", async () => {

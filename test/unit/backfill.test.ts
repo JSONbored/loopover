@@ -34,6 +34,7 @@ import {
   fetchAndStorePullRequestFilesForReview,
   fetchLiveCiAggregate,
   fetchRequiredStatusContexts,
+  isRateLimitedGitHubFailure,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -287,7 +288,7 @@ describe("GitHub backfill", () => {
     expect(await listContributorRepoStats(env, "jsonbored")).toEqual([
       expect.objectContaining({
         dominantLabels: ["alpha", "zeta"],
-        lastActivityAt: "bad-date",
+        lastActivityAt: "2026-05-24T00:00:00Z",
         unlinkedPullRequests: 1,
       }),
     ]);
@@ -1304,6 +1305,43 @@ describe("GitHub backfill", () => {
     expect(await listLatestGitHubRateLimitObservations(env)).toEqual(
       expect.arrayContaining([expect.objectContaining({ repoFullName: "JSONbored/gittensory", resource: "rest", remaining: 0, statusCode: 403 })]),
     );
+  });
+
+  it("treats a permission 403 (x-ratelimit-remaining > 0, no Retry-After) as an error, not a rate-limit wait (#1746)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({
+          name: "gittensory",
+          full_name: "JSONbored/gittensory",
+          private: false,
+          default_branch: "main",
+          language: "TypeScript",
+          owner: { login: "JSONbored" },
+        });
+      }
+      if (url.includes("/labels?") || url.includes("/pulls?")) return Response.json([]);
+      if (url.includes("/issues?")) {
+        // A genuine permission failure: the bucket is NOT exhausted and there is no Retry-After or
+        // secondary-limit body, so it must NOT be misclassified as a rate limit (previously every 403 was).
+        return new Response("Resource not accessible by integration", {
+          status: 403,
+          headers: { "x-ratelimit-limit": "5000", "x-ratelimit-remaining": "4999" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRegisteredRepositories(env, { force: true });
+
+    const [repoResult] = result.repos;
+    expect(repoResult?.status).not.toBe("rate_limited");
+    expect(repoResult?.dataQuality?.rateLimited).toBe(false);
+    const segments = await listRepoSyncSegments(env, "JSONbored/gittensory");
+    expect(segments.find((segment) => segment.segment === "open_issues")?.status).toBe("error");
+    expect(segments.every((segment) => segment.status !== "rate_limited")).toBe(true);
   });
 
   it("queues resumable repo segments without wiping previous usable counts", async () => {
@@ -2790,6 +2828,17 @@ describe("GitHub backfill", () => {
   });
 
   describe("fetchLiveCiAggregate", () => {
+    it("reports unverified without fetching when the head SHA is missing", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
+
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
     it("keeps non-required failing and pending statuses advisory when required contexts are known", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -2799,6 +2848,7 @@ describe("GitHub backfill", () => {
             check_runs: [
               { name: "trusted-required-ci", status: "completed", conclusion: "success" },
               { name: "attacker/non-required-check", status: "completed", conclusion: "failure", output: { title: "Injected failure" } },
+              { name: "attacker/non-required-pending-check", status: "queued", conclusion: null },
             ],
           });
         }
@@ -2817,8 +2867,67 @@ describe("GitHub backfill", () => {
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["trusted-required-ci"]));
 
       expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.hasPending).toBe(true);
       expect(aggregate.failingDetails).toEqual([]);
       expect(aggregate.nonRequiredFailingDetails.map((detail) => detail.name).sort()).toEqual(["attacker/non-required-check", "attacker/non-required-status"]);
+    });
+
+    it("treats a visible required classic status that is still pending as pending CI", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "lint", status: "completed", conclusion: "success" },
+            ],
+          });
+        }
+        if (url.includes("/status?")) {
+          return Response.json({
+            statuses: [
+              { context: "codecov/patch", state: "pending", description: "Waiting for report" },
+              { context: "lint", state: "success" },
+            ],
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(
+        env,
+        "JSONbored/gittensory",
+        "abc123",
+        "public-token",
+        new Set(["codecov/patch", "lint"]),
+      );
+
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+
+    it("keeps an observed failure failed while still reporting pending CI separately", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "test", status: "completed", conclusion: "failure", output: { title: "Test failed" } },
+              { name: "coverage", status: "in_progress", conclusion: null },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "test" })]);
     });
 
     it("falls back to gating all contexts when required contexts are unavailable", async () => {
@@ -2847,6 +2956,7 @@ describe("GitHub backfill", () => {
               { name: "test", status: "completed", conclusion: "success" },
               // BOTH bot-posted checks, still in_progress (posted but not yet concluded). Counting EITHER would
               // defer the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
+              { name: "Gittensory Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
               { name: "Gittensory Gate", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
               { name: "Gittensory Context", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
             ],
@@ -2857,7 +2967,7 @@ describe("GitHub backfill", () => {
       });
 
       // Both bot checks are excluded from the CI wait even if listed among the required contexts.
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Gate", "Gittensory Context"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Orb Review Agent", "Gittensory Gate", "Gittensory Context"]));
 
       expect(aggregate.ciState).toBe("passed"); // would be "pending" if either in_progress bot check were counted
       expect(aggregate.failingDetails).toEqual([]);
@@ -2871,7 +2981,7 @@ describe("GitHub backfill", () => {
           return Response.json({
             check_runs: [
               { name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
-              { name: "Gittensory Gate", status: "completed", conclusion: "failure", output: { title: "External gate failed" }, app: { slug: "external-ci" } },
+              { name: "Gittensory Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "External gate failed" }, app: { slug: "external-ci" } },
             ],
           });
         }
@@ -2879,10 +2989,10 @@ describe("GitHub backfill", () => {
         return new Response("not found", { status: 404 });
       });
 
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test", "Gittensory Gate"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test", "Gittensory Orb Review Agent"]));
 
       expect(aggregate.ciState).toBe("failed");
-      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Gate", summary: "External gate failed" })]);
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "External gate failed" })]);
     });
 
     it("does not ignore classic statuses named like the Gate", async () => {
@@ -2890,14 +3000,14 @@ describe("GitHub backfill", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
         if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
-        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "Gittensory Gate", state: "failure", description: "External status failed" }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "Gittensory Orb Review Agent", state: "failure", description: "External status failed" }] });
         return new Response("not found", { status: 404 });
       });
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
 
       expect(aggregate.ciState).toBe("failed");
-      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Gate", summary: "External status failed" })]);
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Orb Review Agent", summary: "External status failed" })]);
     });
 
     it("treats a required context that never ran (absent from results) as pending, not passed", async () => {
@@ -2937,7 +3047,7 @@ describe("GitHub backfill", () => {
           return Response.json({
             check_runs: [
               { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
-              { name: "Gittensory Gate", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+              { name: "Gittensory Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
             ],
           });
         }
@@ -2945,9 +3055,9 @@ describe("GitHub backfill", () => {
         return new Response("not found", { status: 404 });
       });
 
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "sha", "tok", new Set(["validate", "Gittensory Gate"]));
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "sha", "tok", new Set(["validate", "Gittensory Orb Review Agent"]));
 
-      // "Gittensory Gate" is a bot check: present in results (so not absent), excluded from gate logic → passed
+      // "Gittensory Orb Review Agent" is a bot check: present in results (so not absent), excluded from gate logic → passed
       expect(aggregate.ciState).toBe("passed");
     });
 
@@ -3057,20 +3167,37 @@ describe("GitHub backfill", () => {
       expect(aggregate.ciState).toBe("passed");
     });
 
-    it("ENFORCE-required mode does NOT consult check-suites (the absent-context guard already handles it)", async () => {
+    it("ENFORCE-required mode waits when the GitHub Actions suite is still materializing downstream jobs", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       let suitesFetched = false;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.includes("/check-suites?")) suitesFetched = true;
+        if (url.includes("/check-suites?")) {
+          suitesFetched = true;
+          return Response.json({ check_suites: [{ status: "in_progress", app: { slug: "github-actions" } }] });
+        }
         if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success" }] });
         if (url.includes("/status?")) return Response.json({ statuses: [] });
         return new Response("not found", { status: 404 });
       });
-      // Required = {test} and it passed → passed; the check-suites call is never made in enforce-required mode.
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test"]));
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.hasPending).toBe(true);
+      expect(suitesFetched).toBe(true);
+    });
+
+    it("ENFORCE-required mode does not over-pend when check-suites are unreadable after required checks passed", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return new Response("forbidden", { status: 403 });
+        return new Response("not found", { status: 404 });
+      });
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test"]));
       expect(aggregate.ciState).toBe("passed");
-      expect(suitesFetched).toBe(false);
+      expect(aggregate.hasPending).toBe(false);
     });
 
     it("fold-all: tolerates malformed check-suites (missing app / missing status) without throwing", async () => {
@@ -3185,6 +3312,37 @@ describe("GitHub backfill", () => {
       (env as Env & { GITTENSORY_REQUIRED_CI_CONTEXTS?: string }).GITTENSORY_REQUIRED_CI_CONTEXTS = "stale-required-context";
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+    });
+  });
+
+  describe("isRateLimitedGitHubFailure", () => {
+    it("does not treat a bare permission 403 (remaining > 0, no Retry-After, no secondary body) as a rate limit", () => {
+      expect(
+        isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: null, remaining: "4999", body: "Resource not accessible by integration" }),
+      ).toBe(false);
+    });
+
+    it("treats a 403 with an exhausted x-ratelimit-remaining as a rate limit", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: null, remaining: "0", body: "" })).toBe(true);
+    });
+
+    it("treats a 403 or 429 carrying a Retry-After header as a rate limit", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: "60", remaining: "100", body: "" })).toBe(true);
+      expect(isRateLimitedGitHubFailure({ statusCode: 429, retryAfter: "1", remaining: null, body: "" })).toBe(true);
+    });
+
+    it("treats a secondary-limit / abuse body as a rate limit", () => {
+      expect(
+        isRateLimitedGitHubFailure({ statusCode: 403, retryAfter: null, remaining: "100", body: "You have exceeded a secondary rate limit" }),
+      ).toBe(true);
+    });
+
+    it("does not treat a 429 without any rate-limit signal as a rate limit", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 429, retryAfter: null, remaining: "100", body: "" })).toBe(false);
+    });
+
+    it("does not treat a non-403/429 failure as a rate limit even with a matching body", () => {
+      expect(isRateLimitedGitHubFailure({ statusCode: 500, retryAfter: null, remaining: null, body: "secondary rate limit" })).toBe(false);
     });
   });
 

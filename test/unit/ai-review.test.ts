@@ -571,6 +571,78 @@ describe("BYOK provider dispatch", () => {
     expect(run).not.toHaveBeenCalled(); // advisory mode + BYOK → no Workers AI call
   });
 
+  it("preserves public unstructured BYOK text as manual-review fallback diagnostics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  type: "text",
+                  text: "Looks safe overall, but please double-check the queue cache branch.",
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.inconclusive).toBe(true);
+    expect(result.status === "ok" && result.advisoryNotes).toContain(
+      "queue cache branch",
+    );
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        status: "unparseable_output",
+        responseChars: 67,
+        hasJsonObject: false,
+      }),
+    ]);
+  });
+
+  it("records empty BYOK output diagnostics without publishing fallback notes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ content: [{ type: "text", text: "" }] }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        status: "empty_output",
+        responseChars: 0,
+        hasJsonObject: false,
+      }),
+    ]);
+  });
+
   it("falls back to no notes when the provider returns a non-200 and records the failure reason", async () => {
     vi.stubGlobal(
       "fetch",
@@ -662,7 +734,7 @@ describe("BYOK provider dispatch", () => {
 });
 
 describe("Workers AI fallback + degraded output", () => {
-  it("tries the per-slot fallback model then returns no notes when every opinion is unparseable", async () => {
+  it("tries the per-slot fallback model then preserves public fallback notes when every opinion is unparseable", async () => {
     const run = vi.fn(async (_model: string) => ({
       response: "this is not json at all",
     }));
@@ -673,7 +745,8 @@ describe("Workers AI fallback + degraded output", () => {
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     const result = await runGittensoryAiReview(env, baseInput);
-    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
+    expect(result.status === "ok" && result.advisoryNotes).toContain("this is not json at all");
+    expect(result.status === "ok" && result.inconclusive).toBe(true);
     // primary 3× + fallback 3× retries, all unparseable.
     expect(run).toHaveBeenCalledTimes(6);
   });
@@ -786,6 +859,41 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
     if (result.status !== "ok") throw new Error("expected ok");
     expect(result.consensusDefect?.title).toContain("Bug"); // the single Workers-AI/router reviewer's blocker decides
     expect(seen).toEqual(["claude-code"]); // the decision reviewer ran once; the advisory came from BYOK (fetch)
+  });
+
+  it("single + BYOK: drops unsafe provider fallback text but keeps public reviewer fallback text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  type: "text",
+                  text: "wallet secret should never become a fallback note",
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = planEnv(
+      { reviewers: [{ model: "claude-code" }], combine: "single" },
+      async () => ({
+        response: "Reviewer could not emit JSON, but recommends manual review.",
+      }),
+    );
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      mode: "block",
+      providerKey: { provider: "anthropic", key: "sk-ant" },
+    });
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.inconclusive).toBe(true);
+    expect(result.advisoryNotes).toContain("recommends manual review");
+    expect(result.advisoryNotes).not.toContain("wallet");
   });
 
   it("explicit input.reviewers/combine/onMerge override the env plan", async () => {
@@ -1169,10 +1277,10 @@ describe("pure helpers", () => {
     expect(synthesizeDefect([review([""], 0.5)])).toBeNull();
   });
 
-  it("runWorkersOpinion returns null without a binding and handles a single-model (no distinct fallback) list", async () => {
+  it("runWorkersOpinion returns an empty outcome without a binding and handles a single-model (no distinct fallback) list", async () => {
     expect(
       await runWorkersOpinion(createTestEnv({}), "m", "f", "sys", "user", 256),
-    ).toBeNull();
+    ).toEqual({ review: null });
     const run = vi.fn(async (_model: string) => ({ response: reviewJson() }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     // fallback === primary exercises the single-element model list branch.
@@ -1184,7 +1292,7 @@ describe("pure helpers", () => {
       "user",
       256,
     );
-    expect(parsed?.assessment).toContain("reasonable");
+    expect(parsed.review?.assessment).toContain("reasonable");
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -1196,7 +1304,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const result = await runWorkersOpinion(env, "primary-model", "", "sys", "user", 256);
-    expect(result).toBeNull();
+    expect(result).toEqual({ review: null });
     const exhausted = logSpy.mock.calls
       .map((c) => c[0])
       .find((l) => typeof l === "string" && l.includes("ai_review_provider_exhausted"));
@@ -1211,17 +1319,22 @@ describe("pure helpers", () => {
     warnSpy.mockRestore();
   });
 
-  it("does NOT log exhausted when the model runs but returns unparseable output (no provider error)", async () => {
+  it("logs unparseable exhaustion separately when the model runs but returns unparseable output", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const run = vi.fn(async () => ({ response: "not json at all" }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const result = await runWorkersOpinion(env, "primary-model", "", "sys", "user", 256);
-    expect(result).toBeNull();
+    expect(result).toEqual({ review: null, fallbackNote: "not json at all" });
     expect(
       logSpy.mock.calls
         .map((c) => c[0])
         .some((l) => typeof l === "string" && l.includes("ai_review_provider_exhausted")),
     ).toBe(false);
+    expect(
+      logSpy.mock.calls
+        .map((c) => c[0])
+        .some((l) => typeof l === "string" && l.includes("ai_review_provider_unparseable_exhausted")),
+    ).toBe(true);
     logSpy.mockRestore();
   });
 
@@ -1236,7 +1349,7 @@ describe("pure helpers", () => {
     expect(result.status).toBe("ok");
   });
 
-  it("composeAdvisoryNotes returns null when nothing is public-safe", () => {
+  it("composeAdvisoryNotes returns null when no assessment or finding is public-safe", () => {
     expect(
       composeAdvisoryNotes([
         {
@@ -1249,6 +1362,36 @@ describe("pure helpers", () => {
         },
       ]),
     ).toBeNull();
+  });
+
+  it("composeAdvisoryNotes preserves blockers and nits when the model omits a narrative assessment", () => {
+    const withBlocker = composeAdvisoryNotes([
+      {
+        assessment: "",
+        suggestions: [],
+        nits: [],
+        blockers: ["Null deref in src/a.ts."],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ]);
+    expect(withBlocker).toContain("blocking findings");
+    expect(withBlocker).toContain("**Blockers**");
+    expect(withBlocker).toContain("Null deref in src/a.ts.");
+
+    const withNits = composeAdvisoryNotes([
+      {
+        assessment: "",
+        suggestions: ["Add coverage for the edge case."],
+        nits: ["Rename the helper."],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ]);
+    expect(withNits).toContain("non-blocking notes");
+    expect(withNits).toContain("**Nits (2)**");
+    expect(withNits).toContain("Add coverage for the edge case.");
   });
 
   it("parseModelReview parses well-formed inline findings; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
@@ -1450,15 +1593,11 @@ describe("pure helpers", () => {
       review({ assessment: "Looks good." }),
     ]);
     expect(assessmentOnly).toBe("Looks good.");
-    const nitsOnly = composeAdvisoryNotes([review({ nits: ["Add a test."] })]);
-    expect(nitsOnly).toContain("**Nits (1)**");
-    expect(nitsOnly).not.toContain("<details>");
-    expect(nitsOnly).not.toContain("**Blockers**");
+    expect(composeAdvisoryNotes([review({ nits: ["Add a test."] })])).toContain("Add a test.");
     const blockersOnly = composeAdvisoryNotes([
       review({ blockers: ["Null deref in src/a.ts."] }),
     ]);
-    expect(blockersOnly).toContain("**Blockers**");
-    expect(blockersOnly).not.toContain("**Nits");
+    expect(blockersOnly).toContain("Null deref in src/a.ts.");
   });
 
   it("composeAdvisoryNotes merges + dedupes blockers/nits across two reviewers and renders both sections", () => {

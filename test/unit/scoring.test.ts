@@ -391,22 +391,20 @@ NOVELTY_BONUS_SCALAR = 3
     expect(withScoringGap).toEqual(["NOVELTY_BONUS_SCALAR"]);
   });
 
-  it("excludes DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT and MAX_ISSUE_CLOSE_WINDOW_DAYS from unmodeled drift (#1692)", () => {
-    // Both are numeric constants in the live upstream constants.py that the parser successfully reads, but
-    // neither is a scoring dimension gittensory models — excluding them prevents perpetual false-positive
-    // drift warnings on every refreshScoringModelSnapshot run (same pattern as EMISSION_SHARE_TOLERANCE #809).
+  it("keeps linked-issue close-window constants visible as unmodeled drift (#1692)", () => {
+    // DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT is loader fallback metadata, but MAX_ISSUE_CLOSE_WINDOW_DAYS
+    // controls linked-issue eligibility; keep it visible until the preview models that scoring rule.
     const result = findUnmodeledUpstreamConstants(
       "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT = 0.12\nMAX_ISSUE_CLOSE_WINDOW_DAYS = 1\n",
     );
-    expect(result).toEqual([]);
+    expect(result).toEqual(["MAX_ISSUE_CLOSE_WINDOW_DAYS"]);
     expect(result).not.toContain("DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT");
-    expect(result).not.toContain("MAX_ISSUE_CLOSE_WINDOW_DAYS");
 
-    // A genuinely new upstream scoring dimension still surfaces alongside them.
+    // A genuinely new upstream scoring dimension still surfaces alongside the close-window gap.
     const withNewDimension = findUnmodeledUpstreamConstants(
       "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT = 0.12\nMAX_ISSUE_CLOSE_WINDOW_DAYS = 1\nNOVELTY_BONUS_SCALAR = 3\n",
     );
-    expect(withNewDimension).toEqual(["NOVELTY_BONUS_SCALAR"]);
+    expect(withNewDimension).toEqual(["MAX_ISSUE_CLOSE_WINDOW_DAYS", "NOVELTY_BONUS_SCALAR"]);
   });
 
   it("truncates the unmodeled-constants warning when upstream defines more than 12 (#809)", async () => {
@@ -1848,6 +1846,47 @@ NOVELTY_BONUS_SCALAR = 3
       expect(
         findUnmodeledUpstreamConstants("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n"),
       ).toEqual([]);
+    });
+  });
+
+  describe("documented scoring config bounds (#1744)", () => {
+    const saturationBase = (scale: number): number =>
+      buildScorePreview({
+        repo,
+        snapshot: { ...snapshot, activeModel: "pending_saturation_model" as const, constants: { ...snapshot.constants, SRC_TOK_SATURATION_SCALE: scale } },
+        input: { repoFullName: repo.fullName, sourceTokenScore: 30, totalTokenScore: 30, sourceLines: 30, openPrCount: 0, credibility: 1 },
+      }).scoreEstimate.baseScore;
+
+    it("clamps a fixed_base_score above the documented ceiling to 100", () => {
+      const preview = buildScorePreview({
+        repo: { ...repo, registryConfig: { ...repo.registryConfig!, fixedBaseScore: 150 } },
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 100, totalTokenScore: 200, sourceLines: 10, openPrCount: 0, credibility: 1 },
+      });
+      // Before the fix this previewed baseScore = 150 (API schema is `.min(0)` only; registry normalization
+      // accepts any finite value), minting a base component above the documented [0, 100] ceiling.
+      expect(preview.scoreEstimate.baseScore).toBe(100);
+    });
+
+    it("clamps a negative fixed_base_score (via the API input path) to 0", () => {
+      const preview = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, fixedBaseScore: -5, sourceTokenScore: 100, totalTokenScore: 200, sourceLines: 10, openPrCount: 0, credibility: 1 },
+      });
+      expect(preview.scoreEstimate.baseScore).toBe(0);
+    });
+
+    it("clamps SRC_TOK_SATURATION_SCALE below the documented floor (10) before the saturation curve", () => {
+      // A scale of 3 is below the documented [10, 500] band, so it must score identically to the clamped
+      // floor of 10 — and differently from the in-band default 58 (the prior Math.max(...,1) left 3 in play).
+      expect(saturationBase(3)).toBe(saturationBase(10));
+      expect(saturationBase(3)).not.toBe(saturationBase(58));
+    });
+
+    it("clamps SRC_TOK_SATURATION_SCALE above the documented ceiling (500)", () => {
+      expect(saturationBase(1000)).toBe(saturationBase(500));
+      expect(saturationBase(1000)).not.toBe(saturationBase(400));
     });
   });
 });

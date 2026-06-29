@@ -14,6 +14,7 @@ import {
   type ContributorDetection,
 } from "./engine";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
+import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
 
 export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
@@ -363,7 +364,7 @@ function buildWarnings(settings: RepositorySettings, decision: PublicSurfaceDeci
     warnings.push("Check runs are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
   }
   if (settings.gateCheckMode === "enabled" && missing.has("checks")) {
-    warnings.push("Gate checks are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
+    warnings.push("Review-agent checks are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
   }
   for (const event of installation.missingEvents) {
     warnings.push(`The GitHub App is not subscribed to the ${event} webhook event; subscribe to it so Gittensory receives the relevant deliveries.`);
@@ -544,7 +545,7 @@ function permissionSummary(installation: InstallationHealthSummary | null, missi
 }
 
 function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string | null, settings: RepositorySettings): string[] {
-  const gateOutput = settings.gateCheckMode === "enabled" ? ["Opt-in Gittensory Gate check run."] : [];
+  const gateOutput = settings.gateCheckMode === "enabled" ? [`Opt-in ${GITTENSORY_GATE_CHECK_NAME} check run.`] : [];
   if (decision.skipped) return [`No comment or label for this sample: ${decision.summary}`, ...gateOutput];
   const outputs = [
     ...(decision.willComment ? ["One sanitized sticky PR comment."] : []),

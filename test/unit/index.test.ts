@@ -5,6 +5,7 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("worker entrypoint", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -56,6 +57,57 @@ describe("worker entrypoint", () => {
 
     expect(acked).toEqual(["wh-dlq-1"]); // handled by processDlqBatch (endsWith "-dlq"), not the processJob loop
     expect(retried).toEqual([]);
+  });
+
+  it("does not re-drive webhook DLQ messages from a broker-only Cloudflare runtime", async () => {
+    const env = createTestEnv();
+    delete env.SELFHOST_TRANSIENT_CACHE;
+    const sent: import("../../src/types").JobMessage[] = [];
+    env.WEBHOOKS = { send: async (message: import("../../src/types").JobMessage) => void sent.push(message) } as unknown as Queue;
+    const acked: string[] = [];
+    const batch = {
+      queue: "gittensory-webhooks-dlq",
+      messages: [
+        {
+          id: "wh-dlq-broker-only",
+          body: { type: "github-webhook", deliveryId: "d-broker-only", eventName: "pull_request", payload: {} },
+          ack: () => acked.push("wh-dlq-broker-only"),
+          retry: () => undefined,
+        },
+      ],
+    } as unknown as MessageBatch<import("../../src/types").JobMessage>;
+
+    await worker.queue(batch, env);
+
+    expect(acked).toEqual(["wh-dlq-broker-only"]);
+    expect(sent).toEqual([]);
+  });
+
+  it("acks and ignores stale review-execution jobs from a broker-only Cloudflare runtime", async () => {
+    const env = createTestEnv();
+    delete env.SELFHOST_TRANSIENT_CACHE;
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const acked: string[] = [];
+    const retried: string[] = [];
+    const batch = {
+      messages: [
+        {
+          id: "hosted-review-job",
+          body: { type: "github-webhook", deliveryId: "d-hosted-review", eventName: "pull_request", payload: {} },
+          ack: () => acked.push("hosted-review-job"),
+          retry: () => retried.push("hosted-review-job"),
+        },
+      ],
+    } as unknown as MessageBatch<import("../../src/types").JobMessage>;
+
+    await worker.queue(batch, env);
+
+    expect(acked).toEqual(["hosted-review-job"]);
+    expect(retried).toEqual([]);
+    expect(JSON.parse(String(warned.mock.calls[0]?.[0]))).toMatchObject({
+      event: "retired_review_job_ignored",
+      jobType: "github-webhook",
+    });
   });
 
   it("acks successful queue messages and retries failed messages", async () => {
@@ -152,6 +204,45 @@ describe("worker entrypoint", () => {
     // A regular */2 tick (not :00, not :30) enqueues ONLY the light auto-maintain sweep — the heavier sync/health
     // jobs are gated to :00/:30, so the tight cadence stays cheap while merges/closes fire promptly.
     expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
+  });
+
+  it("does not enqueue review sweeps from a broker-only Cloudflare runtime", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    delete env.SELFHOST_TRANSIENT_CACHE;
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual([]);
+  });
+
+  it("keeps broker-only Cloudflare maintenance cheap on :30 ticks", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    delete env.SELFHOST_TRANSIENT_CACHE;
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual([
+      { type: "repair-data-fidelity", requestedBy: "schedule" },
+      { type: "refresh-installation-health", requestedBy: "schedule" },
+    ]);
   });
 
   it("THROTTLES the sweep when the GitHub REST budget is at/below the maintenance headroom (#6 backpressure)", async () => {
@@ -296,6 +387,40 @@ describe("worker entrypoint", () => {
     await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
+  });
+
+  it("enqueues selftune hourly only when GITTENSORY_REVIEW_SELFTUNE is ON", async () => {
+    const sentFor = async (
+      selfTuneFlag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(selfTuneFlag === undefined
+          ? {}
+          : { GITTENSORY_REVIEW_SELFTUNE: selfTuneFlag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(
+        controllerFor("2026-05-25T05:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      );
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    expect((await sentFor()).some((m) => m.type === "selftune")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "selftune")).toBe(
+      false,
+    );
+    expect((await sentFor("true")).filter((m) => m.type === "selftune")).toEqual([
+      { type: "selftune", requestedBy: "schedule" },
+    ]);
   });
 
   it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when GITTENSORY_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {

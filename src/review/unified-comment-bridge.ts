@@ -26,6 +26,7 @@ import type { CaptureRoute } from "./visual/capture";
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
 // verbatim or `createOrUpdatePrIntelligenceComment` posts a DUPLICATE instead of updating in place.
 import { PR_PANEL_COMMENT_MARKER } from "../github/comments";
+import { GITTENSORY_GATE_CHECK_NAME } from "./check-names";
 import {
   buildUnifiedReviewInput,
   renderUnifiedReviewComment,
@@ -37,8 +38,10 @@ import {
   type UnifiedSignalRow,
   type Verdict,
 } from "./unified-comment";
+import { splitAiReviewNits } from "./ai-notes";
 
 export { PR_PANEL_COMMENT_MARKER };
+export { splitAiReviewNits } from "./ai-notes";
 
 // ── Public-safe defense-in-depth (privacy-critical) ──────────────────────────────────────────────
 //
@@ -122,22 +125,6 @@ export function panelRowsToSignalRows(rows: PublicPrPanelSignalRow[]): UnifiedSi
   });
 }
 
-/** Split the composed AI advisory notes (#focused-reviews) into the prominent body (the assessment prose + any
- *  `**Blockers**` section — real problems stay headline) and the trailing `**Nits (N)**` bullet lines, so the renderer
- *  can DEMOTE nits into the collapsible Nits section instead of the headline assessment (nits are never blockers).
- *  When there is no Nits section the whole blob is the body and `nits` is empty (byte-identical to before). */
-export function splitAiReviewNits(notes: string): { main: string; nits: string[] } {
-  const marker = notes.indexOf("**Nits (");
-  if (marker === -1) return { main: notes.trim(), nits: [] };
-  const nits = notes
-    .slice(marker)
-    .split("\n")
-    .slice(1) // drop the "**Nits (N)**" header line itself
-    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
-    .filter(Boolean);
-  return { main: notes.slice(0, marker).trim(), nits };
-}
-
 /** Self-host environmental + process findings that are already represented in the signal table and are NOT code
  *  observations — keep them OUT of the Nits list so the nit count reflects real code review, not boilerplate that
  *  padded nearly every review (#review-accuracy). */
@@ -160,9 +147,11 @@ export function isBoilerplateNit(finding: AdvisoryFinding): boolean {
 
 /** Build the single AI reviewer note from gittensory's AI output: the composed advisory write-up (minus its nits)
  *  becomes the assessment; a consensus defect (recovered from the advisory findings) becomes a blocker; the AI's own
- *  nits AND the gate's non-blocking warnings become the collapsible nits. Returns `[]` when there is nothing
- *  reviewer-side to surface (no AI notes, no consensus defect) so the renderer hides the reviewer chip. The gate
- *  `decision` (passed separately) stays authoritative over `recommendation` — this is advisory framing only. */
+ *  nits AND the gate's non-blocking warnings become the collapsible nits. Deterministic warnings alone must NOT
+ *  manufacture a reviewer note: a final public comment may only claim an AI review when there is a real AI
+ *  assessment/defect. Returns `[]` when there is nothing reviewer-side to surface (no AI notes, no consensus defect,
+ *  no non-AI gate blocker) so the renderer hides the reviewer chip. The gate `decision` (passed separately) stays
+ *  authoritative over `recommendation` — this is advisory framing only. */
 export function buildDualReviewNotes(args: {
   aiReview?: { notes: string } | undefined;
   consensusDefect?: { title: string; detail: string } | undefined;
@@ -180,7 +169,9 @@ export function buildDualReviewNotes(args: {
   const { main: assessment, nits: aiNitLines } = splitAiReviewNits(
     args.aiReview?.notes?.trim() ?? "",
   );
-  const consensusBlocker = args.consensusDefect ? [`${args.consensusDefect.title}${args.consensusDefect.detail ? `: ${args.consensusDefect.detail}` : ""}`.trim()] : [];
+  const consensusBlocker = args.consensusDefect
+    ? [formatConsensusDefectBlocker(args.consensusDefect)]
+    : [];
   // FIX D1: fold the gate's own hard blockers into the reviewer blockers (so a non-AI gate failure populates
   // "Why this is blocked"). Exclude `ai_consensus_defect` (already surfaced via consensusDefect → appears once)
   // and scrub each through the same public-safe boundary as Nits, DROPPING any that still leaks a private term.
@@ -208,7 +199,7 @@ export function buildDualReviewNotes(args: {
     .map((line) => publicSafeNit(line))
     .filter((line): line is string => line !== null);
   const nits = [...aiNits, ...gateNits];
-  if (!assessment && blockers.length === 0 && nits.length === 0) return [];
+  if (!assessment && blockers.length === 0) return [];
   const notes: ReviewNotes = {
     assessment,
     suggestions: [],
@@ -228,6 +219,20 @@ export function consensusDefectFromFindings(findings: AdvisoryFinding[] | undefi
   const found = (findings ?? []).find((finding) => finding.code === "ai_consensus_defect");
   if (!found) return undefined;
   return { title: found.title, detail: found.detail };
+}
+
+function formatConsensusDefectBlocker(defect: { title: string; detail: string }): string {
+  const title = defect.title.trim();
+  const detail = defect.detail.trim();
+  if (!detail) return title;
+  const normalizedTitle = normalizeConcernLine(title);
+  const normalizedDetail = normalizeConcernLine(detail);
+  if (normalizedTitle.includes(normalizedDetail)) return detail;
+  return `${title}: ${detail}`.trim();
+}
+
+function normalizeConcernLine(value: string): string {
+  return value.toLowerCase().replace(/[\s.,;:!?`]+/g, " ").trim();
 }
 
 export type UnifiedCommentBridgeArgs = {
@@ -270,6 +275,8 @@ export type UnifiedCommentBridgeArgs = {
   /** The author is the repo owner or a protected automation bot — never auto-closed, so a gate "close" verdict
    *  renders as "held" rather than "Closed" (#8/#9). */
   neverClosed?: boolean | undefined;
+  /** Public freshness marker for the posted/updated review comment. Defaults to the current publish time. */
+  reviewedAt?: string | number | Date | undefined;
 };
 
 /**
@@ -353,7 +360,15 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   });
   // The gate already produced 0/1 reviewer notes from a synthesis of the model pair; reflect the caller's
   // actual reviewer count (for the chip + the "N reviewers, synthesized" evidence) without re-deriving it.
-  if (typeof args.reviewerCount === "number") input.reviewerCount = args.reviewerCount;
+  // A non-AI gate blocker can still be folded into the blocker list above, but it must not make the comment claim
+  // an AI reviewer ran. Without this guard, deterministic nits/warnings rendered as `1 AI reviewer` with no
+  // review summary.
+  input.reviewerCount =
+    args.aiReview !== undefined
+      ? typeof args.reviewerCount === "number"
+        ? args.reviewerCount
+        : input.reviewerCount
+      : 0;
 
   // Honor `.gittensory.yml review.fields` row visibility, exactly as the legacy panel does.
   const visibleRows = args.panelRows.filter((row) => args.reviewFields?.[row.key] !== false);
@@ -370,6 +385,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     readinessScore: args.readinessTotal,
     signals,
     footerMarkdown: args.footerMarkdown,
+    reviewedAt: args.reviewedAt ?? new Date(),
     ...(args.reRunLabel !== undefined ? { reRunLabel: args.reRunLabel } : {}),
     ...(extraCollapsibles !== undefined ? { extraCollapsibles } : {}),
     ...(args.heldForReview ? { heldForReview: true } : {}),
@@ -383,7 +399,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
 
 /**
  * Build the unified body for the CLOSED/SKIPPED case (the PR closed before full evaluation). This is the
- * unified-renderer analogue of the legacy `buildClosedPrPanelUpdate` "[!NOTE] Gittensory Gate skipped" panel,
+ * unified-renderer analogue of the legacy `buildClosedPrPanelUpdate` skipped review-agent panel,
  * routed through `buildUnifiedCommentBody` so a comment that started life as a unified OPEN-PR comment keeps
  * its unified shape (and the SAME marker) when the PR closes, instead of being overwritten by the legacy
  * panel under the shared marker. A synthetic `skipped` gate maps (via `gateConclusionToVerdict`) to the
@@ -395,7 +411,7 @@ export function buildClosedUnifiedCommentBody(args: { repoFullName: string; pull
   const skippedGate: GateCheckEvaluation = {
     enabled: true,
     conclusion: "skipped",
-    title: "Gittensory Gate skipped",
+    title: `${GITTENSORY_GATE_CHECK_NAME} skipped`,
     summary: "PR closed before full evaluation. No late first comment was created.",
     blockers: [],
     warnings: [],

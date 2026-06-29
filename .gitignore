@@ -13,6 +13,14 @@ output/
 .env.*
 !.env.example
 *.local
+# Private self-host operator config. Root AGENTS.md/CLAUDE.md are public project docs;
+# repo-scoped review instructions live under this ignored mount.
+gittensory-config/
+# Codex/CLI auth state must only live in runtime volumes or operator home dirs.
+.codex/
+**/.codex/
+auth.json
+**/auth.json
 .DS_Store
 coverage/
 *.tsbuildinfo

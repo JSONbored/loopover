@@ -12,6 +12,12 @@ dist-ssr
 coverage
 .git
 .claude
+# Runtime-only private review config and subscription CLI auth must never enter image layers.
+gittensory-config
+**/gittensory-config
+**/.codex
+auth.json
+**/auth.json
 # The review-enrichment service (REES) is a separate Railway service with its own Dockerfile — keep it out of the engine image.
 review-enrichment
 .DS_Store

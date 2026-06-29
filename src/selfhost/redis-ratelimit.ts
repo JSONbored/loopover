@@ -1,7 +1,7 @@
 // Redis-backed rate limiter for self-host (#977). The Cloudflare deploy uses a RateLimiter Durable Object;
 // self-host provides the SAME binding surface (idFromName → get → fetch) backed by a Redis fixed-window
-// counter, so `enforceRateLimit` works unchanged and is shared across instances. Without REDIS_URL the binding
-// is absent and enforceRateLimit returns null (no limiting) — same as today.
+// counter, so `enforceRateLimit` works unchanged and is shared across instances. REDIS_URL is required by the
+// self-host review runtime.
 import type { Redis } from "ioredis";
 
 interface RateLimitBody {

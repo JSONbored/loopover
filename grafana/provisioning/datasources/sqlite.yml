@@ -1,5 +1,11 @@
-# Intentionally no SQLite datasource is provisioned. Grafana must not receive direct access to
-# the live application database; dashboards should use Prometheus/GitHub or a separately redacted
-# reporting database if one is added in the future.
+# Maintainer-only SQLite datasource for local operator dashboards. Grafana reads a redacted reporting
+# database produced by reporting-exporter; it never mounts the live application database.
 apiVersion: 1
-datasources: []
+datasources:
+  - name: GittensoryDB
+    type: frser-sqlite-datasource
+    uid: gittensory-db
+    access: proxy
+    editable: false
+    jsonData:
+      path: /reporting/gittensory-reporting.sqlite

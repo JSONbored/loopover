@@ -25,6 +25,18 @@ import { Route as ApiIndexRouteImport } from './routes/api.index'
 import { Route as DocsUpstreamDriftRouteImport } from './routes/docs.upstream-drift'
 import { Route as DocsTuningRouteImport } from './routes/docs.tuning'
 import { Route as DocsTroubleshootingRouteImport } from './routes/docs.troubleshooting'
+import { Route as DocsSelfHostingTroubleshootingRouteImport } from './routes/docs.self-hosting-troubleshooting'
+import { Route as DocsSelfHostingSecurityRouteImport } from './routes/docs.self-hosting-security'
+import { Route as DocsSelfHostingReleasesRouteImport } from './routes/docs.self-hosting-releases'
+import { Route as DocsSelfHostingReesAnalyzersRouteImport } from './routes/docs.self-hosting-rees-analyzers'
+import { Route as DocsSelfHostingReesRouteImport } from './routes/docs.self-hosting-rees'
+import { Route as DocsSelfHostingRagRouteImport } from './routes/docs.self-hosting-rag'
+import { Route as DocsSelfHostingQuickstartRouteImport } from './routes/docs.self-hosting-quickstart'
+import { Route as DocsSelfHostingOperationsRouteImport } from './routes/docs.self-hosting-operations'
+import { Route as DocsSelfHostingGithubAppRouteImport } from './routes/docs.self-hosting-github-app'
+import { Route as DocsSelfHostingConfigurationRouteImport } from './routes/docs.self-hosting-configuration'
+import { Route as DocsSelfHostingBackupScalingRouteImport } from './routes/docs.self-hosting-backup-scaling'
+import { Route as DocsSelfHostingAiProvidersRouteImport } from './routes/docs.self-hosting-ai-providers'
 import { Route as DocsScoreabilityRouteImport } from './routes/docs.scoreability'
 import { Route as DocsQuickstartRouteImport } from './routes/docs.quickstart'
 import { Route as DocsPrivacySecurityRouteImport } from './routes/docs.privacy-security'
@@ -33,6 +45,7 @@ import { Route as DocsMinerWorkflowRouteImport } from './routes/docs.miner-workf
 import { Route as DocsMinerQuickstartRouteImport } from './routes/docs.miner-quickstart'
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
+import { Route as DocsMaintainerSelfHostingRouteImport } from './routes/docs.maintainer-self-hosting'
 import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
 import { Route as DocsHowReviewsWorkRouteImport } from './routes/docs.how-reviews-work'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
@@ -133,6 +146,74 @@ const DocsTroubleshootingRoute = DocsTroubleshootingRouteImport.update({
   path: '/troubleshooting',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsSelfHostingTroubleshootingRoute =
+  DocsSelfHostingTroubleshootingRouteImport.update({
+    id: '/self-hosting-troubleshooting',
+    path: '/self-hosting-troubleshooting',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingSecurityRoute = DocsSelfHostingSecurityRouteImport.update({
+  id: '/self-hosting-security',
+  path: '/self-hosting-security',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSelfHostingReleasesRoute = DocsSelfHostingReleasesRouteImport.update({
+  id: '/self-hosting-releases',
+  path: '/self-hosting-releases',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSelfHostingReesAnalyzersRoute =
+  DocsSelfHostingReesAnalyzersRouteImport.update({
+    id: '/self-hosting-rees-analyzers',
+    path: '/self-hosting-rees-analyzers',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingReesRoute = DocsSelfHostingReesRouteImport.update({
+  id: '/self-hosting-rees',
+  path: '/self-hosting-rees',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSelfHostingRagRoute = DocsSelfHostingRagRouteImport.update({
+  id: '/self-hosting-rag',
+  path: '/self-hosting-rag',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSelfHostingQuickstartRoute =
+  DocsSelfHostingQuickstartRouteImport.update({
+    id: '/self-hosting-quickstart',
+    path: '/self-hosting-quickstart',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingOperationsRoute =
+  DocsSelfHostingOperationsRouteImport.update({
+    id: '/self-hosting-operations',
+    path: '/self-hosting-operations',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingGithubAppRoute =
+  DocsSelfHostingGithubAppRouteImport.update({
+    id: '/self-hosting-github-app',
+    path: '/self-hosting-github-app',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingConfigurationRoute =
+  DocsSelfHostingConfigurationRouteImport.update({
+    id: '/self-hosting-configuration',
+    path: '/self-hosting-configuration',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingBackupScalingRoute =
+  DocsSelfHostingBackupScalingRouteImport.update({
+    id: '/self-hosting-backup-scaling',
+    path: '/self-hosting-backup-scaling',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingAiProvidersRoute =
+  DocsSelfHostingAiProvidersRouteImport.update({
+    id: '/self-hosting-ai-providers',
+    path: '/self-hosting-ai-providers',
+    getParentRoute: () => DocsRoute,
+  } as any)
 const DocsScoreabilityRoute = DocsScoreabilityRouteImport.update({
   id: '/scoreability',
   path: '/scoreability',
@@ -173,6 +254,12 @@ const DocsMaintainerWorkflowRoute = DocsMaintainerWorkflowRouteImport.update({
   path: '/maintainer-workflow',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsMaintainerSelfHostingRoute =
+  DocsMaintainerSelfHostingRouteImport.update({
+    id: '/maintainer-self-hosting',
+    path: '/maintainer-self-hosting',
+    getParentRoute: () => DocsRoute,
+  } as any)
 const DocsMaintainerInstallTrustRoute =
   DocsMaintainerInstallTrustRouteImport.update({
     id: '/maintainer-install-trust',
@@ -300,6 +387,7 @@ export interface FileRoutesByFullPath {
   '/docs/github-app': typeof DocsGithubAppRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
+  '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
@@ -308,6 +396,18 @@ export interface FileRoutesByFullPath {
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
+  '/docs/self-hosting-ai-providers': typeof DocsSelfHostingAiProvidersRoute
+  '/docs/self-hosting-backup-scaling': typeof DocsSelfHostingBackupScalingRoute
+  '/docs/self-hosting-configuration': typeof DocsSelfHostingConfigurationRoute
+  '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
+  '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
+  '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
+  '/docs/self-hosting-rag': typeof DocsSelfHostingRagRoute
+  '/docs/self-hosting-rees': typeof DocsSelfHostingReesRoute
+  '/docs/self-hosting-rees-analyzers': typeof DocsSelfHostingReesAnalyzersRoute
+  '/docs/self-hosting-releases': typeof DocsSelfHostingReleasesRoute
+  '/docs/self-hosting-security': typeof DocsSelfHostingSecurityRoute
+  '/docs/self-hosting-troubleshooting': typeof DocsSelfHostingTroubleshootingRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
@@ -342,6 +442,7 @@ export interface FileRoutesByTo {
   '/docs/github-app': typeof DocsGithubAppRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
+  '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
@@ -350,6 +451,18 @@ export interface FileRoutesByTo {
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
+  '/docs/self-hosting-ai-providers': typeof DocsSelfHostingAiProvidersRoute
+  '/docs/self-hosting-backup-scaling': typeof DocsSelfHostingBackupScalingRoute
+  '/docs/self-hosting-configuration': typeof DocsSelfHostingConfigurationRoute
+  '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
+  '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
+  '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
+  '/docs/self-hosting-rag': typeof DocsSelfHostingRagRoute
+  '/docs/self-hosting-rees': typeof DocsSelfHostingReesRoute
+  '/docs/self-hosting-rees-analyzers': typeof DocsSelfHostingReesAnalyzersRoute
+  '/docs/self-hosting-releases': typeof DocsSelfHostingReleasesRoute
+  '/docs/self-hosting-security': typeof DocsSelfHostingSecurityRoute
+  '/docs/self-hosting-troubleshooting': typeof DocsSelfHostingTroubleshootingRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
@@ -388,6 +501,7 @@ export interface FileRoutesById {
   '/docs/github-app': typeof DocsGithubAppRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
+  '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
@@ -396,6 +510,18 @@ export interface FileRoutesById {
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
+  '/docs/self-hosting-ai-providers': typeof DocsSelfHostingAiProvidersRoute
+  '/docs/self-hosting-backup-scaling': typeof DocsSelfHostingBackupScalingRoute
+  '/docs/self-hosting-configuration': typeof DocsSelfHostingConfigurationRoute
+  '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
+  '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
+  '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
+  '/docs/self-hosting-rag': typeof DocsSelfHostingRagRoute
+  '/docs/self-hosting-rees': typeof DocsSelfHostingReesRoute
+  '/docs/self-hosting-rees-analyzers': typeof DocsSelfHostingReesAnalyzersRoute
+  '/docs/self-hosting-releases': typeof DocsSelfHostingReleasesRoute
+  '/docs/self-hosting-security': typeof DocsSelfHostingSecurityRoute
+  '/docs/self-hosting-troubleshooting': typeof DocsSelfHostingTroubleshootingRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
@@ -435,6 +561,7 @@ export interface FileRouteTypes {
     | '/docs/github-app'
     | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
+    | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
     | '/docs/miner-quickstart'
@@ -443,6 +570,18 @@ export interface FileRouteTypes {
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
+    | '/docs/self-hosting-ai-providers'
+    | '/docs/self-hosting-backup-scaling'
+    | '/docs/self-hosting-configuration'
+    | '/docs/self-hosting-github-app'
+    | '/docs/self-hosting-operations'
+    | '/docs/self-hosting-quickstart'
+    | '/docs/self-hosting-rag'
+    | '/docs/self-hosting-rees'
+    | '/docs/self-hosting-rees-analyzers'
+    | '/docs/self-hosting-releases'
+    | '/docs/self-hosting-security'
+    | '/docs/self-hosting-troubleshooting'
     | '/docs/troubleshooting'
     | '/docs/tuning'
     | '/docs/upstream-drift'
@@ -477,6 +616,7 @@ export interface FileRouteTypes {
     | '/docs/github-app'
     | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
+    | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
     | '/docs/miner-quickstart'
@@ -485,6 +625,18 @@ export interface FileRouteTypes {
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
+    | '/docs/self-hosting-ai-providers'
+    | '/docs/self-hosting-backup-scaling'
+    | '/docs/self-hosting-configuration'
+    | '/docs/self-hosting-github-app'
+    | '/docs/self-hosting-operations'
+    | '/docs/self-hosting-quickstart'
+    | '/docs/self-hosting-rag'
+    | '/docs/self-hosting-rees'
+    | '/docs/self-hosting-rees-analyzers'
+    | '/docs/self-hosting-releases'
+    | '/docs/self-hosting-security'
+    | '/docs/self-hosting-troubleshooting'
     | '/docs/troubleshooting'
     | '/docs/tuning'
     | '/docs/upstream-drift'
@@ -522,6 +674,7 @@ export interface FileRouteTypes {
     | '/docs/github-app'
     | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
+    | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
     | '/docs/miner-quickstart'
@@ -530,6 +683,18 @@ export interface FileRouteTypes {
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
+    | '/docs/self-hosting-ai-providers'
+    | '/docs/self-hosting-backup-scaling'
+    | '/docs/self-hosting-configuration'
+    | '/docs/self-hosting-github-app'
+    | '/docs/self-hosting-operations'
+    | '/docs/self-hosting-quickstart'
+    | '/docs/self-hosting-rag'
+    | '/docs/self-hosting-rees'
+    | '/docs/self-hosting-rees-analyzers'
+    | '/docs/self-hosting-releases'
+    | '/docs/self-hosting-security'
+    | '/docs/self-hosting-troubleshooting'
     | '/docs/troubleshooting'
     | '/docs/tuning'
     | '/docs/upstream-drift'
@@ -665,6 +830,90 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsTroubleshootingRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/self-hosting-troubleshooting': {
+      id: '/docs/self-hosting-troubleshooting'
+      path: '/self-hosting-troubleshooting'
+      fullPath: '/docs/self-hosting-troubleshooting'
+      preLoaderRoute: typeof DocsSelfHostingTroubleshootingRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-security': {
+      id: '/docs/self-hosting-security'
+      path: '/self-hosting-security'
+      fullPath: '/docs/self-hosting-security'
+      preLoaderRoute: typeof DocsSelfHostingSecurityRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-releases': {
+      id: '/docs/self-hosting-releases'
+      path: '/self-hosting-releases'
+      fullPath: '/docs/self-hosting-releases'
+      preLoaderRoute: typeof DocsSelfHostingReleasesRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-rees-analyzers': {
+      id: '/docs/self-hosting-rees-analyzers'
+      path: '/self-hosting-rees-analyzers'
+      fullPath: '/docs/self-hosting-rees-analyzers'
+      preLoaderRoute: typeof DocsSelfHostingReesAnalyzersRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-rees': {
+      id: '/docs/self-hosting-rees'
+      path: '/self-hosting-rees'
+      fullPath: '/docs/self-hosting-rees'
+      preLoaderRoute: typeof DocsSelfHostingReesRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-rag': {
+      id: '/docs/self-hosting-rag'
+      path: '/self-hosting-rag'
+      fullPath: '/docs/self-hosting-rag'
+      preLoaderRoute: typeof DocsSelfHostingRagRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-quickstart': {
+      id: '/docs/self-hosting-quickstart'
+      path: '/self-hosting-quickstart'
+      fullPath: '/docs/self-hosting-quickstart'
+      preLoaderRoute: typeof DocsSelfHostingQuickstartRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-operations': {
+      id: '/docs/self-hosting-operations'
+      path: '/self-hosting-operations'
+      fullPath: '/docs/self-hosting-operations'
+      preLoaderRoute: typeof DocsSelfHostingOperationsRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-github-app': {
+      id: '/docs/self-hosting-github-app'
+      path: '/self-hosting-github-app'
+      fullPath: '/docs/self-hosting-github-app'
+      preLoaderRoute: typeof DocsSelfHostingGithubAppRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-configuration': {
+      id: '/docs/self-hosting-configuration'
+      path: '/self-hosting-configuration'
+      fullPath: '/docs/self-hosting-configuration'
+      preLoaderRoute: typeof DocsSelfHostingConfigurationRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-backup-scaling': {
+      id: '/docs/self-hosting-backup-scaling'
+      path: '/self-hosting-backup-scaling'
+      fullPath: '/docs/self-hosting-backup-scaling'
+      preLoaderRoute: typeof DocsSelfHostingBackupScalingRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/self-hosting-ai-providers': {
+      id: '/docs/self-hosting-ai-providers'
+      path: '/self-hosting-ai-providers'
+      fullPath: '/docs/self-hosting-ai-providers'
+      preLoaderRoute: typeof DocsSelfHostingAiProvidersRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/scoreability': {
       id: '/docs/scoreability'
       path: '/scoreability'
@@ -719,6 +968,13 @@ declare module '@tanstack/react-router' {
       path: '/maintainer-workflow'
       fullPath: '/docs/maintainer-workflow'
       preLoaderRoute: typeof DocsMaintainerWorkflowRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/maintainer-self-hosting': {
+      id: '/docs/maintainer-self-hosting'
+      path: '/maintainer-self-hosting'
+      fullPath: '/docs/maintainer-self-hosting'
+      preLoaderRoute: typeof DocsMaintainerSelfHostingRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/maintainer-install-trust': {
@@ -910,6 +1166,7 @@ interface DocsRouteChildren {
   DocsGithubAppRoute: typeof DocsGithubAppRoute
   DocsHowReviewsWorkRoute: typeof DocsHowReviewsWorkRoute
   DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
+  DocsMaintainerSelfHostingRoute: typeof DocsMaintainerSelfHostingRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
   DocsMinerQuickstartRoute: typeof DocsMinerQuickstartRoute
@@ -918,6 +1175,18 @@ interface DocsRouteChildren {
   DocsPrivacySecurityRoute: typeof DocsPrivacySecurityRoute
   DocsQuickstartRoute: typeof DocsQuickstartRoute
   DocsScoreabilityRoute: typeof DocsScoreabilityRoute
+  DocsSelfHostingAiProvidersRoute: typeof DocsSelfHostingAiProvidersRoute
+  DocsSelfHostingBackupScalingRoute: typeof DocsSelfHostingBackupScalingRoute
+  DocsSelfHostingConfigurationRoute: typeof DocsSelfHostingConfigurationRoute
+  DocsSelfHostingGithubAppRoute: typeof DocsSelfHostingGithubAppRoute
+  DocsSelfHostingOperationsRoute: typeof DocsSelfHostingOperationsRoute
+  DocsSelfHostingQuickstartRoute: typeof DocsSelfHostingQuickstartRoute
+  DocsSelfHostingRagRoute: typeof DocsSelfHostingRagRoute
+  DocsSelfHostingReesRoute: typeof DocsSelfHostingReesRoute
+  DocsSelfHostingReesAnalyzersRoute: typeof DocsSelfHostingReesAnalyzersRoute
+  DocsSelfHostingReleasesRoute: typeof DocsSelfHostingReleasesRoute
+  DocsSelfHostingSecurityRoute: typeof DocsSelfHostingSecurityRoute
+  DocsSelfHostingTroubleshootingRoute: typeof DocsSelfHostingTroubleshootingRoute
   DocsTroubleshootingRoute: typeof DocsTroubleshootingRoute
   DocsTuningRoute: typeof DocsTuningRoute
   DocsUpstreamDriftRoute: typeof DocsUpstreamDriftRoute
@@ -931,6 +1200,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsGithubAppRoute: DocsGithubAppRoute,
   DocsHowReviewsWorkRoute: DocsHowReviewsWorkRoute,
   DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
+  DocsMaintainerSelfHostingRoute: DocsMaintainerSelfHostingRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,
   DocsMcpClientsRoute: DocsMcpClientsRoute,
   DocsMinerQuickstartRoute: DocsMinerQuickstartRoute,
@@ -939,6 +1209,18 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsPrivacySecurityRoute: DocsPrivacySecurityRoute,
   DocsQuickstartRoute: DocsQuickstartRoute,
   DocsScoreabilityRoute: DocsScoreabilityRoute,
+  DocsSelfHostingAiProvidersRoute: DocsSelfHostingAiProvidersRoute,
+  DocsSelfHostingBackupScalingRoute: DocsSelfHostingBackupScalingRoute,
+  DocsSelfHostingConfigurationRoute: DocsSelfHostingConfigurationRoute,
+  DocsSelfHostingGithubAppRoute: DocsSelfHostingGithubAppRoute,
+  DocsSelfHostingOperationsRoute: DocsSelfHostingOperationsRoute,
+  DocsSelfHostingQuickstartRoute: DocsSelfHostingQuickstartRoute,
+  DocsSelfHostingRagRoute: DocsSelfHostingRagRoute,
+  DocsSelfHostingReesRoute: DocsSelfHostingReesRoute,
+  DocsSelfHostingReesAnalyzersRoute: DocsSelfHostingReesAnalyzersRoute,
+  DocsSelfHostingReleasesRoute: DocsSelfHostingReleasesRoute,
+  DocsSelfHostingSecurityRoute: DocsSelfHostingSecurityRoute,
+  DocsSelfHostingTroubleshootingRoute: DocsSelfHostingTroubleshootingRoute,
   DocsTroubleshootingRoute: DocsTroubleshootingRoute,
   DocsTuningRoute: DocsTuningRoute,
   DocsUpstreamDriftRoute: DocsUpstreamDriftRoute,

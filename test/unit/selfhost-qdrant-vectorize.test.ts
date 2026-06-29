@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { createQdrantVectorize, initQdrantCollection, qdrantReadyzUrl } from "../../src/selfhost/qdrant-vectorize";
+import { createQdrantVectorize, initQdrantCollection, qdrantDimensionFromEnv, qdrantReadyzUrl } from "../../src/selfhost/qdrant-vectorize";
 import { resetMetrics, renderMetrics } from "../../src/selfhost/metrics";
 
 const BASE = "http://qdrant:6333";
@@ -16,8 +16,27 @@ describe("qdrantReadyzUrl (#1482 regression)", () => {
   });
 });
 
+describe("qdrantDimensionFromEnv", () => {
+  it("uses a positive integer dimension from QDRANT_DIM", () => {
+    expect(qdrantDimensionFromEnv("768")).toBe(768);
+    expect(qdrantDimensionFromEnv("1536.9")).toBe(1536);
+  });
+
+  it("falls back to the bge-m3 default for unset, invalid, or non-positive values", () => {
+    expect(qdrantDimensionFromEnv(undefined)).toBe(1024);
+    expect(qdrantDimensionFromEnv("")).toBe(1024);
+    expect(qdrantDimensionFromEnv("not-a-number")).toBe(1024);
+    expect(qdrantDimensionFromEnv("0")).toBe(1024);
+    expect(qdrantDimensionFromEnv("-5")).toBe(1024);
+  });
+});
+
 describe("initQdrantCollection (#1217)", () => {
-  afterEach(() => { vi.restoreAllMocks(); resetMetrics(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetMetrics();
+    delete process.env.QDRANT_DIM;
+  });
 
   it("PUTs to /collections/<name> with cosine + size params", async () => {
     const fake = mockFetch(200);
@@ -47,6 +66,15 @@ describe("initQdrantCollection (#1217)", () => {
     await initQdrantCollection(BASE, "custom-col", 768);
     const [url, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("custom-col");
+    expect((JSON.parse(init.body as string) as { vectors: { size: number } }).vectors.size).toBe(768);
+  });
+
+  it("uses QDRANT_DIM as the default collection dimension when configured", async () => {
+    process.env.QDRANT_DIM = "768";
+    const fake = mockFetch(200);
+    vi.stubGlobal("fetch", fake);
+    await initQdrantCollection(BASE);
+    const init = (fake.mock.calls[0] as unknown as [string, RequestInit])[1];
     expect((JSON.parse(init.body as string) as { vectors: { size: number } }).vectors.size).toBe(768);
   });
 });

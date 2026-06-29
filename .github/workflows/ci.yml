@@ -181,6 +181,10 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./reports/junit/vitest-shard-${{ matrix.shard }}.xml
           report_type: test_results
+          disable_search: true
+          override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
           fail_ci_if_error: false
 
   # Merge the 3 shard lcovs into one complete report and upload to Codecov ONCE.
@@ -242,6 +246,10 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./merged-lcov/shard-1.info,./merged-lcov/shard-2.info,./merged-lcov/shard-3.info
+          disable_search: true
+          override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
           fail_ci_if_error: false
 
   # Worker-pool runtime tests (separate vitest config); split out of `test` so it

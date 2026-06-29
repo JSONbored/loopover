@@ -124,21 +124,23 @@ describe("makeLocalReviewContextReader (#review-skills)", () => {
     expect(makeLocalReviewContextReader("  ")).toBeNull();
   });
 
-  it("reads the owner-qualified review/CLAUDE.md + skills/*.md (sorted, .md only)", async () => {
+  it("reads the owner-qualified review/AGENTS.md + skills/*.md (sorted, .md only)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gt-review-"));
     const rev = join(dir, "jsonbored__gittensory", "review");
     mkdirSync(join(rev, "skills"), { recursive: true });
-    writeFileSync(join(rev, "CLAUDE.md"), "Review gittensory carefully.\n");
+    writeFileSync(join(rev, "AGENTS.md"), "Review gittensory carefully.\n");
+    writeFileSync(join(rev, "CLAUDE.md"), "Legacy guide should not win.\n");
     writeFileSync(join(rev, "skills", "b-second.md"), "---\nname: second\nwhen: always\n---\nSecond.\n");
     writeFileSync(join(rev, "skills", "a-first.md"), "First with no frontmatter.\n");
     writeFileSync(join(rev, "skills", "notes.txt"), "ignored — not .md\n");
     const reader = makeLocalReviewContextReader(dir)!;
     const ctx = await reader("JSONbored/gittensory");
     expect(ctx.guide).toContain("Review gittensory carefully.");
+    expect(ctx.guide).not.toContain("Legacy guide should not win.");
     expect(ctx.skills.map((s) => s.name)).toEqual(["a-first", "second"]); // sorted by filename; .txt ignored
   });
 
-  it("falls back to the bare repo-name folder; returns empty for a missing or invalid repo", async () => {
+  it("falls back to legacy CLAUDE.md in the bare repo-name folder; returns empty for a missing or invalid repo", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gt-review-"));
     mkdirSync(join(dir, "metagraphed", "review"), { recursive: true });
     writeFileSync(join(dir, "metagraphed", "review", "CLAUDE.md"), "Bare-folder guide.\n");

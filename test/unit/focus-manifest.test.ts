@@ -720,6 +720,7 @@ describe("public-safe invariant", () => {
     expect(isFocusManifestPublicSafe("see /root/repo/src")).toBe(false);
     // #1418: `/var/` was previously missed by this guard's local copy; it now composes from the canonical source.
     expect(isFocusManifestPublicSafe("see /var/folders/me/work/repo")).toBe(false);
+    expect(isFocusManifestPublicSafe("see /var/log/build.log")).toBe(false);
     expect(isFocusManifestPublicSafe("see /tmp/build/out")).toBe(false);
     // Windows, both backslash and forward-slash forms.
     expect(isFocusManifestPublicSafe("see C:\\Users\\me\\repo")).toBe(false);

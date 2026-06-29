@@ -7,6 +7,7 @@ import { isOrbBrokerEnabled } from "./orb/broker";
 import { isOpsEnabled } from "./review/ops-wire";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
+import { isReviewExecutionJob, isSelfHostedReviewRuntime } from "./selfhost/review-runtime";
 import type { JobMessage } from "./types";
 
 const app = createApp();
@@ -19,11 +20,26 @@ export default {
     // Both dead-letter queues (the maintenance lane's gittensory-jobs-dlq and the webhook lane's
     // gittensory-webhooks-dlq, #1276) drain through the same observability + self-heal consumer.
     if (batch.queue?.endsWith("-dlq")) {
-      await processDlqBatch(batch, env);
+      await processDlqBatch(batch, env, { redriveWebhooks: isSelfHostedReviewRuntime(env) });
       return;
     }
     for (const message of batch.messages) {
       try {
+        if (!isSelfHostedReviewRuntime(env) && isReviewExecutionJob(message.body)) {
+          // Hosted review execution is retired. The Cloudflare API worker still handles Orb ingress
+          // (/v1/orb/webhook) and token brokerage, but only self-host runtimes may execute review jobs.
+          // Ack stale Cloudflare review-queue messages so they do not churn into the DLQ after cutover.
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "retired_review_job_ignored",
+              messageId: message.id,
+              jobType: message.body.type,
+            }),
+          );
+          message.ack();
+          continue;
+        }
         await processJob(env, message.body);
         message.ack();
       } catch (error) {
@@ -65,11 +81,15 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // budget is reserved for webhooks (which drive timely reviews) instead of compounding the backlog; the next
   // tick (~2 min) retries, and after the bucket resets the sweep resumes. Webhooks never pre-yield.
   const jobs: JobMessage[] = [];
-  const sweepThrottledUntil = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
-  if (sweepThrottledUntil) {
-    console.log(JSON.stringify({ event: "regate_sweep_throttled", resetAt: sweepThrottledUntil }));
-  } else {
-    jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
+  const selfHostedReviews = isSelfHostedReviewRuntime(env);
+  let sweepThrottledUntil: string | undefined;
+  if (selfHostedReviews) {
+    sweepThrottledUntil = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
+    if (sweepThrottledUntil) {
+      console.log(JSON.stringify({ event: "regate_sweep_throttled", resetAt: sweepThrottledUntil }));
+    } else {
+      jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
+    }
   }
   // Orb relay retry: re-attempt failed forwardOrbEvent calls each sweep cycle. Only enqueued when the
   // broker is enabled — brokered self-hosts register relay URLs; hosted-cloud instances have no relay failures.
@@ -83,9 +103,9 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // 30-min tick retries, and after the bucket resets the backfill resumes. The cheap single-call health jobs
     // (repair-data-fidelity, refresh-installation-health) stay unconditional — they cost ~one call and keep
     // installation/health state fresh even while the budget is reserved.
-    if (!sweepThrottledUntil) {
+    if (selfHostedReviews && !sweepThrottledUntil) {
       jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
-    } else {
+    } else if (selfHostedReviews) {
       console.log(JSON.stringify({ event: "backfill_throttled", resetAt: sweepThrottledUntil }));
     }
     jobs.push({ type: "repair-data-fidelity", requestedBy: "schedule" });
@@ -99,13 +119,13 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Hourly anomaly scan over gittensory's own
     // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
     // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
-    if (isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
+    if (selfHostedReviews && isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
     // Convergence (self-improve / auto-tune, flag GITTENSORY_REVIEW_SELFTUNE). Hourly self-improvement tick over
     // gittensory's own review-outcome data: compute tuning recommendations, shadow-soak any strictly-tightening
     // one, and auto-promote it to live only after the soak window passes the gate (TIGHTENING-ONLY, audited).
     // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does
     // ZERO new tuning work and the enqueued set is byte-identical to today.
-    if (isSelfTuneEnabled(env)) jobs.push({ type: "selftune", requestedBy: "schedule" });
+    if (selfHostedReviews && isSelfTuneEnabled(env)) jobs.push({ type: "selftune", requestedBy: "schedule" });
   }
   if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
     jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });
@@ -125,7 +145,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // registered + cutover-allowlisted repo, mirroring the signal-snapshot fan-out). Enqueued ONLY when the flag
     // is ON — flag-OFF (default) this job is never created, so the cron does ZERO new RAG work and the enqueued
     // set is byte-identical to today.
-    if (isRagEnabled(env)) jobs.push({ type: "rag-index-repo", requestedBy: "schedule" });
+    if (selfHostedReviews && isRagEnabled(env)) jobs.push({ type: "rag-index-repo", requestedBy: "schedule" });
   }
   await Promise.all(jobs.map((job) => env.JOBS.send(job)));
 }

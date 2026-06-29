@@ -45,9 +45,9 @@ describe("surfaceVerdictToGate", () => {
     expect(AI_JUDGMENT_BLOCKER_CODES.has(evaluation.blockers[0]!.code)).toBe(false);
   });
 
-  it("manual → action_required with a warning (not auto-closed)", () => {
+  it("manual → neutral with a warning (not a failing required check)", () => {
     const { evaluation, finding } = surfaceVerdictToGate({ verdict: "manual", summary: "auth declared" });
-    expect(evaluation.conclusion).toBe("action_required");
+    expect(evaluation.conclusion).toBe("neutral");
     expect(evaluation.blockers).toEqual([]);
     expect(evaluation.warnings).toHaveLength(1);
     expect(finding?.code).toBe("surface_lane_manual");
@@ -79,7 +79,7 @@ describe("applySurfaceGate", () => {
     };
     const genericHold = gate({
       conclusion: "neutral",
-      title: "Gittensory Gate — held for manual review",
+      title: "Gittensory Orb Review Agent — held for manual review",
       summary: "Large change — held for manual review",
       blockers: [],
       warnings: [oversized],

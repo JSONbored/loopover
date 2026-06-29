@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import { parsePositiveInt } from "../utils/json";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
@@ -326,13 +327,6 @@ const QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH = 100;
 const QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH = 300;
 const QUEUE_INTELLIGENCE_MAX_BODY_LENGTH = 4000;
 const QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES = 25;
-
-function parsePositiveInt(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
-}
 
 function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
   try {

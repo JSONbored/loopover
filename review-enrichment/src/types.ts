@@ -19,7 +19,7 @@ export interface EnrichRequest {
     deletions?: number;
   }>;
   diff?: string;
-  /** Short-lived broker token for OSV/license/history fetches. Never logged. */
+  /** Optional GitHub read token for GitHub-backed analyzers. Never logged. */
   githubToken?: string;
   budget?: { timeoutMs?: number; maxBriefChars?: number };
   analyzers?: string[];
@@ -79,6 +79,22 @@ export interface InstallScriptFinding {
   version: string;
   hooks: string[];
   publishedAt: string | null;
+}
+
+/** A newly-added/upgraded npm package that is materially heavy but only directly imported/required a few times
+ *  in the changed lines. Size values are package-service bytes and are nullable when that service omits one. */
+export interface HeavyDependencyFinding {
+  ecosystem: "npm";
+  package: string;
+  version: string;
+  from: string | null;
+  direction: "add" | "change";
+  usageCount: number;
+  usageLocations: Array<{ file: string; line: number }>;
+  installSizeBytes: number | null;
+  bundleSizeBytes: number | null;
+  gzipSizeBytes: number | null;
+  dependencyCount: number | null;
 }
 
 /** A third-party GitHub Action referenced by a mutable tag/branch instead of a pinned commit SHA. */
@@ -162,6 +178,21 @@ export interface TyposquatFinding {
   reason: string;
 }
 
+/** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
+ *  (PyPI sdist-only) — a hidden CI cold-start/install cost and a frequent cross-platform breakage source. Reports
+ *  package@version + the factual build property only. (#1512) */
+export interface NativeBuildFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  kind: "native-addon" | "sdist-only";
+  /** npm only: a prebuilt-binary path exists (node-pre-gyp/prebuild or a `binary` field), so a compile is the
+   *  fallback when no prebuilt matches the platform/ABI rather than guaranteed. */
+  prebuiltFallback?: boolean;
+  /** Short, public-safe explanation of the build cost. */
+  reason: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -170,6 +201,7 @@ export interface BriefFindings {
   license?: LicenseFinding[];
   actionPin?: ActionPinFinding[];
   installScript?: InstallScriptFinding[];
+  heavyDependency?: HeavyDependencyFinding[];
   eol?: EolFinding[];
   redos?: RedosFinding[];
   provenance?: ProvenanceFinding[];
@@ -177,6 +209,7 @@ export interface BriefFindings {
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
+  nativeBuild?: NativeBuildFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

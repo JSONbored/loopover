@@ -257,9 +257,9 @@ describe("buildRepoSettingsPreview", () => {
     });
 
     expect(preview.decision).toMatchObject({ skipped: false, actions: ["none"] });
-    expect(preview.warnings.some((warning) => /Gate checks are enabled.*Checks: write/.test(warning))).toBe(true);
+    expect(preview.warnings.some((warning) => /Review-agent checks are enabled.*Checks: write/.test(warning))).toBe(true);
     expect(preview.installPreview.permissions).toMatchObject({ status: "needs_attention", missing: ["checks"] });
-    expect(preview.installPreview.publicOutputs).toEqual(expect.arrayContaining(["Opt-in Gittensory Gate check run."]));
+    expect(preview.installPreview.publicOutputs).toEqual(expect.arrayContaining(["Opt-in Gittensory Orb Review Agent check run."]));
   });
 
   it("shows a quiet skip for a non-miner author with no rendered comment", () => {

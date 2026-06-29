@@ -14,6 +14,7 @@ function nonBlank(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+/** Resolve the Sentry release id from explicit override first, then the image-baked self-host version. */
 export function resolveSentryRelease(
   env: NodeJS.ProcessEnv,
 ): string | undefined {
@@ -49,10 +50,11 @@ export function scrubEvent<T>(event: T): T {
 export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
   if (!env.SENTRY_DSN) return false;
   Sentry = await import("@sentry/node");
+  const release = resolveSentryRelease(env);
   Sentry.init({
     dsn: env.SENTRY_DSN,
     environment: env.SENTRY_ENVIRONMENT ?? "production",
-    release: resolveSentryRelease(env),
+    ...(release ? { release } : {}),
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE ?? "0"),
     serverName: env.PUBLIC_API_ORIGIN,
     beforeSend: (e) => scrubEvent(e),
@@ -100,7 +102,7 @@ export function captureReviewFailure(
 
 // The structured-log fields worth indexing as Sentry tags — the dimensions operators filter + group by. Only
 // string|number values are tagged; everything else stays in the full "log" context.
-const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId"] as const;
+const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId", "provider", "model", "effort", "timeoutMs"] as const;
 
 /** A SHORT location suffix — " (repo#pr)" — for a no-message error title, so the issue list shows WHERE without
  *  dumping every scalar field (which made titles unreadably long, e.g. trailing a full deliveryId). The complete

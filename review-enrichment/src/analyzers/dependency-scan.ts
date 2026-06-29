@@ -27,7 +27,9 @@ interface ScanOptions {
 
 // Per-manifest line parsers. Each returns [name, version] for a `+`/`-` diff line, or null. Heuristic (line-based,
 // not a full manifest parse) — good enough to flag the deps a PR adds/bumps without resolving the whole tree.
-const NPM_RE = /^"([^"]+)"\s*:\s*"([\^~>=<\s]*[0-9][^"]*)"/;
+const NPM_RE = /^"([^"]+)"\s*:\s*"([^"]+)"/;
+const NPM_ALIAS_RE = /^npm:(@[^/]+\/[^@]+|[^@]+)@(.+)$/;
+const NPM_VERSION_PREFIX_RE = /^[\^~>=<\s]+/;
 const PYPI_RE = /^([A-Za-z0-9._-]+)\s*==\s*([0-9][^\s;]*)/;
 const GO_RE = /^([a-z0-9.\/-]+)\s+v([0-9][^\s]*)/;
 
@@ -37,8 +39,13 @@ function parseLine(
 ): { name: string; version: string } | null {
   if (manifest === "package.json") {
     const m = NPM_RE.exec(body);
-    if (m)
-      return { name: m[1]!, version: m[2]!.replace(/^[\^~>=<\s]+/, "").trim() };
+    if (m) {
+      const spec = m[2]!.trim();
+      const alias = NPM_ALIAS_RE.exec(spec);
+      if (alias) return { name: alias[1]!, version: alias[2]!.replace(NPM_VERSION_PREFIX_RE, "").trim() };
+      if (/^[\^~>=<\s]*[0-9]/.test(spec))
+        return { name: m[1]!, version: spec.replace(NPM_VERSION_PREFIX_RE, "").trim() };
+    }
   } else if (manifest === "requirements.txt") {
     const m = PYPI_RE.exec(body);
     if (m) return { name: m[1]!, version: m[2]! };

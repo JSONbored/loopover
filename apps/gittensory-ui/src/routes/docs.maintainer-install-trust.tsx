@@ -50,16 +50,16 @@ function MaintainerInstallTrust() {
         <li>Install Gittensory on one test repository or a selected repository set.</li>
         <li>
           Approve <code>Metadata: read</code>, <code>Pull requests: read</code>, and{" "}
-          <code>Issues: write</code>. Add <code>Checks: write</code> only when Context or Gate check
-          runs are enabled for the repository.
+          <code>Issues: write</code>. Add <code>Checks: write</code> only when Context or
+          review-agent check runs are enabled for the repository.
         </li>
         <li>
           Keep webhook events enabled for <code>issues</code>, <code>issue_comment</code>,{" "}
           <code>pull_request</code>, and <code>repository</code>.
         </li>
         <li>
-          Leave comments, labels, Context checks, and Gate checks in advisory mode until preview
-          output matches the repo's maintainer policy.
+          Leave comments, labels, Context checks, and review-agent checks in advisory mode until
+          preview output matches the repo's maintainer policy.
         </li>
       </ol>
       <CodeBlock
@@ -85,7 +85,7 @@ POST /v1/repos/:owner/:repo/settings-preview`}
   -> confirm private signals stay private
   -> enable advisory Context, labels, or comments
   -> capture screenshots/recordings for UI or extension changes
-  -> decide whether Gate should be required in branch protection`}
+  -> decide whether the review-agent check should be required in branch protection`}
       />
 
       <h2>Maintainer controls</h2>
@@ -107,9 +107,9 @@ POST /v1/repos/:owner/:repo/settings-preview`}
               "Gittensory Context is advisory and should not be required by branch protection.",
           },
           {
-            title: "Gate check",
+            title: "Review agent check",
             description:
-              "Gittensory Gate is opt-in. Make it required only after the repo owner chooses blocking rules and validates previews.",
+              "Gittensory Orb Review Agent is opt-in. Make it required only after the repo owner chooses blocking rules and validates previews.",
           },
           {
             title: "Command access",
@@ -203,8 +203,8 @@ API unavailable or stale data
         contribution fits the repo, issue, and subnet goals.
       </p>
       <p>
-        If the repo enables <strong>Gittensory Gate</strong>, document which blockers are enforced
-        and why. Otherwise, treat Gittensory output as reviewer context only.
+        If the repo enables <strong>Gittensory Orb Review Agent</strong>, document which blockers
+        are enforced and why. Otherwise, treat Gittensory output as reviewer context only.
       </p>
 
       <h2>Reject weak Gittensory-driven PRs</h2>

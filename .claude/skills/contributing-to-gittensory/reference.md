@@ -17,7 +17,7 @@ for maintainer approval (CI shows unverified → the engine **holds**, never clo
 The single **required** status check is **`validate`** (it aggregates `changes, lint, test, workers,
 mcp, ui, security`; a path-skipped job counts as success). **Codecov** posts `codecov/patch` (the real
 coverage gate) and `codecov/project` (informational) independently. The review engine also posts its
-own check run named **`Gittensory Gate`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
+own check run named **`Gittensory Orb Review Agent`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
 verdict (§3), separate from CI. On a PR, jobs run only if their
 path filter matched; on push to `main`, everything runs.
 

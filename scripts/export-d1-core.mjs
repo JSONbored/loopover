@@ -16,12 +16,13 @@ export const EXCLUDED_TABLES = new Set(["sqlite_sequence", "sqlite_stat1", "d1_m
 //   • submission_user_tokens.encrypted_token   — short-lived GitHub OAuth token envelopes, cloud-scoped.
 //   • orb_enrollments.secret_hash              — one-time enrollment secret hashes.
 //   • orb_enrollments.relay_secret_*           — encrypted relay webhook signing secret material.
+//   • orb_enrollments.cached_token_json         — encrypted GitHub installation-token cache envelope.
 export const REDACTED_COLUMNS = {
   auth_sessions: ["token_hash"],
   webhook_events: ["payload_hash"],
   repository_ai_keys: ["ciphertext"],
   submission_user_tokens: ["encrypted_token"],
-  orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt"],
+  orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt", "cached_token_json"],
 };
 
 // A table name is only ever interpolated into SQL (`SELECT * FROM "<name>"`) after passing this allowlist, so a

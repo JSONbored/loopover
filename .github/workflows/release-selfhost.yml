@@ -20,22 +20,41 @@ permissions:
   contents: write # create the GitHub Release
   packages: write # push to GHCR
 
+concurrency:
+  group: release-selfhost-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # Environment gate — requires reviewer approval before a release runs (configure under repo Settings > Environments).
     environment: release
+    env:
+      SENTRY_ORG: jsonbored
+      SENTRY_PROJECT: gittensory
+      SENTRY_CLI_PACKAGE: "@sentry/cli@3.6.0"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify release commit is on main
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+            echo "::error::Self-host releases must be cut from a commit reachable from main."
+            exit 1
+          fi
 
       - name: Resolve version
         id: version
         env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -54,25 +73,43 @@ jobs:
           echo "v=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release=gittensory-selfhost@${VERSION}" >> "$GITHUB_OUTPUT"
 
+      # Release jobs receive publishing/Sentry credentials, so avoid shared dependency caches here.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24.18.0"
-          cache: "npm"
 
       - name: Install deps
         run: npm ci --ignore-scripts
 
-      - name: Build release bundle
+      - name: Build self-host bundle for release
         run: node scripts/build-selfhost.mjs --all
 
       - name: Validate release source map
         run: node scripts/validate-selfhost-sourcemap.mjs
 
-      - name: Upload Sentry source maps
+      - name: Detect Sentry release token
+        id: sentry
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [ -n "$SENTRY_AUTH_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require Sentry token for official release
+        if: github.repository == 'JSONbored/gittensory' && steps.sentry.outputs.enabled != 'true'
+        run: |
+          echo "::error::Configure SENTRY_AUTH_TOKEN in the release environment before publishing official self-host images."
+          exit 1
+
+      - name: Upload Sentry source maps
+        if: steps.sentry.outputs.enabled == 'true'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'jsonbored' }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'gittensory' }}
           SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_RELEASE: ${{ steps.version.outputs.release }}
           SENTRY_REPOSITORY: ${{ github.repository }}
@@ -83,11 +120,11 @@ jobs:
           test -n "$SENTRY_ORG"
           test -n "$SENTRY_PROJECT"
           if [ -z "${SENTRY_URL:-}" ]; then unset SENTRY_URL; fi
-          npx -y @sentry/cli@3.6.0 releases new "$SENTRY_RELEASE"
-          npx -y @sentry/cli@3.6.0 releases set-commits "$SENTRY_RELEASE" --commit "$SENTRY_REPOSITORY@$SENTRY_COMMIT_SHA" --ignore-missing
-          npx -y @sentry/cli@3.6.0 sourcemaps inject dist
+          npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE"
+          npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --commit "$SENTRY_REPOSITORY@$SENTRY_COMMIT_SHA" --ignore-missing
+          npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist
           node scripts/validate-selfhost-sourcemap.mjs
-          npx -y @sentry/cli@3.6.0 sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist
+          npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -101,7 +138,7 @@ jobs:
 
       - name: Image metadata
         id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/gittensory-selfhost
           tags: |
@@ -112,6 +149,7 @@ jobs:
             org.opencontainers.image.title=gittensory-selfhost
             org.opencontainers.image.description=Self-hostable Gittensory review engine
             org.opencontainers.image.version=${{ steps.version.outputs.v }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build + push (linux/amd64 + linux/arm64)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -120,30 +158,31 @@ jobs:
           target: runtime-prebuilt
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GITTENSORY_VERSION=${{ steps.version.outputs.release }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
 
       - name: Finalize Sentry release
+        if: steps.sentry.outputs.enabled == 'true'
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'jsonbored' }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'gittensory' }}
           SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_RELEASE: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail
           if [ -z "${SENTRY_URL:-}" ]; then unset SENTRY_URL; fi
-          npx -y @sentry/cli@3.6.0 releases finalize "$SENTRY_RELEASE"
+          npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE"
 
       - name: Validate Sentry release
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'jsonbored' }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'gittensory' }}
           SENTRY_URL: ${{ vars.SENTRY_URL }}
           SENTRY_RELEASE: ${{ steps.version.outputs.release }}
           SENTRY_REPOSITORY: ${{ github.repository }}
@@ -165,6 +204,6 @@ jobs:
             docker pull ghcr.io/${{ github.repository_owner }}/gittensory-selfhost:${{ steps.version.outputs.v }}
             ```
 
-            Multi-arch (linux/amd64 + linux/arm64). See [docs/self-hosting.md](docs/self-hosting.md) for setup.
-            To include the Claude Code / Codex subscription CLIs, build locally with
-            `--build-arg INSTALL_AI_CLIS=true`.
+            Multi-arch (linux/amd64 + linux/arm64). See https://gittensory.aethereal.dev/docs/maintainer-self-hosting for setup.
+            Includes the Claude Code / Codex subscription CLIs by default; credentials stay runtime-only.
+            Sentry release id baked into the image: `${{ steps.version.outputs.release }}`.

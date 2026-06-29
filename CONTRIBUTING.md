@@ -261,7 +261,7 @@ Public GitHub surfaces:
 - Keep public comments advisory, sanitized, and low-noise.
 - Keep labels limited to configured labels for officially confirmed Gittensor miner PRs.
 - Never publish private reviewability, scoring, wallet, hotkey, or reward/risk context.
-- The Gittensory Gate blocks **only confirmed Gittensor contributors**; every other author (and any
+- The Gittensory Orb Review Agent blocks **only confirmed Gittensor contributors**; every other author (and any
   app/infra state) resolves to a neutral, non-blocking gate. Adding a blocker must keep it
   confirmed-contributor-gated through `evaluateGateCheck`.
 

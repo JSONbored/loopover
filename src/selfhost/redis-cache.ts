@@ -2,7 +2,7 @@
 // deliveries from being processed twice — GitHub retries webhooks that receive a non-200
 // response, and each retry carries the same `x-github-delivery` UUID. By caching the delivery
 // ID after a successful processing attempt, the server can return 204 immediately on retries
-// without re-queuing the job. Activated when REDIS_URL is set alongside --profile redis.
+// without re-queuing the job. The self-host review runtime requires REDIS_URL.
 import type { Redis } from "ioredis";
 
 export function createRedisCache(redis: Redis) {

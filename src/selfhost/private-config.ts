@@ -108,8 +108,9 @@ export function parseReviewSkill(filename: string, text: string): RepoReviewSkil
 }
 
 /** Build the container-local review-context reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset. Per
- *  repo (first existing folder wins) reads `review/CLAUDE.md` (the guide) + every `review/skills/*.md` (rubric modules,
- *  sorted). Missing files/dir degrade to nulls/empty; a per-file read error skips that file. (#review-skills) */
+ *  repo (first existing folder wins) reads `review/AGENTS.md` (Codex) or `review/CLAUDE.md` (Claude Code) as the
+ *  guide + every `review/skills/*.md` rubric module, sorted. Missing files/dir degrade to nulls/empty; a per-file
+ *  read error skips that file. (#review-skills) */
 export function makeLocalReviewContextReader(dir: string | undefined): RepoReviewContextReader | null {
   const trimmed = (dir ?? "").trim();
   if (!trimmed) return null;
@@ -118,10 +119,13 @@ export function makeLocalReviewContextReader(dir: string | undefined): RepoRevie
     for (const folder of reviewContextFolders(repoFullName)) {
       const abs = resolve(base, folder);
       let guide: string | null = null;
-      try {
-        guide = await readFile(resolve(abs, "CLAUDE.md"), "utf8");
-      } catch {
-        // no per-repo review guide
+      for (const guideName of ["AGENTS.md", "CLAUDE.md"]) {
+        try {
+          guide = await readFile(resolve(abs, guideName), "utf8");
+          break;
+        } catch {
+          // no per-repo guide at this candidate name
+        }
       }
       const skills: RepoReviewSkill[] = [];
       try {

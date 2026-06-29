@@ -13,9 +13,17 @@ describe("self-host Sentry release wiring", () => {
     expect(releaseWorkflow).toContain(
       'releases set-commits "$SENTRY_RELEASE" --commit "$SENTRY_REPOSITORY@$SENTRY_COMMIT_SHA" --ignore-missing',
     );
-    expect(releaseWorkflow).toContain("npx -y @sentry/cli@3.6.0");
+    expect(releaseWorkflow).toContain('SENTRY_CLI_PACKAGE: "@sentry/cli@3.6.0"');
+    expect(releaseWorkflow).toContain('npx -y "$SENTRY_CLI_PACKAGE"');
+    expect(releaseWorkflow).not.toContain("@sentry/cli@latest");
     expect(releaseWorkflow).toContain("Validate Sentry release");
-    expect(releaseWorkflow).toContain("SENTRY_REQUIRE_FINALIZED: \"true\"");
+    expect(releaseWorkflow).toContain('SENTRY_REQUIRE_FINALIZED: "true"');
+
+    const edgeDeployScript = read("scripts/deploy-selfhost-prebuilt.sh");
+    expect(edgeDeployScript).toContain(
+      'SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"',
+    );
+    expect(edgeDeployScript).not.toContain("@sentry/cli@latest");
     expect(releaseWorkflow).toContain("target: runtime-prebuilt");
     expect(releaseWorkflow).toContain(
       "GITTENSORY_VERSION=${{ steps.version.outputs.release }}",
@@ -32,6 +40,7 @@ describe("self-host Sentry release wiring", () => {
 
   it("does not copy source maps into the runtime image", () => {
     const dockerfile = read("Dockerfile");
+    expect(dockerfile).toContain("npm install -g --foreground-scripts");
     expect(dockerfile).not.toContain("COPY --from=build /app/dist ./dist");
     expect(dockerfile).toContain(
       "COPY --from=build --chown=node:node /app/dist/server.mjs ./dist/server.mjs",

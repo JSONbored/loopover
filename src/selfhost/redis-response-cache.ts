@@ -1,5 +1,5 @@
-// Redis-backed GitHub GET-response cache (#perf). Optional: when REDIS_URL + GITHUB_CACHE_TTL_SECONDS>0 are set,
-// the self-host caches safe GitHub API GET responses for a short TTL. A single review pass makes ~24 GitHub
+// Redis-backed GitHub GET-response cache (#perf). The self-host runtime requires REDIS_URL; when
+// GITHUB_CACHE_TTL_SECONDS>0, it caches safe GitHub API GET responses for a short TTL. A single review pass makes ~24 GitHub
 // fetches (PR data, files, user/org lookups) — many repeated — all network-bound and rate-limited. A short-TTL
 // cache dedups those within and across rapid re-reviews, cutting latency and rate-limit pressure, and it
 // persists across restarts. Keyed by URL; the TTL bounds staleness. Only the status + body + content-type are

@@ -11,6 +11,7 @@ import {
   getContributorEvidence,
   getAgentRun,
   getContributorScoringProfile,
+  getWebhookEvent,
   getInstallation,
   getLatestUpstreamRulesetSnapshot,
   getPullRequest,
@@ -924,6 +925,40 @@ describe("queue processors", () => {
     // CI completion is event-driven dynamic state, so it must re-run prReadyForReview even when the last surface
     // publish marker already matches this head SHA.
     expect(checkRunsFetched).toBe(true);
+  });
+
+  it("drops already-enqueued self-authored app CI completions without re-reviewing", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_SLUG: "gittensory-orb",
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+    });
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount += 1;
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "self-check-suite-queued",
+      eventName: "check_suite",
+      payload: {
+        action: "completed",
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        installation: { id: 9001 },
+        check_suite: {
+          head_sha: "a7",
+          pull_requests: [{ number: 7 }],
+          app: { slug: "gittensory-orb" },
+        },
+      } as never,
+    });
+
+    expect(fetchCount).toBe(0);
+    await expect(getWebhookEvent(env, "self-check-suite-queued")).resolves.toMatchObject({
+      status: "processed",
+      payloadHash: "processed",
+    });
   });
 
   it("#4 stale-surface repair: a rebased PR resyncs + re-reviews at the new head, and the marker survives the resync", async () => {

@@ -3,6 +3,7 @@ import { getWebhookEvent, recordWebhookEvent } from "../db/repositories";
 import type { GitHubWebhookPayload, JobMessage } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
 import { relayVerify } from "../orb/relay";
+import { isSelfAuthoredWebhookNoise } from "./self-authored";
 
 const DEFAULT_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -81,7 +82,7 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
     repositoryFullName: payload.repository?.full_name,
     payloadHash,
   };
-  if (isSelfAuthoredAppCommentWebhook(env, eventName, payload)) {
+  if (isSelfAuthoredWebhookNoise(env, eventName, payload)) {
     await recordWebhookEvent(env, { ...eventRow, status: "processed" });
     return "ignored";
   }
@@ -101,22 +102,6 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
   }
 
   return "queued";
-}
-
-function isSelfAuthoredAppCommentWebhook(
-  env: Env,
-  eventName: string,
-  payload: GitHubWebhookPayload,
-): boolean {
-  if (eventName !== "issue_comment") return false;
-  if (payload.action !== "created" && payload.action !== "edited") return false;
-  const botLogin = `${env.GITHUB_APP_SLUG}[bot]`.toLowerCase();
-  return (
-    payload.sender?.type === "Bot" &&
-    payload.sender.login?.toLowerCase() === botLogin &&
-    payload.comment?.user?.type === "Bot" &&
-    payload.comment.user.login?.toLowerCase() === botLogin
-  );
 }
 
 /** The brokered self-host's relay RECEIVER. The central Orb forwards an event here, HMAC-signed (x-orb-signature-

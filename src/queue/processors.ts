@@ -106,6 +106,7 @@ import {
   isGitHubRateLimitedError,
   isForeignAppInstallation,
 } from "../github/app";
+import { isSelfAuthoredCiCompletionWebhook } from "../github/self-authored";
 import {
   AGENT_COMMAND_COMMENT_MARKER,
   createOrUpdateAgentCommandComment,
@@ -1932,6 +1933,18 @@ async function maybeReReviewOnCiCompletion(
   const repoFullName = payload.repository?.full_name;
   const installationId = getInstallationId(payload);
   if (!repoFullName || !installationId) return false;
+  if (isSelfAuthoredCiCompletionWebhook(env, eventName, payload)) {
+    await recordWebhookEvent(env, {
+      deliveryId,
+      eventName,
+      action: payload.action,
+      installationId,
+      repositoryFullName: repoFullName,
+      payloadHash: "processed",
+      status: "processed",
+    });
+    return true;
+  }
   const node = (payload as Record<string, unknown>)[eventName] as
     | { pull_requests?: Array<{ number?: number | null }> }
     | undefined;

@@ -27,6 +27,13 @@ describe("gittensory-mcp CLI — basics", () => {
 
     const generic = JSON.parse(run(["init-client", "--print", "mcp", "--json"])) as { snippet: string };
     expect(generic.snippet).toBe(claude.snippet);
+
+    const vscode = JSON.parse(run(["init-client", "--print", "vscode", "--json"])) as { snippet: string };
+    // VS Code uses a `servers` map with an explicit transport type, not the `mcpServers` shape.
+    expect(vscode.snippet).toContain('"servers"');
+    expect(vscode.snippet).toContain('"type": "stdio"');
+    expect(vscode.snippet).toContain('"gittensory"');
+    expect(vscode.snippet).not.toContain('"mcpServers"');
   });
 
   it("prints human-approved agent profile instructions for supported MCP clients", () => {

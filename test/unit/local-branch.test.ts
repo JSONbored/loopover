@@ -1236,6 +1236,32 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).not.toContain("/root/work");
   });
 
+  it("hides /var/ service paths and forward-slash Windows paths from public PR packet changed paths (#1418)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [
+          { path: "/var/folders/work/src/cache.ts", additions: 12, deletions: 2, status: "modified" },
+          { path: "C:/Users/alice/work/src/util.ts", additions: 3, deletions: 1, status: "modified" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.markdown).toContain("[local path hidden]");
+    expect(analysis.prPacket.markdown).not.toContain("/var/folders");
+    expect(analysis.prPacket.markdown).not.toContain("C:/Users/alice");
+  });
+
   it("removes snake_case private signals from public PR packet markdown", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

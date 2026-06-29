@@ -1,5 +1,6 @@
 import type { ContributorDecisionPack } from "./decision-pack";
 import type { SignalSnapshotRecord } from "../types";
+import { PUBLIC_LOCAL_PATH_INLINE } from "../signals/redaction";
 
 export type MinerDashboardSignalGroup = "repo_state" | "contributor_state" | "validation_state" | "policy_context";
 export type MinerDashboardChangeStatus = "new" | "changed" | "unchanged";
@@ -42,7 +43,9 @@ const CHANGE_LABEL_LIMIT = 6;
 const REASON_LIMIT = 3;
 const FORBIDDEN_PUBLIC_TEXT =
   /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|private keys?|raw[-_\s]?trust(?: scores?)?|trust[-_\s]?scores?|reward(?:[-_\s]?(?:estimate|prediction|claim|score))?s?|payouts?|farming(?:[-_\s]?language)?|private[-_\s]?reviewability|private[-_\s]?scoreability|scoreability|public[-_\s]?score[-_\s]?(?:estimate|prediction)|estimated[-_\s]?score|score[-_\s]?estimate)\b/gi;
-const LOCAL_PATH = /(?:\/(?:Users|home|root|tmp|var)\/[^\s,;:)]+|[A-Za-z]:\\Users\\[^\s,;:)]+)/g;
+// Compose the roots from the canonical PUBLIC_LOCAL_PATH_INLINE in redaction.ts (so this surface cannot drift)
+// while preserving this surface's own trailing class and its case-sensitive `/g` (Windows form via `[A-Z]`).
+const LOCAL_PATH = new RegExp(`(?:${PUBLIC_LOCAL_PATH_INLINE})[^\\s,;:)]+`, "g");
 const FORBIDDEN_TOKEN = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 
 export function previousDecisionPackFromSnapshots(currentPack: ContributorDecisionPack, snapshots: SignalSnapshotRecord[]): ContributorDecisionPack | undefined {

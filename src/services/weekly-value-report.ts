@@ -28,6 +28,7 @@ import type {
   WeeklyValueReportVariant,
 } from "../types";
 import { nowIso } from "../utils/json";
+import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
 
 type WeeklyValueReportInputs = {
   generatedAt: string;
@@ -409,7 +410,7 @@ function normalizeReportDays(value: number | null | undefined): number {
 
 function sanitizeReportText(value: string): string {
   const redacted = value
-    .replace(/(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g, "<redacted-path>")
+    .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
     .replace(/\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer <redacted-token>");
   if (

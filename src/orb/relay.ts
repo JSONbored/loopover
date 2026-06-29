@@ -291,8 +291,14 @@ export async function forwardOrbEvent(
   fetchImpl: typeof fetch = fetch,
 ): Promise<"forwarded" | "queued" | "skipped" | "failed"> {
   if (!args.installationId || !RELAY_FORWARD_EVENTS.has(args.eventName)) return "skipped";
+  // issueOrbEnrollment INSERTs a new row per enrollment without revoking prior enrolled rows for the same
+  // installation_id. Without ORDER BY, .first() is nondeterministic — a stale row (no relay / old URL) can win
+  // after re-enrollment (#1783). Prefer enrollments with a registered relay (SQLite sorts NULL first on DESC),
+  // then the newest relay registration, then the newest enrollment.
   const row = await env.DB
-    .prepare("SELECT relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL")
+    .prepare(
+      "SELECT relay_mode, relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL ORDER BY (relay_registered_at IS NOT NULL) DESC, relay_registered_at DESC, enrolled_at DESC",
+    )
     .bind(args.installationId)
     .first<{ relay_mode: string; relay_url: string | null; relay_secret_enc: string | null; relay_secret_iv: string | null; relay_secret_salt: string | null }>();
   if (!row) return "skipped"; // not a brokered self-host (or revoked) — nothing to relay to

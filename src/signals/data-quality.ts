@@ -71,8 +71,12 @@ export function buildFreshnessSloReport(args: {
   const add = (area: keyof typeof FRESHNESS_SLO_MS, targetKey: string, observedAt: string | null | undefined, forced?: "blocked" | "degraded" | "missing") => {
     const observedMs = observedAt ? Date.parse(observedAt) : NaN;
     const validObservedAt = observedAt && Number.isFinite(observedMs) ? observedAt : null;
-    const ageSeconds = validObservedAt ? Math.max(0, Math.floor((nowMs - observedMs) / 1000)) : undefined;
-    const status = forced ?? (!validObservedAt ? "missing" : ageSeconds !== undefined && ageSeconds * 1000 > FRESHNESS_SLO_MS[area] ? "stale" : "fresh");
+    // Compare staleness in milliseconds (matching isStale below), not on the floored-to-seconds age:
+    // `ageSeconds * 1000 > SLO_MS` drops the sub-second remainder, so an age up to 999ms past the SLO is
+    // wrongly reported "fresh". ageSeconds stays floored for display; the threshold check uses raw ms.
+    const ageMs = validObservedAt ? Math.max(0, nowMs - observedMs) : undefined;
+    const ageSeconds = ageMs !== undefined ? Math.floor(ageMs / 1000) : undefined;
+    const status = forced ?? (!validObservedAt ? "missing" : ageMs !== undefined && ageMs > FRESHNESS_SLO_MS[area] ? "stale" : "fresh");
     const launchBlocking = status !== "fresh" && LAUNCH_BLOCKING_FRESHNESS_AREAS.has(area);
     items.push({ area, targetKey, status, launchBlocking, ...(ageSeconds !== undefined ? { ageSeconds, breachSeconds: Math.max(0, ageSeconds - Math.floor(FRESHNESS_SLO_MS[area] / 1000)) } : {}), sloSeconds: Math.floor(FRESHNESS_SLO_MS[area] / 1000), observedAt: validObservedAt, summary: `${area}:${targetKey} is ${status}` });
   };

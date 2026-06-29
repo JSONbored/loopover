@@ -391,6 +391,24 @@ NOVELTY_BONUS_SCALAR = 3
     expect(withScoringGap).toEqual(["NOVELTY_BONUS_SCALAR"]);
   });
 
+  it("excludes DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT and MAX_ISSUE_CLOSE_WINDOW_DAYS from unmodeled drift (#1692)", () => {
+    // Both are numeric constants in the live upstream constants.py that the parser successfully reads, but
+    // neither is a scoring dimension gittensory models — excluding them prevents perpetual false-positive
+    // drift warnings on every refreshScoringModelSnapshot run (same pattern as EMISSION_SHARE_TOLERANCE #809).
+    const result = findUnmodeledUpstreamConstants(
+      "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT = 0.12\nMAX_ISSUE_CLOSE_WINDOW_DAYS = 1\n",
+    );
+    expect(result).toEqual([]);
+    expect(result).not.toContain("DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT");
+    expect(result).not.toContain("MAX_ISSUE_CLOSE_WINDOW_DAYS");
+
+    // A genuinely new upstream scoring dimension still surfaces alongside them.
+    const withNewDimension = findUnmodeledUpstreamConstants(
+      "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT = 0.12\nMAX_ISSUE_CLOSE_WINDOW_DAYS = 1\nNOVELTY_BONUS_SCALAR = 3\n",
+    );
+    expect(withNewDimension).toEqual(["NOVELTY_BONUS_SCALAR"]);
+  });
+
   it("truncates the unmodeled-constants warning when upstream defines more than 12 (#809)", async () => {
     const env = createTestEnv({
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",

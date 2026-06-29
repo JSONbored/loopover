@@ -5,6 +5,11 @@ import {
   queryOsv,
   scanDependencies,
 } from "../dist/analyzers/dependency-scan.js";
+import {
+  extractLockfileChanges,
+  queryOsvBatch,
+  scanLockfileDrift,
+} from "../dist/analyzers/lockfile-drift.js";
 import { renderBrief } from "../dist/render.js";
 import { buildBrief } from "../dist/brief.js";
 import { scanPatch, scanSecrets } from "../dist/analyzers/secret-scan.js";
@@ -160,6 +165,283 @@ test("scanDependencies: only deps with vulns are returned", async () => {
   assert.equal(findings[0].cves[0].severity, "critical");
 });
 
+test("extractLockfileChanges: package-lock version drift with file line, skipping direct manifest deps", () => {
+  const changes = extractLockfileChanges([
+    {
+      path: "package.json",
+      patch: '+    "direct": "2.0.0",',
+    },
+    {
+      path: "package-lock.json",
+      patch: [
+        "@@ -10,8 +10,8 @@",
+        '     "node_modules/direct": {',
+        '-      "version": "1.0.0",',
+        '+      "version": "2.0.0",',
+        '     },',
+        '     "node_modules/minimist": {',
+        '-      "version": "1.2.8",',
+        '+      "version": "0.0.8",',
+      ].join("\n"),
+    },
+  ]);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].package, "minimist");
+  assert.equal(changes[0].from, "1.2.8");
+  assert.equal(changes[0].to, "0.0.8");
+  assert.equal(changes[0].line, 14);
+});
+
+test("extractLockfileChanges: package-lock root dependency versions do not reuse package context", () => {
+  const changes = extractLockfileChanges([
+    {
+      path: "package-lock.json",
+      patch: [
+        "@@ -20,13 +20,13 @@",
+        '     "node_modules/a": {',
+        '-      "version": "1.0.0",',
+        '+      "version": "1.0.1",',
+        "     },",
+        '     "dependencies": {',
+        '       "b": {',
+        '-        "version": "2.0.0",',
+        '+        "version": "2.0.1"',
+        "       }",
+      ].join("\n"),
+    },
+  ]);
+
+  assert.deepEqual(
+    changes.map(({ ecosystem, package: name, from, to }) => ({
+      ecosystem,
+      name,
+      from,
+      to,
+    })),
+    [{ ecosystem: "npm", name: "a", from: "1.0.0", to: "1.0.1" }],
+  );
+});
+
+test("extractLockfileChanges: package-lock v1 dependency stanzas are scanned", () => {
+  const changes = extractLockfileChanges([
+    {
+      path: "package-lock.json",
+      patch: [
+        "@@ -30,10 +30,10 @@",
+        '   "dependencies": {',
+        '     "minimist": {',
+        '-      "version": "1.2.8",',
+        '+      "version": "0.0.8",',
+        "     },",
+        '     "@scope/pkg": {',
+        '-      "version": "2.0.0",',
+        '+      "version": "2.0.1-beta.1+build.5"',
+      ].join("\n"),
+    },
+  ]);
+
+  assert.deepEqual(
+    changes.map(({ ecosystem, package: name, from, to }) => ({
+      ecosystem,
+      name,
+      from,
+      to,
+    })),
+    [
+      { ecosystem: "npm", name: "minimist", from: "1.2.8", to: "0.0.8" },
+      {
+        ecosystem: "npm",
+        name: "@scope/pkg",
+        from: "2.0.0",
+        to: "2.0.1-beta.1+build.5",
+      },
+    ],
+  );
+});
+
+test("extractLockfileChanges: parses yarn.lock and poetry.lock resolved versions", () => {
+  const changes = extractLockfileChanges([
+    {
+      path: "web/yarn.lock",
+      patch: [
+        "@@ -20,7 +20,7 @@",
+        ' "@scope/pkg@^1.0.0":',
+        '-  version "1.1.0"',
+        '+  version "1.0.1"',
+      ].join("\n"),
+    },
+    {
+      path: "berry/yarn.lock",
+      patch: [
+        "@@ -30,7 +30,7 @@",
+        " left-pad@npm:^1.0.0:",
+        "-  version: 1.1.0",
+        "+  version: 1.0.1",
+      ].join("\n"),
+    },
+    {
+      path: "poetry.lock",
+      patch: [
+        "@@ -40,7 +40,7 @@",
+        " [[package]]",
+        ' name = "requests"',
+        '-version = "2.31.0"',
+        '+version = "2.19.0"',
+      ].join("\n"),
+    },
+  ]);
+  assert.deepEqual(
+    changes.map(({ ecosystem, package: name, from, to }) => ({
+      ecosystem,
+      name,
+      from,
+      to,
+    })),
+    [
+      { ecosystem: "npm", name: "@scope/pkg", from: "1.1.0", to: "1.0.1" },
+      { ecosystem: "npm", name: "left-pad", from: "1.1.0", to: "1.0.1" },
+      { ecosystem: "PyPI", name: "requests", from: "2.31.0", to: "2.19.0" },
+    ],
+  );
+});
+
+test("extractLockfileChanges: Yarn ignores non-stanza top-level lines", () => {
+  const changes = extractLockfileChanges([
+    {
+      path: "yarn.lock",
+      patch: [
+        "@@ -10,8 +10,8 @@",
+        " a@^1.0.0:",
+        "-  version: 1.0.0",
+        "+  version: 1.0.1",
+        " metadata",
+        "-  version: 2.0.0",
+        "+  version: 2.0.1",
+      ].join("\n"),
+    },
+  ]);
+
+  assert.deepEqual(
+    changes.map(({ package: name, from, to }) => ({ name, from, to })),
+    [{ name: "a", from: "1.0.0", to: "1.0.1" }],
+  );
+});
+
+test("extractLockfileChanges: Yarn multi-descriptor stanzas preserve transitive packages", () => {
+  const changes = extractLockfileChanges([
+    {
+      path: "package.json",
+      patch: '+    "direct": "1.0.0",',
+    },
+    {
+      path: "yarn.lock",
+      patch: [
+        "@@ -10,7 +10,7 @@",
+        " direct@^1.0.0, transitive@npm:1.0.0:",
+        "-  version: 1.2.8",
+        "+  version: 0.0.8",
+      ].join("\n"),
+    },
+  ]);
+
+  assert.deepEqual(
+    changes.map(({ ecosystem, package: name, from, to }) => ({
+      ecosystem,
+      name,
+      from,
+      to,
+    })),
+    [{ ecosystem: "npm", name: "transitive", from: "1.2.8", to: "0.0.8" }],
+  );
+});
+
+test("queryOsvBatch: sends lockfile resolutions to OSV batch and maps indexed results", async () => {
+  const calls = [];
+  const cves = await queryOsvBatch(
+    [
+      {
+        file: "package-lock.json",
+        line: 3,
+        ecosystem: "npm",
+        package: "minimist",
+        from: "1.2.8",
+        to: "0.0.8",
+      },
+    ],
+    async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return {
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              vulns: [
+                {
+                  id: "GHSA-x",
+                  summary: "Prototype pollution",
+                  database_specific: { severity: "HIGH" },
+                  affected: [
+                    {
+                      ranges: [
+                        { events: [{ introduced: "0" }, { fixed: "1.2.6" }] },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    },
+  );
+  assert.equal(calls[0].url, "https://api.osv.dev/v1/querybatch");
+  assert.deepEqual(calls[0].body.queries[0], {
+    package: { name: "minimist", ecosystem: "npm" },
+    version: "0.0.8",
+  });
+  assert.equal(cves.get("npm::minimist@0.0.8")[0].severity, "high");
+  assert.equal(cves.get("npm::minimist@0.0.8")[0].fixedIn, "1.2.6");
+});
+
+test("scanLockfileDrift: reports only vulnerable lockfile-only resolutions", async () => {
+  const findings = await scanLockfileDrift(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package-lock.json",
+          patch: [
+            "@@ -1,4 +1,4 @@",
+            '     "node_modules/minimist": {',
+            '-      "version": "1.2.8",',
+            '+      "version": "0.0.8",',
+          ].join("\n"),
+        },
+      ],
+    },
+    async () => ({
+      ok: true,
+      json: async () => ({
+        results: [
+          {
+            vulns: [
+              {
+                id: "GHSA-lock",
+                database_specific: { severity: "CRITICAL" },
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].direction, "change");
+  assert.equal(findings[0].cves[0].severity, "critical");
+});
+
 test("renderBrief: sorts by severity, empty when no findings", () => {
   const empty = renderBrief({});
   assert.equal(empty.promptSection, "");
@@ -192,6 +474,127 @@ test("renderBrief: sorts by severity, empty when no findings", () => {
     "critical before low",
   );
   assert.match(rendered.systemSuffix, /verified ground truth/);
+});
+
+test("renderBrief: renders lockfile drift with sanitized location", () => {
+  const r = renderBrief({
+    lockfileDrift: [
+      {
+        file: "package-lock.json",
+        line: 12,
+        ecosystem: "npm",
+        package: "minimist",
+        from: "1.2.8",
+        to: "0.0.8",
+        direction: "change",
+        cves: [
+          {
+            id: "GHSA-lock",
+            severity: "high",
+            summary: "Prototype pollution",
+            fixedIn: "1.2.6",
+          },
+        ],
+      },
+    ],
+  });
+  assert.match(r.promptSection, /Vulnerable lockfile-only dependency drift/);
+  assert.match(r.promptSection, /`package-lock\.json:12` resolves transitive/);
+  assert.match(r.promptSection, /GHSA-lock/);
+});
+
+test("renderBrief: sanitizes dependency OSV text", () => {
+  const r = renderBrief({
+    dependency: [
+      {
+        ecosystem: "npm",
+        package: "minimist",
+        from: null,
+        to: "0.0.8",
+        direction: "add",
+        cves: [
+          {
+            id: "GHSA-dep`\n### injected",
+            severity: "high",
+            summary: "Prototype\n### injected",
+            fixedIn: "1.2.6`\n### fixed",
+          },
+        ],
+      },
+    ],
+  });
+  assert.doesNotMatch(r.promptSection, /\n### injected/);
+  assert.doesNotMatch(r.promptSection, /\n### fixed/);
+  assert.match(r.promptSection, /GHSA-depˋ␤### injected/);
+});
+
+test("renderBrief: sanitizes lockfile drift OSV text", () => {
+  const r = renderBrief({
+    lockfileDrift: [
+      {
+        file: "package-lock.json",
+        line: 12,
+        ecosystem: "npm",
+        package: "minimist",
+        from: "1.2.8`\n### forged",
+        to: "0.0.8",
+        direction: "change",
+        cves: [
+          {
+            id: "GHSA-lock`\n### injected",
+            severity: "high",
+            summary: "Prototype\n### injected",
+            fixedIn: "1.2.6`\n### fixed",
+          },
+        ],
+      },
+    ],
+  });
+  assert.doesNotMatch(r.promptSection, /\n### injected/);
+  assert.doesNotMatch(r.promptSection, /\n### fixed/);
+  assert.match(r.promptSection, /GHSA-lockˋ␤### injected/);
+});
+
+test("buildBrief: lockfile-drift analyzer runs and renders OSV findings", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      results: [
+        {
+          vulns: [
+            {
+              id: "GHSA-lock",
+              database_specific: { severity: "HIGH" },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 10,
+      analyzers: ["lockfileDrift"],
+      files: [
+        {
+          path: "package-lock.json",
+          patch: [
+            "@@ -1,4 +1,4 @@",
+            '     "node_modules/minimist": {',
+            '-      "version": "1.2.8",',
+            '+      "version": "0.0.8",',
+          ].join("\n"),
+        },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.lockfileDrift, "ok");
+    assert.equal(brief.findings.lockfileDrift.length, 1);
+    assert.match(brief.promptSection, /Vulnerable lockfile-only dependency drift/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("buildBrief: runs dependency analyzer, marks others skipped, partial=false on success", async () => {
@@ -2131,6 +2534,7 @@ test("buildBrief: secret-log analyzer runs (pure, no network)", async () => {
     const brief = await buildBrief({
       repoFullName: "o/r",
       prNumber: 1,
+      analyzers: ["secretLog"],
       files: [
         {
           path: "src/a.ts",

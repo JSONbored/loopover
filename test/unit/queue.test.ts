@@ -1149,6 +1149,85 @@ describe("queue processors", () => {
     expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
   });
 
+  it("continues to final verdict when the reviewing placeholder audit write fails", async () => {
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.reviewing_placeholder_failed")
+        throw new Error("D1 audit failed");
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }),
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    const postedBodies: string[] = [];
+    let postAttempts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/47/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/47")) return Response.json({ number: 47, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a47" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a47/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a47/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/47/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/47/comments") && method === "POST") {
+        postAttempts += 1;
+        const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        if (postAttempts === 1) return new Response(JSON.stringify({ message: "temporary comment failure" }), { status: 500 });
+        postedBodies.push(body);
+        return Response.json({ id: 47 }, { status: 201 });
+      }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "reviewing-placeholder-audit-fails",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 47, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a47" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    expect(postAttempts).toBeGreaterThanOrEqual(2);
+    expect(postedBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
+    expect(auditSpy).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({ eventType: "github_app.reviewing_placeholder_failed" }),
+    );
+    auditSpy.mockRestore();
+  });
+
   it("posts the 🟪 reviewing placeholder for non-AI comment refreshes, then overwrites it with the verdict", async () => {
     let aiCalls = 0;
     const env = createTestEnv({
@@ -1349,6 +1428,81 @@ describe("queue processors", () => {
       .bind("github_app.ai_review_public_summary_missing")
       .first<{ n: number }>();
     expect(audit?.n).toBe(1);
+  });
+
+  it("keeps re-gate PR jobs retryable when AI review produces no public summary and audit storage fails", async () => {
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.ai_review_public_summary_missing")
+        throw new Error("D1 audit failed");
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => ({ response: "not-json" }),
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 48, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a48" }, labels: [], body: "Closes #1" });
+    const commentBodies: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/48/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/48")) return Response.json({ number: 48, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a48" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a48/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a48/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/48/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/48/comments") && method === "POST") {
+        commentBodies.push(String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""));
+        return Response.json({ id: 48 }, { status: 201 });
+      }
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, {
+        type: "agent-regate-pr",
+        deliveryId: "regate-ai-summary-missing-audit-fails",
+        repoFullName: "JSONbored/gittensory",
+        prNumber: 48,
+        installationId: 123,
+      }),
+    ).rejects.toThrow(/public summary/i);
+
+    expect(commentBodies).toHaveLength(1);
+    expect(commentBodies[0]).toContain("is reviewing");
+    expect(auditSpy).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({ eventType: "github_app.ai_review_public_summary_missing" }),
+    );
+    auditSpy.mockRestore();
   });
 
   it("agent re-gate sweep re-reviews each stale open PR (installation id) and swallows a failing re-review", async () => {
@@ -3715,6 +3869,18 @@ describe("queue processors", () => {
       "",
       "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
     ].join("\n");
+    env.SELFHOST_TRANSIENT_CACHE = {
+      get: async () => {
+        throw new Error("Redis unavailable");
+      },
+      set: async () => undefined,
+    };
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.pr_panel_retrigger_deferred")
+        throw new Error("D1 audit failed");
+      await originalRecordAuditEvent(auditEnv, event);
+    });
     let commentPatches = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -3749,15 +3915,16 @@ describe("queue processors", () => {
     });
 
     expect(commentPatches).toBe(0);
-    const audit = await env.DB.prepare("select event_type, actor, target_key, outcome from audit_events where event_type = ?")
-      .bind("github_app.pr_panel_retrigger_deferred")
-      .first<{ event_type: string; actor: string; target_key: string; outcome: string }>();
-    expect(audit).toMatchObject({
-      event_type: "github_app.pr_panel_retrigger_deferred",
-      actor: "maintainer",
-      target_key: "JSONbored/gittensory#46",
-      outcome: "queued",
-    });
+    expect(auditSpy).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        eventType: "github_app.pr_panel_retrigger_deferred",
+        actor: "maintainer",
+        targetKey: "JSONbored/gittensory#46",
+        outcome: "queued",
+      }),
+    );
+    auditSpy.mockRestore();
   });
 
   it("refreshes the PR's files on a manual rerun so the slop/manifest gate evaluates the current diff", async () => {

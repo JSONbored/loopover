@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   githubRateLimitRetryDelayMs,
+  jobCoalesceKey,
   jobPriority,
   nonConsumingRetryDelayMs,
 } from "../../src/selfhost/queue-common";
@@ -44,6 +45,42 @@ describe("self-host queue common helpers", () => {
         }),
       ),
     ).toBe(10);
+  });
+
+  it("fails closed when a malformed webhook payload reaches priority parsing", () => {
+    const raw = payload({ type: "github-webhook" });
+    const parse = vi.spyOn(JSON, "parse");
+    parse
+      .mockImplementationOnce(() => ({ type: "github-webhook" }))
+      .mockImplementationOnce(() => {
+        throw new Error("malformed webhook payload");
+      });
+
+    expect(jobPriority(raw)).toBe(0);
+    parse.mockRestore();
+  });
+
+  it("coalesces CI-completion webhooks with sorted pull numbers", () => {
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "github-webhook",
+          eventName: "check_suite",
+          payload: {
+            action: "completed",
+            repository: { full_name: "JSONbored/Gittensory" },
+            check_suite: {
+              head_sha: "abc1234",
+              pull_requests: [{ number: 12 }, { number: 3 }, { number: 7 }],
+            },
+          },
+        }),
+      ),
+    ).toBe("github-webhook:ci-completed:jsonbored/gittensory@abc1234#3,7,12");
+  });
+
+  it("returns no coalesce key for malformed payloads", () => {
+    expect(jobCoalesceKey("not-json")).toBeNull();
   });
 
   it("extracts retry delays from GitHub rate-limit errors", () => {

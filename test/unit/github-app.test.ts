@@ -187,6 +187,67 @@ describe("GitHub check runs", () => {
     expect(rejectedReads).toBe(1);
   });
 
+  it("retries a rejected cached installation token when cache eviction fails", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let gets = 0;
+    let evictionWrites = 0;
+    setInstallationTokenStore({
+      get: async () => {
+        gets += 1;
+        if (gets <= 2)
+          return {
+            token: "stale-token",
+            expiresAtMs: Date.now() + 60 * 60_000,
+          };
+        return null;
+      },
+      set: async (_installationId, value) => {
+        if (value.token === "") {
+          evictionWrites += 1;
+          throw new Error("token cache unavailable");
+        }
+      },
+    });
+    let mints = 0;
+    let rejectedReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({
+          token: "fresh-token",
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      const auth = new Headers(init?.headers).get("authorization") ?? "";
+      if (url.includes("/commits/stale-head/check-runs") && auth.includes("stale-token")) {
+        rejectedReads += 1;
+        return Response.json({ message: "Bad credentials" }, { status: 401 });
+      }
+      if (url.includes("/commits/stale-head/check-runs")) {
+        expect(auth).toContain("fresh-token");
+        return Response.json({ total_count: 0, check_runs: [] });
+      }
+      if (url.includes("/check-runs") && init?.method === "POST") {
+        expect(auth).toContain("fresh-token");
+        return Response.json({ id: 557, html_url: "https://github.com/checks/557" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePendingGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      557,
+      "JSONbored/gittensory",
+      gateAdvisory("stale-head"),
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 557 });
+    expect(evictionWrites).toBe(1);
+    expect(mints).toBe(1);
+    expect(rejectedReads).toBe(1);
+  });
+
   it("single-flights concurrent cold-cache mints for one install (no thundering herd)", async () => {
     const privateKey = await generatePrivateKeyPem();
     let mints = 0;

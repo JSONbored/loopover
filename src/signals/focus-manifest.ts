@@ -289,10 +289,11 @@ const EMPTY_MANIFEST: FocusManifest = {
  * text must not leak reward, wallet/key, ranking, or local filesystem path material.
  */
 export function isFocusManifestPublicSafe(text: string): boolean {
-  // Local filesystem path alternatives mirror the canonical PUBLIC_UNSAFE_PATTERN in redaction.ts: include
-  // `/root/` (container/CI home) and accept the forward-slash Windows form (`C:/Users/`), not only the
-  // backslash one — otherwise a `/root/...` or `C:/Users/...` path leaks through this public-safe guard.
-  return !/\b(reward\w*|score\w*|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|farming|payouts?|rankings?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|private[-\s]?reviewability|reviewability(?:[-\s]?internals?)?|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)s?|estimated[-\s]?scores?|score[-\s]?(?:estimate|prediction|preview)s?)\b|\/Users\/|\/home\/|\/root\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i.test(text);
+  // Local filesystem path alternatives mirror the canonical PUBLIC_UNSAFE_PATTERN in redaction.ts: the full
+  // set is `/Users/`, `/home/`, `/root/` (container/CI home), `/var/` (logs, temp, CI workspaces), `/tmp/`,
+  // and the Windows `[A-Z]:[\/]Users[\/]` form (both slash directions). Any omission leaks that path prefix
+  // through this public-safe guard.
+  return !/\b(reward\w*|score\w*|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|farming|payouts?|rankings?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|private[-\s]?reviewability|reviewability(?:[-\s]?internals?)?|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)s?|estimated[-\s]?scores?|score[-\s]?(?:estimate|prediction|preview)s?)\b|\/Users\/|\/home\/|\/root\/|\/var\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i.test(text);
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {

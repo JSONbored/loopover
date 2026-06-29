@@ -718,6 +718,7 @@ describe("public-safe invariant", () => {
     expect(isFocusManifestPublicSafe("see /Users/me/repo/src")).toBe(false);
     expect(isFocusManifestPublicSafe("see /home/dev/repo/src")).toBe(false);
     expect(isFocusManifestPublicSafe("see /root/repo/src")).toBe(false);
+    expect(isFocusManifestPublicSafe("see /var/log/build.log")).toBe(false);
     expect(isFocusManifestPublicSafe("see /tmp/build/out")).toBe(false);
     // Windows, both backslash and forward-slash forms.
     expect(isFocusManifestPublicSafe("see C:\\Users\\me\\repo")).toBe(false);

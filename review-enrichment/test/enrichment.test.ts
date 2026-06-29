@@ -47,6 +47,11 @@ import {
   scanPatchForSecretLog,
   scanSecretLog,
 } from "../dist/analyzers/secret-log.js";
+import {
+  isRelevantConfigPath,
+  scanPatchForIacMisconfig,
+  scanIacMisconfig,
+} from "../dist/analyzers/iac-misconfig.js";
 
 const NOW = new Date("2026-06-26").getTime();
 const eolFetch =
@@ -1025,6 +1030,157 @@ test("buildBrief: action-pin analyzer runs (pure, no network)", async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("isRelevantConfigPath: matches infra/config targets and skips code files", () => {
+  assert.equal(isRelevantConfigPath("infra/main.tf"), true);
+  assert.equal(isRelevantConfigPath("deploy/values.prod.yaml"), true);
+  assert.equal(isRelevantConfigPath("Dockerfile"), true);
+  assert.equal(isRelevantConfigPath("src/server.ts"), false);
+});
+
+test("scanPatchForIacMisconfig: flags paired and direct config risks with line citations", () => {
+  const patch = [
+    "@@ -1,0 +1,13 @@",
+    "+cors:",
+    "+  origin: '*'",
+    "+  credentials: true",
+    "+security_group_rules:",
+    '+  cidr_blocks = ["0.0.0.0/0"]',
+    '+bucket_acl = "public-read"',
+    "+cookie:",
+    "+  sameSite: none",
+    "+  secure: false",
+    "+production:",
+    "+  debug: true",
+    '+  API_URL: "https://internal.example.com"',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanPatchForIacMisconfig("infra/stack.yaml", patch).map(
+      ({ line, kind }) => ({ line, kind }),
+    ),
+    [
+      { line: 3, kind: "wildcard-cors-credentials" },
+      { line: 5, kind: "open-ingress" },
+      { line: 6, kind: "public-bucket" },
+      { line: 9, kind: "insecure-cookie" },
+      { line: 11, kind: "prod-debug" },
+      { line: 12, kind: "hardcoded-service-url" },
+    ],
+  );
+});
+
+test("scanPatchForIacMisconfig: flags TLS verification disabled and handles debug before prod", () => {
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    "+DEBUG=true",
+    "+rejectUnauthorized: false",
+    "+verify=False",
+    "+NODE_ENV=production",
+  ].join("\n");
+
+  assert.deepEqual(
+    scanPatchForIacMisconfig("Dockerfile", patch).map(({ line, kind }) => ({
+      line,
+      kind,
+    })),
+    [
+      { line: 2, kind: "tls-verification-disabled" },
+      { line: 3, kind: "tls-verification-disabled" },
+      { line: 4, kind: "prod-debug" },
+    ],
+  );
+});
+
+test("scanPatchForIacMisconfig: respects the finding budget", () => {
+  const findings = scanPatchForIacMisconfig(
+    "infra/main.tf",
+    [
+      "@@ -1,0 +1,3 @@",
+      '+cidr_blocks = ["0.0.0.0/0"]',
+      "+rejectUnauthorized: false",
+      '+BASE_URL = "https://svc.example.com"',
+    ].join("\n"),
+    { maxFindings: 2 },
+  );
+
+  assert.deepEqual(
+    findings.map(({ line, kind }) => ({ line, kind })),
+    [
+      { line: 1, kind: "open-ingress" },
+      { line: 2, kind: "tls-verification-disabled" },
+    ],
+  );
+});
+
+test("scanIacMisconfig: scans only matching config files and forwards abort", async () => {
+  const findings = await scanIacMisconfig({
+    repoFullName: "o/r",
+    prNumber: 1,
+    files: [
+      {
+        path: "infra/main.tf",
+        patch: '@@ -1,0 +1,1 @@\n+cidr_blocks = ["0.0.0.0/0"]',
+      },
+      {
+        path: "src/index.ts",
+        patch: '@@ -1,0 +1,1 @@\n+const baseUrl = "https://svc.example.com";',
+      },
+    ],
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "open-ingress");
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () =>
+      scanIacMisconfig(
+        {
+          repoFullName: "o/r",
+          prNumber: 1,
+          files: [
+            {
+              path: "infra/main.tf",
+              patch: '@@ -1,0 +1,1 @@\n+cidr_blocks = ["0.0.0.0/0"]',
+            },
+          ],
+        },
+        controller.signal,
+      ),
+    /analyzer_aborted/,
+  );
+});
+
+test("renderBrief: renders the IaC misconfig block", () => {
+  const r = renderBrief({
+    iacMisconfig: [
+      { file: "infra/main.tf", line: 14, kind: "open-ingress" },
+      { file: "deploy/values.yaml", line: 9, kind: "insecure-cookie" },
+    ],
+  });
+  assert.match(r.promptSection, /IaC \/ config misconfigurations/);
+  assert.match(r.promptSection, /`infra\/main\.tf:14`/);
+  assert.match(r.promptSection, /world-accessible/);
+  assert.match(r.promptSection, /SameSite=None/);
+});
+
+test("buildBrief: iac-misconfig analyzer runs and renders findings", async () => {
+  const brief = await buildBrief({
+    repoFullName: "o/r",
+    prNumber: 1,
+    analyzers: ["iacMisconfig"],
+    files: [
+      {
+        path: "infra/main.tf",
+        patch: '@@ -1,0 +1,1 @@\n+cidr_blocks = ["0.0.0.0/0"]',
+      },
+    ],
+  });
+  assert.equal(brief.analyzerStatus.iacMisconfig, "ok");
+  assert.equal(brief.findings.iacMisconfig.length, 1);
+  assert.match(brief.promptSection, /IaC \/ config misconfigurations/);
 });
 
 test("hasCatastrophicBacktracking: flags nested unbounded quantifiers, not linear/bounded shapes", () => {

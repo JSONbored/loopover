@@ -162,6 +162,20 @@ export interface TyposquatFinding {
   reason: string;
 }
 
+/** A static IaC / config misconfiguration introduced by the PR. Reports the location + rule only. */
+export interface IacMisconfigFinding {
+  file: string;
+  line: number;
+  kind:
+    | "wildcard-cors-credentials"
+    | "open-ingress"
+    | "public-bucket"
+    | "insecure-cookie"
+    | "tls-verification-disabled"
+    | "prod-debug"
+    | "hardcoded-service-url";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -177,6 +191,7 @@ export interface BriefFindings {
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
+  iacMisconfig?: IacMisconfigFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

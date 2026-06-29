@@ -24,6 +24,7 @@ See `src/server.ts` for the `EnrichRequest` / `ReviewBrief` contract.
 - **#1502** lockfile-only transitive vulnerability drift via OSV.dev
 - **#1475** SPDX license policy
 - **#1476** gitleaks-grade secret scan (value-redacted)
+- **#1508** IaC / config misconfiguration audit over changed infra/config files
 - **#1477** static analysis + complexity (lint/semgrep over the diff)
 - **#1478** history (author track record, similar past PRs, linked-issue alignment)
 

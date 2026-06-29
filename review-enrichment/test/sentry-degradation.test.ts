@@ -147,3 +147,48 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
   assert.equal(sentry.tags.headSha, "head-sha");
   assert.equal(sentry.tags.timeoutMs, "50");
 });
+
+test("buildBrief treats an explicit empty analyzer list as run none", async () => {
+  let ran = false;
+
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 42,
+      headSha: "head-sha",
+      analyzers: [],
+    },
+    {
+      secret: async () => {
+        ran = true;
+        return [
+          {
+            file: "src/config.ts",
+            line: 7,
+            kind: "generic_secret_assignment",
+            confidence: "high",
+          },
+        ];
+      },
+      redos: async () => {
+        ran = true;
+        return [
+          {
+            file: "src/regex.ts",
+            line: 3,
+            kind: "nested-quantifier",
+            pattern: "(a+)+",
+          },
+        ];
+      },
+    },
+  );
+
+  assert.equal(ran, false);
+  assert.equal(brief.partial, false);
+  assert.deepEqual(brief.findings, {});
+  assert.equal(brief.analyzerStatus.secret, "skipped");
+  assert.equal(brief.analyzerStatus.redos, "skipped");
+  assert.equal(brief.promptSection, "");
+  assert.equal(brief.systemSuffix, "");
+});

@@ -329,6 +329,7 @@ import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
+  isReesGithubTokenForwardingEnabled,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
@@ -1583,6 +1584,7 @@ async function reReviewStoredPullRequest(
     advisory,
     {
       deliveryId,
+      baseSha: live?.base?.sha ?? null,
       ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
       ...(options.skipAiReview ? { skipAiReview: true } : {}),
     },
@@ -3087,6 +3089,7 @@ async function processGitHubWebhook(
               deliveryId,
               authorType: payload.pull_request.user?.type,
               action: payload.action,
+              baseSha: payload.pull_request.base?.sha ?? null,
             },
           ).catch((error) => {
             if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
@@ -3609,13 +3612,31 @@ export function shouldRequirePublicAiReviewForAdvisory(
   return true;
 }
 
+async function resolveReviewEnrichmentGithubToken(
+  env: Env,
+  repoFullName: string,
+): Promise<string | undefined> {
+  const repo = await getRepository(env, repoFullName);
+  const installationToken = repo?.installationId
+    ? await createInstallationToken(env, repo.installationId).catch(
+        () => undefined,
+      )
+    : undefined;
+  return installationToken ?? env.GITHUB_PUBLIC_TOKEN;
+}
+
 export async function runAiReviewForAdvisory(
   env: Env,
   args: {
     settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
     repoFullName: string;
-    pr: { number: number; title: string; body?: string | null | undefined };
+    pr: {
+      number: number;
+      title: string;
+      body?: string | null | undefined;
+      baseSha?: string | null | undefined;
+    };
     author: string | null;
     confirmedContributor: boolean;
     // Pre-resolved PR files (the caller's resolvePullRequestFilesForReview output). When provided, the AI
@@ -3789,7 +3810,15 @@ export async function runAiReviewForAdvisory(
             repoFullName: args.repoFullName,
             prNumber: args.pr.number,
             headSha: args.advisory.headSha,
+            baseSha: args.pr.baseSha ?? null,
             title: args.pr.title,
+            author: args.author,
+            githubToken: isReesGithubTokenForwardingEnabled(env)
+              ? await resolveReviewEnrichmentGithubToken(
+                  env,
+                  args.repoFullName,
+                )
+              : undefined,
             files,
             diff: enrichmentDiff,
           })
@@ -4228,6 +4257,7 @@ async function maybePublishPrPublicSurface(
     deliveryId: string;
     authorType?: string | undefined;
     action?: string | undefined;
+    baseSha?: string | null | undefined;
     previewPollAttempt?: number | undefined;
     skipAiReview?: boolean | undefined;
   },
@@ -4740,7 +4770,7 @@ async function maybePublishPrPublicSurface(
           settings,
           advisory,
           repoFullName,
-          pr,
+          pr: { ...pr, baseSha: webhook.baseSha ?? null },
           author,
           confirmedContributor,
           files: await getReviewFiles(),

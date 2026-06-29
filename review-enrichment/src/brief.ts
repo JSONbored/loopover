@@ -27,7 +27,7 @@ import { captureAnalyzerDegradation } from "./sentry.js";
 type AnalyzerFn = (req: EnrichRequest, signal: AbortSignal) => Promise<unknown>;
 type AnalyzerRegistry = Partial<Record<keyof BriefFindings, AnalyzerFn>>;
 
-// The analyzer registry. More land behind this same shape: license (#1475), secret (#1476), static (#1477), history (#1478).
+// The analyzer registry. Each key is the exact name accepted by the engine's REES_ANALYZERS setting.
 const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   dependency: (req, signal) => scanDependencies(req, fetch, { signal }),
   lockfileDrift: (req, signal) => scanLockfileDrift(req, fetch, { signal }),
@@ -74,7 +74,7 @@ export async function buildBrief(
 ): Promise<ReviewBrief> {
   const start = Date.now();
   const all = Object.keys(analyzers) as Array<keyof BriefFindings>;
-  const requested = req.analyzers?.length
+  const requested = Array.isArray(req.analyzers)
     ? all.filter((name) => req.analyzers!.includes(name))
     : all;
   const budgetMs = req.budget?.timeoutMs ?? 8000;

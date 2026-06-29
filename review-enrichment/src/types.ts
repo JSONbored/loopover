@@ -19,7 +19,7 @@ export interface EnrichRequest {
     deletions?: number;
   }>;
   diff?: string;
-  /** Short-lived broker token for OSV/license/history fetches. Never logged. */
+  /** Optional GitHub read token for GitHub-backed analyzers. Never logged. */
   githubToken?: string;
   budget?: { timeoutMs?: number; maxBriefChars?: number };
   analyzers?: string[];

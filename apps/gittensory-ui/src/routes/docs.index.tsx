@@ -67,12 +67,14 @@ const AUDIENCES: Audience[] = [
   {
     icon: <Shield className="size-4" />,
     title: "Maintainers",
-    description: "Confirmed-miner context, sanitized comments, no noisy checks.",
+    description: "Install, tune, or self-host the review system for your repos.",
     primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
       { to: "/docs/maintainer-install-trust", label: "Install & trust guide" },
       { to: "/docs/github-app", label: "Install the GitHub App" },
       { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
+      { to: "/docs/maintainer-self-hosting", label: "Self-host reviews" },
+      { to: "/docs/self-hosting-rees-analyzers", label: "REES analyzers" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/ai-summaries", label: "AI summaries policy" },
     ],

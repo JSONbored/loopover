@@ -1077,7 +1077,7 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
   }
 }
 
-export export function parseGitHubIssueUrl(issueUrl: string): { owner: string; name: string; number: number } | null {
+export function parseGitHubIssueUrl(issueUrl: string): { owner: string; name: string; number: number } | null {
   try {
     const url = new URL(issueUrl);
     if (url.hostname.toLowerCase() !== "github.com") return null;

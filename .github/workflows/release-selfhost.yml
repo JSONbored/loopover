@@ -204,6 +204,6 @@ jobs:
             docker pull ghcr.io/${{ github.repository_owner }}/gittensory-selfhost:${{ steps.version.outputs.v }}
             ```
 
-            Multi-arch (linux/amd64 + linux/arm64). See [docs/self-hosting.md](docs/self-hosting.md) for setup.
+            Multi-arch (linux/amd64 + linux/arm64). See https://gittensory.aethereal.dev/docs/maintainer-self-hosting for setup.
             Includes the Claude Code / Codex subscription CLIs by default; credentials stay runtime-only.
             Sentry release id baked into the image: `${{ steps.version.outputs.release }}`.

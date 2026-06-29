@@ -16,16 +16,32 @@ treats any timeout/error as "no brief" and proceeds.
 | `GET /ready`      | Readiness.                                                                      |
 | `POST /v1/enrich` | `Authorization: Bearer <REES_SHARED_SECRET>` → `EnrichRequest` → `ReviewBrief`. |
 
-See `src/server.ts` for the `EnrichRequest` / `ReviewBrief` contract.
+See `src/types.ts` for the `EnrichRequest` / `ReviewBrief` contract. When the engine is configured with
+`REES_FORWARD_GITHUB_TOKEN=true` (the default), requests can include a GitHub read token so token-aware analyzers can
+read CODEOWNERS and blob sizes. The engine prefers a short-lived installation token and falls back to
+`GITHUB_PUBLIC_TOKEN`. The service must never log request bodies, diffs, or tokens.
 
-## Analyzers (added behind the contract)
+## Analyzers
 
-- **#1474** dependency-diff + OSV.dev CVE
-- **#1502** lockfile-only transitive vulnerability drift via OSV.dev
-- **#1475** SPDX license policy
-- **#1476** gitleaks-grade secret scan (value-redacted)
-- **#1477** static analysis + complexity (lint/semgrep over the diff)
-- **#1478** history (author track record, similar past PRs, linked-issue alignment)
+| Analyzer        | Purpose                                                                      | Network/token behavior                                       |
+| --------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `dependency`    | Direct dependency CVEs from changed manifests.                               | Calls OSV.dev.                                               |
+| `lockfileDrift` | Vulnerable transitive versions introduced only through lockfiles.            | Calls OSV.dev querybatch.                                    |
+| `secret`        | Credential-shaped values in added diff lines. Values are never returned.     | Pure local.                                                  |
+| `license`       | Copyleft or unknown dependency licenses.                                     | Calls deps.dev.                                              |
+| `installScript` | npm packages that run install lifecycle hooks.                               | Calls the npm registry.                                      |
+| `actionPin`     | Third-party GitHub Actions pinned to mutable refs.                           | Pure local.                                                  |
+| `eol`           | Runtime/base-image pins that are EOL or close to EOL.                        | Calls endoflife.date.                                        |
+| `redos`         | Regex literals with catastrophic-backtracking structure.                     | Pure local.                                                  |
+| `provenance`    | Missing package attestations plus binary/vendored/minified additions.        | Calls npm/PyPI for attestations; path checks are local.      |
+| `codeowners`    | Changed files owned by CODEOWNERS entries that do not include the PR author. | Calls GitHub API; needs author and token for private repos.  |
+| `secretLog`     | Secrets, PII, or request/session objects written to logs/stdout.             | Pure local.                                                  |
+| `assetWeight`   | Heavy binary assets added or grown.                                          | Calls GitHub API; needs headSha, baseSha for growth, and token for private repos. |
+| `typosquat`     | New dependency names that look squatted or publicly claimable.               | Uses bundled popular-package lists plus npm/PyPI lookups.    |
+
+The engine can send `analyzers: ["secret", "actionPin"]` to run a subset. If the field is omitted, REES runs the
+full registry. An explicit empty array runs no analyzers; the engine uses that fail-closed shape when an
+operator-configured analyzer list contains no valid names.
 
 ## Run locally
 
@@ -53,28 +69,28 @@ exact post-injection `dist/` files, records a deploy, removes source maps from t
 
 Set these Railway service variables:
 
-| Variable                    | Purpose                                                                 |
-| --------------------------- | ----------------------------------------------------------------------- |
-| `SENTRY_DSN`                | Enables REES error capture. Unset means the SDK is a no-op.             |
-| `SENTRY_AUTH_TOKEN`         | Allows the runtime uploader to create releases and upload source maps.  |
-| `SENTRY_ORG`                | Sentry organization slug.                                               |
-| `SENTRY_PROJECT`            | Sentry project slug.                                                    |
-| `SENTRY_ENVIRONMENT`        | Optional; defaults to Railway's environment name, then `production`.    |
-| `SENTRY_TRACES_SAMPLE_RATE` | Optional; defaults to `0`, so errors report without tracing.            |
-| `SENTRY_RELEASE`            | Optional override. Only set it when that exact REES bundle is uploaded. |
-| `SENTRY_URL`                | Optional Sentry API URL; defaults to `https://sentry.io`.               |
-| `SENTRY_REPOSITORY`         | Optional; defaults to `JSONbored/gittensory` for commit association.    |
-| `REES_SENTRY_UPLOAD_STRICT` | Optional. Set `true` to fail startup if source-map upload fails.        |
-| `REES_SENTRY_VALIDATE_RELEASE` | Optional. Set `false` only to disable post-upload release validation. |
+| Variable                       | Purpose                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `SENTRY_DSN`                   | Enables REES error capture. Unset means the SDK is a no-op.             |
+| `SENTRY_AUTH_TOKEN`            | Allows the runtime uploader to create releases and upload source maps.  |
+| `SENTRY_ORG`                   | Sentry organization slug.                                               |
+| `SENTRY_PROJECT`               | Sentry project slug.                                                    |
+| `SENTRY_ENVIRONMENT`           | Optional; defaults to Railway's environment name, then `production`.    |
+| `SENTRY_TRACES_SAMPLE_RATE`    | Optional; defaults to `0`, so errors report without tracing.            |
+| `SENTRY_RELEASE`               | Optional override. Only set it when that exact REES bundle is uploaded. |
+| `SENTRY_URL`                   | Optional Sentry API URL; defaults to `https://sentry.io`.               |
+| `SENTRY_REPOSITORY`            | Optional; defaults to `JSONbored/gittensory` for commit association.    |
+| `REES_SENTRY_UPLOAD_STRICT`    | Optional. Set `true` to fail startup if source-map upload fails.        |
+| `REES_SENTRY_VALIDATE_RELEASE` | Optional. Set `false` only to disable post-upload release validation.   |
 
 By default the release id is `gittensory-rees@<RAILWAY_GIT_COMMIT_SHA>`, using Railway's Git metadata. The Sentry
 GitHub code mapping should be:
 
-| Sentry field      | Value               |
-| ----------------- | ------------------- |
-| Stack Trace Root  | `/app`              |
-| Source Code Root  | `review-enrichment` |
-| Branch            | `main`              |
+| Sentry field     | Value               |
+| ---------------- | ------------------- |
+| Stack Trace Root | `/app`              |
+| Source Code Root | `review-enrichment` |
+| Branch           | `main`              |
 
 Do **not** pass `SENTRY_AUTH_TOKEN` as a Docker build arg. Railway deploys this service from Git, and Docker build args
 can leak through image metadata. Keeping the upload at runtime means Sentry sees the same `dist/` files that the service

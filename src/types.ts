@@ -276,6 +276,7 @@ export type GitHubPullRequestPayload = {
   };
   base?: {
     ref?: string;
+    sha?: string;
   };
   labels?: Array<{ name?: string }>;
   body?: string | null;

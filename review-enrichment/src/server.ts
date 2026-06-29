@@ -1,12 +1,12 @@
 // Gittensory review-enrichment service (REES).
 //
-// Given a PR (repo, number, headSha, diff, files, short-lived token), this service runs the heavy/external/
-// historical analysis the no-checkout `claude --print` reviewer is blind to, and returns a pre-rendered,
-// public-safe "review brief" the engine splices into the prompt next to grounding + RAG. The engine treats any
-// timeout/error as "no brief" and proceeds — so this service is strictly additive and fully fail-safe.
+// Given a PR (repo, number, headSha, diff, files, optional GitHub token), this service runs the
+// heavy/external analysis the no-checkout reviewer is blind to, and returns a pre-rendered, public-safe
+// "review brief" the engine splices into the prompt next to grounding + RAG. The engine treats any
+// timeout/error as "no brief" and proceeds, so this service is strictly additive and fail-safe.
 //
-// Transport + contract here; the analysis lives in brief.ts (orchestrator) + analyzers/* — dependency/CVE (#1474),
-// then license (#1475), secret (#1476), static+complexity (#1477), history (#1478), each filling one findings key.
+// Transport + contract here; the analysis lives in brief.ts (orchestrator) + analyzers/*, with each analyzer
+// filling one findings key for renderer/prompt consumption.
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { normalizeSharedSecret, verifyBearer } from "./auth.js";

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   isEnrichmentEnabled,
   buildReviewEnrichment,
+  isReesGithubTokenForwardingEnabled,
+  resolveReesAnalyzers,
 } from "../../src/review/enrichment-wire";
 
 const env = (o: Record<string, string>) => o as unknown as Env;
@@ -75,7 +77,12 @@ describe("buildReviewEnrichment", () => {
         REES_SHARED_SECRET: '  "sek"\n',
         REES_TIMEOUT_MS: "12000",
       }),
-      input,
+      {
+        ...input,
+        baseSha: "baseabc",
+        author: "alice",
+        githubToken: "gh-read-token",
+      },
     );
     expect(r?.promptSection).toBe("BRIEF");
     expect(r?.systemSuffix).toContain("REVIEW ENRICHMENT");
@@ -92,6 +99,10 @@ describe("buildReviewEnrichment", () => {
     );
     const body = JSON.parse(calls[0]!.init.body as string);
     expect(body.repoFullName).toBe("o/r");
+    expect(body.baseSha).toBe("baseabc");
+    expect(body.author).toBe("alice");
+    expect(body.githubToken).toBe("gh-read-token");
+    expect(body.analyzers).toBeUndefined();
     expect(body.files).toEqual([
       {
         path: "a.ts",
@@ -107,6 +118,47 @@ describe("buildReviewEnrichment", () => {
       },
       { path: "b.ts", status: undefined, patch: undefined },
     ]);
+  });
+
+  it("sends a configured analyzer subset to REES", async () => {
+    const calls: RequestInit[] = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      calls.push(init);
+      return {
+        ok: true,
+        json: async () => ({ promptSection: "brief" }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(
+      env({
+        REES_URL: "https://r",
+        REES_ANALYZERS: " secret,actionPin,redos,secret ",
+      }),
+      input,
+    );
+    expect(JSON.parse(calls[0]!.body as string).analyzers).toEqual([
+      "secret",
+      "actionPin",
+      "redos",
+    ]);
+  });
+
+  it("sends an explicit empty analyzer list when REES_ANALYZERS has no valid names", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const calls: RequestInit[] = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      calls.push(init);
+      return {
+        ok: true,
+        json: async () => ({ promptSection: "brief" }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(
+      env({ REES_URL: "https://r", REES_ANALYZERS: "bogus,nope" }),
+      input,
+    );
+    expect(JSON.parse(calls[0]!.body as string).analyzers).toEqual([]);
+    warnSpy.mockRestore();
   });
 
   it("undefined when REES_URL is unset", async () => {
@@ -319,5 +371,77 @@ describe("buildReviewEnrichment", () => {
     expect(
       (calls[0]!.headers as Record<string, string>).authorization,
     ).toBeUndefined();
+  });
+});
+
+describe("isReesGithubTokenForwardingEnabled", () => {
+  it("defaults on and only turns off for explicit false-like values", () => {
+    expect(isReesGithubTokenForwardingEnabled(env({}))).toBe(true);
+    expect(
+      isReesGithubTokenForwardingEnabled(
+        env({ REES_FORWARD_GITHUB_TOKEN: "true" }),
+      ),
+    ).toBe(true);
+    expect(
+      isReesGithubTokenForwardingEnabled(
+        env({ REES_FORWARD_GITHUB_TOKEN: "off" }),
+      ),
+    ).toBe(false);
+    expect(
+      isReesGithubTokenForwardingEnabled(
+        env({ REES_FORWARD_GITHUB_TOKEN: " false " }),
+      ),
+    ).toBe(false);
+    expect(
+      isReesGithubTokenForwardingEnabled(
+        env({ REES_FORWARD_GITHUB_TOKEN: "0" }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("resolveReesAnalyzers", () => {
+  it("returns undefined for unset, all, or wildcard so REES runs every analyzer", () => {
+    expect(resolveReesAnalyzers(env({}))).toBeUndefined();
+    expect(
+      resolveReesAnalyzers(env({ REES_ANALYZERS: "all" })),
+    ).toBeUndefined();
+    expect(resolveReesAnalyzers(env({ REES_ANALYZERS: "*" }))).toBeUndefined();
+    expect(
+      resolveReesAnalyzers(env({ REES_ANALYZERS: "secret,all,redos" })),
+    ).toBeUndefined();
+  });
+
+  it("dedupes valid analyzer names and ignores invalid entries with a warning", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      resolveReesAnalyzers(
+        env({ REES_ANALYZERS: " secret, bogus, actionPin,secret,,redos " }),
+      ),
+    ).toEqual(["secret", "actionPin", "redos"]);
+    expect(
+      warnSpy.mock.calls.some(
+        (c) =>
+          String(c[0]).includes("rees_analyzer_config_invalid") &&
+          String(c[0]).includes("bogus"),
+      ),
+    ).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("returns an explicit empty list when every configured analyzer name is invalid", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      resolveReesAnalyzers(env({ REES_ANALYZERS: "bogus, nope" })),
+    ).toEqual([]);
+    expect(
+      warnSpy.mock.calls.some(
+        (c) =>
+          String(c[0]).includes("rees_analyzer_config_invalid") &&
+          String(c[0]).includes("bogus") &&
+          String(c[0]).includes("nope"),
+      ),
+    ).toBe(true);
+    warnSpy.mockRestore();
   });
 });

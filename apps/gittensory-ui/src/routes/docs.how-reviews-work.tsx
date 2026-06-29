@@ -49,11 +49,10 @@ function HowReviewsWork() {
         </li>
       </ol>
       <p>
-        Everything those layers find is folded into a single <strong>gittensory review</strong>{" "}
         comment on the PR, plus an optional <strong>Gittensory Orb Review Agent</strong> check run.
         The review algorithm is open-source; what changes between repos is the configuration you
-        tune. See <a href="/docs/review-configuration">Review configuration</a> for every option and
-        default.
+        tune. See <a href="/docs/tuning">Tuning your reviews</a> for the review options and
+        defaults.
       </p>
       <Callout variant="safety">
         Defaults are quiet. With no settings and no <code>.gittensory.yml</code>, the gate is{" "}
@@ -265,7 +264,7 @@ function HowReviewsWork() {
         <em>can this merge</em> with fixed rules you can read; the AI review adds judgment as
         advisory notes, escalating to a blocker only on two-model consensus; and the comment is the
         single, sanitized place a contributor reads the whole verdict. Tune every mode, threshold,
-        and surface in <a href="/docs/review-configuration">Review configuration</a>.
+        and surface in <a href="/docs/tuning">Tuning your reviews</a>.
       </p>
     </DocsPage>
   );

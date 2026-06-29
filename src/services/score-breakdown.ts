@@ -99,6 +99,31 @@ function openIssueBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdo
   };
 }
 
+// Upstream merged-PR history floor (#808): scoring is gated to zero until a contributor has at least the
+// minimum merged-PR count. Explained here so a miner whose preview is zeroed by the floor sees the same
+// actionable breakdown the open-PR / open-issue gates already provide. mergedPullRequests is absent when the
+// history is unknown — in that case the multiplier defaults to 1 (treated as eligible), so say so explicitly.
+function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { mergedHistoryMultiplier } = preview.scoreEstimate;
+  const { mergedPullRequests, mergedPrFloor } = preview.gates;
+  const band = bandForMultiplier(mergedHistoryMultiplier);
+  return {
+    component: "mergedHistoryMultiplier",
+    band,
+    summary:
+      mergedHistoryMultiplier >= 1
+        ? mergedPullRequests !== undefined
+          ? `Merged-PR history (${mergedPullRequests}) meets the upstream validity floor (${mergedPrFloor}).`
+          : `Merged-PR history is not yet observed, so it is treated as meeting the upstream validity floor (${mergedPrFloor}).`
+        : `Merged-PR history (${mergedPullRequests ?? 0}) is below the upstream validity floor (${mergedPrFloor}), so scoring is gated to zero.`,
+    lever:
+      mergedHistoryMultiplier >= 1
+        ? "Keep landing merged PRs in registered repos to stay above the upstream validity floor."
+        : "Build more merged-PR history in registered repos to clear the upstream merged-PR validity floor.",
+    leverageScore: mergedHistoryMultiplier >= 1 ? 8 : 90,
+  };
+}
+
 function credibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { credibilityMultiplier } = preview.scoreEstimate;
   const { credibilityObserved, credibilityFloor } = preview.gates;
@@ -239,6 +264,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     reviewPenaltyBreakdown(preview),
     openPrBreakdown(preview),
     openIssueBreakdown(preview),
+    mergedHistoryBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

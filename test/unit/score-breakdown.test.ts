@@ -83,6 +83,7 @@ describe("explainScoreBreakdown", () => {
         "reviewPenaltyMultiplier",
         "openPrMultiplier",
         "openIssueMultiplier",
+        "mergedHistoryMultiplier",
       ]),
     );
     for (const component of breakdown.components) {
@@ -95,6 +96,26 @@ describe("explainScoreBreakdown", () => {
     expect(JSON.stringify(breakdown)).not.toMatch(FORBIDDEN);
     // No open issues → within the allowance → full band on the open-issue gate.
     expect(breakdown.components.find((entry) => entry.component === "openIssueMultiplier")).toMatchObject({ band: "full" });
+    // No observed merged-PR history → treated as eligible (full), with an explicit "not yet observed" note.
+    const mergedHistory = breakdown.components.find((entry) => entry.component === "mergedHistoryMultiplier");
+    expect(mergedHistory).toMatchObject({ band: "full" });
+    expect(mergedHistory?.summary).toMatch(/not yet observed/i);
+  });
+
+  it("explains the merged-PR history floor: meets the floor when observed, blocks when below", () => {
+    const base = { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80 };
+    const eligible = explainScoreBreakdown(buildScorePreview({ repo, snapshot, input: { ...base, mergedPullRequests: 5 } }));
+    const below = explainScoreBreakdown(buildScorePreview({ repo, snapshot, input: { ...base, mergedPullRequests: 1 } }));
+    const eMerged = eligible.components.find((entry) => entry.component === "mergedHistoryMultiplier");
+    const bMerged = below.components.find((entry) => entry.component === "mergedHistoryMultiplier");
+    // 5 merged PRs clears the default MIN_VALID_MERGED_PRS (3) floor.
+    expect(eMerged).toMatchObject({ band: "full" });
+    expect(eMerged?.summary).toMatch(/meets the upstream validity floor/i);
+    // 1 merged PR is below the floor → scoring gated to zero.
+    expect(bMerged).toMatchObject({ band: "blocked" });
+    expect(bMerged?.summary).toMatch(/below the upstream validity floor/i);
+    expect(bMerged?.lever).toMatch(/build more merged-PR history/i);
+    expect(JSON.stringify(below)).not.toMatch(FORBIDDEN);
   });
 
   it("explains an over-threshold open-issue count as a blocked open-issue spam gate", () => {

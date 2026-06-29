@@ -85,11 +85,11 @@ test("scanHistory: surfaces similar past PRs and marks a reverted one", async ()
     [
       "/commits?path=",
       res([
-        { sha: shaA, commit: { message: 'Revert "add foo" (#10)' } },
+        { sha: shaA, commit: { message: 'Revert "add foo (#10)"' } },
         { sha: shaB, commit: { message: "add foo" } },
       ]),
     ],
-    [new RegExp(`/commits/${shaA}/pulls`), res([{ number: 11, title: 'Revert "add foo" (#10)' }])],
+    [new RegExp(`/commits/${shaA}/pulls`), res([{ number: 11, title: 'Revert "add foo (#10)"' }])],
     [new RegExp(`/commits/${shaB}/pulls`), res([{ number: 10, title: "add foo" }])],
   ]);
   const out = await scanHistory(
@@ -184,8 +184,8 @@ test("scanHistory: a rate-limited GitHub query degrades the block (partial) with
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].partial, true);
-  assert.equal(out[0].author.priorMergedInRepo, 0);
-  assert.equal(out[0].author.firstTimeContributor, true); // counts defaulted to 0 on failure
+  assert.equal(out[0].author.priorMergedInRepo, null); // a failed lookup is UNKNOWN, not zero
+  assert.equal(out[0].author.firstTimeContributor, null); // never claim a first-timer on a degraded lookup
   assert.equal(out[0].linkedIssueAlignment.issue, 9); // the rest of the block still ships
 });
 
@@ -228,15 +228,19 @@ test("classifyCoverage thresholds", () => {
   assert.equal(classifyCoverage("", "anything"), "none");
 });
 
-test("collectRevertRefs only collects from revert messages", () => {
+test("collectRevertRefs collects only the reverted PR from a GitHub revert title", () => {
   const s1 = new Set();
-  collectRevertRefs('Revert "x" (#10) and #12', s1);
-  assert.deepEqual([...s1].sort((a, b) => a - b), [10, 12]);
+  collectRevertRefs('Revert "add foo (#10)"', s1);
+  assert.deepEqual([...s1], [10]);
+  // The trailing revert-PR number and an unrelated `fixes #N` in the body are NOT collected.
   const s2 = new Set();
-  collectRevertRefs("normal commit referencing #5", s2);
-  assert.equal(s2.size, 0);
-  collectRevertRefs(undefined, s2);
-  assert.equal(s2.size, 0);
+  collectRevertRefs('Revert "add foo (#10)" (#20)\n\nThis reverts commit abc123. fixes #99', s2);
+  assert.deepEqual([...s2], [10]);
+  const s3 = new Set();
+  collectRevertRefs("normal commit referencing #5", s3);
+  assert.equal(s3.size, 0);
+  collectRevertRefs(undefined, s3);
+  assert.equal(s3.size, 0);
 });
 
 test("parseRepo rejects unsafe names", () => {

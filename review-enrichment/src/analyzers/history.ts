@@ -87,8 +87,10 @@ export function classifyCoverage(
 ): "full" | "partial" | "none" {
   const tokens = requirementTokens(requirement);
   if (tokens.length === 0) return "none";
-  const hay = haystack.toLowerCase();
-  const covered = tokens.filter((t) => hay.includes(t)).length;
+  // Match whole words only — tokenize the haystack the same way the requirement is tokenized — so a short keyword
+  // can't be "covered" by an unrelated word it is a substring of (e.g. `test` inside `latest`). (#1478)
+  const hayWords = new Set(haystack.toLowerCase().split(/[^a-z0-9]+/));
+  const covered = tokens.filter((t) => hayWords.has(t)).length;
   if (covered === 0) return "none";
   return covered / tokens.length >= FULL_COVERAGE_RATIO ? "full" : "partial";
 }
@@ -185,14 +187,16 @@ async function buildAuthorContext(
   const merged = await fetchSearchCount(`${repoQ} is:merged`, token, fetchImpl, signal);
   const closed = await fetchSearchCount(`${repoQ} is:unmerged is:closed`, token, fetchImpl, signal);
   const accountAgeDays = await fetchAccountAgeDays(author, token, fetchImpl, now, signal);
-  const priorMergedInRepo = merged ?? 0;
-  const priorClosedInRepo = closed ?? 0;
+  // A failed Search lookup is UNKNOWN, not zero — keep it null so a 403 / rate-limit can never be rendered as a
+  // first-time contributor. firstTimeContributor is decided ONLY when both counts are known. (#1478)
+  const firstTimeContributor =
+    merged === null || closed === null ? null : merged === 0 && closed === 0;
   return {
     author: {
-      priorMergedInRepo,
-      priorClosedInRepo,
+      priorMergedInRepo: merged,
+      priorClosedInRepo: closed,
       accountAgeDays,
-      firstTimeContributor: priorMergedInRepo === 0 && priorClosedInRepo === 0,
+      firstTimeContributor,
     },
     partial: merged === null || closed === null || accountAgeDays === null,
   };
@@ -258,13 +262,15 @@ async function fetchPullsForCommit(
   }
 }
 
-/** Collect PR numbers referenced by a revert commit message (`Revert "…" (#N)`, `This reverts … #N`) into `into`. */
+/** Collect the reverted PR number(s) from a revert commit/PR message into `into`. GitHub's revert title is
+ *  `Revert "<original title> (#N)"` — the reverted PR is the number INSIDE the quoted original title, so we match
+ *  only that. This avoids misclassifying a trailing revert-PR number or an unrelated `fixes #X` in the body. (#1478) */
 export function collectRevertRefs(
   message: string | undefined,
   into: Set<number>,
 ): void {
-  if (!message || !/\brevert/i.test(message)) return;
-  for (const m of message.matchAll(/#(\d+)/g)) {
+  if (!message) return;
+  for (const m of message.matchAll(/\brevert\s+"[^"]*\(#(\d+)\)"/gi)) {
     const n = Number(m[1]);
     if (Number.isInteger(n) && n > 0) into.add(n);
   }

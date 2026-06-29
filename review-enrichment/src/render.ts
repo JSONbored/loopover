@@ -329,9 +329,18 @@ export function renderBrief(
     const entries: string[] = [];
     if (item.author) {
       const a = item.author;
-      const record = a.firstTimeContributor
-        ? "first-time contributor to this repo"
-        : `${a.priorMergedInRepo} merged / ${a.priorClosedInRepo} closed prior PRs here`;
+      let record: string;
+      if (
+        a.firstTimeContributor === null ||
+        a.priorMergedInRepo === null ||
+        a.priorClosedInRepo === null
+      ) {
+        record = "prior PR history unavailable";
+      } else if (a.firstTimeContributor) {
+        record = "first-time contributor to this repo";
+      } else {
+        record = `${a.priorMergedInRepo} merged / ${a.priorClosedInRepo} closed prior PRs here`;
+      }
       const age =
         a.accountAgeDays === null
           ? "account age unknown"
@@ -339,7 +348,9 @@ export function renderBrief(
       entries.push(`- Author: ${record}; ${age}`);
     }
     for (const pr of item.similarPastPrs) {
-      const paths = pr.overlapPaths.map((p) => safeCodeSpan(p)).join(", ");
+      const paths = pr.overlapPaths.length
+        ? pr.overlapPaths.map((p) => safeCodeSpan(p)).join(", ")
+        : "unknown paths";
       entries.push(
         `- This area was previously changed in #${pr.number} (${pr.outcome}): ${promptText(pr.title)} — overlaps ${paths}`,
       );

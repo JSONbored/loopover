@@ -225,10 +225,12 @@ export interface NativeBuildFinding {
 export interface HistoryFinding {
   /** Author track record in THIS repo. `null` when no token/author was available to query the GitHub API. */
   author: {
-    priorMergedInRepo: number;
-    priorClosedInRepo: number;
+    /** Prior PRs by this author in this repo; `null` when the GitHub Search lookup failed / was unavailable. */
+    priorMergedInRepo: number | null;
+    priorClosedInRepo: number | null;
     accountAgeDays: number | null;
-    firstTimeContributor: boolean;
+    /** `true`/`false` ONLY when both PR-count lookups succeeded; `null` when a count was unavailable (never guessed). */
+    firstTimeContributor: boolean | null;
   } | null;
   /** Past PRs that already changed the same files, with the outcome of each and the overlapping paths. */
   similarPastPrs: Array<{

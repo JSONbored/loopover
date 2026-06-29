@@ -109,6 +109,19 @@ export interface SecretLogFinding {
   category: "secret" | "pii" | "request-object";
 }
 
+/** A changed file that is a statistical churn hotspot — high commit frequency AND a high fraction of
+ *  fix/revert commits in recent history (#1513). Defects cluster in such files, so the reviewer scrutinizes
+ *  harder. Counts + a rate only — no commit messages, authors, or dates (public-safe by construction). */
+export interface ChurnHotspotFinding {
+  file: string;
+  /** Total commits touching this file in the lookback window (capped at the per-page fetch limit). */
+  commits: number;
+  /** Commits whose subject reads as a defect fix or a revert. */
+  fixRevertCommits: number;
+  /** `fixRevertCommits / commits`, rounded to 2 decimals. */
+  fixRevertRate: number;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -120,6 +133,7 @@ export interface BriefFindings {
   redos?: RedosFinding[];
   codeowners?: CodeownersFinding[];
   secretLog?: SecretLogFinding[];
+  churnHotspot?: ChurnHotspotFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

@@ -160,6 +160,19 @@ export function renderBrief(
     }
   }
 
+  const churnHotspots = findings.churnHotspot ?? [];
+  if (churnHotspots.length) {
+    lines.push(
+      "### Churn hotspots (high commit frequency + fix/revert clustering — scrutinize harder)",
+    );
+    for (const item of churnHotspots) {
+      const pct = Math.round(item.fixRevertRate * 100);
+      lines.push(
+        `- ${safeCodeSpan(item.file)} — ${item.commits} commits in the last 90 days, ${pct}% fix/revert (${item.fixRevertCommits}/${item.commits})`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

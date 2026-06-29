@@ -287,6 +287,19 @@ export interface BriefFindings {
   iacMisconfig?: IacMisconfigFinding[];
   nativeBuild?: NativeBuildFinding[];
   history?: HistoryFinding[];
+  docCommentDrift?: DocCommentDriftFinding[];
+}
+
+/** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a
+ *  verifiable doc-vs-signature drift the PR introduced by changing the signature. Reports the function name +
+ *  the stale parameter names + location only. Functions with destructured/ambiguous params are skipped (so the
+ *  param set is always confidently enumerable). (#1519) */
+export interface DocCommentDriftFinding {
+  file: string;
+  line: number;
+  symbol: string;
+  /** `@param` names documented but absent from the function's actual parameter list. */
+  staleParams: string[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

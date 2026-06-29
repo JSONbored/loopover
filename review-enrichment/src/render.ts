@@ -340,6 +340,19 @@ export function renderBrief(
     }
   }
 
+  const docDrift = findings.docCommentDrift ?? [];
+  if (docDrift.length) {
+    lines.push(
+      "### Doc-comment drift (JSDoc @param names the signature no longer declares — update the doc)",
+    );
+    for (const item of docDrift) {
+      const params = item.staleParams.map((name) => safeCodeSpan(name)).join(", ");
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} ${safeCodeSpan(item.symbol)} documents ${params} — no longer a parameter`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

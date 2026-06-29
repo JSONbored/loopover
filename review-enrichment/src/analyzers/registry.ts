@@ -3,6 +3,7 @@ import { scanAssetWeight } from "./asset-weight.js";
 import { scanCodeowners } from "./codeowners.js";
 import { scanCommitSignature } from "./commit-signature.js";
 import { dependencyAnalyzer } from "./dependency/descriptor.js";
+import { scanDocCommentDrift } from "./doc-comment-drift.js";
 import { scanEol } from "./eol-check.js";
 import { scanHeavyDependencies } from "./heavy-dependency.js";
 import { scanHistory } from "./history.js";
@@ -354,6 +355,26 @@ export const ANALYZER_DESCRIPTORS = [
         timeoutMs: context.timeoutMs,
         diagnostics: context.diagnostics,
       }),
+  }),
+  descriptor({
+    name: "docCommentDrift",
+    title: "Doc-comment drift",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: { maxFiles: 20, maxFindings: 50 },
+    docs: {
+      summary:
+        "Flags a JSDoc/TSDoc @param that names a parameter the PR removed or renamed but left documented.",
+      looksAt:
+        "Changed TS/JS source files at headSha, comparing each named function's old vs new parameter list.",
+      reports: "File, line, function, and the stale parameter name(s).",
+      network: "Calls the GitHub API for changed file contents. Requires headSha and token forwarding for private repos.",
+      notes:
+        "Conservative: only named function declarations with confidently-enumerable params; non-parameter signature edits are not reported.",
+    },
+    run: (req, { signal }) => scanDocCommentDrift(req, fetch, { signal }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

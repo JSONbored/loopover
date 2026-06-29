@@ -28,6 +28,7 @@ const EXPECTED_ANALYZERS = [
   "iacMisconfig",
   "nativeBuild",
   "history",
+  "docCommentDrift",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

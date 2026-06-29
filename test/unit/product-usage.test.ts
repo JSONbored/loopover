@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
   getContributorScoringProfile,
@@ -340,6 +342,39 @@ describe("product usage events", () => {
     await upsertDigestSubscription(env, { login: "OKTOFEESH1", email: "digest@example.com", status: "paused" });
     await expect(listDigestSubscriptionsForLogin(env, "Oktofeesh1")).resolves.toEqual([
       expect.objectContaining({ login: "oktofeesh1", email: "digest@example.com", status: "paused" }),
+    ]);
+  });
+
+  it("normalizes legacy digest subscription rows during migration", () => {
+    const db = new DatabaseSync(":memory:");
+    for (const migrationFile of readdirSync("migrations")
+      .filter((file) => file.endsWith(".sql") && file < "0083_")
+      .sort()) {
+      db.exec(readFileSync(`migrations/${migrationFile}`, "utf8"));
+    }
+    db.exec(`
+      INSERT INTO digest_subscriptions (id, login, email, status, source, created_at, updated_at)
+      VALUES
+        ('legacy-active', 'OktoFeesh1', 'Digest@Example.com', 'active', 'app', '2026-05-29T00:00:00.000Z', '2026-05-29T00:00:00.000Z'),
+        ('legacy-paused', 'oktofeesh1', 'digest@example.com', 'paused', 'app', '2026-05-30T00:00:00.000Z', '2026-05-30T00:00:00.000Z')
+    `);
+
+    db.exec(readFileSync("migrations/0083_normalize_digest_subscription_logins.sql", "utf8"));
+
+    expect(db.prepare("SELECT login, email, status FROM digest_subscriptions").all()).toEqual([
+      { login: "oktofeesh1", email: "digest@example.com", status: "paused" },
+    ]);
+  });
+
+  it("keeps legacy mixed-case digest subscriptions visible during lookup", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO digest_subscriptions (id, login, email, status, source, created_at, updated_at)
+       VALUES ('legacy-digest', 'OktoFeesh1', 'legacy@example.com', 'active', 'app', '2026-05-30T00:00:00.000Z', '2026-05-30T00:00:00.000Z')`,
+    ).run();
+
+    await expect(listDigestSubscriptionsForLogin(env, "oktofeesh1")).resolves.toEqual([
+      expect.objectContaining({ login: "OktoFeesh1", email: "legacy@example.com", status: "active" }),
     ]);
   });
 

@@ -17,7 +17,7 @@ for maintainer approval (CI shows unverified → the engine **holds**, never clo
 The single **required** status check is **`validate`** (it aggregates `changes, lint, test, workers,
 mcp, ui, security`; a path-skipped job counts as success). **Codecov** posts `codecov/patch` (the real
 coverage gate) and `codecov/project` (informational) independently. The review engine also posts its
-own check run named **`Gittensory Gate`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
+own check run named **`Gittensory Orb Review Agent`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
 verdict (§3), separate from CI. On a PR, jobs run only if their
 path filter matched; on push to `main`, everything runs.
 
@@ -91,8 +91,8 @@ Implications for you:
 
 `.gittensory.yml` (the public config you can predict against) sets the gate *modes* (`linkedIssue:
 advisory`, `duplicates: block`, `readiness: advisory/60`, AI review off) and the focus manifest
-(`wantedPaths`: `src/ packages/ test/ migrations/ scripts/ .github/workflows/ wrangler.jsonc
-apps/gittensory-ui/`; `blockedPaths`: `site/ CNAME **/lovable/**`; `linkedIssuePolicy: preferred`;
+(`wantedPaths`: `src/ packages/ test/ migrations/ scripts/ review-enrichment/ .github/workflows/
+wrangler.jsonc apps/gittensory-ui/`; `blockedPaths`: `site/ CNAME **/lovable/**`; `linkedIssuePolicy: preferred`;
 `testExpectations: npm run test:ci`). But the **modes are inputs to the disposition above** — the
 engine still auto-merges the clean case and auto-closes the adverse case. The MCP `predict_gate` uses
 the public config + safe defaults; a clean prediction is necessary but not sufficient (it can't see

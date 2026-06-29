@@ -10,18 +10,18 @@ import type { GitHubWebhookPayload, JobMessage } from "../../src/types";
 
 const FORK_SHA = "deadbeefcafe1234deadbeefcafe1234deadbeef";
 
-class MemoryKv {
+class MemoryTransientCache {
   readonly values = new Map<string, string>();
   getCalls = 0;
-  putCalls = 0;
+  setCalls = 0;
 
   async get(key: string): Promise<string | null> {
     this.getCalls += 1;
     return this.values.get(key) ?? null;
   }
 
-  async put(key: string, value: string): Promise<void> {
-    this.putCalls += 1;
+  async set(key: string, value: string): Promise<void> {
+    this.setCalls += 1;
     this.values.set(key, value);
   }
 }
@@ -154,8 +154,8 @@ describe("CI-completion fork PR resume (head-SHA fallback)", () => {
   });
 
   it("dispatch: duplicate empty-pull_requests fork completions coalesce before head-SHA resolution", async () => {
-    const kv = new MemoryKv();
-    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", REVIEW_CONFIG: kv as unknown as KVNamespace });
+    const cache = new MemoryTransientCache();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", SELFHOST_TRANSIENT_CACHE: cache });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 5001);
 
     let commitPullsCalls = 0;
@@ -174,8 +174,8 @@ describe("CI-completion fork PR resume (head-SHA fallback)", () => {
     }
 
     expect(commitPullsCalls).toBe(1);
-    expect(kv.values.has(`ci-head-sha-resolve:jsonbored/gittensory@${FORK_SHA}`)).toBe(true);
-    expect(kv.putCalls).toBe(2); // one head-SHA resolution claim + one per-PR re-review claim
+    expect(cache.values.has(`ci-head-sha-resolve:jsonbored/gittensory@${FORK_SHA}`)).toBe(true);
+    expect(cache.setCalls).toBe(2); // one head-SHA resolution claim + one per-PR re-review claim
 
     const audits = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
       .bind("github_app.ci_completion_fork_resume")

@@ -73,9 +73,10 @@ describe("MCP gittensory_predict_gate", () => {
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Build output", changedPaths: ["dist/bundle.js"] },
     });
     expect(result.isError).toBeFalsy();
-    const data = result.structuredContent as { conclusion: string; blockers: Array<{ code: string }>; note: string };
-    expect(data.conclusion).toBe("failure");
-    expect(data.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(true);
+    const data = result.structuredContent as { conclusion: string; blockers: Array<{ code: string }>; warnings: Array<{ code: string }>; note: string };
+    expect(data.conclusion).toBe("neutral");
+    expect(data.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
+    expect(data.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(true);
     // With paths supplied the note drops the "provide changed paths" disclaimer but still disclaims slop.
     expect(data.note).not.toContain("Provide the PR's changed paths");
     expect(data.note.toLowerCase()).toContain("slop");

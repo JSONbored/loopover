@@ -65,9 +65,32 @@ export function renderBrief(
           (SEVERITY_RANK[b.cve.severity] ?? 4),
       );
     for (const { dep, cve } of flat) {
-      const fix = cve.fixedIn ? ` — fixed in ${cve.fixedIn}` : "";
+      const fix = cve.fixedIn
+        ? ` — fixed in ${safeCodeSpan(cve.fixedIn)}`
+        : "";
       lines.push(
-        `- \`${dep.package}@${dep.to}\` (${dep.ecosystem}): **${cve.severity}** ${cve.id} — ${cve.summary}${fix}`,
+        `- ${safeCodeSpan(`${dep.package}@${dep.to}`)} (${dep.ecosystem}): **${cve.severity}** ${safeCodeSpan(cve.id)} — ${promptText(cve.summary)}${fix}`,
+      );
+    }
+  }
+
+  const lockfileDrift = findings.lockfileDrift ?? [];
+  if (lockfileDrift.length) {
+    lines.push("### Vulnerable lockfile-only dependency drift (OSV.dev)");
+    const flat = lockfileDrift
+      .flatMap((dep) => dep.cves.map((cve) => ({ dep, cve })))
+      .sort(
+        (a, b) =>
+          (SEVERITY_RANK[a.cve.severity] ?? 4) -
+          (SEVERITY_RANK[b.cve.severity] ?? 4),
+      );
+    for (const { dep, cve } of flat) {
+      const from = dep.from ? ` from ${safeCodeSpan(dep.from)}` : "";
+      const fix = cve.fixedIn
+        ? ` — fixed in ${safeCodeSpan(cve.fixedIn)}`
+        : "";
+      lines.push(
+        `- ${safeCodeSpan(`${dep.file}:${dep.line}`)} resolves transitive ${safeCodeSpan(`${dep.package}@${dep.to}`)} (${dep.ecosystem})${from}: **${cve.severity}** ${safeCodeSpan(cve.id)} — ${promptText(cve.summary)}${fix}`,
       );
     }
   }
@@ -239,6 +262,22 @@ export function renderBrief(
           ? `adds ${formatBytes(item.bytes)}`
           : `grows +${formatBytes(item.deltaBytes)} to ${formatBytes(item.bytes)}`;
       lines.push(`- ${safeCodeSpan(item.path)} ${detail}`);
+    }
+  }
+
+  const typosquats = findings.typosquat ?? [];
+  if (typosquats.length) {
+    lines.push(
+      "### Typosquat / dependency-confusion risks (verify the package name before merging)",
+    );
+    for (const item of typosquats) {
+      const detail =
+        item.kind === "typosquat"
+          ? `${item.reason} — likely typosquat of ${safeCodeSpan(item.similarTo ?? "")}`
+          : item.reason;
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${detail}`,
+      );
     }
   }
 

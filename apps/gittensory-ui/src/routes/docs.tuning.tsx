@@ -199,9 +199,10 @@ function Tuning() {
           blocks.
         </li>
         <li>
-          <code>block</code> — the finding can become a hard <code>Gittensory Gate</code> blocker.
-          Blocking is always confirmed-contributor-gated: the mode chooses <em>which</em>{" "}
-          deterministic checks are active, never <em>who</em> can be blocked.
+          <code>block</code> — the finding can become a hard{" "}
+          <code>Gittensory Orb Review Agent</code> blocker. Blocking is always
+          confirmed-contributor-gated: the mode chooses <em>which</em> deterministic checks are
+          active, never <em>who</em> can be blocked.
         </li>
       </ul>
       <p>

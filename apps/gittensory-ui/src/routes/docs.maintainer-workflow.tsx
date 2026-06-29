@@ -133,7 +133,7 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
       <p>
         New installations should start with <Link to="/docs/github-app">GitHub App setup</Link>:
         install on one repo, verify installation health, preview the public panel, then decide
-        whether <strong>Gittensory Gate</strong> should become a required check.
+        whether <strong>Gittensory Orb Review Agent</strong> should become a required check.
       </p>
       <WorkflowMirror
         role="maintainer"

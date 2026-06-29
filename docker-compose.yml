@@ -5,10 +5,9 @@
 #
 # PROFILES — activate optional services by passing --profile <name> (combine freely):
 #
-#   (none)                  SQLite single-node stack (default — no flags needed)
+#   (none)                  SQLite + Redis single-node stack (default — no flags needed)
 #   --profile postgres      pgvector/pg16 shared database (multi-instance capable)
 #   --profile pgbouncer     PgBouncer connection pooler in front of Postgres
-#   --profile redis         Redis fixed-window rate limiter
 #   --profile qdrant        Qdrant vector database for RAG
 #   --profile ollama        Local Ollama AI backend
 #   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
@@ -18,7 +17,7 @@
 #   --profile runners       GitHub Actions self-hosted runner
 #
 # Examples:
-#   docker compose up --build                                    # SQLite, no AI
+#   docker compose up --build                                    # SQLite + Redis, no external AI
 #   docker compose --profile postgres --profile caddy up -d     # Postgres + HTTPS
 #   docker compose --profile observability up -d                 # metrics + logs + dashboards
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
@@ -28,6 +27,9 @@ services:
   gittensory:
     build:
       context: .
+      args:
+        INSTALL_AI_CLIS: "${INSTALL_AI_CLIS:-true}"
+        INSTALL_VISUAL_REVIEW: "${INSTALL_VISUAL_REVIEW:-false}"
     restart: unless-stopped
     ports:
       # Remove this when using the caddy profile — Caddy becomes the public listener.
@@ -58,13 +60,13 @@ services:
       # PGVECTOR_ENABLED: "true"
       # With --profile pgbouncer, route through the pooler instead of postgres directly:
       # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@pgbouncer:5432/gittensory
-      # Uncomment for Redis rate limiting (--profile redis):
-      # REDIS_URL: redis://redis:6379
+      # Required shared transient state for review correctness, webhook dedup, and rate limiting.
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       # Uncomment for Qdrant RAG vector store (--profile qdrant):
       # QDRANT_URL: http://qdrant:6333
       # Uncomment for Ollama AI (--profile ollama):
       # AI_PROVIDER: ollama
-      # AI_BASE_URL: http://ollama:11434/v1
+      # OLLAMA_AI_BASE_URL: http://ollama:11434/v1
       # BROKERED mode — use the central Gittensory Orb App instead of creating your own GitHub App. Install the
       # Orb App on your repos + set ORB_ENROLLMENT_SECRET in .env (loaded above); the engine then brokers
       # short-lived GitHub tokens from the Orb on demand (no own App private key). See .env.example.
@@ -75,6 +77,8 @@ services:
       # locally (gitignored — never commit real policy). Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
       - ./gittensory-config:/config:ro
     depends_on:
+      redis:
+        condition: service_healthy
       # Gate startup on a healthy Qdrant when --profile qdrant is active; required:false means the
       # dependency is ignored when qdrant isn't started (default/other profiles). Belt-and-suspenders
       # with the app-side waitForQdrant retry in src/server.ts (which also covers a mid-life restart).
@@ -97,6 +101,27 @@ services:
       timeout: 5s
       start_period: 60s
       retries: 3
+
+  # ── Redis (always on; required by the review runtime) ─────────────────────
+  # Shared transient review state: pending-CI first-seen stamps, webhook dedup/coalescing, rate limits, and
+  # short-lived GitHub caches. Losing it on restart is safe; the app requires it while running.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
 
   # ── Postgres (--profile postgres | --profile pgbouncer) ───────────────────
   postgres:
@@ -136,30 +161,6 @@ services:
       DEFAULT_POOL_SIZE: "20"
       AUTH_TYPE: md5
 
-  # ── Redis (--profile redis) ────────────────────────────────────────────────
-  # Ephemeral rate-limiter + 5-min webhook-dedup cache only — losing it is harmless, so persistence is
-  # fully disabled. --save "" turns off RDB snapshots; --appendonly no turns off AOF. allkeys-lru caps
-  # memory at 256mb and evicts least-recently-used keys under pressure instead of OOM-killing. No volume:
-  # nothing here needs to survive a restart. (The empty-string and "no" are quoted so YAML keeps them.)
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    profiles: ["redis"]
-    command:
-      - redis-server
-      - --maxmemory
-      - 256mb
-      - --maxmemory-policy
-      - allkeys-lru
-      - --save
-      - ""
-      - --appendonly
-      - "no"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      retries: 5
-
   # ── Qdrant (--profile qdrant) ─────────────────────────────────────────────
   # Dedicated vector database for RAG — replaces the built-in sqlite-vec / pgvector when
   # QDRANT_URL=http://qdrant:6333 is set. Scales to millions of vectors with ANN search.
@@ -197,7 +198,7 @@ services:
   # ── Ollama (--profile ollama) ──────────────────────────────────────────────
   # After `docker compose --profile ollama up -d`, pull a model:
   #   docker compose exec ollama ollama pull llama3.2
-  # Then set AI_PROVIDER=ollama and AI_BASE_URL=http://ollama:11434/v1 in .env.
+  # Then set AI_PROVIDER=ollama and OLLAMA_AI_BASE_URL=http://ollama:11434/v1 in .env.
   ollama:
     image: ollama/ollama:0.30.10
     restart: unless-stopped
@@ -220,8 +221,8 @@ services:
       - gittensory-data:/data
       - ./litestream.yml:/etc/litestream.yml:ro
     environment:
-      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID}
-      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY}
+      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:-}
+      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY:-}
       LITESTREAM_ENDPOINT: ${LITESTREAM_ENDPOINT:-}
       LITESTREAM_REGION: ${LITESTREAM_REGION:-us-east-1}
 
@@ -260,7 +261,7 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-180d}"
 
   # Routes Prometheus alerts to your notification channel. Ships SILENT: alerts go to a
   # null receiver until you fill in a receiver in alertmanager/alertmanager.yml.
@@ -282,21 +283,69 @@ services:
     image: grafana/grafana:13.1.0
     restart: unless-stopped
     profiles: ["observability"]
-    depends_on: [prometheus, loki]
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      reporting-exporter:
+        condition: service_healthy
     ports:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Maintainer dashboards query only the redacted reporting export, never the live app DB.
+      - grafana-reporting-data:/reporting:ro
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      # Only install the signed GitHub datasource plugin. Do not mount or query the live app SQLite
-      # database from Grafana; observability must not bypass application authorization.
-      GF_INSTALL_PLUGINS: grafana-github-datasource
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+
+  reporting-exporter:
+    image: alpine:3.20
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on:
+      gittensory:
+        condition: service_healthy
+    volumes:
+      # The exporter needs live DB read access to build the redacted snapshot. Grafana does not get this mount.
+      - gittensory-data:/appdb:ro
+      - grafana-reporting-data:/reporting
+      - ./scripts/export-grafana-reporting-db.sh:/export-grafana-reporting-db.sh:ro
+    environment:
+      # Default SQLite app DB path maps app /data/gittensory.sqlite to exporter /appdb/gittensory.sqlite.
+      # If you override DATABASE_PATH, set this to the matching /appdb/<file> path. DATABASE_URL/Postgres
+      # deployments export an empty dashboard-safe DB so Grafana can still start until a SQL exporter is added.
+      GITTENSORY_REPORTING_SOURCE_DB: "${GITTENSORY_REPORTING_SOURCE_DB:-/appdb/gittensory.sqlite}"
+      GITTENSORY_REPORTING_DIR: /reporting
+      GITTENSORY_REPORTING_DB: "${GITTENSORY_REPORTING_DB:-/reporting/gittensory-reporting.sqlite}"
+      GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS: "${GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS:-30}"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        apk add --no-cache sqlite >/dev/null 2>&1 &&
+        while true; do
+          sh /export-grafana-reporting-db.sh || echo '[reporting] export failed';
+          interval="$${GRAFANA_REPORTING_EXPORT_INTERVAL_SECONDS:-30}";
+          case "$$interval" in ''|*[!0-9]*) interval=30;; esac;
+          sleep "$$interval";
+        done
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "db=\"$${GITTENSORY_REPORTING_DB:-/reporting/gittensory-reporting.sqlite}\"; test -s \"$$db\" && sqlite3 \"$$db\" 'PRAGMA quick_check;' | grep -q '^ok$'",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
   # ── Log pipeline (--profile observability) ─────────────────────────────────
   # Loki stores logs; Promtail discovers every container in this compose project via the read-only
@@ -400,7 +449,7 @@ services:
       - NET_ADMIN
       - SYS_MODULE
     environment:
-      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
       TS_STATE_DIR: /var/lib/tailscale
       TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
     volumes:
@@ -420,8 +469,8 @@ services:
     profiles: ["runners"]
     environment:
       RUNNER_SCOPE: ${RUNNER_SCOPE:-repo}
-      REPO_URL: ${RUNNER_REPO_URL}
-      RUNNER_TOKEN: ${RUNNER_TOKEN}
+      REPO_URL: ${RUNNER_REPO_URL:-}
+      RUNNER_TOKEN: ${RUNNER_TOKEN:-}
       ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN:-}
       RUNNER_NAME: ${RUNNER_NAME:-gittensory-runner}
       LABELS: ${RUNNER_LABELS:-self-hosted,linux,x64}
@@ -463,6 +512,7 @@ volumes:
   prometheus-data:
   alertmanager-data:
   grafana-data:
+  grafana-reporting-data:
   loki-data:
   promtail-data:
   tailscale-state:

@@ -12,6 +12,7 @@ on:
       - "src/selfhost/**"
       - "src/server.ts"
       - "scripts/build-selfhost.mjs"
+      - "scripts/validate-selfhost-sourcemap.mjs"
       - "scripts/register-selfhost.mjs"
       - "Dockerfile"
       - "docker-compose.yml"
@@ -24,6 +25,7 @@ on:
       - "src/selfhost/**"
       - "src/server.ts"
       - "scripts/build-selfhost.mjs"
+      - "scripts/validate-selfhost-sourcemap.mjs"
       - "scripts/register-selfhost.mjs"
       - "Dockerfile"
       - "docker-compose.yml"
@@ -52,13 +54,13 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "24"
+          node-version: "24.18.0"
           cache: "npm"
 
       - name: Install deps
@@ -70,6 +72,9 @@ jobs:
       - name: Build the self-host bundle
         run: node scripts/build-selfhost.mjs
 
+      - name: Validate self-host source map
+        run: node scripts/validate-selfhost-sourcemap.mjs
+
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build the Docker image
@@ -80,9 +85,32 @@ jobs:
             --load \
             -t gittensory:selfhost-ci .
 
+      - name: Smoke-test bundled AI CLIs
+        run: |
+          docker run --rm --entrypoint sh gittensory:selfhost-ci -c \
+            'command -v claude && claude --version && command -v codex && codex --version'
+
+      - name: Build release target with visual review deps
+        run: |
+          docker buildx build \
+            --target runtime-prebuilt \
+            --build-context selfhost_dist=./dist \
+            --build-arg INSTALL_VISUAL_REVIEW=true \
+            --load \
+            -t gittensory:selfhost-prebuilt-visual-ci .
+          docker run --rm --entrypoint node gittensory:selfhost-prebuilt-visual-ci \
+            -e "import('puppeteer-core').then(() => console.log('puppeteer-core ok'))"
+
       - name: Boot the container + smoke-test /health, /ready, /metrics, migrations
         run: |
-          docker run -d --name gt -p 8787:8787 gittensory:selfhost-ci
+          docker network create gt-smoke
+          docker run -d --name gt-redis --network gt-smoke redis:7-alpine
+          trap 'docker rm -f gt gt-redis >/dev/null 2>&1 || true; docker network rm gt-smoke >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if docker exec gt-redis redis-cli ping | grep -q PONG; then break; fi
+            sleep 1
+          done
+          docker run -d --name gt --network gt-smoke -p 8787:8787 -e REDIS_URL=redis://gt-redis:6379 gittensory:selfhost-ci
           ok=0
           for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8787/health >/dev/null; then ok=1; break; fi
@@ -94,4 +122,3 @@ jobs:
           curl -sf http://127.0.0.1:8787/metrics | grep -q 'gittensory_uptime_seconds'
           docker logs gt 2>&1 | grep -q 'selfhost_migrations_applied'
           echo "self-host smoke test passed"
-          docker rm -f gt

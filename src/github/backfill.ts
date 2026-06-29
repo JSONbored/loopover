@@ -59,7 +59,12 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
-import { createInstallationToken, getAppInstallation, GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME } from "./app";
+import { createInstallationToken, getAppInstallation } from "./app";
+import {
+  GITTENSORY_CONTEXT_CHECK_NAME,
+  GITTENSORY_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_GATE_CHECK_NAME,
+} from "../review/check-names";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
 
 type GitHubLabelPayload = {
@@ -825,8 +830,8 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
       optional: gateCheckRepoCount === 0,
       summary:
         gateCheckRepoCount > 0
-          ? "Gate check mode is enabled for at least one installed repo, so Checks: write is required."
-          : "Checks: write is optional unless gate check mode is enabled for an installed repo.",
+          ? "Review-agent check mode is enabled for at least one installed repo, so Checks: write is required."
+          : "Checks: write is optional unless review-agent check mode is enabled for an installed repo.",
     }),
   ];
   const eventDiagnostics: InstallationEventDiagnostic[] = [
@@ -1920,7 +1925,11 @@ const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 // the very review they're blocking runs → the PR defers forever). Excluded from the CI aggregate entirely.
 // (#gate-self-deadlock — froze green-CI PRs as "CI still running". The Gate alone wasn't enough: the Context
 // check is posted the same way and re-created the deadlock, so exclude ALL bot-owned checks.)
-const BOT_OWNED_CHECK_NAMES = new Set<string>([GITTENSORY_GATE_CHECK_NAME, GITTENSORY_CONTEXT_CHECK_NAME]);
+const BOT_OWNED_CHECK_NAMES = new Set<string>([
+  GITTENSORY_GATE_CHECK_NAME,
+  GITTENSORY_LEGACY_GATE_CHECK_NAME,
+  GITTENSORY_CONTEXT_CHECK_NAME,
+]);
 
 function isOwnGitHubAppCheckRun(env: Env, run: GitHubCheckRunPayload): boolean {
   const appSlug = typeof run.app?.slug === "string" ? run.app.slug.trim().toLowerCase() : "";
@@ -1930,6 +1939,10 @@ function isOwnGitHubAppCheckRun(env: Env, run: GitHubCheckRunPayload): boolean {
 
 export type LiveCiAggregate = {
   ciState: "passed" | "failed" | "pending" | "unverified";
+  // Any non-bot CI source that is still pending, inferred missing, or unreadable. This is deliberately broader
+  // than ciState: a non-required pending check must not fail the gate, but review execution should still wait
+  // until every visible CI signal has settled.
+  hasPending: boolean;
   // Checks that FAIL the gate: every failing check when required contexts are unknown, else only the failing
   // REQUIRED contexts. These drive ciState === "failed" and the disposition (no-merge / close / request-changes).
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
@@ -1988,13 +2001,14 @@ export async function fetchLiveCiAggregate(
   // back to gating on all contexts to avoid silently passing an unknown required failure.
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", failingDetails: [], nonRequiredFailingDetails: [] };
+  if (!headSha) return { ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] };
   const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
   const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;
   let anyPending = false;
+  let anyVisiblePending = false;
   // CI visibility flags: a failed/short read of either source means we did NOT enumerate the commit's full check
   // set, so we must not certify it "passed". They drive the fail-CLOSED degrade below. In enforce-required mode
   // the absent-context guard already catches this; this additionally closes the fold-all (unknown-required) seam
@@ -2036,8 +2050,9 @@ export async function fetchLiveCiAggregate(
         (isRequired(run.name) ? failingDetails : nonRequiredFailingDetails).push(detail);
       } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
         // concluded and not failing → passing
-      } else if (isRequired(run.name)) {
-        anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+      } else {
+        anyVisiblePending = true;
+        if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
       }
     }
     if (!hasNextPage(result.link)) break;
@@ -2074,8 +2089,9 @@ export async function fetchLiveCiAggregate(
       (isRequired(name) ? failingDetails : nonRequiredFailingDetails).push(detail);
     } else if (state === "success") {
       // passing
-    } else if (isRequired(name)) {
-      anyPending = true; // pending — only a REQUIRED context holds the gate
+    } else {
+      anyVisiblePending = true;
+      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
     }
   }
 
@@ -2084,19 +2100,21 @@ export async function fetchLiveCiAggregate(
   // trigger on forks, or a check that was skipped).
   if (seenContextNames) {
     for (const ctx of requiredContexts!) {
-      if (!seenContextNames.has(ctx)) anyPending = true;
+      if (!seenContextNames.has(ctx)) {
+        anyPending = true;
+        anyVisiblePending = true;
+      }
     }
   }
 
-  // FOLD-ALL hardening (#ci-foldall-checksuites): when branch protection is UNREADABLE (no `administration:read`
-  // ⇒ requiredContexts null ⇒ fold-all), the check-run/status scan above can read "passed" for a fork PR whose
-  // required workflow is AWAITING APPROVAL — its check-RUNS don't exist yet (the workflow never ran), so only the
-  // always-on third-party checks are seen and nothing fails or pends. Read the check-SUITES too: a GitHub-Actions
-  // suite still `queued`/`requested`/`waiting`/`in_progress` (not `completed`) means the first-party CI has NOT
-  // run, so hold (pending) instead of certifying a never-run workflow as green. Enforce-required mode already
-  // catches this via the absent-context guard above, so this runs ONLY in fold-all (one extra call on the degraded
-  // path), and ONLY when we would otherwise certify "passed" (no failure, nothing else pending).
-  if (!enforceRequiredOnly && headSha && failingDetails.length === 0 && !anyPending && !checkRunsIncomplete && !statusIncomplete) {
+  // Check-suite hardening (#ci-foldall-checksuites / #dependent-ci-materialization): the check-run/status scan can
+  // read "settled" before GitHub materializes downstream jobs whose `needs:` dependencies just completed
+  // (`coverage-upload` and then `validate` are the common shape). Read the check-SUITES too before certifying a
+  // commit settled: a GitHub-Actions suite still `queued`/`requested`/`waiting`/`in_progress` means first-party CI
+  // has not finished, even if every currently-visible check-run is completed. This runs only when the cheaper
+  // sources found no failure, no pending check, and no incomplete page, so it does not add a call to already-pending
+  // or already-failing PRs.
+  if (headSha && failingDetails.length === 0 && !anyPending && !anyVisiblePending && !checkRunsIncomplete && !statusIncomplete) {
     const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> }>(
       env,
       repoFullName,
@@ -2111,9 +2129,10 @@ export async function fetchLiveCiAggregate(
     if (!suitesResult) {
       // total === 0 means the commit has NO checks at all → genuinely unverified (no CI), not a missing first-party
       // run, so leave it; only pend when checks DO exist but none of them is a confirmed first-party run.
-      if (!sawFirstPartyCheckRun && total > 0) anyPending = true;
+      if (!enforceRequiredOnly && !sawFirstPartyCheckRun && total > 0) anyPending = true;
     } else if ((suitesResult.data.check_suites ?? []).some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
-      anyPending = true; // a first-party GitHub Actions workflow has not completed (e.g. a fork PR awaiting approval)
+      anyPending = true; // a first-party GitHub Actions workflow has not completed (or downstream jobs are pending materialization)
+      anyVisiblePending = true;
     }
   }
 
@@ -2125,7 +2144,13 @@ export async function fetchLiveCiAggregate(
   // commit as passed/clean — hold (pending) so the gate waits and re-evaluates on the next sweep instead of
   // auto-merging on partial data. An OBSERVED failure ("failed") is authoritative and preserved.
   if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
-  return { ciState, failingDetails, nonRequiredFailingDetails };
+  const hasPending =
+    anyVisiblePending ||
+    anyPending ||
+    checkRunsIncomplete ||
+    statusIncomplete ||
+    ciState === "pending";
+  return { ciState, hasPending, failingDetails, nonRequiredFailingDetails };
 }
 
 /**
@@ -2805,7 +2830,10 @@ function topItems(values: string[], limit: number): string[] {
 }
 
 function latestDate(values: Array<string | null | undefined>): string | undefined {
-  return values.filter(Boolean).sort().at(-1) ?? undefined;
+  // Drop unparseable values before the lexicographic max: a malformed/sentinel timestamp whose first char
+  // sorts after "2" (e.g. "bad-date", "pending") would otherwise outrank a real 2026-... ISO stamp and be
+  // persisted as lastActivityAt. Mirrors the guarded newest()/oldest() in signals/data-quality.ts.
+  return values.filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value)))).sort().at(-1) ?? undefined;
 }
 
 function daysSince(value: string): number {

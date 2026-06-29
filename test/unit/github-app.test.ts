@@ -14,10 +14,13 @@ import {
   isCacheableGithubUrl,
   isCheckRunPermissionError,
   isForeignAppInstallation,
+  isGitHubBadCredentialsError,
+  isGitHubRateLimitedError,
   isRateLimitedResponse,
   rateLimitRetryMs,
   setGitHubResponseCache,
   setInstallationTokenStore,
+  withInstallationTokenRetry,
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -144,6 +147,142 @@ describe("GitHub check runs", () => {
     expect(first).toBe("installation-token-1");
     expect(second).toBe("installation-token-1");
     expect(mints).toBe(1);
+  });
+
+  it("expires a rejected cached installation token and retries check-run publication once", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mints = 0;
+    let rejectedReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({
+          token: mints === 1 ? "stale-token" : "fresh-token",
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      const auth = new Headers(init?.headers).get("authorization") ?? "";
+      if (url.includes("/commits/stale-head/check-runs") && auth.includes("stale-token")) {
+        rejectedReads += 1;
+        return Response.json({ message: "Bad credentials" }, { status: 401 });
+      }
+      if (url.includes("/commits/stale-head/check-runs")) {
+        expect(auth).toContain("fresh-token");
+        return Response.json({ total_count: 0, check_runs: [] });
+      }
+      if (url.includes("/check-runs") && init?.method === "POST") {
+        expect(auth).toContain("fresh-token");
+        return Response.json({ id: 556, html_url: "https://github.com/checks/556" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePendingGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      556,
+      "JSONbored/gittensory",
+      gateAdvisory("stale-head"),
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 556 });
+    expect(mints).toBe(2);
+    expect(rejectedReads).toBe(1);
+  });
+
+  it("retries a rejected cached installation token when cache eviction fails", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let gets = 0;
+    let evictionWrites = 0;
+    setInstallationTokenStore({
+      get: async () => {
+        gets += 1;
+        if (gets <= 2)
+          return {
+            token: "stale-token",
+            expiresAtMs: Date.now() + 60 * 60_000,
+          };
+        return null;
+      },
+      set: async (_installationId, value) => {
+        if (value.token === "") {
+          evictionWrites += 1;
+          throw new Error("token cache unavailable");
+        }
+      },
+    });
+    let mints = 0;
+    let rejectedReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({
+          token: "fresh-token",
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      const auth = new Headers(init?.headers).get("authorization") ?? "";
+      if (url.includes("/commits/stale-head/check-runs") && auth.includes("stale-token")) {
+        rejectedReads += 1;
+        return Response.json({ message: "Bad credentials" }, { status: 401 });
+      }
+      if (url.includes("/commits/stale-head/check-runs")) {
+        expect(auth).toContain("fresh-token");
+        return Response.json({ total_count: 0, check_runs: [] });
+      }
+      if (url.includes("/check-runs") && init?.method === "POST") {
+        expect(auth).toContain("fresh-token");
+        return Response.json({ id: 557, html_url: "https://github.com/checks/557" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePendingGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      557,
+      "JSONbored/gittensory",
+      gateAdvisory("stale-head"),
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 557 });
+    expect(evictionWrites).toBe(1);
+    expect(mints).toBe(1);
+    expect(rejectedReads).toBe(1);
+  });
+
+  it("does not evict a newer cached installation token when the rejected token is already stale", async () => {
+    const reads = [
+      { token: "rejected-token", expiresAtMs: Date.now() + 60 * 60_000 },
+      { token: "replacement-token", expiresAtMs: Date.now() + 60 * 60_000 },
+      { token: "replacement-token", expiresAtMs: Date.now() + 60 * 60_000 },
+    ];
+    const writes: Array<{ token: string; expiresAtMs: number }> = [];
+    setInstallationTokenStore({
+      get: async () => reads.shift() ?? null,
+      set: async (_installationId, value) => {
+        writes.push(value);
+      },
+    });
+    const seenTokens: string[] = [];
+
+    const result = await withInstallationTokenRetry(createTestEnv(), 558, async (token) => {
+      seenTokens.push(token);
+      if (token === "rejected-token")
+        throw { response: { status: 401 }, message: "token expired" };
+      return "ok";
+    });
+
+    expect(result).toBe("ok");
+    expect(seenTokens).toEqual(["rejected-token", "replacement-token"]);
+    expect(writes).toEqual([]);
+    expect(isGitHubBadCredentialsError(new Error("Bad credentials"))).toBe(true);
+    expect(isGitHubBadCredentialsError({ response: { status: 401 }, message: "Unauthorized" })).toBe(true);
+  });
+
+  it("does not treat primitive values as GitHub rate-limit errors", () => {
+    expect(isGitHubRateLimitedError("secondary rate limit")).toBe(false);
+    expect(isGitHubRateLimitedError(null)).toBe(false);
   });
 
   it("single-flights concurrent cold-cache mints for one install (no thundering herd)", async () => {
@@ -577,7 +716,7 @@ describe("GitHub check runs", () => {
     expect(isCrossAppCheckRunError(null)).toBe(false); // non-object
   });
 
-  it("creates a failing opt-in Gittensory Gate check for merge blockers", async () => {
+  it("creates a failing opt-in Gittensory Orb Review Agent check for merge blockers", async () => {
     const privateKey = await generatePrivateKeyPem();
     let capturedBody: {
       name?: string;
@@ -634,9 +773,9 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "published", id: 88 });
     expect(capturedBody).toMatchObject({
-      name: "Gittensory Gate",
+      name: "Gittensory Orb Review Agent",
       conclusion: "failure",
-      output: { title: "Gittensory Gate: No linked issue detected" },
+      output: { title: "Gittensory Orb Review Agent: No linked issue detected" },
     });
     expect(capturedBody.output?.text).toContain("Link the issue before merge.");
     expect(capturedBody.output?.text).not.toMatch(
@@ -678,9 +817,9 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "published", id: 89 });
     expect(capturedBody).toMatchObject({
-      name: "Gittensory Gate",
+      name: "Gittensory Orb Review Agent",
       status: "in_progress",
-      output: { title: "Gittensory Gate is evaluating" },
+      output: { title: "Gittensory Orb Review Agent is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
     // The Gate blocks every author the same on a configured blocker (confirmed status no longer gates the verdict).
@@ -689,6 +828,174 @@ describe("GitHub check runs", () => {
     expect(capturedBody.details_url).toBe(
       "https://gittensory.aethereal.dev/app?view=maintainer&repo=JSONbored%2Fgittensory",
     );
+  });
+
+  it("finalizes the legacy pending Gate check when posting the renamed review-agent check", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let newCheckBody: { name?: string; status?: string; conclusion?: string } = {};
+    let legacyPatchBody: {
+      name?: string;
+      status?: string;
+      conclusion?: string;
+      output?: { title?: string; text?: string };
+    } = {};
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (url.includes("/commits/legacy-pending/check-runs")) {
+          const checkName = new URL(url).searchParams.get("check_name");
+          if (checkName === "Gittensory Orb Review Agent")
+            return Response.json({ total_count: 0, check_runs: [] });
+          if (checkName === "Gittensory Gate")
+            return Response.json({
+              total_count: 1,
+              check_runs: [
+                { id: 321, name: "Gittensory Gate", status: "in_progress" },
+              ],
+            });
+        }
+        if (url.includes("/check-runs/321") && method === "PATCH") {
+          legacyPatchBody = JSON.parse(String(init?.body)) as typeof legacyPatchBody;
+          return Response.json({ id: 321 });
+        }
+        if (url.includes("/check-runs") && method === "POST") {
+          newCheckBody = JSON.parse(String(init?.body)) as typeof newCheckBody;
+          return Response.json({ id: 89 }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    const result = await createOrUpdatePendingGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      gateAdvisory("legacy-pending"),
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 89 });
+    expect(newCheckBody).toMatchObject({
+      name: "Gittensory Orb Review Agent",
+      status: "in_progress",
+    });
+    expect(newCheckBody).not.toHaveProperty("conclusion");
+    expect(legacyPatchBody).toMatchObject({
+      name: "Gittensory Gate",
+      status: "completed",
+      conclusion: "neutral",
+      output: {
+        title:
+          "Gittensory Orb Review Agent superseded this legacy check",
+      },
+    });
+    expect(legacyPatchBody.output?.text).toContain(
+      "Use Gittensory Orb Review Agent",
+    );
+  });
+
+  it("leaves an already-completed legacy Gate check alone while posting the renamed review-agent check", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    let newCheckBody: { name?: string; status?: string } = {};
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        calls.push(`${method} ${url}`);
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (url.includes("/commits/legacy-completed/check-runs")) {
+          const checkName = new URL(url).searchParams.get("check_name");
+          if (checkName === "Gittensory Orb Review Agent")
+            return Response.json({ total_count: 0, check_runs: [] });
+          if (checkName === "Gittensory Gate")
+            return Response.json({
+              total_count: 1,
+              check_runs: [
+                { id: 323, name: "Gittensory Gate", status: "completed" },
+              ],
+            });
+        }
+        if (url.includes("/check-runs/323"))
+          throw new Error("must not patch completed legacy check");
+        if (url.includes("/check-runs") && method === "POST") {
+          newCheckBody = JSON.parse(String(init?.body)) as typeof newCheckBody;
+          return Response.json({ id: 91 }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    const result = await createOrUpdatePendingGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      gateAdvisory("legacy-completed"),
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 91 });
+    expect(newCheckBody).toMatchObject({
+      name: "Gittensory Orb Review Agent",
+      status: "in_progress",
+    });
+    expect(calls.some((call) => call.includes("/check-runs/323"))).toBe(false);
+  });
+
+  it("still posts the renamed review-agent check when legacy Gate cleanup fails", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let newCheckBody: { name?: string; status?: string } = {};
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (url.includes("/commits/legacy-cleanup-fails/check-runs")) {
+          const checkName = new URL(url).searchParams.get("check_name");
+          if (checkName === "Gittensory Orb Review Agent")
+            return Response.json({ total_count: 0, check_runs: [] });
+          if (checkName === "Gittensory Gate")
+            return Response.json({
+              total_count: 1,
+              check_runs: [
+                { id: 322, name: "Gittensory Gate", status: "in_progress" },
+              ],
+            });
+        }
+        if (url.includes("/check-runs/322") && method === "PATCH")
+          return new Response("legacy patch failed", { status: 500 });
+        if (url.includes("/check-runs") && method === "POST") {
+          newCheckBody = JSON.parse(String(init?.body)) as typeof newCheckBody;
+          return Response.json({ id: 90 }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    try {
+      const result = await createOrUpdatePendingGateCheckRun(
+        createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+        123,
+        "JSONbored/gittensory",
+        gateAdvisory("legacy-cleanup-fails"),
+      );
+
+      expect(result).toMatchObject({ kind: "published", id: 90 });
+      expect(newCheckBody).toMatchObject({
+        name: "Gittensory Orb Review Agent",
+        status: "in_progress",
+      });
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("legacy_gate_check_finalize_failed"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("omits details_url when the site origin cannot form a URL (#audit-details-url null arm)", async () => {
@@ -761,10 +1068,10 @@ describe("GitHub check runs", () => {
       calls.some((call) => call.includes("/commits/final123/check-runs")),
     ).toBe(false);
     expect(capturedBody).toMatchObject({
-      name: "Gittensory Gate",
+      name: "Gittensory Orb Review Agent",
       status: "completed",
       conclusion: "success",
-      output: { title: "Gittensory Gate passed" },
+      output: { title: "Gittensory Orb Review Agent passed" },
     });
   });
 
@@ -834,7 +1141,7 @@ describe("GitHub check runs", () => {
         if (url.includes("/commits/pending-existing/check-runs")) {
           return Response.json({
             total_count: 1,
-            check_runs: [{ id: 333, name: "Gittensory Gate" }],
+            check_runs: [{ id: 333, name: "Gittensory Orb Review Agent", status: "in_progress" }],
           });
         }
         if (url.includes("/check-runs/333")) {
@@ -861,6 +1168,64 @@ describe("GitHub check runs", () => {
       html_url: "https://github.com/checks/333",
     });
     expect(capturedBody.status).toBe("in_progress");
+    expect(capturedBody).not.toHaveProperty("conclusion");
+  });
+
+  it("posts a fresh pending Gate check instead of patching a completed run", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    let capturedBody: { status?: string; conclusion?: string; output?: { title?: string } } = {};
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        calls.push(`${method} ${url}`);
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (url.includes("/commits/pending-after-failure/check-runs")) {
+          return Response.json({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 444,
+                name: "Gittensory Orb Review Agent",
+                status: "completed",
+                conclusion: "failure",
+              },
+            ],
+          });
+        }
+        if (url.includes("/check-runs/444"))
+          throw new Error("must not patch completed Gate run");
+        if (url.includes("/check-runs") && method === "POST") {
+          capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+          return Response.json({
+            id: 445,
+            html_url: "https://github.com/checks/445",
+          }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    const result = await createOrUpdatePendingGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      gateAdvisory("pending-after-failure"),
+    );
+
+    expect(result).toMatchObject({
+      kind: "published",
+      id: 445,
+      html_url: "https://github.com/checks/445",
+    });
+    expect(calls.some((call) => call.includes("/check-runs/444"))).toBe(false);
+    expect(capturedBody).toMatchObject({
+      status: "in_progress",
+      output: { title: "Gittensory Orb Review Agent is evaluating" },
+    });
     expect(capturedBody).not.toHaveProperty("conclusion");
   });
 
@@ -903,13 +1268,65 @@ describe("GitHub check runs", () => {
       status: "completed",
       conclusion: "skipped",
       output: {
-        title: "Gittensory Gate skipped",
+        title: "Gittensory Orb Review Agent skipped",
         summary: "Merged before Gittensory finished.",
       },
     });
     expect(capturedBody.output?.text).toContain(
       "does not post late first comments",
     );
+  });
+
+  it("reposts a known check-run id when the old run belongs to a prior App", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        calls.push(`${method} ${url}`);
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (method === "PATCH" && url.includes("/check-runs/456"))
+          return new Response(
+            JSON.stringify({
+              message:
+                "Invalid app_id 3824093 - check run can only be modified by the GitHub App that created it.",
+            }),
+            { status: 403 },
+          );
+        if (method === "POST" && url.includes("/check-runs"))
+          return Response.json({ id: 457, html_url: "https://github.com/checks/457" }, { status: 201 });
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    try {
+      const result = await createOrUpdateGateCheckRun(
+        createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+        123,
+        "JSONbored/gittensory",
+        gateAdvisory("cross-app-known-id"),
+        {},
+        { checkRunId: 456 },
+      );
+
+      expect(result).toMatchObject({ kind: "published", id: 457 });
+      expect(
+        calls.some((call) =>
+          call.includes("/commits/cross-app-known-id/check-runs"),
+        ),
+      ).toBe(false);
+      expect(
+        logSpy.mock.calls.some((call) =>
+          String(call[0]).includes('"staleCheckRunId":456'),
+        ),
+      ).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it("publishes Context check annotations on changed files while Gate stays text-only", async () => {
@@ -936,9 +1353,9 @@ describe("GitHub check runs", () => {
             output?: { annotations?: Array<{ path: string; title: string }> };
           };
           if (body.name === "Gittensory Context") contextBody = body;
-          if (body.name === "Gittensory Gate") gateBody = body;
+          if (body.name === "Gittensory Orb Review Agent") gateBody = body;
           return Response.json(
-            { id: body.name === "Gittensory Gate" ? 90 : 77 },
+            { id: body.name === "Gittensory Orb Review Agent" ? 90 : 77 },
             { status: 201 },
           );
         }

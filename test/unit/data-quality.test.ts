@@ -250,6 +250,28 @@ describe("sync data quality", () => {
     expect(report.items.map((item) => item.area).sort()).toEqual(["bounty_data", "decision_pack", "github_totals", "registry", "repo_segments", "scoring_model", "signal_snapshot"]);
   });
 
+  it("compares freshness against the SLO in milliseconds, not floored seconds", () => {
+    const fetchedAt = "2026-05-25T00:00:00.000Z";
+    const sloMs = 7 * 24 * 60 * 60 * 1000; // scoring_model uses DEFAULT_STALE_MS (7 days)
+    const scoringSnapshot = {
+      id: "scoring",
+      sourceKind: "test" as const,
+      sourceUrl: "fixture://scoring",
+      fetchedAt,
+      activeModel: "current_density_model" as const,
+      constants: {},
+      programmingLanguages: {},
+      warnings: [],
+      payload: {},
+    };
+    // 1ms past the SLO must be stale — the old floored-seconds compare wrongly reported it fresh.
+    const stale = buildFreshnessSloReport({ scoringSnapshot, nowMs: Date.parse(fetchedAt) + sloMs + 1 });
+    expect(stale.items.find((item) => item.area === "scoring_model")?.status).toBe("stale");
+    // Exactly at the SLO stays fresh — the threshold is strictly greater-than.
+    const fresh = buildFreshnessSloReport({ scoringSnapshot, nowMs: Date.parse(fetchedAt) + sloMs });
+    expect(fresh.items.find((item) => item.area === "scoring_model")?.status).toBe("fresh");
+  });
+
   it("degrades freshness when repo segments are active and totals are missing", () => {
     const report = buildFreshnessSloReport({
       repoCount: 1,

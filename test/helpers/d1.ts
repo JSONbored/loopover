@@ -50,6 +50,7 @@ export class TestD1Database {
 }
 
 export function createTestEnv(overrides: Partial<Env> = {}): Env {
+  const transientCache = new Map<string, string>();
   return {
     DB: new TestD1Database() as unknown as D1Database,
     JOBS: {
@@ -77,6 +78,17 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
     GITHUB_APP_PRIVATE_KEY: "test-private-key",
     ADMIN_GITHUB_LOGINS: "jsonbored",
+    SELFHOST_TRANSIENT_CACHE: {
+      async get(key: string) {
+        return transientCache.get(key) ?? null;
+      },
+      async set(key: string, value: string) {
+        transientCache.set(key, value);
+      },
+      async del(key: string) {
+        transientCache.delete(key);
+      },
+    },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
     // gated review features. Override to "" to assert the dormant (no-repo) default.
     GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,acme/widgets",

@@ -28,6 +28,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       ui: ${{ steps.filter.outputs.ui }}
       mcp: ${{ steps.filter.outputs.mcp }}
+      rees: ${{ steps.filter.outputs.rees }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -65,6 +66,9 @@ jobs:
               - 'packages/gittensory-mcp/**'
               - 'scripts/check-mcp-package.mjs'
               - 'package-lock.json'
+            rees:
+              - 'review-enrichment/**'
+              - '.github/workflows/ci.yml'
 
   # Fast-failing checks first: workflow lint + typecheck.
   lint:
@@ -177,6 +181,10 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./reports/junit/vitest-shard-${{ matrix.shard }}.xml
           report_type: test_results
+          disable_search: true
+          override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
           fail_ci_if_error: false
 
   # Merge the 3 shard lcovs into one complete report and upload to Codecov ONCE.
@@ -238,6 +246,10 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./merged-lcov/shard-1.info,./merged-lcov/shard-2.info,./merged-lcov/shard-3.info
+          disable_search: true
+          override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
           fail_ci_if_error: false
 
   # Worker-pool runtime tests (separate vitest config); split out of `test` so it
@@ -304,6 +316,27 @@ jobs:
         run: npm run build:mcp
       - name: MCP package check
         run: npm run test:mcp-pack
+
+  # Standalone Railway review-enrichment service.
+  rees:
+    name: rees
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.rees == 'true' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'ubuntu-latest' || 'self-hosted' }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: review-enrichment/package-lock.json
+      - name: REES build, source-map validation, and tests
+        run: npm run rees:test
 
   # UI checks: each split into its own step for legible failures.
   ui:
@@ -373,7 +406,7 @@ jobs:
   # Path-filtered jobs report "skipped", which is treated as success.
   validate:
     name: validate
-    needs: [changes, lint, test, coverage-upload, workers, mcp, ui, security]
+    needs: [changes, lint, test, coverage-upload, workers, mcp, rees, ui, security]
     if: ${{ always() }}
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'ubuntu-latest' || 'self-hosted' }}
     timeout-minutes: 2

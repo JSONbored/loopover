@@ -19,7 +19,7 @@ export interface EnrichRequest {
     deletions?: number;
   }>;
   diff?: string;
-  /** Short-lived broker token for OSV/license/history fetches. Never logged. */
+  /** Optional GitHub read token for GitHub-backed analyzers. Never logged. */
   githubToken?: string;
   budget?: { timeoutMs?: number; maxBriefChars?: number };
   analyzers?: string[];
@@ -36,6 +36,19 @@ export interface Cve {
 /** One added/changed dependency that carries at least one known vulnerability. */
 export interface DependencyFinding {
   ecosystem: string;
+  package: string;
+  from: string | null;
+  to: string;
+  direction: "add" | "change";
+  cves: Cve[];
+}
+
+/** A vulnerable lockfile-only dependency resolution. The package was not changed in a top-level manifest diff,
+ *  so it is treated as transitive lockfile drift and reported with the lockfile location that introduced it. */
+export interface LockfileDriftFinding {
+  file: string;
+  line: number;
+  ecosystem: "npm" | "PyPI";
   package: string;
   from: string | null;
   to: string;
@@ -149,9 +162,26 @@ export interface AssetWeightFinding {
   status: "added" | "grown";
 }
 
+/** A newly-added dependency whose name is a near-miss of a popular package (typosquat) or an unscoped name that
+ *  is not published on the public registry and is therefore publicly claimable (dependency-confusion). Reports
+ *  the package name + the reason only — never the manifest contents. (#1501) */
+export interface TyposquatFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  kind: "typosquat" | "confusion";
+  /** The popular package the name is a near-miss of — set for `typosquat` findings. */
+  similarTo?: string;
+  /** Damerau-Levenshtein distance to `similarTo` — set for edit-distance `typosquat` findings (0 = homoglyph/separator). */
+  distance?: number;
+  /** Short, public-safe explanation of why the name was flagged. */
+  reason: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
+  lockfileDrift?: LockfileDriftFinding[];
   secret?: SecretFinding[];
   license?: LicenseFinding[];
   actionPin?: ActionPinFinding[];
@@ -163,6 +193,7 @@ export interface BriefFindings {
   codeowners?: CodeownersFinding[];
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
+  typosquat?: TyposquatFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

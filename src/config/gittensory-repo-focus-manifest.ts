@@ -13,6 +13,7 @@ wantedPaths:
   - test/
   - migrations/
   - scripts/
+  - review-enrichment/
   - .github/workflows/
   - wrangler.jsonc
   - apps/gittensory-ui/
@@ -44,11 +45,12 @@ gate:
   linkedIssue: advisory        # block | advisory | off — issues aren't always available; advise, don't block
   duplicates: block            # block | advisory | off — block obvious duplicate PRs
   readiness:
-    mode: advisory             # block | advisory | off — readiness-score floor
+    mode: advisory             # advisory | off — readiness score is informational and never blocks the Gate
     minScore: 60
   # aiReview:                  # opt-in AI maintainer review (off by default; needs the AI flags enabled)
   #   mode: advisory           # block | advisory | off — block only blocks on a dual-model consensus defect
   #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays free Workers AI
+  #   allAuthors: false        # true reviews every PR author with the selected self-host model(s)
   #   provider: anthropic      # anthropic | openai — which BYOK provider (the secret key is set via the dashboard, never here)
   #   model: claude-3-5-sonnet-latest   # optional model override for the BYOK write-up
 
@@ -58,9 +60,9 @@ gate:
 #   footer:
 #     text: "Reviewed by the Acme maintainer bot."     # custom lead line (attribution still appended)
 #   note: "Run the test suite before requesting review."   # short intro line shown above the panel
-#   fields:                                             # show/hide rows (default: all shown). Keys:
-#     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad |
-#     openPrQueue: false                                # validationEvidence | openPrQueue | contributorContext | gateResult
+#   fields:                                             # show/hide rows (default: all shown). Stable keys:
+#     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad (Change scope) |
+#     openPrQueue: false                                # validationEvidence (Validation posture) | openPrQueue (Contributor workload) | contributorContext | gateResult
 
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.

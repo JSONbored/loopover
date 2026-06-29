@@ -209,6 +209,8 @@ export interface UnifiedCommentContext {
   /** The PR's author is the repo owner or a protected automation bot — the disposition NEVER auto-closes them,
    *  so a gate "close" verdict renders as "held", not "Closed" (#8/#9). */
   neverClosed?: boolean;
+  /** Public freshness marker for the posted/updated review comment. Rendered as UTC when provided. */
+  reviewedAt?: string | number | Date | undefined;
 }
 
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
@@ -250,21 +252,24 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
     else if ((input.failedCount ?? 0) > 0 || recs.some((r) => r !== "merge")) status = "held";
     else status = "ready";
   }
-  // CI gate — a PR is "safe to merge" ONLY when CI is GREEN. Apply this only to otherwise-ready statuses so
-  // pending/unverified CI cannot mask an authoritative close/block decision from the gate.
-  if (status === "ready" && input.readiness && input.readiness.ciState !== "passed") {
-    return input.readiness.ciState === "failed" ? "blocked" : "held";
+  // CI failure is an objective failing review state even when the disposition cannot auto-close the PR
+  // (for example, JSONbored/owner-authored PRs). The action wording below still respects `neverClosed`, so this
+  // renders as a red fix-required/manual-follow-up state without suggesting an owner PR will be rejected/closed.
+  if (input.readiness?.ciState === "failed") {
+    return "blocked";
   }
-  // Merge-state gate — "safe to merge" also requires the PR to be MERGEABLE. A `dirty` (base conflict) PR
-  // cannot merge as-is → BLOCKED; a `behind` PR needs a rebase first → HELD. This stops the green "safe to
-  // merge" / "Approved" headline from contradicting a `dirty`/`behind` merge-state chip (the #4220 report,
-  // where the headline said "safe to merge" while the chip read `dirty`). Other states — clean, a not-yet-
-  // computed `unknown`, or a `blocked` that the bot's own pending approval will clear — do not downgrade.
+  // Readiness is otherwise advisory for the Gittensory verdict. A PR is not "safe to merge" until CI is green,
+  // but pending/unverified CI should hold rather than create a red/blocked Gittensory decision by itself.
+  if (status === "ready" && input.readiness && input.readiness.ciState !== "passed") {
+    return "held";
+  }
+  // Merge-state readiness follows the same rule: do not claim "safe to merge" while GitHub says the branch is
+  // dirty/behind, but keep the comment in a held/advisory tone instead of turning readiness into a blocker.
+  // Other states — clean, a not-yet-computed `unknown`, or a `blocked` that the bot's own pending approval will clear — do not downgrade.
   // (#ready-needs-mergeable)
   if (status === "ready" && input.readiness?.mergeStateLabel) {
     const mergeState = input.readiness.mergeStateLabel.toLowerCase();
-    if (mergeState === "dirty") return "blocked";
-    if (mergeState === "behind") return "held";
+    if (mergeState === "dirty" || mergeState === "behind") return "held";
   }
   // Guarded-hold gate — a clean + green PR whose diff touches a hard-guardrail path (CI config, the review
   // engine, visuals) is HELD for owner review by the disposition, never auto-merged. The comment must then say
@@ -273,27 +278,25 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
   if (status === "ready" && ctx.heldForReview) return "held";
   // Held-vs-closed disposition parity (#8/#9): a gate "close" verdict does NOT always close the PR. An
-  // owner/automation-bot author is NEVER auto-closed, and a guarded-path PR is held for owner review UNLESS a
-  // RED required check forces the close (ciState "failed" mirrors the disposition's redVerifiedRequiredCi). Render
-  // those as "held" so the headline matches the action (#4220 class); a genuine contributor close — red required
-  // CI, or a non-guarded block — still headlines "Closed".
+  // owner/automation-bot author is NEVER auto-closed, and a guarded-path PR is held for owner review. Failed CI
+  // returned the red blocked status above, so the remaining close/held cases are green-or-pending manual holds.
   if (input.decision === "close") {
     if (ctx.neverClosed) return "held";
-    if (ctx.heldForReview && input.readiness?.ciState !== "failed") return "held";
+    if (ctx.heldForReview) return "held";
   }
   return status;
 }
 
-function verb(status: UnifiedCommentStatus, input: UnifiedReviewInput): string {
+function headlineLabel(status: UnifiedCommentStatus, input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   switch (status) {
     case "ready":
-      return "safe to merge";
+      return "approve/merge recommended";
     case "advisory":
-      return "advisory only";
+      return "advisory review";
     case "held":
-      return "held for maintainer review";
+      return "manual review recommended";
     case "blocked":
-      return input.decision === "close" ? "closed" : "blocked";
+      return input.decision === "close" && !ctx.neverClosed ? "reject/close recommended" : "fixes required";
   }
 }
 
@@ -303,7 +306,7 @@ function plural(n: number, one: string): string {
 
 function statusChips(input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   const chips: string[] = [`\`${plural(input.changedFiles, "file")}\``];
-  if (input.reviewerCount > 0) chips.push(`\`${input.reviewerCount} AI reviewers\``);
+  if (input.reviewerCount > 0) chips.push(`\`${plural(input.reviewerCount, "AI reviewer")}\``);
   const blockerCount = (input.blockers ?? []).length;
   chips.push(blockerCount ? `\`${plural(blockerCount, "blocker")}\`` : "`no blockers`");
   if (typeof ctx.readinessScore === "number") chips.push(`\`readiness ${Math.round(ctx.readinessScore)}/100\``);
@@ -315,20 +318,29 @@ function statusChips(input: UnifiedReviewInput, ctx: UnifiedCommentContext): str
   return chips.join(" · ");
 }
 
-function verdictLine(status: UnifiedCommentStatus, input: UnifiedReviewInput): string {
+function verdictLine(status: UnifiedCommentStatus, input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   const icon = STATUS_META[status].icon;
-  const reason = input.verdictReason ? ` — ${escapePublicHtmlAngles(input.verdictReason)}` : "";
+  const reasons = (defaultReason?: string) => {
+    const raw = input.verdictReason?.trim() || defaultReason?.trim() || "";
+    return raw ? `\n${actionReasonBullets(raw)}` : "";
+  };
   switch (status) {
     case "ready":
       return input.merged
-        ? `**${icon} Approved & auto-merged**${input.verdictReason ? reason : " — all checks passed"}`
-        : `**${icon} Approved**${input.verdictReason ? reason : " — safe to merge"}`;
+        ? `**${icon} Suggested Action - Approve/Merge**${reasons("auto-merged")}`
+        : `**${icon} Suggested Action - Approve/Merge**${reasons("safe to merge")}`;
     case "advisory":
-      return `**${icon} Advisory only**${input.verdictReason ? reason : " — no action taken"}`;
+      return `**${icon} Suggested Action - Advisory Only**${reasons("no action taken")}`;
     case "held":
-      return `**${icon} Held for maintainer review**${reason}`;
+      return `**${icon} Suggested Action - Manual Review**${reasons()}`;
     case "blocked":
-      return `**${icon} ${input.decision === "close" ? "Closed" : "Blocked"}**${reason}`;
+      if (ctx.neverClosed) {
+        return `**${icon} Suggested Action - Manual Review**${reasons()}`;
+      }
+      if (input.decision === "close" && !ctx.neverClosed) {
+        return `**${icon} Suggested Action - Reject/Close**${reasons()}`;
+      }
+      return `**${icon} Suggested Action - Fix Blockers**${reasons()}`;
   }
 }
 
@@ -360,6 +372,30 @@ function bullets(items: string[]): string {
     .join("\n");
 }
 
+function taskList(items: string[]): string {
+  return dedupeLines(items)
+    .map((i) => `- [ ] ${escapePublicHtmlAngles(i)}`)
+    .join("\n");
+}
+
+function actionReasonBullets(reason: string): string {
+  const reasons = reason
+    .split(/[;\n]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return dedupeLines(reasons, 8)
+    .map((item) => `- ${escapePublicHtmlAngles(item)}`)
+    .join("\n");
+}
+
+function formatReviewTimestamp(value: string | number | Date | undefined): string | null {
+  if (value === undefined) return null;
+  const time = value instanceof Date ? value : new Date(value);
+  const ms = time.getTime();
+  if (!Number.isFinite(ms)) return null;
+  return time.toISOString().replace(/\.\d{3}Z$/, "Z").replace("T", " ").replace("Z", " UTC");
+}
+
 /** Render the failing CI checks as a bullet list of `name — reason` (reason only when the check carried one),
  *  preferring failingDetails (which pairs each name with its WHY: codecov %/test/lint reason) and falling back
  *  to the bare failingChecks names. Public-safe: only check names + their already-public short summary, both
@@ -385,11 +421,17 @@ function failingChecksBlock(readiness: MergeReadiness | undefined): string {
 
 function signalTable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   const blockerCount = (input.blockers ?? []).length;
+  const reviewerEvidence =
+    input.reviewerCount > 1
+      ? `${input.reviewerCount} reviewers, synthesized`
+      : input.reviewerCount === 1
+        ? "1 reviewer"
+        : "No AI review summary";
   const codeRow: UnifiedSignalRow = {
     label: "Code review",
     state: blockerCount ? "fail" : "ok",
     result: blockerCount ? plural(blockerCount, "blocker") : "No blockers",
-    evidence: input.reviewerCount > 0 ? `${input.reviewerCount} reviewers, synthesized` : "synthesized",
+    evidence: reviewerEvidence,
   };
   const rows = [codeRow, ...(ctx.signals ?? [])];
   const lines = rows.map((r, i) => {
@@ -433,15 +475,20 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   const status = deriveUnifiedStatus(input, ctx);
   const meta = STATUS_META[status];
   const brand = escapePublicHtmlAngles(ctx.brand ?? "Gittensory review");
+  const reviewTimestamp = formatReviewTimestamp(ctx.reviewedAt);
 
   const blocks: string[] = [
     meta.square.repeat(12),
-    `### ${meta.icon} ${brand} — ${verb(status, input)}${status === "ready" && input.merged ? " · auto-merged" : ""}`,
+    `### ${meta.icon} ${brand} result - ${headlineLabel(status, input, ctx)}${status === "ready" && input.merged ? " · auto-merged" : ""}`,
+    ...(reviewTimestamp ? [`<sub>Review updated: ${reviewTimestamp}</sub>`] : []),
     statusChips(input, ctx),
-    verdictLine(status, input),
+    verdictLine(status, input, ctx),
   ];
 
   if (input.summary.trim()) blocks.push(`**Review summary**\n${escapePublicHtmlAngles(input.summary.trim())}`);
+
+  const nits = dedupeLines(input.nits ?? []);
+  if (nits.length) blocks.push(details("Nits", taskList(nits), `${nits.length} non-blocking`));
 
   const blockers = dedupeLines(input.blockers ?? []);
   if (blockers.length) {
@@ -456,9 +503,6 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   if (failingChecks) blocks.push(`**CI checks failing**\n${failingChecks}`);
 
   blocks.push(signalTable(input, ctx));
-
-  const nits = dedupeLines(input.nits ?? []);
-  if (nits.length) blocks.push(details("Nits", bullets(nits), `${nits.length} non-blocking`));
   for (const c of ctx.extraCollapsibles ?? []) {
     if (c.body.trim()) blocks.push(c.rawHtml ? detailsRaw(c.title, c.body.trim()) : details(c.title, c.body.trim()));
   }
@@ -537,6 +581,6 @@ export function renderReviewingPlaceholder(ctx: { brand?: string } = {}): string
 
 /** Returns true when the reviewing placeholder should be posted before the AI review runs.
  *  Pure helper so both branches are testable without async setup. */
-export function shouldPostReviewingPlaceholder(args: { aiReviewWillRun: boolean; mode: string; willComment: boolean }): boolean {
-  return args.aiReviewWillRun && args.mode === "live" && args.willComment;
+export function shouldPostReviewingPlaceholder(args: { reviewWillRun: boolean; mode: string; willComment: boolean }): boolean {
+  return args.reviewWillRun && args.mode === "live" && args.willComment;
 }

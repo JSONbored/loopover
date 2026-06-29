@@ -64,7 +64,7 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
     // Public-safe: blocker text carries a fix and no raw internal markers.
-    expect(result.title.toLowerCase()).toContain("gittensory gate");
+    expect(result.title.toLowerCase()).toContain("gittensory orb review agent");
   });
 
   it("does NOT block on a duplicate when duplicates:off", () => {
@@ -282,14 +282,15 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers.some((b) => b.code === "pre_merge_check_required")).toBe(false);
   });
 
-  it("predicts a manifest path-policy BLOCK when a changed path hits a blocked glob and manifestPolicy:block (#12)", () => {
+  it("predicts a manifest path-policy HOLD when a changed path hits a blocked glob and manifestPolicy:block (#12)", () => {
     const result = verdict({
       gate: { manifestPolicy: "block" },
       manifestExtra: { blockedPaths: ["dist/**"] },
       changedPaths: ["dist/bundle.js"],
     });
-    expect(result.conclusion).toBe("failure");
-    expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(true);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
+    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(true);
     // The note no longer disclaims path-policy once paths are supplied, but slop stays disclaimed.
     expect(result.note).not.toContain("Provide the PR's changed paths");
     expect(result.note.toLowerCase()).toContain("slop");

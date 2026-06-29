@@ -8,6 +8,7 @@ import type {
   AnalyzerStatus,
 } from "./types.js";
 import { scanDependencies } from "./analyzers/dependency-scan.js";
+import { scanLockfileDrift } from "./analyzers/lockfile-drift.js";
 import { scanSecrets } from "./analyzers/secret-scan.js";
 import { scanLicenses } from "./analyzers/license-check.js";
 import { scanInstallScripts } from "./analyzers/install-scripts.js";
@@ -19,13 +20,17 @@ import { scanProvenance } from "./analyzers/provenance.js";
 import { scanCodeowners } from "./analyzers/codeowners.js";
 import { scanSecretLog } from "./analyzers/secret-log.js";
 import { scanAssetWeight } from "./analyzers/asset-weight.js";
+import { scanTyposquat } from "./analyzers/typosquat.js";
 import { renderBrief } from "./render.js";
+import { captureAnalyzerDegradation } from "./sentry.js";
 
 type AnalyzerFn = (req: EnrichRequest, signal: AbortSignal) => Promise<unknown>;
+type AnalyzerRegistry = Partial<Record<keyof BriefFindings, AnalyzerFn>>;
 
-// The analyzer registry. More land behind this same shape: license (#1475), secret (#1476), static (#1477), history (#1478).
+// The analyzer registry. Each key is the exact name accepted by the engine's REES_ANALYZERS setting.
 const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   dependency: (req, signal) => scanDependencies(req, fetch, { signal }),
+  lockfileDrift: (req, signal) => scanLockfileDrift(req, fetch, { signal }),
   secret: (req) => scanSecrets(req),
   license: (req) => scanLicenses(req),
   installScript: (req) => scanInstallScripts(req),
@@ -38,6 +43,7 @@ const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
   codeowners: (req, signal) => scanCodeowners(req, fetch, { signal }),
   secretLog: (req, signal) => scanSecretLog(req, signal),
   assetWeight: (req, signal) => scanAssetWeight(req, fetch, { signal }),
+  typosquat: (req, signal) => scanTyposquat(req, fetch, { signal }),
 };
 
 function runWithTimeout<T>(
@@ -63,10 +69,13 @@ function runWithTimeout<T>(
   });
 }
 
-export async function buildBrief(req: EnrichRequest): Promise<ReviewBrief> {
+export async function buildBrief(
+  req: EnrichRequest,
+  analyzers: AnalyzerRegistry = ANALYZERS,
+): Promise<ReviewBrief> {
   const start = Date.now();
-  const all = Object.keys(ANALYZERS) as Array<keyof BriefFindings>;
-  const requested = req.analyzers?.length
+  const all = Object.keys(analyzers) as Array<keyof BriefFindings>;
+  const requested = Array.isArray(req.analyzers)
     ? all.filter((name) => req.analyzers!.includes(name))
     : all;
   const budgetMs = req.budget?.timeoutMs ?? 8000;
@@ -78,15 +87,24 @@ export async function buildBrief(req: EnrichRequest): Promise<ReviewBrief> {
   await Promise.all(
     requested.map(async (name) => {
       try {
+        const analyzer = analyzers[name];
+        if (!analyzer) throw new Error("analyzer_unregistered");
         const result = await runWithTimeout(
-          (signal) => ANALYZERS[name](req, signal),
+          (signal) => analyzer(req, signal),
           budgetMs,
         );
         findings[name] = result as never;
         analyzerStatus[name] = "ok";
-      } catch {
+      } catch (error) {
         analyzerStatus[name] = "degraded";
         partial = true;
+        captureAnalyzerDegradation(error, {
+          analyzer: name,
+          repoFullName: req.repoFullName,
+          prNumber: req.prNumber,
+          headSha: req.headSha,
+          timeoutMs: budgetMs,
+        });
       }
     }),
   );

@@ -89,6 +89,20 @@ describe("AI-spend gate: reputation downgrade", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("FLAG-ON: aiReviewAllAuthors bypasses the reputation downgrade and still runs the review", async () => {
+    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
+    await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(env, {
+      ...baseArgs,
+      advisory: adv,
+      settings: { aiReviewMode: "advisory", aiReviewAllAuthors: true } as RepositorySettings,
+    });
+
+    expect(result?.notes).toContain("Add a test.");
+    expect(run).toHaveBeenCalled();
+  });
+
   it("FLAG-ON: a good-reputation submitter proceeds to the normal AI review", async () => {
     const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 20, merged: 18, closed: 2, manual: 0 });

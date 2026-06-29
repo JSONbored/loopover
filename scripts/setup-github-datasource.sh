@@ -7,7 +7,7 @@
 # and a read-only fine-grained PAT (Pull requests: read, Issues: read, Contents: read) on the repos.
 #
 # Usage:
-#   GITHUB_TOKEN=github_pat_xxx GRAFANA_ADMIN_PASSWORD=... ./scripts/setup-github-datasource.sh
+#   GITHUB_TOKEN=<read-only-github-token> GRAFANA_ADMIN_PASSWORD=... ./scripts/setup-github-datasource.sh
 #   # or rely on values already in ./.env (GITHUB_TOKEN, GRAFANA_ADMIN_PASSWORD)
 set -euo pipefail
 

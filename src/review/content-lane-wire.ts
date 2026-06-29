@@ -44,8 +44,8 @@ function surfaceFinding(code: string, severity: AdvisorySeverity, summary: strin
   return { code, title: SURFACE_TITLE, severity, detail: summary, publicText: summary };
 }
 
-/** Convert the deterministic surface verdict into a gate evaluation. merge→success, manual→action_required
- *  (a warning, not auto-closed), and any decisive non-merge/non-manual verdict (close) → failure with a single
+/** Convert the deterministic surface verdict into a gate evaluation. merge→success, manual→neutral
+ *  (a warning, not auto-closed and not a failing required check), and any decisive non-merge/non-manual verdict (close) → failure with a single
  *  critical blocker. Returns the finding to splice into the advisory so the public comment renders the reason. */
 export function surfaceVerdictToGate(result: SurfaceReviewResult): {
   evaluation: GateCheckEvaluation;
@@ -57,7 +57,7 @@ export function surfaceVerdictToGate(result: SurfaceReviewResult): {
   }
   if (result.verdict === "manual") {
     const finding = surfaceFinding(SURFACE_MANUAL_CODE, "warning", summary);
-    return { evaluation: { enabled: true, conclusion: "action_required", title: SURFACE_TITLE, summary, blockers: [], warnings: [finding] }, finding };
+    return { evaluation: { enabled: true, conclusion: "neutral", title: SURFACE_TITLE, summary, blockers: [], warnings: [finding] }, finding };
   }
   const finding = surfaceFinding(SURFACE_REJECT_CODE, "critical", summary);
   return { evaluation: { enabled: true, conclusion: "failure", title: SURFACE_TITLE, summary, blockers: [finding], warnings: [] }, finding };

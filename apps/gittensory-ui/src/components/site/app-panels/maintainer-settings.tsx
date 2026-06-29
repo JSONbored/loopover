@@ -137,7 +137,7 @@ type FieldDef = SelectFieldDef | ToggleFieldDef | NumberFieldDef;
 const GATE_FIELDS: FieldDef[] = [
   {
     key: "gateCheckMode",
-    label: "Gate check",
+    label: "Review agent check",
     kind: "select",
     options: [
       ["off", "off"],

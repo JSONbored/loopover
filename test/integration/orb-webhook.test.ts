@@ -111,6 +111,19 @@ describe("handleOrbWebhook (POST /v1/orb/webhook)", () => {
     await Promise.all(scheduled); // drain — install 99 has no enrollment → forward skips cleanly
   });
 
+  it("INVARIANT: central Orb ingress stays live without the self-host review-runtime cache", async () => {
+    const e = env();
+    delete e.SELFHOST_TRANSIENT_CACHE;
+    const PR = JSON.stringify({ action: "opened", installation: { id: 100 }, repository: { full_name: "JSONbored/gittensory" }, number: 8 });
+    const res = await post(e, PR, { delivery: "orb-no-review-cache", event: "pull_request" });
+    expect(res.status).toBe(202);
+    await expect(res.json()).resolves.toMatchObject({ status: "received", eventName: "pull_request" });
+    expect(await row(e, "orb-no-review-cache")).toMatchObject({
+      event_name: "pull_request",
+      status: "received",
+    });
+  });
+
   it("stores null fields for a payload with no action/installation/repository (e.g. ping)", async () => {
     const e = env();
     await post(e, JSON.stringify({ zen: "keep it logically awesome" }), { delivery: "ping-1", event: "ping" });

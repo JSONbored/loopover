@@ -257,9 +257,6 @@ const NON_SCORING_UPSTREAM_CONSTANT_NAMES = new Set([
   // Fallback weight applied by the validator's load_programming_language_weights() for extensions absent from
   // the JSON file; gittensory reads the JSON directly and does not track this loader default (#1692).
   "DEFAULT_PROGRAMMING_LANGUAGE_WEIGHT",
-  // Validator-side window (days) within which a linked issue's close timestamp must fall relative to the PR
-  // merge to count as a valid link; gittensory's scoring preview does not model this linkage constraint (#1692).
-  "MAX_ISSUE_CLOSE_WINDOW_DAYS",
 ]);
 
 /**

@@ -1028,6 +1028,18 @@ describe("processSubmitDraft — token expiry / consumed guards + base-SHA + tit
     expect(row).toMatchObject({ status: "error", last_error: "token_unavailable" });
   });
 
+  it("marks the draft error 'token_unavailable' when expires_at is unparseable (fail-closed)", async () => {
+    // A malformed expires_at must NOT be treated as "never expired"; it short-circuits to token_unavailable.
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env, SAMPLE_FIELDS, { expiresAt: "not-a-valid-date" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await processSubmitDraft(env, id);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    const row = await env.DB.prepare("SELECT status, last_error FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; last_error: string }>();
+    expect(row).toMatchObject({ status: "error", last_error: "token_unavailable" });
+  });
+
   it("marks the draft error 'token_unavailable' when the token is already consumed (consumed guard)", async () => {
     const env = draftEnv();
     const id = await seedQueuedDraftWithToken(env, SAMPLE_FIELDS, { consumed: true });

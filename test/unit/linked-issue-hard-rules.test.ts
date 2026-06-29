@@ -191,97 +191,63 @@ describe("evaluateLinkedIssueHardRules", () => {
   });
 });
 
-function envWith(get: (key: string, type: string) => Promise<unknown>): Env {
-  return { REVIEW_CONFIG: { get } } as unknown as Env;
-}
-
 describe("loadLinkedIssueHardRules", () => {
-  it("returns the all-off default when REVIEW_CONFIG is unbound", async () => {
+  it("returns the all-off default without requiring external policy storage", async () => {
     expect(await loadLinkedIssueHardRules({} as Env, "JSONbored/gittensory")).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
   });
 
-  it("returns the all-off default when the key / field is absent", async () => {
-    expect(await loadLinkedIssueHardRules(envWith(async () => null), "o/r")).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
-    expect(await loadLinkedIssueHardRules(envWith(async () => ({})), "o/r")).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
-    expect(await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: null })), "o/r")).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
-  });
-
-  it("returns the all-off default when the KV read THROWS (outage must never manufacture a close)", async () => {
-    const result = await loadLinkedIssueHardRules(
-      envWith(async () => {
-        throw new Error("kv down");
-      }),
-      "o/r",
+  it("ignores unrelated env data so stale hosted config cannot manufacture a close", async () => {
+    const cfg = await loadLinkedIssueHardRules(
+      {
+        LEGACY_POLICY: {
+          linkedIssueHardRules: {
+            ownerAssignedClose: "block",
+            missingPointLabelClose: "block",
+            maintainerOnlyLabelClose: "block",
+            pointBearingLabels: ["gittensor:bug"],
+            maintainerOnlyLabels: ["reserved"],
+            defaultLabelRepo: true,
+            verifyBeforeClose: false,
+            closeDelaySeconds: 0,
+          },
+        },
+      } as unknown as Env,
+      "JSONbored/gittensory",
     );
-    expect(result).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
+    expect(cfg).toEqual(DEFAULT_LINKED_ISSUE_HARD_RULES);
   });
 
-  it("reads the config keyed by the repo slug (owner stripped)", async () => {
-    const get = vi.fn().mockResolvedValue({
-      linkedIssueHardRules: {
-        ownerAssignedClose: "block",
-        missingPointLabelClose: "block",
-        maintainerOnlyLabelClose: "block",
-        pointBearingLabels: ["gittensor:bug"],
-        maintainerOnlyLabels: ["reserved"],
-        defaultLabelRepo: true,
-      },
-    });
-    const cfg = await loadLinkedIssueHardRules(envWith(get), "JSONbored/gittensory");
-    expect(get).toHaveBeenCalledWith("gittensory", "json");
+  it("the default is explicitly all-off and keeps the verification timing stable", async () => {
+    const cfg = await loadLinkedIssueHardRules({} as Env, "soloname");
     expect(cfg).toEqual({
+      ownerAssignedClose: "off",
+      missingPointLabelClose: "off",
+      maintainerOnlyLabelClose: "off",
+      pointBearingLabels: [],
+      maintainerOnlyLabels: [],
+      defaultLabelRepo: false,
+      verifyBeforeClose: true,
+      closeDelaySeconds: 30,
+    });
+  });
+});
+
+describe("evaluateLinkedIssueHardRules with explicit config", () => {
+  it("supports a fully enabled config for self-host config plumbing", () => {
+    const cfg: LinkedIssueHardRulesConfig = {
       ownerAssignedClose: "block",
       missingPointLabelClose: "block",
       maintainerOnlyLabelClose: "block",
       pointBearingLabels: ["gittensor:bug"],
       maintainerOnlyLabels: ["reserved"],
       defaultLabelRepo: true,
-      // verify config not specified in the KV object → defaults (verify ON, 30s).
       verifyBeforeClose: true,
       closeDelaySeconds: 30,
+    };
+    expect(evaluateLinkedIssueHardRules({ issues: [issue({ number: 9, labels: ["reserved"] })], config: cfg, repoOwner: OWNER })).toEqual({
+      violated: true,
+      reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs.",
     });
-  });
-
-  it("merges a PARTIAL config over the safe default (omitted fields keep their default)", async () => {
-    const cfg = await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { maintainerOnlyLabelClose: "block" } })), "o/r");
-    expect(cfg.maintainerOnlyLabelClose).toBe("block");
-    expect(cfg.ownerAssignedClose).toBe("off");
-    expect(cfg.missingPointLabelClose).toBe("off");
-    expect(cfg.defaultLabelRepo).toBe(false);
-    // an enabled rule with no listed labels falls back to the default gittensor label lists
-    expect(cfg.pointBearingLabels).toEqual(["gittensor:bug", "gittensor:feature", "gittensor:priority"]);
-    expect(cfg.maintainerOnlyLabels).toEqual(["maintainer-only"]);
-  });
-
-  it("ignores an invalid mode value and keeps the default for that field", async () => {
-    const cfg = await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { ownerAssignedClose: "yes" } })), "o/r");
-    expect(cfg.ownerAssignedClose).toBe("off");
-  });
-
-  it("uses the whole name as the slug when there is no owner prefix", async () => {
-    const get = vi.fn().mockResolvedValue({ linkedIssueHardRules: { ownerAssignedClose: "block" } });
-    await loadLinkedIssueHardRules(envWith(get), "soloname");
-    expect(get).toHaveBeenCalledWith("soloname", "json");
-  });
-
-  it("defaults verifyBeforeClose ON and closeDelaySeconds to 30 when unspecified", async () => {
-    const cfg = await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { ownerAssignedClose: "block" } })), "o/r");
-    expect(cfg.verifyBeforeClose).toBe(true);
-    expect(cfg.closeDelaySeconds).toBe(30);
-  });
-
-  it("disables verifyBeforeClose only on an explicit false (any other value keeps ON)", async () => {
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { verifyBeforeClose: false } })), "o/r")).verifyBeforeClose).toBe(false);
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { verifyBeforeClose: "no" } })), "o/r")).verifyBeforeClose).toBe(true);
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: {} })), "o/r")).verifyBeforeClose).toBe(true);
-  });
-
-  it("clamps closeDelaySeconds into [0, 300] and falls back to 30 for a non-number", async () => {
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 120 } })), "o/r")).closeDelaySeconds).toBe(120);
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: -5 } })), "o/r")).closeDelaySeconds).toBe(0);
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 9999 } })), "o/r")).closeDelaySeconds).toBe(300);
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 45.9 } })), "o/r")).closeDelaySeconds).toBe(45);
-    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: "30" } })), "o/r")).closeDelaySeconds).toBe(30);
   });
 });
 

@@ -53,11 +53,20 @@ export function qdrantReadyzUrl(url: string): string {
   return `${url.replace(/\/+$/, "")}/readyz`;
 }
 
+export function qdrantDimensionFromEnv(value: string | undefined): number {
+  const dim = Number(value);
+  return Number.isFinite(dim) && dim > 0 ? Math.floor(dim) : DEFAULT_DIM;
+}
+
 /**
  * Ensures the Qdrant collection exists. Safe to call on every startup — a 409 (already exists)
  * is silently ignored. Call this before createQdrantVectorize() when QDRANT_URL is set.
  */
-export async function initQdrantCollection(url: string, collection = DEFAULT_COLLECTION, dim = DEFAULT_DIM): Promise<void> {
+export async function initQdrantCollection(
+  url: string,
+  collection = DEFAULT_COLLECTION,
+  dim = qdrantDimensionFromEnv(process.env.QDRANT_DIM),
+): Promise<void> {
   const base = url.replace(/\/+$/, "");
   const res = await fetch(`${base}/collections/${collection}`, {
     method: "PUT",

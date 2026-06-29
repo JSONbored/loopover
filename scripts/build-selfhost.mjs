@@ -2,6 +2,7 @@
 //   default       → node_modules stay external (resolved at runtime; fast local dev rebuilds).
 //   --all / SELFHOST_BUNDLE_ALL=1 → bundle EVERYTHING into one self-contained file (the Docker image needs no
 //                   node_modules → a ~10× smaller image). node: builtins stay external (platform:node).
+//   source maps are always emitted so release builds can inject/upload matching Sentry artifacts.
 // In both modes the Cloudflare-only specifiers resolve to Node stubs via the plugin (precedence over external),
 // so the bundle has zero `cloudflare:*` imports.
 import { dirname, resolve } from "node:path";
@@ -18,6 +19,9 @@ await esbuild.build({
   format: "esm",
   target: "node22",
   outfile: resolve(root, "dist/server.mjs"),
+  sourcemap: true,
+  sourcesContent: true,
+  sourceRoot: "/app/dist",
   // External: nothing (bundle all) vs every package (external). node: builtins are always external on node.
   ...(bundleAll ? {} : { packages: "external" }),
   // Bundling CJS deps into an ESM output needs require/__dirname/__filename shimmed (some deps call them).

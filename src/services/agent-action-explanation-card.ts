@@ -1,4 +1,5 @@
 import type { AgentActionBlockerCategory, AgentActionExplanationCard, AgentActionRecord } from "../types";
+import { PUBLIC_LOCAL_PATH_INLINE } from "../signals/redaction";
 
 type AgentActionExplanationInput = Pick<
   AgentActionRecord,
@@ -9,7 +10,9 @@ const BLOCKER_CATEGORY_ORDER: AgentActionBlockerCategory[] = ["branch", "account
 const PUBLIC_FORBIDDEN_PATTERN =
   /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw[-_\s]?trust scores?|trust scores?|private reviewability|reviewability internals?|private scoreability|scoreability|projected scores?|score(?:d|s|ability)?|public score estimates?|estimated scores?|score estimates?|score previews?|reward estimates?|payouts?|farming|reward optimization|private rankings?)\b/gi;
 const PUBLIC_SCORE_DELTA_PATTERN = /\b(?:projected\s+)?score\w*(?:\s+\w+){0,4}\s+[-+]?\d+(?:\.\d+)?\s*->\s*[-+]?\d+(?:\.\d+)?\b/gi;
-const TOKEN_OR_PATH_PATTERN = /\bgithub_pat_[A-Za-z0-9_]+|\bgh[pousr]_[A-Za-z0-9_]+|\/Users\/\S+|\/home\/\S+|\/tmp\/\S+|[A-Z]:\\Users\\\S+/gi;
+// Token alternatives stay local; the local-path alternatives compose from the canonical PUBLIC_LOCAL_PATH_INLINE
+// in redaction.ts (adds the previously-missed /root/ and /var/, plus the forward-slash Windows form C:/Users/).
+const TOKEN_OR_PATH_PATTERN = new RegExp(`\\bgithub_pat_[A-Za-z0-9_]+|\\bgh[pousr]_[A-Za-z0-9_]+|(?:${PUBLIC_LOCAL_PATH_INLINE})\\S+`, "gi");
 
 export function withAgentActionExplanationCard(action: AgentActionRecord): AgentActionRecord {
   return { ...action, explanationCard: buildAgentActionExplanationCard(action) };

@@ -225,6 +225,19 @@ export interface NativeBuildFinding {
   reason: string;
 }
 
+/** A newly-added/upgraded direct dependency (npm/PyPI) that is DEPRECATED/yanked by its maintainer, or STALE
+ *  (no release in roughly N years) — maintenance-health risks the no-checkout reviewer cannot derive from the
+ *  registry. Reports package@version + a short factual reason from the metadata only. (#1511) */
+export interface DepMaintenanceHealthFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  /** `deprecated` (npm), `yanked` (PyPI), or `stale` (no recent release in either ecosystem). */
+  kind: "deprecated" | "yanked" | "stale";
+  /** Short, public-safe explanation of the maintenance signal. */
+  reason: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -244,6 +257,7 @@ export interface BriefFindings {
   commitSignature?: CommitSignatureFinding[];
   iacMisconfig?: IacMisconfigFinding[];
   nativeBuild?: NativeBuildFinding[];
+  depMaintenanceHealth?: DepMaintenanceHealthFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

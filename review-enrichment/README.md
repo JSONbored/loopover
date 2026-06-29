@@ -78,6 +78,11 @@ Do **not** pass `SENTRY_AUTH_TOKEN` as a Docker build arg. Railway deploys this 
 can leak through image metadata. Keeping the upload at runtime means Sentry sees the same `dist/` files that the service
 executes, without exposing source maps over HTTP.
 
+Analyzer failures are still fail-open: the `/v1/enrich` response marks the analyzer as `degraded` and returns a partial
+brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags for
+`analyzer`, `repo`, `pullNumber`, `headSha`, `release`, `environment`, and `timeoutMs`. Use those tags to spot a broken
+analyzer without exposing request bodies, diffs, tokens, or review content.
+
 If Sentry still shows frames such as `/app/dist/server.js`, check:
 
 1. The event's `release` is `gittensory-rees@<same Railway commit sha>` or your exact `SENTRY_RELEASE` override.

@@ -1,9 +1,12 @@
 import type { ErrorEvent, EventHint } from "@sentry/node";
 
 type SentryNs = typeof import("@sentry/node");
+type SentryClient = Pick<SentryNs, "init" | "withScope" | "captureException" | "flush">;
 
-let Sentry: SentryNs | undefined;
+let Sentry: SentryClient | undefined;
 let active = false;
+let activeRelease: string | undefined;
+let activeEnvironment = "production";
 
 const SECRET_FIELD = /(?:authorization|cookie|token|secret|password|private[_-]?key|shared[_-]?secret)/i;
 const SECRET_VALUE = /\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|gts_[a-f0-9]{64}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g;
@@ -50,6 +53,14 @@ function scrubValue(value: unknown): unknown {
   return value;
 }
 
+function sentryTagValue(value: string | number | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const scrubbed = scrubValue(String(value));
+  if (typeof scrubbed !== "string") return undefined;
+  const text = nonBlank(scrubbed);
+  return text ? text.slice(0, 200) : undefined;
+}
+
 function scrubEvent(event: ErrorEvent): ErrorEvent {
   return scrubValue(event) as ErrorEvent;
 }
@@ -58,10 +69,12 @@ export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
   if (!nonBlank(env.SENTRY_DSN)) return false;
   try {
     Sentry = await import("@sentry/node");
+    activeRelease = resolveReesSentryRelease(env);
+    activeEnvironment = resolveSentryEnvironment(env);
     Sentry.init({
       dsn: env.SENTRY_DSN,
-      environment: resolveSentryEnvironment(env),
-      release: resolveReesSentryRelease(env),
+      environment: activeEnvironment,
+      release: activeRelease,
       tracesSampleRate: resolveTracesSampleRate(env),
       beforeSend: (event: ErrorEvent, _hint: EventHint) => scrubEvent(event),
     });
@@ -70,6 +83,8 @@ export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
   } catch (error) {
     active = false;
     Sentry = undefined;
+    activeRelease = undefined;
+    activeEnvironment = "production";
     warn("rees_sentry_init_failed", { message: error instanceof Error ? error.message : String(error) });
     return false;
   }
@@ -83,7 +98,64 @@ export function captureError(error: unknown, context?: Record<string, unknown>):
   });
 }
 
+export interface AnalyzerDegradationContext {
+  analyzer: string;
+  repoFullName: string;
+  prNumber: number;
+  headSha?: string;
+  timeoutMs?: number;
+}
+
+export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegradationContext): void {
+  if (!active || !Sentry) return;
+  const safeContext = {
+    event: "rees_analyzer_degraded",
+    analyzer: context.analyzer,
+    repoFullName: context.repoFullName,
+    prNumber: context.prNumber,
+    headSha: nonBlank(context.headSha),
+    timeoutMs: context.timeoutMs,
+    release: activeRelease,
+    environment: activeEnvironment,
+  };
+  Sentry.withScope((scope) => {
+    const analyzerTag = sentryTagValue(context.analyzer) ?? "unknown";
+    const headShaTag = sentryTagValue(safeContext.headSha);
+    const timeoutTag = sentryTagValue(context.timeoutMs);
+    const releaseTag = sentryTagValue(activeRelease);
+    scope.setLevel("error");
+    scope.setContext("rees_analyzer", scrubValue(safeContext) as Record<string, unknown>);
+    scope.setFingerprint(["rees-analyzer-degraded", analyzerTag]);
+    scope.setTag("event", "rees_analyzer_degraded");
+    scope.setTag("analyzer", analyzerTag);
+    scope.setTag("repo", sentryTagValue(context.repoFullName) ?? "unknown");
+    scope.setTag("pullNumber", sentryTagValue(context.prNumber) ?? "unknown");
+    if (headShaTag) scope.setTag("headSha", headShaTag);
+    if (timeoutTag) scope.setTag("timeoutMs", timeoutTag);
+    if (releaseTag) scope.setTag("release", releaseTag);
+    scope.setTag("environment", sentryTagValue(activeEnvironment) ?? "production");
+    Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
+  });
+}
+
 export async function flushSentry(timeoutMs = 2000): Promise<void> {
   if (!active || !Sentry) return;
   await Sentry.flush(timeoutMs).catch(() => undefined);
+}
+
+export function resetSentryForTest(): void {
+  Sentry = undefined;
+  active = false;
+  activeRelease = undefined;
+  activeEnvironment = "production";
+}
+
+export function setSentryForTest(
+  sentry: Pick<SentryClient, "withScope" | "captureException" | "flush">,
+  options: { release?: string; environment?: string } = {},
+): void {
+  Sentry = sentry as SentryClient;
+  active = true;
+  activeRelease = options.release;
+  activeEnvironment = options.environment ?? "production";
 }

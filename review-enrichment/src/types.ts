@@ -162,6 +162,21 @@ export interface TyposquatFinding {
   reason: string;
 }
 
+/** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
+ *  (PyPI sdist-only) — a hidden CI cold-start/install cost and a frequent cross-platform breakage source. Reports
+ *  package@version + the factual build property only. (#1512) */
+export interface NativeBuildFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  kind: "native-addon" | "sdist-only";
+  /** npm only: a prebuilt-binary path exists (node-pre-gyp/prebuild or a `binary` field), so a compile is the
+   *  fallback when no prebuilt matches the platform/ABI rather than guaranteed. */
+  prebuiltFallback?: boolean;
+  /** Short, public-safe explanation of the build cost. */
+  reason: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -177,6 +192,7 @@ export interface BriefFindings {
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
+  nativeBuild?: NativeBuildFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";

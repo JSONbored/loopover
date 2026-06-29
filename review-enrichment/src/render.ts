@@ -254,6 +254,18 @@ export function renderBrief(
     }
   }
 
+  const nativeBuilds = findings.nativeBuild ?? [];
+  if (nativeBuilds.length) {
+    lines.push(
+      "### Native-build / install-cost dependencies (CI cold-start + cross-platform build cost)",
+    );
+    for (const item of nativeBuilds) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${item.reason}`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listUpstreamDriftReports, updateUpstreamDriftReportIssue } from "../../src/db/repositories";
+import { listUpstreamDriftReports, updateUpstreamDriftReportIssue, upsertUpstreamDriftReport } from "../../src/db/repositories";
 import { syncUnmodeledScoringConstantDrift, unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import { createTestEnv } from "../helpers/d1";
 
@@ -101,5 +101,50 @@ describe("unmodeled scoring constant drift", () => {
     const report = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: names });
     expect(report?.summary).toMatch(/, …$/);
     expect(report?.severity).toBe("high");
+  });
+
+  it("looks up the stable unmodeled-constants fingerprint even when it falls off the newest-50 drift list", async () => {
+    const env = createTestEnv();
+    const fingerprint = await unmodeledScoringConstantsFingerprint();
+    const opened = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA"] });
+    expect(opened?.fingerprint).toBe(fingerprint);
+
+    // Push the unmodeled report out of `listUpstreamDriftReports(env, 50)`'s recency window.
+    await upsertUpstreamDriftReport(env, { ...opened!, updatedAt: "2020-01-01T00:00:00.000Z" });
+    for (let index = 0; index < 51; index++) {
+      await upsertUpstreamDriftReport(env, {
+        id: `newer-${index}`,
+        fingerprint: `newer-drift-${index}`,
+        severity: "low",
+        status: "open",
+        summary: `newer drift ${index}`,
+        affectedAreas: ["registry"],
+        previousRulesetId: null,
+        currentRulesetId: null,
+        issueNumber: null,
+        issueUrl: null,
+        payload: { changes: ["noop"] },
+        generatedAt: "2026-06-30T00:00:00.000Z",
+        updatedAt: `2026-06-30T${String(index).padStart(2, "0")}:00:00.000Z`,
+      });
+    }
+    expect((await listUpstreamDriftReports(env, 50)).some((report) => report.fingerprint === fingerprint)).toBe(false);
+
+    await updateUpstreamDriftReportIssue(env, fingerprint, {
+      number: 811,
+      url: "https://github.com/JSONbored/gittensory/issues/811",
+    });
+    const updated = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA", "BETA"] });
+    expect(updated).toMatchObject({
+      id: opened!.id,
+      fingerprint,
+      status: "open",
+      issueNumber: 811,
+      issueUrl: "https://github.com/JSONbored/gittensory/issues/811",
+      payload: expect.objectContaining({ unmodeledUpstreamConstants: ["ALPHA", "BETA"] }),
+    });
+
+    const resolved = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: [] });
+    expect(resolved).toMatchObject({ id: opened!.id, fingerprint, status: "resolved" });
   });
 });

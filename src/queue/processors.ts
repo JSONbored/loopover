@@ -1412,12 +1412,12 @@ export function agentMaintenanceHeadMatchesGate(reviewedHeadSha: string | null |
 type BlockingPullRequestFreshness = Extract<
   PullRequestFreshness,
   { status: "stale" }
-> & { reason: "closed" | "head_changed" };
+>;
 
 function freshnessBlocksReviewOutput(
   freshness: PullRequestFreshness,
 ): freshness is BlockingPullRequestFreshness {
-  return freshness.status === "stale" && (freshness.reason === "closed" || freshness.reason === "head_changed");
+  return freshness.status === "stale";
 }
 
 async function reviewTargetFreshness(

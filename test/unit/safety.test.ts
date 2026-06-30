@@ -90,6 +90,7 @@ function stubFinalizeFetch(seen: { conclusion?: string | undefined }): void {
     const method = init?.method ?? "GET";
     if (url === "https://api.gittensor.io/miners") return Response.json([{ uid: 7, githubUsername: "contributor", githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 }]);
     if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+    if (/\/pulls\/42(?:\?|$)/.test(url)) return Response.json({ number: 42, state: "open", head: { sha: "gate123" } });
     if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
     if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 900 }, { status: 201 });
     if (url.includes("/check-runs/900") && method === "PATCH") {

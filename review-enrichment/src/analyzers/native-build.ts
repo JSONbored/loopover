@@ -55,6 +55,8 @@ export interface NpmVersionMeta {
 
 interface NpmPackumentMeta {
   versions?: Record<string, NpmVersionMeta>;
+  time?: Record<string, string>;
+  "dist-tags"?: Record<string, string>;
 }
 
 function hasNpmVersionMeta(
@@ -67,7 +69,22 @@ function isNpmPackumentMeta(
   data: NpmVersionMeta | NpmPackumentMeta,
 ): data is NpmPackumentMeta {
   const versions = (data as NpmPackumentMeta).versions;
-  return Boolean(versions && typeof versions === "object" && !hasNpmVersionMeta(data));
+  return Boolean(
+    versions &&
+      typeof versions === "object" &&
+      hasNpmPackumentMarker(data) &&
+      !hasNpmVersionMeta(data),
+  );
+}
+
+function hasNpmPackumentMarker(data: NpmVersionMeta | NpmPackumentMeta): boolean {
+  // Exact version metadata can contain a package-owned `versions` field; packuments also carry package-level markers.
+  const time = (data as NpmPackumentMeta).time;
+  const distTags = (data as NpmPackumentMeta)["dist-tags"];
+  return Boolean(
+    (time && typeof time === "object") ||
+      (distTags && typeof distTags === "object"),
+  );
 }
 
 function npmVersionMeta(

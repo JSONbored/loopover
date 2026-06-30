@@ -20,7 +20,11 @@ const pypiAdd = (name, version = "1.0.0") => ({
   files: [{ path: "requirements.txt", patch: `@@ -1,0 +1,1 @@\n+${name}==${version}` }],
 });
 const jsonResponse = (body, init) => new Response(JSON.stringify(body), init);
-const npmFetch = (meta) => async () => jsonResponse({ versions: { "1.0.0": meta } });
+const npmFetch = (meta) => async () =>
+  jsonResponse({
+    versions: { "1.0.0": meta },
+    time: { "1.0.0": "2026-06-30T00:00:00.000Z" },
+  });
 const pypiFetch = (urls) => async () => jsonResponse({ urls });
 const status = (code) => async () => jsonResponse({}, { status: code });
 const throwingFetch = async () => {
@@ -90,6 +94,16 @@ test("scanNativeBuild uses exact version metadata when custom versions field is 
   assert.equal(findings.length, 1);
   assert.equal(findings[0].package, "malicious");
   assert.equal(findings[0].kind, "native-addon");
+});
+
+test("scanNativeBuild ignores custom versions field on exact metadata without packument markers", async () => {
+  const findings = await scanNativeBuild(npmAdd("pure-js"), async () =>
+    jsonResponse({
+      versions: { "1.0.0": { gypfile: true } },
+    }),
+  );
+
+  assert.deepEqual(findings, []);
 });
 
 test("scanNativeBuild: a pure-JS npm dependency is not flagged", async () => {

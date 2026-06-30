@@ -34,6 +34,7 @@ interface NpmVersionMetadata {
 interface NpmPackumentMetadata {
   versions?: Record<string, NpmVersionMetadata>;
   time?: Record<string, string>;
+  "dist-tags"?: Record<string, string>;
 }
 
 function isPackumentMetadata(
@@ -43,7 +44,20 @@ function isPackumentMetadata(
     "versions" in data &&
       data.versions &&
       typeof data.versions === "object" &&
+      hasPackumentMarker(data) &&
       !hasVersionMetadata(data),
+  );
+}
+
+function hasPackumentMarker(
+  data: NpmVersionMetadata | NpmPackumentMetadata,
+): boolean {
+  // Exact version metadata can contain a package-owned `versions` field; packuments also carry package-level markers.
+  const time = (data as NpmPackumentMetadata).time;
+  const distTags = (data as NpmPackumentMetadata)["dist-tags"];
+  return Boolean(
+    (time && typeof time === "object") ||
+      (distTags && typeof distTags === "object"),
   );
 }
 

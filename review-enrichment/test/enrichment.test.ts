@@ -879,6 +879,7 @@ test("scanInstallScripts: validates npm names and encodes the full registry path
       ok: true,
       json: async () => ({
         versions: { "1.0.0": { scripts: { install: "x" } } },
+        time: { "1.0.0": "2026-06-30T00:00:00.000Z" },
       }),
     };
   };

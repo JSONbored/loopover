@@ -99,6 +99,38 @@ function openIssueBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdo
   };
 }
 
+// Sibling of openIssueBreakdown/openPrBreakdown for the merged-PR history floor (upstream MIN_VALID_MERGED_PRS):
+// a contributor whose observed merged-PR count on this repo is below the floor has the entire preview zeroed.
+// Explained here so a miner sees the same actionable breakdown the open-PR / open-issue gates already provide.
+function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { mergedHistoryMultiplier } = preview.scoreEstimate;
+  const { mergedPrFloor, mergedPullRequests } = preview.gates;
+  // mergedPullRequests is optional: when unobserved the floor is not enforced (the multiplier stays 1).
+  if (mergedPullRequests === undefined) {
+    return {
+      component: "mergedHistoryMultiplier",
+      band: "neutral",
+      summary: `Merged-PR history floor is not enforced for this preview (no contributor history observed; upstream floor is ${mergedPrFloor}).`,
+      lever: "No action needed for this preview; the upstream merged-PR floor applies once contributor history is observed.",
+      leverageScore: 0,
+    };
+  }
+  const band = bandForMultiplier(mergedHistoryMultiplier);
+  return {
+    component: "mergedHistoryMultiplier",
+    band,
+    summary:
+      mergedPullRequests >= mergedPrFloor
+        ? `Merged PR history (${mergedPullRequests}) meets the upstream floor (${mergedPrFloor}).`
+        : `Merged PR history (${mergedPullRequests}) is below the upstream floor (${mergedPrFloor}), so this preview is zeroed.`,
+    lever:
+      mergedPullRequests >= mergedPrFloor
+        ? "Keep landing merged PRs in this repo to maintain contributor history."
+        : "Land more merged PRs in this repo to clear the contributor-history floor before relying on this preview.",
+    leverageScore: mergedPullRequests >= mergedPrFloor ? 5 : 100,
+  };
+}
+
 function credibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { credibilityMultiplier } = preview.scoreEstimate;
   const { credibilityObserved, credibilityFloor } = preview.gates;
@@ -239,6 +271,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     reviewPenaltyBreakdown(preview),
     openPrBreakdown(preview),
     openIssueBreakdown(preview),
+    mergedHistoryBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

@@ -83,6 +83,7 @@ describe("explainScoreBreakdown", () => {
         "reviewPenaltyMultiplier",
         "openPrMultiplier",
         "openIssueMultiplier",
+        "mergedHistoryMultiplier",
       ]),
     );
     for (const component of breakdown.components) {
@@ -95,6 +96,28 @@ describe("explainScoreBreakdown", () => {
     expect(JSON.stringify(breakdown)).not.toMatch(FORBIDDEN);
     // No open issues → within the allowance → full band on the open-issue gate.
     expect(breakdown.components.find((entry) => entry.component === "openIssueMultiplier")).toMatchObject({ band: "full" });
+  });
+
+  it("explains the merged-PR history floor as neutral (unobserved), full (meets floor), and blocked (below floor)", () => {
+    // Unobserved history -> floor not enforced -> neutral.
+    const unobserved = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none" } }),
+    );
+    expect(unobserved.components.find((entry) => entry.component === "mergedHistoryMultiplier")).toMatchObject({ band: "neutral" });
+
+    // Observed >= upstream floor (MIN_VALID_MERGED_PRS = 3) -> full.
+    const meets = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none", mergedPullRequests: 5 } }),
+    );
+    expect(meets.components.find((entry) => entry.component === "mergedHistoryMultiplier")).toMatchObject({ band: "full" });
+
+    // Observed < floor -> blocked, and the merged-PR lever is the top-leverage one.
+    const blocked = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none", mergedPullRequests: 1 } }),
+    );
+    expect(blocked.components.find((entry) => entry.component === "mergedHistoryMultiplier")).toMatchObject({ band: "blocked", leverageScore: 100 });
+    expect(blocked.highestLeverageLever.lever).toMatch(/merge/i);
+    expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
   });
 
   it("explains an over-threshold open-issue count as a blocked open-issue spam gate", () => {

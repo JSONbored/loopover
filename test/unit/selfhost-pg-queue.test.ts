@@ -1323,4 +1323,32 @@ describe("createPgQueue (durable #977)", () => {
       gittensory_jobs_dead_total: 0,
     });
   });
+
+  it("snapshot() reports pending/processing/dead queue depth by job type", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    const now = Date.now();
+    m.fn.mockResolvedValueOnce({
+      rows: [
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "pending", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "processing", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("github-webhook")), status: "pending", run_after: String(now + 60_000) },
+        { payload: JSON.stringify(msg("rag-index-repo")), status: "dead", run_after: String(now - 1) },
+      ],
+      rowCount: 4,
+    });
+
+    const snapshot = await q.snapshot();
+
+    expect(snapshot.totals).toMatchObject({ pending: 2, processing: 1, dead: 1 });
+    expect(snapshot.byType).toEqual(
+      expect.arrayContaining([
+        { type: "agent-regate-pr", status: "pending", count: 1, due: 1 },
+        { type: "agent-regate-pr", status: "processing", count: 1, due: 0 },
+        { type: "github-webhook", status: "pending", count: 1, due: 0 },
+        { type: "rag-index-repo", status: "dead", count: 1, due: 0 },
+      ]),
+    );
+  });
 });

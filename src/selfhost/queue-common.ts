@@ -20,6 +20,24 @@ const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BACKGROUND_CONCURRENCY = 1;
 export const FOREGROUND_QUEUE_PRIORITY_FLOOR = 8;
 
+export type SelfHostQueueJobStatus = "pending" | "processing" | "dead";
+
+export type SelfHostQueueSnapshotRow = {
+  type: string;
+  status: SelfHostQueueJobStatus;
+  count: number;
+  due: number;
+};
+
+export type SelfHostQueueSnapshot = {
+  totals: Record<SelfHostQueueJobStatus, number> & { due: number };
+  byType: SelfHostQueueSnapshotRow[];
+};
+
+export interface SelfHostQueueIntrospection {
+  snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
+}
+
 // Webhook-driven work (a fresh PR -> its review) jumps ahead of heavy background jobs. Per-PR review refreshes
 // sit just below real webhooks, and sweep fan-out sits below those so stale surfaces are repaired during bursts.
 // Bot-generated comment edits are background noise; keeping them with real webhooks lets panel edits starve repair.
@@ -93,6 +111,61 @@ export function isGitHubBudgetBackgroundJob(message: JobMessage): boolean {
     return !message.deliveryId.startsWith("manual-regate:");
   }
   return GITHUB_BUDGET_BACKGROUND_TYPES.has(message.type);
+}
+
+export function buildSelfHostQueueSnapshot(
+  rows: Iterable<{ payload?: unknown; status?: unknown; run_after?: unknown; runAfter?: unknown }>,
+  nowMs = Date.now(),
+): SelfHostQueueSnapshot {
+  const totals = { pending: 0, processing: 0, dead: 0, due: 0 };
+  const byKey = new Map<string, SelfHostQueueSnapshotRow>();
+  for (const row of rows) {
+    const status = queueStatus(row.status);
+    if (!status) continue;
+    const type = typeof row.payload === "string" ? (extractPayloadType(row.payload) ?? "unknown") : "unknown";
+    const runAfter = queueRunAfterMs(row.run_after ?? row.runAfter);
+    const due = status === "pending" && (runAfter === null || runAfter <= nowMs) ? 1 : 0;
+    const key = `${type}\0${status}`;
+    const current = byKey.get(key) ?? { type, status, count: 0, due: 0 };
+    current.count += 1;
+    current.due += due;
+    byKey.set(key, current);
+    totals[status] += 1;
+    totals.due += due;
+  }
+  return {
+    totals,
+    byType: [...byKey.values()].sort((a, b) => a.type.localeCompare(b.type) || a.status.localeCompare(b.status)),
+  };
+}
+
+export function queueSnapshotBacklog(
+  snapshot: SelfHostQueueSnapshot | null | undefined,
+  types: readonly string[],
+  statuses: readonly SelfHostQueueJobStatus[] = ["pending", "processing"],
+): number {
+  if (!snapshot) return 0;
+  const typeSet = new Set(types);
+  const statusSet = new Set(statuses);
+  return snapshot.byType.reduce(
+    (sum, row) => sum + (typeSet.has(row.type) && statusSet.has(row.status) ? row.count : 0),
+    0,
+  );
+}
+
+export async function queueSnapshotFromBinding(binding: Queue): Promise<SelfHostQueueSnapshot | null> {
+  const snapshot = (binding as Queue & Partial<SelfHostQueueIntrospection>).snapshot;
+  if (typeof snapshot !== "function") return null;
+  return snapshot.call(binding);
+}
+
+function queueStatus(value: unknown): SelfHostQueueJobStatus | null {
+  return value === "pending" || value === "processing" || value === "dead" ? value : null;
+}
+
+function queueRunAfterMs(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : null;
+  return parsed !== null && Number.isFinite(parsed) ? parsed : null;
 }
 
 function githubObservedRateLimitDelayMs(

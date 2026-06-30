@@ -15,6 +15,7 @@ import {
   githubRateLimitAdmissionTargetForJob,
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
+  buildSelfHostQueueSnapshot,
   jobCoalesceKey,
   jobPriority,
   queueBackgroundConcurrency,
@@ -25,6 +26,7 @@ import {
   rateLimitRetryDelayWithJitter,
   matchesGitHubRateLimitAdmissionTarget,
   type GitHubRateLimitAdmissionTarget,
+  type SelfHostQueueSnapshot,
 } from "./queue-common";
 import type { JobMessage } from "../types";
 
@@ -60,6 +62,7 @@ export interface PgDurableQueue {
   size(): Promise<number>;
   deadCount(): Promise<number>;
   stats(): Promise<Record<string, number>>;
+  snapshot(): Promise<SelfHostQueueSnapshot>;
 }
 
 interface JobRow {
@@ -569,6 +572,14 @@ export function createPgQueue(
     },
     async stats() {
       return readQueueStats();
+    },
+    async snapshot() {
+      const res = await pool.query(
+        `SELECT payload, status, run_after FROM ${TABLE} WHERE status IN ('pending','processing','dead')`,
+      );
+      return buildSelfHostQueueSnapshot(
+        res.rows as Array<{ payload: string; status: string; run_after: string | number }>,
+      );
     },
   };
 

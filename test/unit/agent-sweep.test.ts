@@ -132,7 +132,7 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
 
   it("defaults: freshness window is two minutes and the cap is bounded for the shared REST budget (#audit-rate-headroom)", () => {
     expect(SWEEP_FRESHNESS_MS).toBe(2 * 60 * 1000);
-    expect(SWEEP_MAX_PRS).toBe(6); // lowered from 25: 6 × 3 repos × 9 GETs × 30 ticks/hr ≈ 4.9k/hr ≤ the 5000 bucket
+    expect(SWEEP_MAX_PRS).toBe(3); // 3 × 3 repos × 9 GETs × 30 ticks/hr ≈ 2.4k/hr, leaving headroom for webhooks
     const pulls = Array.from({ length: 40 }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(120 + i) }));
     expect(selectRegateCandidates({ pulls, now: NOW })).toHaveLength(SWEEP_MAX_PRS);
   });

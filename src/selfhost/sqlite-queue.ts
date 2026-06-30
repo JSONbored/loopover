@@ -16,6 +16,7 @@ import {
   githubRateLimitAdmissionTargetForJob,
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
+  buildSelfHostQueueSnapshot,
   jobCoalesceKey,
   jobPriority,
   queueBackgroundConcurrency,
@@ -26,6 +27,7 @@ import {
   rateLimitRetryDelayWithJitter,
   matchesGitHubRateLimitAdmissionTarget,
   type GitHubRateLimitAdmissionTarget,
+  type SelfHostQueueSnapshot,
 } from "./queue-common";
 import type { JobMessage } from "../types";
 
@@ -62,6 +64,7 @@ export interface DurableQueue {
   size(): number;
   deadCount(): number;
   stats(): Record<string, number>;
+  snapshot(): SelfHostQueueSnapshot;
 }
 
 interface JobRow {
@@ -517,6 +520,14 @@ export function createSqliteQueue(
     },
     stats() {
       return readQueueStats(driver);
+    },
+    snapshot() {
+      return buildSelfHostQueueSnapshot(
+        driver.query(
+          `SELECT payload, status, run_after FROM ${TABLE} WHERE status IN ('pending','processing','dead')`,
+          [],
+        ).rows as Array<{ payload: string; status: string; run_after: number }>,
+      );
     },
   };
 }

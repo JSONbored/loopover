@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
+  buildSelfHostQueueSnapshot,
   consumingRetryDelayMs,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionKeyScope,
@@ -18,6 +19,8 @@ import {
   queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
+  queueSnapshotBacklog,
+  queueSnapshotFromBinding,
   queueStartupJitterMinJobs,
   queueStartupJitterMs,
 } from "../../src/selfhost/queue-common";
@@ -59,6 +62,49 @@ describe("self-host queue common helpers", () => {
     expect(queueBackgroundConcurrency(Number.NaN, "3")).toBe(0);
     expect(queueBackgroundConcurrency(4, null)).toBe(1);
     expect(queueBackgroundConcurrency(4, "")).toBe(1);
+  });
+
+  it("builds queue snapshots by job type/status and only marks due pending jobs", () => {
+    const now = 1_000;
+    const snapshot = buildSelfHostQueueSnapshot(
+      [
+        { payload: payload({ type: "agent-regate-pr" }), status: "pending", run_after: 999 },
+        { payload: payload({ type: "agent-regate-pr" }), status: "pending", run_after: "1001" },
+        { payload: payload({ type: "agent-regate-pr" }), status: "processing", run_after: 1 },
+        { payload: payload({ type: "github-webhook" }), status: "processing", run_after: 1 },
+        { payload: "not-json", status: "dead", run_after: 1 },
+        { payload: payload({ type: "ignored" }), status: "done", run_after: 1 },
+        { payload: null, status: "pending", runAfter: "not-a-number" },
+      ],
+      now,
+    );
+
+    expect(snapshot.totals).toEqual({ pending: 3, processing: 2, dead: 1, due: 2 });
+    expect(snapshot.byType).toEqual([
+      { type: "agent-regate-pr", status: "pending", count: 2, due: 1 },
+      { type: "agent-regate-pr", status: "processing", count: 1, due: 0 },
+      { type: "github-webhook", status: "processing", count: 1, due: 0 },
+      { type: "unknown", status: "dead", count: 1, due: 0 },
+      { type: "unknown", status: "pending", count: 1, due: 1 },
+    ]);
+    expect(queueSnapshotBacklog(snapshot, ["agent-regate-pr"])).toBe(3);
+    expect(queueSnapshotBacklog(snapshot, ["agent-regate-pr"], ["processing"])).toBe(1);
+    expect(queueSnapshotBacklog(snapshot, ["agent-regate-pr"], ["dead"])).toBe(0);
+    expect(queueSnapshotBacklog(null, ["agent-regate-pr"])).toBe(0);
+  });
+
+  it("reads queue snapshots only from self-host bindings that expose introspection", async () => {
+    const snapshot = buildSelfHostQueueSnapshot([
+      { payload: payload({ type: "agent-regate-sweep" }), status: "pending", run_after: 0 },
+    ]);
+    const binding = {
+      async send() {},
+      async sendBatch() {},
+      snapshot: () => snapshot,
+    } as unknown as Queue;
+
+    await expect(queueSnapshotFromBinding(binding)).resolves.toBe(snapshot);
+    await expect(queueSnapshotFromBinding({ async send() {}, async sendBatch() {} } as unknown as Queue)).resolves.toBeNull();
   });
 
   it("identifies GitHub-budget background jobs without pre-yielding fresh webhooks or manual re-gates", () => {

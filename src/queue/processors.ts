@@ -210,6 +210,10 @@ import {
   shouldWaitForGitHubRateLimit,
 } from "../github/rate-limit";
 import {
+  queueSnapshotBacklog,
+  queueSnapshotFromBinding,
+} from "../selfhost/queue-common";
+import {
   downgradeCloseToHold,
   downgradeMergeToHold,
   isProtectedAutomationAuthor,
@@ -408,6 +412,7 @@ import { errorMessage, nowIso } from "../utils/json";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
+const PER_PR_REGATE_BACKPRESSURE_TYPES = ["agent-regate-pr"] as const;
 const PR_PUBLIC_SURFACE_ACTIONS = new Set([
   "opened",
   "reopened",
@@ -791,7 +796,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         await fanOutAgentRegateSweepJobs(env, message.requestedBy);
         return;
       }
-      await sweepRepoRegate(env, message.repoFullName);
+      await sweepRepoRegate(env, message.repoFullName, message.requestedBy);
       return;
     case "agent-regate-pr":
       // One bounded re-gate unit fanned out by the sweep (#audit-sweep-fanout): re-review + stamp a single PR.
@@ -1020,6 +1025,11 @@ async function fanOutAgentRegateSweepJobs(
   });
 }
 
+async function currentRegateBacklog(env: Env): Promise<number> {
+  const snapshot = await queueSnapshotFromBinding(env.JOBS).catch(() => null);
+  return queueSnapshotBacklog(snapshot, PER_PR_REGATE_BACKPRESSURE_TYPES);
+}
+
 // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). The dispatch for the `rag-index-repo` job.
 // Caller already gated on isRagEnabled(env).
 //   - No repoFullName → cron fan-out: enqueue one FULL re-index job per registered + cutover-allowlisted repo.
@@ -1142,6 +1152,7 @@ async function maybeEnqueueRagReindexForMergedPr(
 async function sweepRepoRegate(
   env: Env,
   repoFullName: string | undefined,
+  requestedBy: "schedule" | "api" | "test",
 ): Promise<void> {
   if (!repoFullName) return;
   const settings = await resolveRepositorySettings(env, repoFullName);
@@ -1168,6 +1179,19 @@ async function sweepRepoRegate(
       outcome: "denied",
       detail: "agent actions paused — re-gate sweep skipped",
       metadata: { repoFullName, mode },
+    });
+    return;
+  }
+  const regateBacklog = requestedBy === "schedule" ? await currentRegateBacklog(env) : 0;
+  if (regateBacklog > 0) {
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.regate",
+      actor: "gittensory",
+      targetKey: repoFullName,
+      outcome: "queued",
+      detail:
+        "re-gate sweep deferred: prior scheduled re-gate work is still pending or processing",
+      metadata: { repoFullName, mode, deferred: true, regateBacklog },
     });
     return;
   }

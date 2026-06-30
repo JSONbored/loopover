@@ -6,6 +6,7 @@
 // Single env switch: GITTENSORY_REVIEW_ENRICHMENT (+ REES_URL must be set, so the hosted Worker — which sets neither
 // — is unaffected). Default OFF → gathers nothing, prompt byte-identical. FULLY FAIL-SAFE: any timeout / non-200 /
 // network / parse error, or an empty brief, returns undefined and the review proceeds on diff + grounding + RAG.
+import { extractLinkedIssueNumbers, getIssue } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { neutralizePromptInjection } from "./prompt-injection";
 import type { PullRequestFileRecord } from "../types";
@@ -92,6 +93,7 @@ export const REES_ANALYZER_NAMES = [
   "iacMisconfig",
   "nativeBuild",
   "history",
+  "docCommentDrift",
 ] as const;
 
 const REES_ANALYZER_NAME_SET = new Set<string>(REES_ANALYZER_NAMES);
@@ -153,6 +155,33 @@ interface EnrichmentInput {
   githubToken?: string | undefined;
   files: PullRequestFileRecord[];
   diff: string;
+}
+
+/** Prefer explicit linkedIssues; fall back to Fixes #N parsing from the PR body. */
+export function resolveEnrichmentLinkedIssueNumbers(
+  linkedIssues: number[] | undefined,
+  body: string | null | undefined,
+): number[] {
+  const explicit = (linkedIssues ?? []).filter((candidate) => Number.isInteger(candidate) && candidate > 0);
+  if (explicit.length > 0) return explicit;
+  return extractLinkedIssueNumbers(body ?? "");
+}
+
+/** Resolve the PR's primary linked issue into the compact REES envelope (#1478). */
+export async function resolveEnrichmentLinkedIssue(
+  env: Env,
+  repoFullName: string,
+  linkedIssues: number[],
+): Promise<EnrichmentLinkedIssue | undefined> {
+  const number = linkedIssues.find((candidate) => Number.isInteger(candidate) && candidate > 0);
+  if (!number) return undefined;
+  const issue = await getIssue(env, repoFullName, number).catch(() => null);
+  if (!issue) return { number };
+  return {
+    number: issue.number,
+    ...(issue.title ? { title: issue.title } : {}),
+    ...(issue.body ? { body: issue.body } : {}),
+  };
 }
 
 /** Optional comma-list of REES analyzers. Unset/"all" omits the field so REES runs its full registry.

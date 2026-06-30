@@ -291,6 +291,7 @@ export interface BriefFindings {
   nativeBuild?: NativeBuildFinding[];
   history?: HistoryFinding[];
   docCommentDrift?: DocCommentDriftFinding[];
+  duplication?: DuplicationFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a
@@ -303,6 +304,22 @@ export interface DocCommentDriftFinding {
   symbol: string;
   /** `@param` names documented but absent from the function's actual parameter list. */
   staleParams: string[];
+}
+
+/** Added code that is a near-verbatim duplicate of a contiguous block already present elsewhere in the repo — a
+ *  copy-paste the no-checkout reviewer cannot see, where importing the existing implementation is usually better.
+ *  Reports the head location, the matching source location, and the matched line count only — never the code. (#1520) */
+export interface DuplicationFinding {
+  /** Path of the changed file that ADDED the duplicated block. */
+  file: string;
+  /** New-file line where the duplicated run begins in the changed file. */
+  line: number;
+  /** Path of the existing repo file that already contains the same block. */
+  sourceFile: string;
+  /** 1-based line where the run begins in the existing source file. */
+  sourceLine: number;
+  /** Number of contiguous significant lines that matched verbatim (after whitespace normalization). */
+  lines: number;
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped" | "capped" | "timeout";

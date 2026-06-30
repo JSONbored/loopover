@@ -2,6 +2,7 @@ import {
   getLatestScoringModelSnapshot,
   persistScoringModelSnapshot,
 } from "../db/repositories";
+import { timeoutFetch } from "../github/client";
 import { getLatestRegistrySnapshot } from "../registry/sync";
 import { syncUnmodeledScoringConstantDrift } from "../upstream/unmodeled-scoring-drift";
 import type { JsonValue, ScoringModelSnapshotRecord } from "../types";
@@ -80,7 +81,7 @@ function upstreamRawUrl(config: { repo: string; ref: string }, path: string): st
 // missing administration token must never block the constants refresh itself.
 async function fetchUpstreamRefSha(upstream: { repo: string; ref: string }, token: string | undefined): Promise<string | null> {
   try {
-    const response = await fetch(`https://api.github.com/repos/${upstream.repo}/commits/${encodeURIComponent(upstream.ref)}`, { headers: githubHeaders(token, "application/vnd.github+json") });
+    const response = await timeoutFetch(`https://api.github.com/repos/${upstream.repo}/commits/${encodeURIComponent(upstream.ref)}`, { headers: githubHeaders(token, "application/vnd.github+json") });
     if (!response.ok) return null;
     const data = (await response.json()) as { sha?: string };
     return typeof data.sha === "string" && data.sha.length > 0 ? data.sha : null;
@@ -313,7 +314,7 @@ function hasDensityConstants(constants: Record<string, number>): boolean {
 
 async function fetchText(url: string, token?: string): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
   try {
-    const response = await fetch(url, { headers: githubHeaders(token, "text/plain") });
+    const response = await timeoutFetch(url, { headers: githubHeaders(token, "text/plain") });
     if (!response.ok) return { ok: false, error: `${response.status} ${response.statusText}` };
     return { ok: true, value: await response.text() };
   } catch (error) {
@@ -323,7 +324,7 @@ async function fetchText(url: string, token?: string): Promise<{ ok: true; value
 
 async function fetchJson(url: string, token?: string): Promise<{ ok: true; value: Record<string, JsonValue> } | { ok: false; error: string }> {
   try {
-    const response = await fetch(url, { headers: githubHeaders(token, "application/json") });
+    const response = await timeoutFetch(url, { headers: githubHeaders(token, "application/json") });
     if (!response.ok) return { ok: false, error: `${response.status} ${response.statusText}` };
     return { ok: true, value: (await response.json()) as Record<string, JsonValue> };
   } catch (error) {

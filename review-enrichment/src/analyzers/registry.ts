@@ -4,6 +4,7 @@ import { scanCodeowners } from "./codeowners.js";
 import { scanCommitSignature } from "./commit-signature.js";
 import { dependencyAnalyzer } from "./dependency/descriptor.js";
 import { scanDocCommentDrift } from "./doc-comment-drift.js";
+import { scanDuplication } from "./duplication-scan.js";
 import { scanEol } from "./eol-check.js";
 import { scanHeavyDependencies } from "./heavy-dependency.js";
 import { scanHistory } from "./history.js";
@@ -387,6 +388,35 @@ export const ANALYZER_DESCRIPTORS = [
         "Conservative: only named function declarations with confidently-enumerable params; non-parameter signature edits are not reported.",
     },
     run: (req, { signal }) => scanDocCommentDrift(req, fetch, { signal }),
+  }),
+  descriptor({
+    name: "duplication",
+    title: "Near-verbatim duplicated code",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: {
+      minRun: 8,
+      maxCandidates: 40,
+      maxFetches: 30,
+      maxFindings: 25,
+      maxFileBytes: 500_000,
+    },
+    docs: {
+      summary:
+        "Flags added code that is a near-verbatim duplicate of a block already present elsewhere in the repo.",
+      looksAt:
+        "Added diff hunks in changed source files compared against same-extension repo files fetched from the git tree at headSha.",
+      reports:
+        "The head file:line, the existing source file:line it duplicates, and the matched line count.",
+      network:
+        "Calls the GitHub API for the git tree and candidate blobs. Requires headSha and token forwarding for private repos.",
+      notes:
+        "Conservative: trivial/boilerplate lines are dropped and a long contiguous run is required, so incidental overlap is not flagged. Never returns code content.",
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanDuplication(req, fetch, { signal, analysis, diagnostics }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

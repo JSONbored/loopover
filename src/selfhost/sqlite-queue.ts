@@ -12,7 +12,9 @@ import {
   consumingRetryDelayMs,
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
-  githubBackgroundRateLimitDelayMs,
+  githubRateLimitAdmissionDelayMs,
+  githubRateLimitAdmissionKeyForJob,
+  githubRateLimitAdmissionRemainingFloor,
   githubRateLimitRetryDelayMs,
   isGitHubBudgetBackgroundJob,
   jobCoalesceKey,
@@ -285,25 +287,24 @@ export function createSqliteQueue(
         return true;
       }
       const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
-      const backgroundRateLimitDelay = isGitHubBudgetBackgroundJob(message)
-        ? backgroundRateLimitDelayMs(driver)
-        : null;
-      if (backgroundRateLimitDelay !== null) {
+      const rateLimitAdmission = rateLimitAdmissionDelayMs(driver, message);
+      if (rateLimitAdmission !== null) {
         const now = Date.now();
         const retryAfter = now + rateLimitRetryDelayWithJitter(
-          backgroundRateLimitDelay,
+          rateLimitAdmission.delayMs,
           `${job.job_key ?? ""}:${job.id}:${job.payload}`,
         );
+        const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
         const { changes } = driver.query(
           `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
-          [retryAfter, "github rate-limit background admission", job.id],
+          [retryAfter, lastError, job.id],
         );
         if (changes) {
           recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total");
           console.warn(
             JSON.stringify({
               level: "warn",
-              event: "selfhost_queue_background_admission_deferred",
+              event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
               jobType: message.type,
               retry_after_ms: Math.max(0, retryAfter - now),
             }),
@@ -602,16 +603,32 @@ function deferPendingJobsForRateLimit(
   return changed;
 }
 
-function backgroundRateLimitDelayMs(driver: SqliteDriver): number | null {
+function rateLimitAdmissionDelayMs(
+  driver: SqliteDriver,
+  message: JobMessage,
+): { kind: "background" | "webhook"; delayMs: number } | null {
+  const kind =
+    message.type === "github-webhook"
+      ? "webhook"
+      : isGitHubBudgetBackgroundJob(message)
+        ? "background"
+        : null;
+  if (kind === null) return null;
   try {
-    const row = driver.query(
-      `SELECT remaining, reset_at FROM github_rate_limit_observations
-        WHERE resource='rest' AND remaining IS NOT NULL
-        ORDER BY observed_at DESC
-        LIMIT 1`,
-      [],
-    ).rows[0] as { remaining?: number | null; reset_at?: string | null } | undefined;
-    return githubBackgroundRateLimitDelayMs(row);
+    const admissionKey = githubRateLimitAdmissionKeyForJob(message);
+    const remainingFloor = githubRateLimitAdmissionRemainingFloor(kind);
+    const rows = driver.query(
+      `SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
+        WHERE resource='rest' AND remaining IS NOT NULL AND (
+          (? IS NOT NULL AND admission_key=?)
+          OR admission_key IS NULL
+        )
+        ORDER BY CASE WHEN remaining <= ? THEN 1 ELSE 0 END DESC, observed_at DESC
+        LIMIT 16`,
+      [admissionKey, admissionKey, remainingFloor],
+    ).rows as Array<{ remaining?: number | null; reset_at?: string | null; observed_at?: string | null }>;
+    const delayMs = githubRateLimitAdmissionDelayMs(kind, admissionKey, rows);
+    return delayMs === null ? null : { kind, delayMs };
   } catch {
     return null;
   }

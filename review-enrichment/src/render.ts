@@ -353,6 +353,18 @@ export function renderBrief(
     }
   }
 
+  const duplication = findings.duplication ?? [];
+  if (duplication.length) {
+    lines.push(
+      "### Near-verbatim duplicated code (prefer importing the existing implementation)",
+    );
+    for (const item of duplication) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} duplicates ${safeCodeSpan(`${item.sourceFile}:${item.sourceLine}`)} (~${item.lines} lines)`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

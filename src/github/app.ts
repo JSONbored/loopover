@@ -5,6 +5,7 @@ import {
 } from "../orb/broker-client";
 import {
   clearGitHubResponseCacheForTest,
+  githubRateLimitAdmissionKeyForInstallation,
   makeInstallationOctokit,
   timeoutFetch,
 } from "./client";
@@ -345,7 +346,11 @@ export async function getRepositoryCollaboratorPermission(
   const token = await createInstallationToken(env, installationId);
   const response = await timeoutFetch(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
-    { headers: githubHeaders(`Bearer ${token}`) },
+    {
+      headers: githubHeaders(`Bearer ${token}`),
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
+    },
   );
   if (response.status === 404) return null;
   if (!response.ok) {
@@ -587,7 +592,7 @@ async function createOrUpdateNamedCheckRun(
   return await withInstallationTokenRetry(env, installationId, async (token) => {
     // makeInstallationOctokit injects the shared per-request timeout (a stalled PATCH can never orphan the
     // in_progress check) AND suppresses the check-run writes under a non-live mode (dry-run / pause / freeze).
-    const octokit = makeInstallationOctokit(env, token, check.mode);
+    const octokit = makeInstallationOctokit(env, token, check.mode, githubRateLimitAdmissionKeyForInstallation(installationId));
     // Point the merge-box "Details" link at the repo's Gittensory maintainer panel instead of GitHub's generic
     // check page. Spread conditionally so a URL-construction failure (null) just omits it. (#audit-details-url)
     const detailsUrl = maintainerControlPanelUrl(env, repoFullName);

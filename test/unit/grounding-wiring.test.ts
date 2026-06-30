@@ -9,6 +9,8 @@ import {
   makeGithubFileFetcher,
 } from "../../src/review/grounding-wire";
 import { upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import * as githubApp from "../../src/github/app";
+import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
 import type { Advisory, CheckSummaryRecord, JsonValue, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -510,6 +512,43 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     // The installation-token path failed → it fell back to the public token, not a Bearer install token.
     expect(sawAuth).toBe("Bearer ghp_public");
     fetchSpy.mockRestore();
+  });
+
+  it("uses installation-token contents reads and records admission telemetry when token mint succeeds", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_public" });
+    const key = githubRateLimitAdmissionKeyForInstallation(12345);
+    const tokenSpy = vi.spyOn(githubApp, "createInstallationToken").mockResolvedValue("install-token");
+    let sawAuth: string | null = null;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      sawAuth = headers.get("authorization");
+      return new Response("private body", {
+        status: 200,
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-remaining": "22",
+          "x-ratelimit-reset": String(Date.parse("2026-06-24T12:10:00.000Z") / 1000),
+        },
+      });
+    });
+
+    try {
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", 12345);
+      expect(await fetcher.getFileContent("ok.ts", "sha7")).toBe("private body");
+      expect(tokenSpy).toHaveBeenCalledWith(env, 12345);
+      expect(sawAuth).toBe("Bearer install-token");
+      expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+        remaining: 22,
+        resetAt: "2026-06-24T12:10:00.000Z",
+        observedAtMs: Date.parse("2026-06-24T12:00:00.000Z"),
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      tokenSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
 

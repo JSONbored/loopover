@@ -1,5 +1,5 @@
 import { createInstallationToken } from "./app";
-import { makeInstallationOctokit } from "./client";
+import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
 import type { AgentActionMode } from "../settings/agent-execution";
 
 type GitHubLabel = {
@@ -19,7 +19,7 @@ export async function ensurePullRequestLabel(
 
   const token = await createInstallationToken(env, installationId);
   // Non-live mode suppresses the label create + apply writes; the GET dedup probe below still runs.
-  const octokit = makeInstallationOctokit(env, token, options.mode ?? "live");
+  const octokit = makeInstallationOctokit(env, token, options.mode ?? "live", githubRateLimitAdmissionKeyForInstallation(installationId));
   const existing = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/labels", {
     owner,
     repo,
@@ -64,7 +64,7 @@ export async function removePullRequestLabel(env: Env, installationId: number, r
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) return;
   const token = await createInstallationToken(env, installationId);
-  const octokit = makeInstallationOctokit(env, token, mode);
+  const octokit = makeInstallationOctokit(env, token, mode, githubRateLimitAdmissionKeyForInstallation(installationId));
   await octokit
     .request("DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}", { owner, repo, issue_number: pullNumber, name: labelName })
     .catch(() => undefined);

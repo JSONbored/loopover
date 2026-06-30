@@ -20,7 +20,6 @@ const AGENT_ACTOR = "gittensory";
 // agent-execution test can enforce the invariant that every member is also counted by agentRequiresPrWrite
 // (PR_WRITE_ACTION_CLASSES is a superset), so this runtime guard never disagrees with the readiness gate.
 export const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close", "update_branch"]);
-const PR_MUTATION_CLASSES = new Set<AgentActionClass>(["label", "request_changes", "approve", "merge", "close"]);
 
 export type AgentActionExecutionContext = {
   installationId: number;
@@ -110,19 +109,18 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
-    // 5) Freshness guard: any PR mutation must still target the reviewed, open head. This protects approval-queue
-    //    replays and slow webhook jobs from force-pushes or manual closes that happen after the review was planned.
-    if (PR_MUTATION_CLASSES.has(action.actionClass)) {
-      const expectedHeadSha = action.expectedHeadSha ?? ctx.headSha ?? null;
-      if (!expectedHeadSha) {
-        await audit("denied", "live PR head guard unavailable — action not executed");
-        continue;
-      }
-      const freshness = await freshnessFor(expectedHeadSha);
-      if (freshness.status !== "current") {
-        await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
-        continue;
-      }
+    // 5) Freshness guard: every supported live action mutates PR state or PR-visible output, so it must still
+    //    target the reviewed, open head. This protects approval-queue replays and slow webhook jobs from
+    //    force-pushes or manual closes that happen after the review was planned.
+    const expectedHeadSha = action.expectedHeadSha ?? ctx.headSha ?? null;
+    if (!expectedHeadSha) {
+      await audit("denied", "live PR head guard unavailable — action not executed");
+      continue;
+    }
+    const freshness = await freshnessFor(expectedHeadSha);
+    if (freshness.status !== "current") {
+      await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
+      continue;
     }
     // 6) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {

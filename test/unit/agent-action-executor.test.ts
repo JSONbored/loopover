@@ -209,12 +209,13 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("LIVE with minimal action payloads: denies PR mutations when no reviewed head can be pinned", async () => {
     const env = createTestEnv({});
     const bare = (actionClass: PlannedAgentAction["actionClass"]): PlannedAgentAction => ({ actionClass, requiresApproval: false, reason: "x" });
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ headSha: undefined }), [bare("label"), bare("request_changes"), bare("approve"), bare("merge"), bare("close")]);
-    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["denied", "denied", "denied", "denied", "denied"]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ headSha: undefined }), [bare("label"), bare("request_changes"), bare("approve"), bare("merge"), bare("close"), bare("update_branch")]);
+    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["denied", "denied", "denied", "denied", "denied", "denied"]);
     expect(ensurePullRequestLabel).not.toHaveBeenCalled();
     expect(createPullRequestReview).not.toHaveBeenCalled();
     expect(mergePullRequest).not.toHaveBeenCalled();
     expect(closePullRequest).not.toHaveBeenCalled();
+    expect(updatePullRequestBranch).not.toHaveBeenCalled();
     expect(createIssueComment).not.toHaveBeenCalled();
     expect(fetchPullRequestFreshness).not.toHaveBeenCalled();
     expect(outcomes[0]?.detail).toContain("head guard unavailable");
@@ -230,14 +231,16 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       liveState: "open",
     });
 
-    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, approve, merge, close]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, approve, merge, close, updateBranch]);
 
-    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["denied", "denied", "denied", "denied"]);
+    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["denied", "denied", "denied", "denied", "denied"]);
     expect(ensurePullRequestLabel).not.toHaveBeenCalled();
     expect(createPullRequestReview).not.toHaveBeenCalled();
     expect(mergePullRequest).not.toHaveBeenCalled();
     expect(closePullRequest).not.toHaveBeenCalled();
+    expect(updatePullRequestBranch).not.toHaveBeenCalled();
     expect(outcomes[0]?.detail).toContain("PR head changed from sha7 to newsha");
+    expect(outcomes.find((outcome) => outcome.actionClass === "update_branch")?.detail).toContain("PR head changed from sha7 to newsha");
     const audit = await auditFor(env, "merge");
     expect(audit?.outcome).toBe("denied");
   });

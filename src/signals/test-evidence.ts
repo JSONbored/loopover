@@ -6,7 +6,8 @@ export function isTestPath(file: string): boolean {
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
     /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file) ||
     /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|js|jsx)$/i.test(file) ||
-    /(^|\/)__snapshots__\//i.test(file)
+    /(^|\/)__snapshots__\//i.test(file) ||
+    /(^|\/)(__fixtures__|__mocks__)\//i.test(file)
   );
 }
 

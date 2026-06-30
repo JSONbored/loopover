@@ -379,6 +379,18 @@ export function renderBrief(
     }
   }
 
+  const unsafeDom = findings.unsafeDom ?? [];
+  if (unsafeDom.length) {
+    lines.push(
+      "### Unsafe DOM / code-execution sinks (XSS / arbitrary-code-execution risk — sanitize or avoid)",
+    );
+    for (const item of unsafeDom) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} — ${safeCodeSpan(item.sink)} (${item.kind}); avoid this sink or sanitize/escape the input`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

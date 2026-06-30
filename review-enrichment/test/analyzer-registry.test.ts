@@ -31,6 +31,7 @@ const EXPECTED_ANALYZERS = [
   "docCommentDrift",
   "duplication",
   "churnHotspot",
+  "unsafeDom",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

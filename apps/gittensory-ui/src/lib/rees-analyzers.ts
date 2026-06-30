@@ -559,6 +559,29 @@ export const REES_ANALYZERS = [
         "Distinct from the history analyzer's author track record; this scores the change AREA's defect density.",
     },
   },
+  {
+    name: "unsafeDom",
+    title: "Unsafe DOM / code-execution sinks",
+    category: "security",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags added code that passes data into a DOM-HTML write sink or a dynamic code-execution sink.",
+      looksAt:
+        "Added JS/TS/JSX lines using innerHTML, dangerouslySetInnerHTML, document.write, eval, new Function, or a string-bodied setTimeout/setInterval.",
+      reports: "File, line, the sink, and the unsafe-sink kind.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "String-literal and comment text is stripped before matching, so a sink named in a string or comment is not flagged.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

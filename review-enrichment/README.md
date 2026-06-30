@@ -48,6 +48,28 @@ The engine can send `analyzers: ["secret", "actionPin"]` to run a subset. If the
 full registry. An explicit empty array runs no analyzers; the engine uses that fail-closed shape when an
 operator-configured analyzer list contains no valid names.
 
+## Analyzer manifests
+
+Analyzer runtime metadata lives in `src/analyzers/registry.ts` as `AnalyzerDescriptor` entries. New analyzer work
+should prefer the modular shape introduced for `dependency` and `secret`:
+
+| File                                      | Purpose                                                        |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `src/analyzers/<name>/descriptor.ts`      | Analyzer name, title, category, cost, requirements, docs, run function, and optional renderer. |
+| `src/analyzers/<name>.ts`                 | Pure scanner helpers and the analyzer implementation.          |
+| `test/<name>.test.ts`                     | Focused tests for scanner behavior, rendering, and degradation. |
+
+Descriptors are the extension point future REES runtime work will use for profiles, docs generation, scheduler cost
+classes, per-analyzer limits, and self-host configuration. When adding or migrating an analyzer:
+
+- Keep the public analyzer name stable; it is what `REES_ANALYZERS` and the engine request body use.
+- Put operator-facing metadata in the descriptor: `category`, `cost`, `defaultEnabled`, `requires`, `limits`, and
+  `docs`.
+- Keep renderer output public-safe. Never include tokens, request bodies, diffs, raw prompts, comments, or private
+  config values.
+- Make external-call analyzers fail open and respect the orchestrator abort signal when the scanner supports it.
+- Prefer a focused analyzer test file instead of expanding the shared `enrichment.test.ts` mega-test.
+
 The engine also sends `budget.timeoutMs` with one second of headroom below `REES_TIMEOUT_MS`, so REES can return a
 partial/degraded brief before the caller aborts the HTTP request. If Railway is still running an older REES build,
 temporarily raise the engine-side `REES_TIMEOUT_MS` above the REES analyzer budget, or set `REES_ANALYZERS` to a

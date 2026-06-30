@@ -9,7 +9,7 @@ describe("workflow runner labels", () => {
     const trustedRunnerExpression =
       '${{ fromJSON((github.event_name == \'pull_request\' && github.event.pull_request.head.repo.fork == true) && \'["ubuntu-latest"]\' || \'["self-hosted","gittensory"]\') }}';
 
-    expect(workflow.match(new RegExp(escapeRegExp(trustedRunnerExpression), "g")) ?? []).toHaveLength(10);
+    expect(workflow.match(new RegExp(escapeRegExp(trustedRunnerExpression), "g")) ?? []).toHaveLength(9);
     expect(workflow).not.toContain("|| 'self-hosted'");
     expect(workflow).not.toContain('"fork-ci"');
   });

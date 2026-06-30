@@ -8,74 +8,21 @@ import type {
   AnalyzerStatus,
   AnalyzerDiagnostics,
 } from "./types.js";
-import { scanDependencies } from "./analyzers/dependency-scan.js";
-import { scanLockfileDrift } from "./analyzers/lockfile-drift.js";
-import { scanSecrets } from "./analyzers/secret-scan.js";
-import { scanLicenses } from "./analyzers/license-check.js";
-import { scanInstallScripts } from "./analyzers/install-scripts.js";
-import { scanHeavyDependencies } from "./analyzers/heavy-dependency.js";
-import { scanActionPins } from "./analyzers/actions-pin.js";
-import { scanEol } from "./analyzers/eol-check.js";
-import { scanRedos } from "./analyzers/redos.js";
-import { scanProvenance } from "./analyzers/provenance.js";
-import { scanCodeowners } from "./analyzers/codeowners.js";
-import { scanSecretLog } from "./analyzers/secret-log.js";
-import { scanAssetWeight } from "./analyzers/asset-weight.js";
-import { scanTyposquat } from "./analyzers/typosquat.js";
-import { scanCommitSignature } from "./analyzers/commit-signature.js";
-import { scanIacMisconfig } from "./analyzers/iac-misconfig.js";
-import { scanNativeBuild } from "./analyzers/native-build.js";
-import { scanHistory } from "./analyzers/history.js";
+import type {
+  AnalyzerRegistry,
+  AnalyzerRunContext,
+} from "./analyzers/types.js";
+import { ANALYZERS } from "./analyzers/registry.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
 const DEFAULT_ANALYZER_TIMEOUT_MS = 8000;
 const MIN_ANALYZER_TIMEOUT_MS = 1;
 
-interface AnalyzerRunContext {
-  signal: AbortSignal;
-  timeoutMs: number;
-  startedAtMs: number;
-  deadlineMs: number;
-  diagnostics: AnalyzerDiagnostics;
-}
-
 interface BuildBriefOptions {
   requestId?: string;
   traceId?: string;
 }
-
-type AnalyzerFn = (req: EnrichRequest, context: AnalyzerRunContext) => Promise<unknown>;
-type AnalyzerRegistry = Partial<Record<keyof BriefFindings, AnalyzerFn>>;
-
-// The analyzer registry. Each key is the exact name accepted by the engine's REES_ANALYZERS setting.
-const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
-  dependency: (req, { signal }) => scanDependencies(req, fetch, { signal }),
-  lockfileDrift: (req, { signal }) => scanLockfileDrift(req, fetch, { signal }),
-  secret: (req) => scanSecrets(req),
-  license: (req) => scanLicenses(req),
-  installScript: (req) => scanInstallScripts(req),
-  heavyDependency: (req, { signal }) =>
-    scanHeavyDependencies(req, fetch, { signal }),
-  actionPin: (req) => scanActionPins(req),
-  eol: (req) => scanEol(req),
-  redos: (req) => scanRedos(req),
-  provenance: (req, { signal }) => scanProvenance(req, fetch, { signal }),
-  codeowners: (req, { signal }) => scanCodeowners(req, fetch, { signal }),
-  secretLog: (req, { signal }) => scanSecretLog(req, signal),
-  assetWeight: (req, { signal }) => scanAssetWeight(req, fetch, { signal }),
-  typosquat: (req, { signal }) => scanTyposquat(req, fetch, { signal }),
-  commitSignature: (req, { signal }) => scanCommitSignature(req, fetch, { signal }),
-  iacMisconfig: (req, { signal }) => scanIacMisconfig(req, signal),
-  nativeBuild: (req, { signal }) => scanNativeBuild(req, fetch, { signal }),
-  history: (req, context) =>
-    scanHistory(req, fetch, {
-      signal: context.signal,
-      deadlineMs: context.deadlineMs,
-      timeoutMs: context.timeoutMs,
-      diagnostics: context.diagnostics,
-    }),
-};
 
 function resolveAnalyzerTimeoutMs(value: number | undefined): number {
   const parsed = Number(value ?? DEFAULT_ANALYZER_TIMEOUT_MS);

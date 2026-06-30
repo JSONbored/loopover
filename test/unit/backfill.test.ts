@@ -3338,6 +3338,92 @@ describe("GitHub backfill", () => {
       ]);
     });
 
+    it("only trusts exact scanner bot logins for scanner-authored review thread blockers", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/superagent.ts",
+                      line: 10,
+                      comments: { nodes: [{ body: "**P1:** Canonical Superagent blocker", author: { login: "superagent[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/superagent-security.ts",
+                      line: 20,
+                      comments: { nodes: [{ body: "**P1:** Canonical Superagent Security blocker", author: { login: "superagent-security[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/superagent-security-dev.ts",
+                      line: 30,
+                      comments: { nodes: [{ body: "**P1:** Canonical Superagent Security Dev blocker", author: { login: "SUPERAGENT-SECURITY-DEV[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/brin.ts",
+                      line: 40,
+                      comments: { nodes: [{ body: "<!-- brin-pr-finding -->\n**P1:** Canonical Brin blocker", author: { login: "brin[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/superagentsecurity.ts",
+                      line: 50,
+                      comments: { nodes: [{ body: "**P1:** Typosquat without separator", author: { login: "superagentsecurity[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/superagent-evil.ts",
+                      line: 60,
+                      comments: { nodes: [{ body: "**P1:** Typosquat suffix", author: { login: "superagent-evil[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/brin-security.ts",
+                      line: 70,
+                      comments: { nodes: [{ body: "<!-- brin-pr-finding -->\n**P1:** Brin suffix typosquat", author: { login: "brin-security[bot]" }, authorAssociation: "NONE" }] },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/missing-author.ts",
+                      line: 80,
+                      comments: { nodes: [{ body: "**P1:** Missing author cannot authorize", author: null }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      });
+
+      const blockers = await fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1781, "public-token");
+
+      expect(blockers.map((blocker) => blocker.title)).toEqual([
+        "Canonical Superagent blocker",
+        "Canonical Superagent Security blocker",
+        "Canonical Superagent Security Dev blocker",
+        "Canonical Brin blocker",
+      ]);
+      expect(blockers.map((blocker) => blocker.authorLogin)).toEqual(["superagent[bot]", "superagent-security[bot]", "SUPERAGENT-SECURITY-DEV[bot]", "brin[bot]"]);
+      expect(blockers.map((blocker) => blocker.path)).toEqual(["src/superagent.ts", "src/superagent-security.ts", "src/superagent-security-dev.ts", "src/brin.ts"]);
+    });
+
     it("paginates review threads so blockers beyond the first page cannot hide", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       const queries: string[] = [];
@@ -3351,7 +3437,7 @@ describe("GitHub backfill", () => {
               repository: {
                 pullRequest: {
                   reviewThreads: {
-                    nodes: [{ isResolved: true, isOutdated: false, path: "resolved.ts", line: 1, comments: { nodes: [{ body: "already resolved", author: { login: "scanner[bot]" } }] } }],
+                    nodes: [{ isResolved: true, isOutdated: false, path: "resolved.ts", line: 1, comments: { nodes: [{ body: "already resolved", author: { login: "superagent-security[bot]" } }] } }],
                     pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
                   },
                 },
@@ -3426,7 +3512,7 @@ describe("GitHub backfill", () => {
                             isOutdated: false,
                             path: "src/repeated-cursor.ts",
                             line: 9,
-                            comments: { nodes: [{ body: "**P1:** Repeated cursor blocker", author: { login: "scanner[bot]" } }] },
+                            comments: { nodes: [{ body: "**P1:** Repeated cursor blocker", author: { login: "superagent-security[bot]" } }] },
                           },
                         ],
                   pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
@@ -3469,7 +3555,7 @@ describe("GitHub backfill", () => {
                       isOutdated: false,
                       path: "src/fetched-before-malformed-page.ts",
                       line: 14,
-                      comments: { nodes: [{ body: "**P1:** Fetched blocker before malformed page", author: { login: "scanner[bot]" } }] },
+                      comments: { nodes: [{ body: "**P1:** Fetched blocker before malformed page", author: { login: "superagent-security[bot]" } }] },
                     },
                   ],
                   pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
@@ -3507,7 +3593,7 @@ describe("GitHub backfill", () => {
                       isOutdated: false,
                       path: "src/missing-cursor.ts",
                       line: 12,
-                      comments: { nodes: [{ body: "**P2:** Missing cursor blocker", author: { login: "scanner[bot]" } }] },
+                      comments: { nodes: [{ body: "**P2:** Missing cursor blocker", author: { login: "superagent-security[bot]" } }] },
                     },
                   ],
                   pageInfo: { hasNextPage: true, endCursor: null },
@@ -3531,6 +3617,314 @@ describe("GitHub backfill", () => {
       ]);
     });
 
+    it("ignores unresolved review threads from untrusted public commenters", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/security.ts",
+                      line: 42,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "<!-- brin-pr-finding -->\n**P0:** Forged public blocker",
+                            url: "https://github.example/thread/untrusted",
+                            author: { login: "random-outsider" },
+                            authorAssociation: "NONE",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      });
+
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1781, "public-token")).resolves.toEqual([]);
+    });
+
+    it("verifies member review thread authors against live repository permissions", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const permissionRequests: string[] = [];
+      const permissionUrl = (login: string) => `https://api.github.com/repos/JSONbored/gittensory/collaborators/${login}/permission`;
+      const permissionResponses = new Map<string, () => Response>([
+        [permissionUrl("repo-maintainer"), () => Response.json({ permission: "maintain" })],
+        [permissionUrl("repo-admin"), () => Response.json({ permission: "admin" })],
+        [permissionUrl("repo-writer"), () => Response.json({ permission: "write" })],
+        [permissionUrl("org-member"), () => Response.json({ permission: "read" })],
+        [permissionUrl("member-lookup-fails"), () => new Response("permission unavailable", { status: 403 })],
+      ]);
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        const permissionResponse = permissionResponses.get(url);
+        if (permissionResponse) {
+          permissionRequests.push(url);
+          return permissionResponse();
+        }
+        if (url !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/maintainer-owner.ts",
+                      line: 7,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Owner requested change",
+                            url: "https://github.example/thread/owner",
+                            author: { login: "repo-owner" },
+                            authorAssociation: "OWNER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/maintainer-member.ts",
+                      line: 8,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Maintainer requested change",
+                            url: "https://github.example/thread/maintainer",
+                            author: { login: "repo-maintainer" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/maintainer-collaborator.ts",
+                      line: 9,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Collaborator requested change",
+                            url: "https://github.example/thread/collaborator",
+                            author: { login: "repo-collaborator" },
+                            authorAssociation: "COLLABORATOR",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/scanner.ts",
+                      line: 10,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Scanner requested change",
+                            url: "https://github.example/thread/scanner",
+                            author: { login: "superagent-security[bot]" },
+                            authorAssociation: "NONE",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/admin-member.ts",
+                      line: 11,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Admin requested change",
+                            url: "https://github.example/thread/admin",
+                            author: { login: "repo-admin" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/writer-member.ts",
+                      line: 12,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Writer requested change",
+                            url: "https://github.example/thread/writer",
+                            author: { login: "repo-writer" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/own-member.ts",
+                      line: 13,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Own bot requested change",
+                            url: "https://github.example/thread/own-member",
+                            author: { login: "gittensory-orb[bot]" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/maintainer-member-repeat.ts",
+                      line: 14,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Maintainer repeated change",
+                            url: "https://github.example/thread/maintainer-repeat",
+                            author: { login: "repo-maintainer" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/org-member.ts",
+                      line: 15,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Org member requested change",
+                            url: "https://github.example/thread/org-member",
+                            author: { login: "org-member" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/member-lookup-fails.ts",
+                      line: 16,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Unverified member requested change",
+                            url: "https://github.example/thread/member-lookup-fails",
+                            author: { login: "member-lookup-fails" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/member-missing-author.ts",
+                      line: 17,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Member association with missing author",
+                            url: "https://github.example/thread/member-missing-author",
+                            author: null,
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/member-blank-author.ts",
+                      line: 18,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Member association with blank author",
+                            url: "https://github.example/thread/member-blank-author",
+                            author: { login: "   " },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      });
+
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1781, "public-token")).resolves.toEqual([
+        expect.objectContaining({
+          title: "Owner requested change",
+          authorLogin: "repo-owner",
+          scannerFinding: false,
+        }),
+        expect.objectContaining({
+          title: "Maintainer requested change",
+          authorLogin: "repo-maintainer",
+          scannerFinding: false,
+        }),
+        expect.objectContaining({
+          title: "Collaborator requested change",
+          authorLogin: "repo-collaborator",
+          scannerFinding: false,
+        }),
+        expect.objectContaining({
+          title: "Scanner requested change",
+          authorLogin: "superagent-security[bot]",
+          scannerFinding: false,
+        }),
+        expect.objectContaining({
+          title: "Admin requested change",
+          authorLogin: "repo-admin",
+          scannerFinding: false,
+        }),
+        expect.objectContaining({
+          title: "Writer requested change",
+          authorLogin: "repo-writer",
+          scannerFinding: false,
+        }),
+        expect.objectContaining({
+          title: "Maintainer repeated change",
+          authorLogin: "repo-maintainer",
+          scannerFinding: false,
+        }),
+      ]);
+      expect(permissionRequests).toEqual([
+        permissionUrl("repo-maintainer"),
+        permissionUrl("repo-admin"),
+        permissionUrl("repo-writer"),
+        permissionUrl("org-member"),
+        permissionUrl("member-lookup-fails"),
+      ]);
+    });
+
     it("ignores resolved, outdated, own-bot, and empty review threads", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -3541,10 +3935,12 @@ describe("GitHub backfill", () => {
                 pullRequest: {
                   reviewThreads: {
                     nodes: [
-                      { isResolved: true, isOutdated: false, path: "a.ts", line: 1, comments: { nodes: [{ body: "resolved", author: { login: "scanner[bot]" } }] } },
-                      { isResolved: false, isOutdated: true, path: "b.ts", line: 2, comments: { nodes: [{ body: "outdated", author: { login: "scanner[bot]" } }] } },
-                      { isResolved: false, isOutdated: false, path: "c.ts", line: 3, comments: { nodes: [{ body: "own bot", author: { login: "gittensory-orb[bot]" } }] } },
-                      { isResolved: false, isOutdated: false, path: "d.ts", line: 4, comments: { nodes: [{ body: "   ", author: { login: "scanner[bot]" } }, null] } },
+                      { isResolved: true, isOutdated: false, path: "a.ts", line: 1, comments: { nodes: [{ body: "resolved", author: { login: "superagent-security[bot]" } }] } },
+                      { isResolved: false, isOutdated: true, path: "b.ts", line: 2, comments: { nodes: [{ body: "outdated", author: { login: "superagent-security[bot]" } }] } },
+                      { isResolved: false, isOutdated: false, path: "c.ts", line: 3, comments: { nodes: [{ body: "own bot", author: { login: "gittensory-orb[bot]" }, authorAssociation: "OWNER" }] } },
+                      { isResolved: false, isOutdated: false, path: "own-collaborator.ts", line: 5, comments: { nodes: [{ body: "own bot with collaborator association", author: { login: "gittensory[bot]" }, authorAssociation: "COLLABORATOR" }] } },
+                      { isResolved: false, isOutdated: false, path: "no-comments.ts", line: 6, comments: null },
+                      { isResolved: false, isOutdated: false, path: "d.ts", line: 4, comments: { nodes: [{ body: "   ", author: { login: "superagent-security[bot]" } }, null] } },
                       null,
                     ],
                   },

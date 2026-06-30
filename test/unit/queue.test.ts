@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as sentryModule from "../../src/selfhost/sentry";
 import {
@@ -1106,8 +1107,10 @@ describe("queue processors", () => {
       aiReviewMode: "block",
       gatePack: "oss-anti-slop",
     });
-    const commentBodies: string[] = [];
-    let firstCommentWasPlaceholder = false;
+    const stickyComment: { current: { id: number; body: string } | null } = { current: null };
+    let firstWriteWasPlaceholder = false;
+    let postCount = 0;
+    let patchCount = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
@@ -1117,12 +1120,21 @@ describe("queue processors", () => {
       if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
       if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
-      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "GET") {
+        return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+      }
       if (url.includes("/issues/7/comments") && method === "POST") {
         const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
-        if (commentBodies.length === 0) firstCommentWasPlaceholder = body.includes("is reviewing");
-        commentBodies.push(body);
+        postCount += 1;
+        if (postCount === 1) firstWriteWasPlaceholder = body.includes("is reviewing");
+        stickyComment.current = { id: 1, body };
         return Response.json({ id: 1 }, { status: 201 });
+      }
+      if (url.includes("/issues/comments/1") && method === "PATCH") {
+        const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        patchCount += 1;
+        stickyComment.current = { id: 1, body };
+        return Response.json({ id: 1 }, { status: 200 });
       }
       if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
       return Response.json({});
@@ -1140,13 +1152,13 @@ describe("queue processors", () => {
       },
     });
 
-    // The transient purple placeholder was posted FIRST (before the final verdict comment), proving the
-    // pre-review placeholder glue in maybePublishPrPublicSurface runs when a comment + AI review are due.
-    expect(commentBodies.length).toBeGreaterThanOrEqual(2);
-    expect(firstCommentWasPlaceholder).toBe(true);
-    expect(commentBodies[0]).toContain("🟪");
-    // A later comment carries the real verdict, not the placeholder prose.
-    expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
+    // The transient purple placeholder is the first write, then the final verdict updates the same sticky comment.
+    expect(postCount).toBe(1);
+    expect(patchCount).toBeGreaterThanOrEqual(1);
+    expect(firstWriteWasPlaceholder).toBe(true);
+    expect(stickyComment.current?.body).toContain(PR_PANEL_COMMENT_MARKER);
+    expect(stickyComment.current?.body).toContain("Thanks for the contribution");
+    expect(stickyComment.current?.body).not.toContain("is reviewing");
   });
 
   it("continues to final verdict when the reviewing placeholder audit write fails", async () => {
@@ -1240,7 +1252,9 @@ describe("queue processors", () => {
     await persistRegistrySnapshot(env, normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"));
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commentMode: "all_prs", publicSurface: "comment_only", autoLabelEnabled: false, checkRunMode: "off", gateCheckMode: "enabled", aiReviewMode: "advisory" });
-    const commentBodies: string[] = [];
+    const stickyComment: { current: { id: number; body: string } | null } = { current: null };
+    let postCount = 0;
+    let patchCount = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
@@ -1250,10 +1264,20 @@ describe("queue processors", () => {
       if (url.includes("/commits/a8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/a8/status")) return Response.json({ state: "success", statuses: [] });
       if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
-      if (url.includes("/issues/8/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/8/comments") && method === "GET") {
+        return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+      }
       if (url.includes("/issues/8/comments") && method === "POST") {
-        commentBodies.push(String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""));
+        const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        postCount += 1;
+        stickyComment.current = { id: 1, body };
         return Response.json({ id: 1 }, { status: 201 });
+      }
+      if (url.includes("/issues/comments/1") && method === "PATCH") {
+        const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        patchCount += 1;
+        stickyComment.current = { id: 1, body };
+        return Response.json({ id: 1 }, { status: 200 });
       }
       if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
       return Response.json({});
@@ -1272,10 +1296,11 @@ describe("queue processors", () => {
     });
 
     expect(aiCalls).toBe(0);
-    expect(commentBodies.length).toBeGreaterThanOrEqual(2);
-    expect(commentBodies[0]).toContain("is reviewing");
-    expect(commentBodies[0]).toContain("🟪");
-    expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
+    expect(postCount).toBe(1);
+    expect(patchCount).toBeGreaterThanOrEqual(1);
+    expect(stickyComment.current?.body).toContain(PR_PANEL_COMMENT_MARKER);
+    expect(stickyComment.current?.body).toContain("Thanks for the contribution");
+    expect(stickyComment.current?.body).not.toContain("is reviewing");
   });
 
   it("keeps the PR comment in 🟪 reviewing state and retries when the final comment update is rate-limited", async () => {

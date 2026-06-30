@@ -2233,6 +2233,7 @@ type GitHubReviewThreadNode = {
       body?: string | null;
       url?: string | null;
       author?: { login?: string | null } | null;
+      authorAssociation?: string | null;
     } | null> | null;
   } | null;
 };
@@ -2257,7 +2258,8 @@ type GitHubReviewThreadResponse = {
 
 /** Fetch unresolved GitHub review threads that should block merge readiness. GraphQL is required because REST
  *  review comments do not expose thread resolution; if GraphQL is unavailable this fails open to [] rather than
- *  guessing. Own gittensory-authored inline-comment threads are ignored so the bot never blocks on itself. */
+ *  guessing. Only maintainer/collaborator comments or known scanner-bot comments can create blockers, so
+ *  public review comments from untrusted actors cannot influence merge/close state. */
 export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<ReviewThreadBlocker[]> {
   if (!token) return [];
   const [owner, name] = repoFullName.split("/");
@@ -2281,6 +2283,7 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
                   body
                   url
                   author { login }
+                  authorAssociation
                 }
               }
             }
@@ -2306,9 +2309,10 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
     cursor = nextCursor;
   }
   const blockers: ReviewThreadBlocker[] = [];
+  const memberPermissionCache = new Map<string, Promise<boolean>>();
   for (const thread of threads) {
     if (!thread || thread.isResolved !== false || thread.isOutdated === true) continue;
-    const comments = (thread.comments?.nodes ?? [])
+    const rawComments = (thread.comments?.nodes ?? [])
       .flatMap((comment) =>
         comment
           ? [
@@ -2316,11 +2320,26 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
                 body: comment.body,
                 url: comment.url,
                 authorLogin: comment.author?.login,
+                authorAssociation: comment.authorAssociation,
               },
             ]
           : [],
-      )
-      .filter((comment) => !isOwnReviewThreadAuthor(comment.authorLogin));
+      );
+    const comments: typeof rawComments = [];
+    for (const comment of rawComments) {
+      if (
+        await isAuthorizedReviewThreadAuthor(
+          env,
+          repoFullName,
+          token,
+          memberPermissionCache,
+          comment.authorLogin,
+          comment.authorAssociation,
+        )
+      ) {
+        comments.push(comment);
+      }
+    }
     const blocker = buildReviewThreadBlocker({
       path: thread.path,
       line: thread.line,
@@ -2329,6 +2348,62 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
     if (blocker) blockers.push(blocker);
   }
   return blockers;
+}
+
+async function isAuthorizedReviewThreadAuthor(
+  env: Env,
+  repoFullName: string,
+  token: string,
+  memberPermissionCache: Map<string, Promise<boolean>>,
+  login: string | null | undefined,
+  association: string | null | undefined,
+): Promise<boolean> {
+  if (isOwnReviewThreadAuthor(login)) return false;
+  if (isTrustedScannerReviewThreadAuthor(login)) return true;
+  if (isMaintainerReviewThreadAuthor(association)) return true;
+  return isVerifiedMemberReviewThreadAuthor(env, repoFullName, token, memberPermissionCache, login, association);
+}
+
+const MAINTAINER_REVIEW_THREAD_ASSOCIATIONS = new Set(["OWNER", "COLLABORATOR"]);
+function isMaintainerReviewThreadAuthor(association: string | null | undefined): boolean {
+  return typeof association === "string" && MAINTAINER_REVIEW_THREAD_ASSOCIATIONS.has(association);
+}
+
+const REPOSITORY_WRITE_REVIEW_THREAD_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+// Raw GitHub review-comment MEMBER can mean org membership, so verify repo permission before trusting it.
+function isVerifiedMemberReviewThreadAuthor(
+  env: Env,
+  repoFullName: string,
+  token: string,
+  memberPermissionCache: Map<string, Promise<boolean>>,
+  login: string | null | undefined,
+  association: string | null | undefined,
+): Promise<boolean> {
+  if (association !== "MEMBER" || typeof login !== "string") return Promise.resolve(false);
+  const normalizedLogin = login.trim();
+  if (normalizedLogin === "") return Promise.resolve(false);
+  const cacheKey = normalizedLogin.toLowerCase();
+  const cached = memberPermissionCache.get(cacheKey);
+  if (cached) return cached;
+  const verified = githubJsonWithHeaders<{ permission?: string | null }>(
+    env,
+    repoFullName,
+    `/collaborators/${encodeURIComponent(normalizedLogin)}/permission`,
+    token,
+  )
+    .then((result) => {
+      const permission = result.data.permission;
+      return typeof permission === "string" && REPOSITORY_WRITE_REVIEW_THREAD_PERMISSIONS.has(permission.toLowerCase());
+    })
+    .catch(() => false);
+  memberPermissionCache.set(cacheKey, verified);
+  return verified;
+}
+
+// External scanner GitHub App bot logins allowed to create review-thread blockers.
+const TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS = new Set(["superagent[bot]", "superagent-security[bot]", "superagent-security-dev[bot]", "brin[bot]"]);
+function isTrustedScannerReviewThreadAuthor(login: string | null | undefined): boolean {
+  return typeof login === "string" && TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS.has(login.toLowerCase());
 }
 
 function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {

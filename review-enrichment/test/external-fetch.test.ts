@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createAnalysisContext } from "../dist/analysis-context.js";
-import { boundedFetchJson } from "../dist/external-fetch.js";
+import { boundedFetchJson, boundedFetchStatus } from "../dist/external-fetch.js";
 
 test("boundedFetchJson aborts slow subcalls and records safe diagnostics", async () => {
   const diagnostics = {};
@@ -62,6 +62,41 @@ test("boundedFetchJson caps oversized responses before reading the body", async 
   assert.equal(diagnostics.capped, true);
   assert.equal(diagnostics.endpointCategory, "pypi-json");
   assert.equal(diagnostics.externalFailureReason, "response_too_large");
+});
+
+test("boundedFetchStatus checks status without reading a response body", async () => {
+  const diagnostics = {};
+  let bodyRead = false;
+  let method = "";
+
+  const result = await boundedFetchStatus("https://registry.example.test/pkg", {
+    endpointCategory: "npm-package-status",
+    diagnostics,
+    fetchImpl: async (_url, init = {}) => {
+      method = init.method ?? "";
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-length": "999999999" }),
+        text: async () => {
+          bodyRead = true;
+          return "{}";
+        },
+        body: {
+          getReader() {
+            bodyRead = true;
+            throw new Error("body should not be read");
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 200);
+  assert.equal(result.bytes, null);
+  assert.equal(method, "HEAD");
+  assert.equal(bodyRead, false);
 });
 
 test("AnalysisContext fetchJson de-dupes identical in-flight calls and caps new category calls", async () => {

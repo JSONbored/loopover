@@ -92,6 +92,32 @@ test("isPublished: definitive 404/200, undeterminable otherwise", async () => {
   assert.equal(await isPublished("npm", "x", status(404), AbortSignal.abort()), null);
 });
 
+test("isPublished uses a status-only HEAD request and does not read registry bodies", async () => {
+  let method = "";
+  let bodyRead = false;
+  const published = await isPublished("npm", "x", async (_url, init = {}) => {
+    method = init.method ?? "";
+    return {
+      status: 200,
+      ok: true,
+      text: async () => {
+        bodyRead = true;
+        return "{}";
+      },
+      body: {
+        getReader() {
+          bodyRead = true;
+          throw new Error("body should not be read");
+        },
+      },
+    };
+  });
+
+  assert.equal(published, true);
+  assert.equal(method, "HEAD");
+  assert.equal(bodyRead, false);
+});
+
 test("scanTyposquat flags a typosquat without any registry call", async () => {
   let called = false;
   const findings = await scanTyposquat(npmAdd("expres"), async () => {

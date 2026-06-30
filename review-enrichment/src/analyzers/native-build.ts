@@ -2,7 +2,7 @@
 // whose install does real work the manifest diff never shows: an npm package that compiles a native addon
 // (node-gyp / gypfile) on install, or a PyPI release that ships no prebuilt wheel (sdist-only) so pip compiles from
 // source. Both are a hidden CI cold-start cost and a frequent cross-platform breakage source. Factual signals from
-// the registry metadata only — the no-checkout reviewer can fetch neither. Reports package@version + the property.
+// version-scoped registry metadata only — the no-checkout reviewer can fetch neither. Reports package@version + the property.
 import type {
   AnalyzerDiagnostics,
   EnrichRequest,
@@ -13,7 +13,8 @@ import { extractDependencyChanges } from "./dependency-scan.js";
 import { boundedFetchJson } from "../external-fetch.js";
 
 const MAX_QUERIES = 25;
-const MAX_REGISTRY_JSON_BYTES = 2 * 1024 * 1024;
+const MAX_NPM_VERSION_JSON_BYTES = 256 * 1024;
+const MAX_PYPI_VERSION_JSON_BYTES = 2 * 1024 * 1024;
 const INSTALL_HOOKS = ["preinstall", "install", "postinstall"];
 // Tokens in an install-lifecycle script that indicate a native toolchain runs on install.
 const NATIVE_TOOL_RE = /\b(node-gyp|node-pre-gyp|prebuild|prebuild-install|cmake-js|node-addon-api|nan)\b/;
@@ -52,6 +53,25 @@ export interface NpmVersionMeta {
   scripts?: Record<string, string>;
 }
 
+interface NpmPackumentMeta {
+  versions?: Record<string, NpmVersionMeta>;
+}
+
+function isNpmPackumentMeta(
+  data: NpmVersionMeta | NpmPackumentMeta,
+): data is NpmPackumentMeta {
+  const versions = (data as NpmPackumentMeta).versions;
+  return Boolean(versions && typeof versions === "object");
+}
+
+function npmVersionMeta(
+  data: NpmVersionMeta | NpmPackumentMeta | null,
+  version: string,
+): NpmVersionMeta | undefined {
+  if (!data) return undefined;
+  return isNpmPackumentMeta(data) ? data.versions?.[version] : data;
+}
+
 /** Pure: does this npm version compile a native addon on install? Returns a reason (+ whether a prebuilt fallback
  *  exists), or null. Signals: `gypfile: true`, or an install/preinstall/postinstall script that runs a native tool. */
 export function npmNativeBuild(meta: NpmVersionMeta): { reason: string; prebuiltFallback: boolean } | null {
@@ -82,7 +102,8 @@ async function fetchJson(
   fetchImpl: typeof fetch,
   url: string,
   options: ScanOptions,
-  endpointCategory: "npm-packument" | "pypi-json",
+  endpointCategory: "npm-version" | "pypi-json",
+  maxBytes: number,
 ): Promise<unknown | null> {
   if (options.signal?.aborted) return null;
   const boundedOptions = {
@@ -92,7 +113,7 @@ async function fetchJson(
     diagnostics: options.diagnostics,
     phase: "native-build",
     subcall: endpointCategory,
-    maxBytes: MAX_REGISTRY_JSON_BYTES,
+    maxBytes,
     maxCallsPerCategory: options.limits?.maxQueries ?? MAX_QUERIES,
   };
   const response = options.analysis
@@ -119,11 +140,12 @@ export async function scanNativeBuild(
     if (change.ecosystem === "npm") {
       const data = (await fetchJson(
         fetchImpl,
-        `https://registry.npmjs.org/${encodeURIComponent(change.package)}`,
+        `https://registry.npmjs.org/${encodeURIComponent(change.package)}/${encodeURIComponent(change.to)}`,
         options,
-        "npm-packument",
-      )) as { versions?: Record<string, NpmVersionMeta> } | null;
-      const meta = data?.versions?.[change.to];
+        "npm-version",
+        MAX_NPM_VERSION_JSON_BYTES,
+      )) as (NpmVersionMeta | { versions?: Record<string, NpmVersionMeta> }) | null;
+      const meta = npmVersionMeta(data, change.to);
       const native = meta && npmNativeBuild(meta);
       if (native) {
         findings.push({
@@ -142,6 +164,7 @@ export async function scanNativeBuild(
         `https://pypi.org/pypi/${encodeURIComponent(change.package)}/${encodeURIComponent(change.to)}/json`,
         options,
         "pypi-json",
+        MAX_PYPI_VERSION_JSON_BYTES,
       )) as { urls?: PypiUrl[] } | null;
       if (data && pypiSdistOnly(data.urls ?? [])) {
         findings.push({

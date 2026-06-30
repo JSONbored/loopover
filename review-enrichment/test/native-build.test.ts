@@ -67,6 +67,18 @@ test("scanNativeBuild: npm gypfile dependency is flagged native-addon", async ()
   assert.equal(findings[0].prebuiltFallback, false);
 });
 
+test("scanNativeBuild fetches exact npm version metadata, not the full packument", async () => {
+  const urls = [];
+  const findings = await scanNativeBuild(npmAdd("bcrypt"), async (url) => {
+    urls.push(String(url));
+    return jsonResponse({ gypfile: true });
+  });
+
+  assert.deepEqual(urls, ["https://registry.npmjs.org/bcrypt/1.0.0"]);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "bcrypt");
+});
+
 test("scanNativeBuild: a pure-JS npm dependency is not flagged", async () => {
   assert.deepEqual(await scanNativeBuild(npmAdd("lodash"), npmFetch({ scripts: { build: "tsc" } })), []);
 });

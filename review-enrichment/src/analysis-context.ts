@@ -10,6 +10,7 @@ import {
 } from "./analyzers/dependency-scan.js";
 import {
   boundedFetchJson,
+  boundedFetchStatus,
   boundedFetchText,
   externalFetchCacheKey,
   safeEndpointCategory,
@@ -84,6 +85,10 @@ export interface AnalysisContext {
     url: string,
     options: AnalysisFetchJsonOptions,
   ): Promise<BoundedFetchResult<string>>;
+  fetchStatus(
+    url: string,
+    options: AnalysisFetchJsonOptions,
+  ): Promise<BoundedFetchResult<null>>;
   dependencyChanges(limits?: ScanLimits): readonly DepChange[];
   packageChanges(limits?: ScanLimits): readonly DepChange[];
   remainingMs(deadlineMs?: number): number;
@@ -219,6 +224,9 @@ export function createAnalysisContext(
     },
     fetchText(url: string, options: AnalysisFetchJsonOptions) {
       return cachedBoundedFetch(cache, metrics, url, options, boundedFetchText);
+    },
+    fetchStatus(url: string, options: AnalysisFetchJsonOptions) {
+      return cachedBoundedFetch(cache, metrics, url, options, boundedFetchStatus);
     },
     dependencyChanges(limits: ScanLimits = {}) {
       const key = dependencyLimitKey(limits);

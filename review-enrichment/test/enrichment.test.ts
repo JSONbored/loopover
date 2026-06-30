@@ -92,6 +92,10 @@ const okFetch = (vulns) => async () => ({
   ok: true,
   json: async () => ({ vulns }),
 });
+const okBatchFetch = (vulns) => async () => ({
+  ok: true,
+  json: async () => ({ results: [{ vulns }] }),
+});
 
 test("extractDependencyChanges: npm change vs add, ignores removed + non-version lines", () => {
   const changes = extractDependencyChanges([
@@ -169,7 +173,7 @@ test("scanDependencies: only deps with vulns are returned", async () => {
       prNumber: 1,
       files: [{ path: "package.json", patch: '+    "lodash": "4.17.20",' }],
     },
-    okFetch([{ id: "GHSA-x", database_specific: { severity: "CRITICAL" } }]),
+    okBatchFetch([{ id: "GHSA-x", database_specific: { severity: "CRITICAL" } }]),
   );
   assert.equal(findings.length, 1);
   assert.equal(findings[0].direction, "add");
@@ -610,7 +614,7 @@ test("buildBrief: lockfile-drift analyzer runs and renders OSV findings", async 
 
 test("buildBrief: runs dependency analyzer, marks others skipped, partial=false on success", async () => {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = okFetch([
+  globalThis.fetch = okBatchFetch([
     { id: "GHSA-z", database_specific: { severity: "HIGH" } },
   ]);
   try {
@@ -895,7 +899,7 @@ test("scanInstallScripts: validates npm names and encodes the full registry path
     },
     fetchImpl,
   );
-  assert.deepEqual(calls, ["https://registry.npmjs.org/%40scope%2Fpkg"]);
+  assert.deepEqual(calls, ["https://registry.npmjs.org/%40scope%2Fpkg/1.0.0"]);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].package, "@scope/pkg");
 });
@@ -1645,13 +1649,13 @@ test("scanDependencies: caps OSV queries and forwards abort signals", async () =
     { repoFullName: "o/r", prNumber: 1, files },
     async (_url, init) => {
       seenSignals.push(init.signal);
-      return { ok: true, json: async () => ({ vulns: [] }) };
+      return { ok: true, json: async () => ({ results: [{ vulns: [] }, { vulns: [] }] }) };
     },
     { signal: controller.signal, limits: { maxDependencyQueries: 2 } },
   );
 
   assert.equal(findings.length, 0);
-  assert.equal(seenSignals.length, 2);
+  assert.equal(seenSignals.length, 1);
   assert.ok(seenSignals.every((signal) => signal instanceof AbortSignal));
 });
 

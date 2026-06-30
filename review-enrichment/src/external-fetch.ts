@@ -84,6 +84,66 @@ export async function boundedFetchJson<T>(
   }
 }
 
+export async function boundedFetchStatus(
+  url: string,
+  options: BoundedFetchOptions,
+): Promise<BoundedFetchResult<null>> {
+  const endpointCategory = safeEndpointCategory(options.endpointCategory);
+  const startedAtMs = Date.now();
+  const signal = options.signal;
+  if (signal?.aborted) {
+    const result = failure(endpointCategory, "aborted", startedAtMs, null);
+    attachDiagnostics(result, options);
+    return result;
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromParent = () => controller.abort();
+  signal?.addEventListener("abort", abortFromParent, { once: true });
+  const timeoutMs = Math.max(
+    1,
+    Math.floor(options.timeoutMs ?? DEFAULT_EXTERNAL_TIMEOUT_MS),
+  );
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const response = await (options.fetchImpl ?? fetch)(url, {
+      method: options.method ?? "HEAD",
+      headers: options.headers,
+      body: options.body,
+      signal: controller.signal,
+    });
+    const status = response.status;
+    if (!response.ok) {
+      const result = failure(endpointCategory, "http_error", startedAtMs, null, status);
+      attachDiagnostics(result, options);
+      return result;
+    }
+
+    return {
+      ok: true,
+      status,
+      data: null,
+      bytes: null,
+      elapsedMs: Date.now() - startedAtMs,
+      endpointCategory,
+    };
+  } catch {
+    const reason =
+      timedOut || controller.signal.aborted ? (timedOut ? "timeout" : "aborted") : "network_error";
+    const result = failure(endpointCategory, reason, startedAtMs, null);
+    attachDiagnostics(result, options);
+    return result;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
 export async function boundedFetchText(
   url: string,
   options: BoundedFetchOptions,

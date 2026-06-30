@@ -10,7 +10,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { extractDependencyChanges } from "./dependency-scan.js";
-import { boundedFetchText } from "../external-fetch.js";
+import { boundedFetchStatus } from "../external-fetch.js";
 
 const MAX_DEPS = 50;
 const MAX_CONFUSION_QUERIES = 15;
@@ -25,7 +25,7 @@ interface ScanLimits {
 interface ScanOptions {
   signal?: AbortSignal;
   limits?: ScanLimits;
-  analysis?: Pick<AnalysisContext, "fetchText">;
+  analysis?: Pick<AnalysisContext, "fetchStatus">;
   diagnostics?: AnalyzerDiagnostics;
 }
 
@@ -148,9 +148,10 @@ export async function isPublished(
 ): Promise<boolean | null> {
   const toUrl = REGISTRY_URL[ecosystem];
   if (!toUrl || signal?.aborted) return null;
-  const endpointCategory = ecosystem === "npm" ? "npm-packument" : "pypi-json";
+  const endpointCategory = ecosystem === "npm" ? "npm-package-status" : "pypi-package-status";
   const fetchOptions = {
     endpointCategory,
+    method: "HEAD",
     signal,
     fetchImpl,
     diagnostics: options.diagnostics,
@@ -160,8 +161,8 @@ export async function isPublished(
     maxCallsPerCategory: options.limits?.maxConfusionQueries ?? MAX_CONFUSION_QUERIES,
   };
   const response = options.analysis
-    ? await options.analysis.fetchText(toUrl(name), fetchOptions)
-    : await boundedFetchText(toUrl(name), fetchOptions);
+    ? await options.analysis.fetchStatus(toUrl(name), fetchOptions)
+    : await boundedFetchStatus(toUrl(name), fetchOptions);
   if (!response.ok) return response.status === 404 ? false : null;
   return true;
 }

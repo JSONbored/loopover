@@ -25,9 +25,11 @@ import {
   buildQueueHealth,
   buildRoleContext,
   detectGittensorContributor,
+  itemSharesPlannedLinkedIssue,
   shouldPublishPrIntelligenceComment,
   unionScopedOverlapClusters,
   type CollisionCluster,
+  type CollisionItem,
   type CollisionReport,
   type QueueHealth,
 } from "../../src/signals/engine";
@@ -610,6 +612,41 @@ describe("signal coverage edge cases", () => {
     );
 
     expect(preflight.findings.map((finding) => finding.code)).toContain("possible_duplicate_work");
+  });
+
+  it("matches duplicate work by a shared linked issue, not a coincident PR number (#1775)", () => {
+    const directRepo = repo("owner/direct");
+    // A clustered issue (#7) and an open PR (#50) that closes it — the issue↔linking-PR collision cluster.
+    const sharedIssue = issue(directRepo.fullName, 7, "Token refresh race in the auth middleware");
+    const linkingPr = pr(directRepo.fullName, 50, "Guard the token refresh race", { linkedIssues: [7] });
+
+    // Plan links issue #50, which coincides with the open PR's NUMBER but not its linked issue (#7), and the
+    // planned title/paths do not overlap the cluster — so only the old number-conflation bug would flag it.
+    const coincidentNumber = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: "Add pagination to the labels export endpoint", body: "Fixes #50", changedFiles: ["src/api/labels.ts"], linkedIssues: [50] },
+      directRepo,
+      [sharedIssue],
+      [linkingPr],
+    );
+    expect(coincidentNumber.findings.map((finding) => finding.code)).not.toContain("possible_duplicate_work");
+
+    // Plan links the actually-shared issue (#7) → genuine overlap is still flagged.
+    const sharedLinkedIssue = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: "Add pagination to the labels export endpoint", body: "Fixes #7", changedFiles: ["src/api/labels.ts"], linkedIssues: [7] },
+      directRepo,
+      [sharedIssue],
+      [linkingPr],
+    );
+    expect(sharedLinkedIssue.findings.map((finding) => finding.code)).toContain("possible_duplicate_work");
+  });
+
+  it("itemSharesPlannedLinkedIssue intersects linked-issue sets and tolerates missing linkedIssues (#1775)", () => {
+    const prItemValue: CollisionItem = { type: "pull_request", number: 42, title: "Unrelated PR", linkedIssues: [9] };
+    // Shares issue #9 with the plan → match; only its number (42) overlapping the plan must NOT match.
+    expect(itemSharesPlannedLinkedIssue(prItemValue, [9])).toBe(true);
+    expect(itemSharesPlannedLinkedIssue(prItemValue, [42])).toBe(false);
+    // Defensive: an item without a linkedIssues array never matches (covers the nullish fallback).
+    expect(itemSharesPlannedLinkedIssue({ type: "pull_request", number: 9, title: "No links" }, [9])).toBe(false);
   });
 
   it("does not flag duplicate work for a short planned title that merely shares one word", () => {

@@ -901,6 +901,18 @@ export function isPullRequestInDuplicateCluster(collisions: CollisionReport, pul
   );
 }
 
+/**
+ * True when a collision item targets one of the planned contribution's linked issues. An issue item carries its
+ * own number in `linkedIssues` (`[issue.number]`); a PR / recent-merge item carries the issues that PR closes. The
+ * preflight duplicate-work check previously tested `plannedLinkedIssues.includes(item.number)`, which conflated a
+ * PR's NUMBER with an issue number — an unrelated open PR #42 then matched a plan linking issue #42, a routine
+ * GitHub numbering collision that minted a spurious `possible_duplicate_work` finding. Compare linked-issue SETS
+ * instead, mirroring the pairwise `sharedIssue` test `buildCollisionReport` already uses between items. (#1775)
+ */
+export function itemSharesPlannedLinkedIssue(item: CollisionItem, plannedLinkedIssues: number[]): boolean {
+  return (item.linkedIssues ?? []).some((issueNumber) => plannedLinkedIssues.includes(issueNumber));
+}
+
 export function buildQueueHealth(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
@@ -2487,7 +2499,7 @@ export function buildPreflightResult(
   const itemTerms = collisionReportTermCache.get(collisionReport) ?? new Map<string, CollisionTerms>();
   const collisions = collisionReport.clusters.filter((cluster) =>
     cluster.items.some((item) => {
-      if (linkedIssues.includes(item.number)) {
+      if (itemSharesPlannedLinkedIssue(item, linkedIssues)) {
         return true;
       }
       const overlap = termOverlap(plannedTerms, itemTerms.get(itemKey(item)) ?? collisionTerms(item));

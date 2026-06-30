@@ -88,7 +88,8 @@ function buildWindow(windowDays: 7 | 14 | 30, totals: RepoGithubTotalsSnapshotRe
   const targetMs = latestMs - windowDays * 24 * 60 * 60 * 1000;
   const baseline = [...totals].reverse().find((snapshot) => Date.parse(snapshot.fetchedAt) <= targetMs);
   if (!baseline) return unavailableWindow(windowDays, `Need at least ${windowDays} days of totals history.`);
-  const observedDays = Math.max(0, round((latestMs - Date.parse(baseline.fetchedAt)) / (24 * 60 * 60 * 1000)));
+  // Baseline is the newest snapshot at or before (latest - windowDays), so observedDays >= windowDays.
+  const observedDays = round((latestMs - Date.parse(baseline.fetchedAt)) / (24 * 60 * 60 * 1000));
   const mergedPullRequests = Math.max(0, latest.mergedPullRequestsTotal - baseline.mergedPullRequestsTotal);
   const closedUnmergedPullRequests = Math.max(0, latest.closedUnmergedPullRequestsTotal - baseline.closedUnmergedPullRequestsTotal);
   const latestQueue = latestQueuePoint(queuePoints);

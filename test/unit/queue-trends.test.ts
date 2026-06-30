@@ -55,6 +55,47 @@ describe("queue trend windows", () => {
     expect(report.warnings).toEqual(expect.arrayContaining([expect.stringContaining("stale PR rate"), expect.stringContaining("duplicate cluster")]));
   });
 
+  it("does not emit Infinity review velocity when latest totals snapshots share fetchedAt", () => {
+    const sharedAt = atDaysAgo(0);
+    const report = buildQueueTrendReport({
+      repoFullName: "owner/repo",
+      totalsSnapshots: [
+        totals(7, { openIssues: 10, openPrs: 5, merged: 10, closed: 4 }),
+        { ...totals(0, { openIssues: 8, openPrs: 3, merged: 11, closed: 4 }), id: "totals-dup-a", fetchedAt: sharedAt },
+        { ...totals(0, { openIssues: 8, openPrs: 3, merged: 17, closed: 7 }), id: "totals-dup-b", fetchedAt: sharedAt },
+      ],
+    });
+
+    expect(report.status).toBe("ready");
+    for (const window of report.windows.filter((entry) => entry.status === "ready")) {
+      expect(window.reviewVelocityPerDay).not.toBe(Infinity);
+      expect(window.summary).not.toContain("Infinity");
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
+    }
+    expect(report.windows[0]).toMatchObject({
+      windowDays: 7,
+      mergedPullRequests: 7,
+      closedUnmergedPullRequests: 3,
+      reviewVelocityPerDay: 1.43,
+      summary: expect.stringContaining("review velocity 1.43/day"),
+    });
+  });
+
+  it("observedDays is at least the requested window span for ready windows", () => {
+    const report = buildQueueTrendReport({
+      repoFullName: "owner/repo",
+      totalsSnapshots: [
+        totals(30, { openIssues: 20, openPrs: 4, merged: 2, closed: 1 }),
+        totals(0, { openIssues: 21, openPrs: 4, merged: 4, closed: 2 }),
+      ],
+    });
+
+    for (const window of report.windows.filter((entry) => entry.status === "ready")) {
+      expect(window.observedDays).toBeGreaterThanOrEqual(window.windowDays);
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
+    }
+  });
+
   it("returns clear unavailable windows when history is missing", () => {
     const report = buildQueueTrendReport({ repoFullName: "owner/repo", totalsSnapshots: [totals(0, { openIssues: 1, openPrs: 1, merged: 0, closed: 0 })] });
     expect(report).toMatchObject({

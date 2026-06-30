@@ -55,6 +55,16 @@ describe("rate-limit headroom (#audit-rate-headroom)", () => {
       expect(await shouldWaitForGitHubRateLimit(env)).toBeUndefined();
     });
 
+    it("returns the resetAt when remaining is low but resetAt is unparseable so delayUntil can defer conservatively", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW));
+      const env = createTestEnv();
+      const resetAt = "not-a-date";
+      await seedRest(env, 50, resetAt);
+      expect(await shouldWaitForGitHubRateLimit(env)).toBe(resetAt);
+      expect(delayUntil(resetAt)).toBe(60);
+    });
+
     it("honors a higher maintenance floor — yields at 120 remaining for maintenance but not for the default backfill floor", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date(NOW));

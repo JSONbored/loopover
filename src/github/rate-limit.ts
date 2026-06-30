@@ -20,7 +20,12 @@ export async function shouldWaitForGitHubRateLimit(env: Env, floor: number = LOW
   // headroom check below needs no further nullish guard.
   const rest = observations.find((observation): observation is typeof observation & { remaining: number } => observation.resource === "rest" && observation.remaining !== null && observation.remaining !== undefined);
   if (!rest?.resetAt || rest.remaining > floor) return undefined;
-  return Date.parse(rest.resetAt) > Date.now() ? rest.resetAt : undefined;
+  const resetMs = Date.parse(rest.resetAt);
+  if (Number.isFinite(resetMs) && resetMs > Date.now()) return rest.resetAt;
+  // A present-but-unparseable resetAt must still defer: NaN > now is false, which would otherwise proceed
+  // while the bucket is exhausted. Return the raw string so delayUntil applies its conservative 60s delay.
+  if (!Number.isFinite(resetMs)) return rest.resetAt;
+  return undefined;
 }
 
 /** Seconds to defer a job until a GitHub rate-limit reset, clamped to [30, 900] with a 15s safety margin. An

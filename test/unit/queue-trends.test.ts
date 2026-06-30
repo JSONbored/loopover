@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getRepoQueueTrendSnapshot, persistRepoGithubTotalsSnapshot, persistSignalSnapshot, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { generateSignalSnapshots } from "../../src/queue/processors";
-import { buildQueueTrendReport, buildUnavailableQueueTrendReport, computeReviewVelocityPerDay, type QueueTrendReport } from "../../src/services/queue-trends";
+import { buildQueueTrendReport, buildUnavailableQueueTrendReport, type QueueTrendReport } from "../../src/services/queue-trends";
 import type { RepoGithubTotalsSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -70,9 +70,7 @@ describe("queue trend windows", () => {
     for (const window of report.windows.filter((entry) => entry.status === "ready")) {
       expect(window.reviewVelocityPerDay).not.toBe(Infinity);
       expect(window.summary).not.toContain("Infinity");
-      if (window.reviewVelocityPerDay !== null) {
-        expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
-      }
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
     }
     expect(report.windows[0]).toMatchObject({
       windowDays: 7,
@@ -94,15 +92,8 @@ describe("queue trend windows", () => {
 
     for (const window of report.windows.filter((entry) => entry.status === "ready")) {
       expect(window.observedDays).toBeGreaterThanOrEqual(window.windowDays);
-      if (window.reviewVelocityPerDay !== null) {
-        expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
-      }
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
     }
-  });
-
-  it("returns null review velocity when observedDays is zero", () => {
-    expect(computeReviewVelocityPerDay(7, 3, 0)).toBeNull();
-    expect(computeReviewVelocityPerDay(7, 3, 7)).toBe(1.43);
   });
 
   it("returns clear unavailable windows when history is missing", () => {

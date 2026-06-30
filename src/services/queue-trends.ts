@@ -88,7 +88,7 @@ function buildWindow(windowDays: 7 | 14 | 30, totals: RepoGithubTotalsSnapshotRe
   const targetMs = latestMs - windowDays * 24 * 60 * 60 * 1000;
   const baseline = [...totals].reverse().find((snapshot) => Date.parse(snapshot.fetchedAt) <= targetMs);
   if (!baseline) return unavailableWindow(windowDays, `Need at least ${windowDays} days of totals history.`);
-  // With a valid baseline, observedDays is normally >= windowDays; zero falls back to null velocity.
+  // Baseline is the newest snapshot at or before (latest - windowDays), so observedDays >= windowDays.
   const observedDays = round((latestMs - Date.parse(baseline.fetchedAt)) / (24 * 60 * 60 * 1000));
   const mergedPullRequests = Math.max(0, latest.mergedPullRequestsTotal - baseline.mergedPullRequestsTotal);
   const closedUnmergedPullRequests = Math.max(0, latest.closedUnmergedPullRequestsTotal - baseline.closedUnmergedPullRequestsTotal);
@@ -97,7 +97,7 @@ function buildWindow(windowDays: 7 | 14 | 30, totals: RepoGithubTotalsSnapshotRe
   const stalePullRequestRate = latestQueue ? staleRate(latestQueue) : null;
   const baselineStaleRate = baselineQueue ? staleRate(baselineQueue) : null;
   const duplicateTrend = latestQueue && baselineQueue ? latestQueue.collisionClusters - baselineQueue.collisionClusters : null;
-  const reviewVelocityPerDay = computeReviewVelocityPerDay(mergedPullRequests, closedUnmergedPullRequests, observedDays);
+  const reviewVelocityPerDay = round((mergedPullRequests + closedUnmergedPullRequests) / observedDays);
   const pullRequestGrowth = latest.openPullRequestsTotal - baseline.openPullRequestsTotal;
   return {
     windowDays,
@@ -113,18 +113,8 @@ function buildWindow(windowDays: 7 | 14 | 30, totals: RepoGithubTotalsSnapshotRe
     stalePullRequestRate,
     stalePullRequestRateDelta: stalePullRequestRate !== null && baselineStaleRate !== null ? round(stalePullRequestRate - baselineStaleRate) : null,
     duplicateTrend,
-    summary: `${windowDays}d trend: PR queue ${signed(pullRequestGrowth)}, review velocity ${formatReviewVelocityPerDay(reviewVelocityPerDay)}.`,
+    summary: `${windowDays}d trend: PR queue ${signed(pullRequestGrowth)}, review velocity ${reviewVelocityPerDay}/day.`,
   };
-}
-
-/** Returns null when observedDays <= 0 (no divide-by-zero / Infinity); otherwise the per-day close+merge rate. */
-export function computeReviewVelocityPerDay(mergedPullRequests: number, closedUnmergedPullRequests: number, observedDays: number): number | null {
-  if (observedDays <= 0) return null;
-  return round((mergedPullRequests + closedUnmergedPullRequests) / observedDays);
-}
-
-function formatReviewVelocityPerDay(reviewVelocityPerDay: number | null): string {
-  return reviewVelocityPerDay === null ? "n/a" : `${reviewVelocityPerDay}/day`;
 }
 
 function trendWarnings(windows: QueueTrendWindow[]): string[] {

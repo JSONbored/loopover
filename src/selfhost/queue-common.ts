@@ -236,9 +236,20 @@ export function jobCoalesceKey(payload: string): string | null {
     const message = JSON.parse(payload) as {
       type?: unknown;
       eventName?: unknown;
+      requestedBy?: unknown;
       repoFullName?: unknown;
       prNumber?: unknown;
       attempt?: unknown;
+      force?: unknown;
+      mode?: unknown;
+      segment?: unknown;
+      cursor?: unknown;
+      login?: unknown;
+      day?: unknown;
+      days?: unknown;
+      dryRun?: unknown;
+      variant?: unknown;
+      paths?: unknown;
       payload?: GitHubWebhookPayload | null;
     };
     const type = typeof message.type === "string" ? message.type : "";
@@ -258,6 +269,76 @@ export function jobCoalesceKey(payload: string): string | null {
       return repo && pr !== null && attempt !== null
         ? `recapture-preview:${repo}#${pr}:${attempt}`
         : null;
+    }
+    switch (type) {
+      case "refresh-registry":
+      case "refresh-installation-health":
+      case "refresh-scoring-model":
+      case "refresh-upstream-sources":
+      case "build-upstream-ruleset":
+      case "detect-upstream-drift":
+      case "refresh-upstream-drift":
+      case "file-upstream-drift-issues":
+      case "repair-data-fidelity":
+      case "ops-alerts":
+      case "selftune":
+      case "retry-orb-relay":
+        return type;
+      case "backfill-registered-repos":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "all",
+          normalizedEnum(message.mode) ?? "default",
+          boolFlag(message.force),
+        );
+      case "backfill-repo-segment":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "unknown",
+          normalizedEnum(message.segment) ?? "unknown",
+          normalizedEnum(message.mode) ?? "default",
+          boolFlag(message.force),
+          normalizedCursor(message.cursor) ?? "start",
+        );
+      case "backfill-pr-details":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "unknown",
+          normalizedEnum(message.mode) ?? "default",
+          normalizedCursor(message.cursor) ?? "start",
+        );
+      case "generate-signal-snapshots":
+      case "build-burden-forecasts":
+        return keyOf(type, normalizedRepo(message.repoFullName) ?? "all");
+      case "build-contributor-evidence":
+      case "build-contributor-decision-packs":
+        return keyOf(type, normalizedLogin(message.login) ?? "all");
+      case "refresh-contributor-activity":
+        return keyOf(
+          type,
+          normalizedLogin(message.login) ?? "unknown",
+          normalizedRepo(message.repoFullName) ?? "all",
+        );
+      case "rollup-product-usage":
+        return keyOf(
+          type,
+          normalizedDate(message.day) ?? "latest",
+          normalizedCursor(message.days) ?? "default",
+        );
+      case "prune-retention":
+        return keyOf(type, boolFlag(message.dryRun));
+      case "generate-weekly-value-report":
+        return keyOf(
+          type,
+          normalizedEnum(message.variant) ?? "operator",
+          normalizedCursor(message.days) ?? "default",
+        );
+      case "rag-index-repo":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "all",
+          normalizedPathScope(message.paths) ?? "full",
+        );
     }
     if (type !== "github-webhook") return null;
     const eventName =
@@ -294,6 +375,43 @@ function normalizedNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.floor(value)
     : null;
+}
+
+function normalizedLogin(value: unknown): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function normalizedEnum(value: unknown): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function normalizedCursor(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.floor(value));
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizedDate(value: unknown): string | null {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+    ? value.trim()
+    : null;
+}
+
+function normalizedPathScope(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const paths = [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim()))].sort();
+  return paths.length > 0 ? paths.join(",") : null;
+}
+
+function boolFlag(value: unknown): string {
+  return value === true ? "1" : "0";
+}
+
+function keyOf(type: string, ...parts: string[]): string {
+  return `${type}:${parts.join(":")}`;
 }
 
 function numberHeader(

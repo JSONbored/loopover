@@ -234,6 +234,84 @@ describe("self-host queue common helpers", () => {
     ).toBeNull();
   });
 
+  it("coalesces recurring maintenance jobs while preserving their semantic scope", () => {
+    expect(
+      jobCoalesceKey(
+        payload({ type: "backfill-registered-repos", requestedBy: "schedule" }),
+      ),
+    ).toBe("backfill-registered-repos:all:default:0");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "backfill-registered-repos",
+          requestedBy: "api",
+          repoFullName: "JSONbored/Gittensory",
+          mode: "resume",
+          force: true,
+        }),
+      ),
+    ).toBe("backfill-registered-repos:jsonbored/gittensory:resume:1");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "backfill-repo-segment",
+          requestedBy: "schedule",
+          repoFullName: "JSONbored/Gittensory",
+          segment: "labels",
+          mode: "resume",
+          force: true,
+          cursor: "page-2",
+        }),
+      ),
+    ).toBe("backfill-repo-segment:jsonbored/gittensory:labels:resume:1:page-2");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "refresh-contributor-activity",
+          requestedBy: "schedule",
+          login: "OktoFeesh1",
+          repoFullName: "JSONbored/Gittensory",
+        }),
+      ),
+    ).toBe("refresh-contributor-activity:oktofeesh1:jsonbored/gittensory");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rollup-product-usage",
+          requestedBy: "schedule",
+          day: "2026-06-30",
+          days: 7,
+        }),
+      ),
+    ).toBe("rollup-product-usage:2026-06-30:7");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "generate-weekly-value-report",
+          requestedBy: "schedule",
+          variant: "public",
+          days: 31,
+        }),
+      ),
+    ).toBe("generate-weekly-value-report:public:31");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/Gittensory",
+          paths: ["README.md", "src/a.ts", "README.md"],
+        }),
+      ),
+    ).toBe("rag-index-repo:jsonbored/gittensory:README.md,src/a.ts");
+    expect(jobCoalesceKey(payload({ type: "prune-retention", requestedBy: "schedule", dryRun: true }))).toBe(
+      "prune-retention:1",
+    );
+    expect(jobCoalesceKey(payload({ type: "ops-alerts", requestedBy: "schedule" }))).toBe(
+      "ops-alerts",
+    );
+  });
+
   it("returns no coalesce key for malformed payloads", () => {
     expect(jobCoalesceKey("not-json")).toBeNull();
   });

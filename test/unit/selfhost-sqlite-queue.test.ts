@@ -314,6 +314,96 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  it("coalesces recurring maintenance jobs by semantic scope and keeps distinct scopes separate", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      mode: "resume",
+      force: true,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "api",
+      repoFullName: "JSONbored/gittensory",
+      mode: "resume",
+      force: true,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "api",
+      repoFullName: "JSONbored/gittensory",
+      mode: "light",
+      force: true,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "schedule",
+      variant: "operator",
+      days: 7,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "api",
+      variant: "operator",
+      days: 7,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "api",
+      variant: "public",
+      days: 7,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts", "src/a.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts", "src/b.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/c.ts"],
+    }, { delaySeconds: 60 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+
+    expect(rows).toHaveLength(6);
+    expect(rows.map((row) => row.job_key)).toEqual([
+      "backfill-registered-repos:jsonbored/gittensory:resume:1",
+      "backfill-registered-repos:jsonbored/gittensory:light:1",
+      "generate-weekly-value-report:operator:7",
+      "generate-weekly-value-report:public:7",
+      "rag-index-repo:jsonbored/gittensory:src/a.ts,src/b.ts",
+      "rag-index-repo:jsonbored/gittensory:src/c.ts",
+    ]);
+    expect(rows.map((row) => JSON.parse(row.payload).requestedBy)).toEqual([
+      "api",
+      "api",
+      "api",
+      "api",
+      "schedule",
+      "schedule",
+    ]);
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 6,
+      gittensory_jobs_coalesced_total: 3,
+    });
+  });
+
   it("does not coalesce terminal pull_request events that carry distinct lifecycle side effects", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);

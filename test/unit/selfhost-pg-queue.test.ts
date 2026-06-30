@@ -301,6 +301,103 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("coalesces recurring maintenance jobs by semantic scope and preserves distinct scopes", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-backfill" }], rowCount: 1 });
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      mode: "resume",
+      force: true,
+    });
+
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "api",
+      repoFullName: "JSONbored/gittensory",
+      mode: "light",
+      force: true,
+    });
+
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-report" }], rowCount: 1 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "schedule",
+      variant: "operator",
+      days: 7,
+    });
+
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "api",
+      variant: "public",
+      days: 7,
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE status='pending' AND job_key=$1"),
+      ["backfill-registered-repos:jsonbored/gittensory:resume:1"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE status='pending' AND job_key=$1"),
+      ["backfill-registered-repos:jsonbored/gittensory:light:1"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE status='pending' AND job_key=$1"),
+      ["generate-weekly-value-report:operator:7"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE status='pending' AND job_key=$1"),
+      ["generate-weekly-value-report:public:7"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET payload=$1, run_after=GREATEST"),
+      expect.arrayContaining([
+        expect.stringContaining('"type":"backfill-registered-repos"'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        "existing-backfill",
+      ]),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET payload=$1, run_after=GREATEST"),
+      expect.arrayContaining([
+        expect.stringContaining('"type":"generate-weekly-value-report"'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        "existing-report",
+      ]),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([
+        expect.stringContaining('"mode":"light"'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        "backfill-registered-repos:jsonbored/gittensory:light:1",
+      ]),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([
+        expect.stringContaining('"variant":"public"'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        "generate-weekly-value-report:public:7",
+      ]),
+    );
+  });
+
   it("processes a job successfully (job_complete audit emitted)", async () => {
     const m = makePool();
     m.enqueueJob("1", { type: "review" });

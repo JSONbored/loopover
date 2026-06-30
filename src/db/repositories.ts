@@ -377,8 +377,25 @@ function resolveLinkedIssueClaimedAt(
 ): string | null {
   if (linkedIssues.length === 0) return null;
   if (!existing) return observedLinkedIssueClaimedAt;
-  if (existing.linkedIssuesJson === linkedIssuesJson) return existing.linkedIssueClaimedAt ?? observedLinkedIssueClaimedAt;
+  if (
+    existing.linkedIssuesJson === linkedIssuesJson ||
+    sameLinkedIssueSet(parseLinkedIssuesJson(existing.linkedIssuesJson), linkedIssues)
+  )
+    return existing.linkedIssueClaimedAt ?? observedLinkedIssueClaimedAt;
   return observedLinkedIssueClaimedAt;
+}
+
+function parseLinkedIssuesJson(value: string): number[] {
+  const parsed = parseJson<unknown>(value, []);
+  return Array.isArray(parsed) ? (parsed as number[]) : [];
+}
+
+function sameLinkedIssueSet(left: number[], right: number[]): boolean {
+  return normalizedLinkedIssueSet(left) === normalizedLinkedIssueSet(right);
+}
+
+function normalizedLinkedIssueSet(numbers: number[]): string {
+  return jsonString([...new Set(numbers)].sort((left, right) => left - right));
 }
 
 export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issue: GitHubIssuePayload, options: { seenOpenAt?: string } = {}): Promise<IssueRecord> {

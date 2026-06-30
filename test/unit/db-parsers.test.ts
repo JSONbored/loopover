@@ -139,6 +139,22 @@ describe("database row parser hardening", () => {
       linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z",
     });
 
+    vi.setSystemTime(new Date("2026-06-29T10:07:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11,
+      title: "Reordered expanded claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #2\nFixes #1",
+    });
+    const reordered = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 11);
+    expect(reordered).toMatchObject({
+      title: "Reordered expanded claim",
+      linkedIssues: [2, 1],
+      linkedIssueClaimedAt: expanded?.linkedIssueClaimedAt,
+    });
+
     vi.setSystemTime(new Date("2026-06-29T10:10:00.000Z"));
     await upsertPullRequestFromGitHub(env, "owner/repo", {
       number: 11,
@@ -200,6 +216,41 @@ describe("database row parser hardening", () => {
     expect(repaired).toMatchObject({
       linkedIssues: [7],
       linkedIssueClaimedAt: "2026-06-29T11:03:00.000Z",
+    });
+  });
+
+  it("repairs sparse non-array linked issue cache rows without throwing", async () => {
+    const env = createTestEnv();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-29T11:10:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 13,
+      title: "Sparse cached claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #8",
+    });
+    await env.DB.prepare("UPDATE pull_requests SET linked_issues_json = ? WHERE repo_full_name = ? AND number = ?")
+      .bind("{}", "owner/repo", 13)
+      .run();
+
+    vi.setSystemTime(new Date("2026-06-29T11:12:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 13,
+      title: "Sparse cached claim repaired",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #8",
+    });
+
+    const repaired = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 13);
+    expect(repaired).toMatchObject({
+      title: "Sparse cached claim repaired",
+      linkedIssues: [8],
+      linkedIssueClaimedAt: "2026-06-29T11:12:00.000Z",
     });
   });
 

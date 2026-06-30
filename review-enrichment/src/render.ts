@@ -365,6 +365,20 @@ export function renderBrief(
     }
   }
 
+  const churnHotspots = findings.churnHotspot ?? [];
+  if (churnHotspots.length) {
+    lines.push(
+      "### Churn hotspots (high commit + fix/revert density — historically fragile, scrutinize)",
+    );
+    for (const item of churnHotspots) {
+      const pct = item.commitCount ? Math.round((item.fixCount / item.commitCount) * 100) : 0;
+      const count = `${item.commitCount}${item.capped ? "+" : ""}`;
+      lines.push(
+        `- ${safeCodeSpan(item.file)} — ${count} commits in ${item.windowDays}d, ${item.fixCount} fix/revert (${pct}%)`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

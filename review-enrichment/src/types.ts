@@ -270,6 +270,21 @@ export interface HistoryFinding {
   partial: boolean;
 }
 
+/** A changed file that is a statistical churn hotspot: many recent commits AND a high fraction of fix/revert
+ *  commits, so defects historically cluster there. Counts come from the repository's public commit history within
+ *  a fixed window — never file contents. (#1513) */
+export interface ChurnHotspotFinding {
+  file: string;
+  /** Commits touching this file in the window (capped at one page; `capped` marks the cap was hit). */
+  commitCount: number;
+  /** Of those, how many were fix/revert/hotfix/regression commits. */
+  fixCount: number;
+  /** The lookback window in days. */
+  windowDays: number;
+  /** True when `commitCount` reached the per-page cap, so the real count is at least that. */
+  capped: boolean;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -292,6 +307,7 @@ export interface BriefFindings {
   history?: HistoryFinding[];
   docCommentDrift?: DocCommentDriftFinding[];
   duplication?: DuplicationFinding[];
+  churnHotspot?: ChurnHotspotFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

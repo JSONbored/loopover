@@ -229,7 +229,30 @@ describe("self-host OpenTelemetry", () => {
       ),
     ).toMatchObject({
       "http.route": "/v1/orb/webhook",
+      "github.webhook.event": "installation",
       "selfhost.webhook.transport": "orb",
+    });
+    expect(
+      selfHostHttpRequestAttributes(
+        new Request("https://self.example/v1/github/webhook", {
+          method: "POST",
+          headers: { "x-github-event": "attacker_unique_event_1" },
+        }),
+      ),
+    ).toEqual({
+      "http.request.method": "POST",
+      "http.route": "/v1/github/webhook",
+      "selfhost.webhook.transport": "github",
+    });
+    expect(
+      selfHostHttpRequestAttributes(
+        new Request("https://self.example/v1/repos/acme/widgets", {
+          headers: { "x-github-event": "pull_request" },
+        }),
+      ),
+    ).toEqual({
+      "http.request.method": "GET",
+      "http.route": "/v1/*",
     });
     expect(selfHostHttpRequestAttributes(new Request("https://self.example/v1/internal/jobs/refresh-registry"))).toMatchObject({
       "http.route": "/v1/internal/*",

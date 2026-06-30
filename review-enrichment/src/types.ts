@@ -25,8 +25,11 @@ export interface EnrichRequest {
    *  whether the diff covers the issue's stated requirement without an extra fetch. Absent ⇒ alignment omitted. (#1478) */
   linkedIssue?: EnrichLinkedIssue;
   budget?: { timeoutMs?: number; maxBriefChars?: number };
+  profile?: ReesProfileName;
   analyzers?: string[];
 }
+
+export type ReesProfileName = "fast" | "balanced" | "deep";
 
 /** A PR's linked issue, as carried in the request envelope. `title`/`body` hold the stated requirement the history
  *  analyzer measures the diff against; only the number is mandatory. (#1478) */
@@ -302,7 +305,7 @@ export interface DocCommentDriftFinding {
   staleParams: string[];
 }
 
-export type AnalyzerStatus = "ok" | "degraded" | "skipped";
+export type AnalyzerStatus = "ok" | "degraded" | "skipped" | "capped" | "timeout";
 
 /** Internal, public-safe analyzer diagnostics for Sentry. Never attach request bodies, diffs, tokens, or raw prompts. */
 export interface AnalyzerDiagnostics {
@@ -347,7 +350,38 @@ export interface ReviewBrief {
   elapsedMs: number;
   partial: boolean;
   analyzerStatus: Record<string, AnalyzerStatus>;
+  telemetry: ReviewBriefTelemetry;
   findings: BriefFindings;
   promptSection: string;
   systemSuffix: string;
+}
+
+export interface ReviewBriefTelemetry {
+  profile: ReesProfileName;
+  responseReserveMs: number;
+  requestedAnalyzers: string[];
+  analyzerCount: {
+    requested: number;
+    runnable: number;
+    skipped: number;
+  };
+  analyzers: Record<string, AnalyzerTelemetry>;
+  cacheHits: number;
+  cacheMisses: number;
+  cacheHitRate: number;
+  externalCallsByCategory: Record<string, number>;
+  skippedWorkByCategory: Record<string, number>;
+  cappedWorkByCategory: Record<string, number>;
+  elapsedMs: number;
+}
+
+export interface AnalyzerTelemetry {
+  status: AnalyzerStatus;
+  elapsedMs: number;
+  timeoutMs?: number;
+  costClass?: string;
+  partialStatus?: "complete" | "partial";
+  partialReason?: string;
+  skipReason?: string;
+  capped?: boolean;
 }

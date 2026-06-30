@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { Callout, CodeBlock, FeatureRow } from "@/components/site/primitives";
-import { REES_ANALYZERS, REES_ANALYZER_NAMES } from "@/lib/rees-analyzers";
+import { REES_ANALYZERS, REES_ANALYZER_NAMES, REES_PROFILES } from "@/lib/rees-analyzers";
 
 export const Route = createFileRoute("/docs/self-hosting-rees-analyzers")({
   head: () => ({
@@ -37,7 +37,8 @@ function SelfHostingReesAnalyzers() {
         REES runs analyzers independently. A failed analyzer is marked degraded, completed analyzers
         still return findings, and an empty result produces no user-facing brief. Use exact analyzer
         names in <code>REES_ANALYZERS</code>. A typo-only analyzer list fails closed with no
-        analyzers selected.
+        analyzers selected. Leave <code>REES_PROFILE</code> unset for the balanced profile, or set
+        <code>fast</code> during incidents to favor local and low-cost registry checks.
       </p>
 
       <CodeBlock
@@ -52,6 +53,41 @@ REES_ANALYZERS=secret,actionPin,redos
 REES_ANALYZERS=unknownName`}
       />
 
+      <h2>Profiles</h2>
+      <div className="not-prose divide-y divide-border border-y border-border">
+        {REES_PROFILES.map((profile) => (
+          <section key={profile.name} className="py-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-token-base font-medium text-foreground">{profile.name}</h3>
+              {profile.default ? (
+                <span className="rounded-token border border-border bg-accent/30 px-2 py-0.5 text-token-xs text-muted-foreground">
+                  default
+                </span>
+              ) : null}
+            </div>
+            <dl className="mt-3 grid gap-3 text-token-sm sm:grid-cols-3">
+              <div>
+                <dt className="font-medium text-foreground">Cost classes</dt>
+                <dd className="mt-1 text-muted-foreground">{profile.costClasses.join(", ")}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-foreground">Concurrency caps</dt>
+                <dd className="mt-1 font-mono text-token-xs text-muted-foreground">
+                  {Object.entries(profile.concurrency)
+                    .filter(([, value]) => value > 0)
+                    .map(([key, value]) => `${key}:${value}`)
+                    .join(", ")}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium text-foreground">Response reserve</dt>
+                <dd className="mt-1 text-muted-foreground">{profile.responseReserveMs} ms</dd>
+              </div>
+            </dl>
+          </section>
+        ))}
+      </div>
+
       <h2>All analyzer names</h2>
       <CodeBlock filename="REES_ANALYZERS names" code={REES_ANALYZER_NAMES.join("\n")} />
 
@@ -61,17 +97,17 @@ REES_ANALYZERS=unknownName`}
           {
             title: "Pure analyzers",
             description:
-              "secret, actionPin, redos, and secretLog work only from the diff/files sent to REES.",
+              "secret, actionPin, redos, secretLog, and iacMisconfig work only from the diff/files sent to REES.",
           },
           {
             title: "Public registry analyzers",
             description:
-              "dependency, lockfileDrift, license, installScript, eol, provenance, and typosquat call public package or lifecycle APIs.",
+              "dependency, lockfileDrift, license, installScript, heavyDependency, eol, provenance, typosquat, and nativeBuild call public package or lifecycle APIs.",
           },
           {
             title: "GitHub API analyzers",
             description:
-              "codeowners and assetWeight need author/head metadata and GitHub token forwarding when the repo is private.",
+              "codeowners, assetWeight, commitSignature, and history need author/head metadata and GitHub token forwarding when the repo is private.",
           },
         ]}
       />
@@ -89,29 +125,42 @@ REES_ANALYZERS=unknownName`}
               <div>
                 <h3 className="text-token-base font-medium text-foreground">{analyzer.title}</h3>
                 <p className="mt-1 text-token-sm leading-token-relaxed text-muted-foreground">
-                  {analyzer.summary}
+                  {analyzer.docs.summary}
                 </p>
               </div>
-              <code className="rounded-token border border-border bg-accent/30 px-2 py-1 font-mono text-token-xs text-foreground">
-                {analyzer.name}
-              </code>
+              <div className="flex flex-wrap justify-end gap-2">
+                <code className="rounded-token border border-border bg-accent/30 px-2 py-1 font-mono text-token-xs text-foreground">
+                  {analyzer.name}
+                </code>
+                <span className="rounded-token border border-border px-2 py-1 text-token-xs text-muted-foreground">
+                  {analyzer.cost}
+                </span>
+              </div>
             </div>
             <dl className="mt-4 grid gap-3 text-token-sm sm:grid-cols-2">
               <div>
                 <dt className="font-medium text-foreground">Looks at</dt>
-                <dd className="mt-1 text-muted-foreground">{analyzer.looksAt}</dd>
+                <dd className="mt-1 text-muted-foreground">{analyzer.docs.looksAt}</dd>
               </div>
               <div>
                 <dt className="font-medium text-foreground">Reports</dt>
-                <dd className="mt-1 text-muted-foreground">{analyzer.reports}</dd>
+                <dd className="mt-1 text-muted-foreground">{analyzer.docs.reports}</dd>
               </div>
               <div>
                 <dt className="font-medium text-foreground">Network</dt>
-                <dd className="mt-1 text-muted-foreground">{analyzer.network}</dd>
+                <dd className="mt-1 text-muted-foreground">{analyzer.docs.network}</dd>
               </div>
               <div>
                 <dt className="font-medium text-foreground">Operational note</dt>
-                <dd className="mt-1 text-muted-foreground">{analyzer.notes}</dd>
+                <dd className="mt-1 text-muted-foreground">{analyzer.docs.notes}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-foreground">Profiles</dt>
+                <dd className="mt-1 text-muted-foreground">{analyzer.profiles.join(", ")}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-foreground">Requirements</dt>
+                <dd className="mt-1 text-muted-foreground">{analyzer.requires.join(", ")}</dd>
               </div>
             </dl>
           </section>

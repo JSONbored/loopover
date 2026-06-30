@@ -5,6 +5,7 @@ import {
   isReesGithubTokenForwardingEnabled,
   resolveReesAnalyzers,
   resolveReesAnalyzerBudgetMs,
+  resolveReesProfile,
   resolveReesTransportTimeoutMs,
 } from "../../src/review/enrichment-wire";
 
@@ -108,6 +109,7 @@ describe("buildReviewEnrichment", () => {
     expect(body.author).toBe("alice");
     expect(body.githubToken).toBe("gh-read-token");
     expect(body.analyzers).toBeUndefined();
+    expect(body.profile).toBeUndefined();
     expect(body.budget).toEqual({ timeoutMs: 11000, maxBriefChars: 8000 });
     expect(body.files).toEqual([
       {
@@ -172,6 +174,24 @@ describe("buildReviewEnrichment", () => {
       "actionPin",
       "redos",
     ]);
+  });
+
+  it("sends a configured REES profile when no explicit analyzer subset is required", async () => {
+    const calls: RequestInit[] = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      calls.push(init);
+      return {
+        ok: true,
+        json: async () => ({ promptSection: "brief" }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(
+      env({ REES_URL: "https://r", REES_PROFILE: " fast " }),
+      input,
+    );
+    const body = JSON.parse(calls[0]!.body as string);
+    expect(body.profile).toBe("fast");
+    expect(body.analyzers).toBeUndefined();
   });
 
   it("sends an explicit empty analyzer list when REES_ANALYZERS has no valid names", async () => {
@@ -510,6 +530,31 @@ describe("resolveReesAnalyzers", () => {
           String(c[0]).includes("rees_analyzer_config_invalid") &&
           String(c[0]).includes("bogus") &&
           String(c[0]).includes("nope"),
+      ),
+    ).toBe(true);
+    warnSpy.mockRestore();
+  });
+});
+
+describe("resolveReesProfile", () => {
+  it("returns undefined for unset profiles", () => {
+    expect(resolveReesProfile(env({}))).toBeUndefined();
+  });
+
+  it("normalizes supported profile names", () => {
+    expect(resolveReesProfile(env({ REES_PROFILE: " FAST " }))).toBe("fast");
+    expect(resolveReesProfile(env({ REES_PROFILE: "balanced" }))).toBe("balanced");
+    expect(resolveReesProfile(env({ REES_PROFILE: "Deep" }))).toBe("deep");
+  });
+
+  it("warns and omits unsupported profiles", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveReesProfile(env({ REES_PROFILE: "everything" }))).toBeUndefined();
+    expect(
+      warnSpy.mock.calls.some(
+        (c) =>
+          String(c[0]).includes("rees_profile_config_invalid") &&
+          String(c[0]).includes("everything"),
       ),
     ).toBe(true);
     warnSpy.mockRestore();

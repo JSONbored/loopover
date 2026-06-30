@@ -9,10 +9,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "metadata": "npm run build && node scripts/generate-analyzer-metadata.mjs",
+    "metadata:check": "npm run build && node scripts/generate-analyzer-metadata.mjs --check",
     "validate:sourcemaps": "node scripts/validate-sourcemaps.mjs",
     "start": "node dist/server.js",
     "dev": "node --experimental-strip-types --watch src/server.ts",
-    "test": "npm run build && npm run validate:sourcemaps && node --test --experimental-strip-types \"test/**/*.test.ts\""
+    "test": "npm run build && npm run validate:sourcemaps && node scripts/generate-analyzer-metadata.mjs --check && node --test --experimental-strip-types \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -22,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "prettier": "3.8.4",
     "typescript": "^5.7.2"
   }
 }

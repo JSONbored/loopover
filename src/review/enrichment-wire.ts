@@ -16,6 +16,7 @@ interface EnrichmentEnv {
   REES_SHARED_SECRET?: string | undefined;
   REES_TIMEOUT_MS?: string | undefined;
   REES_ANALYZERS?: string | undefined;
+  REES_PROFILE?: string | undefined;
   REES_FORWARD_GITHUB_TOKEN?: string | undefined;
 }
 
@@ -94,6 +95,9 @@ export const REES_ANALYZER_NAMES = [
 ] as const;
 
 const REES_ANALYZER_NAME_SET = new Set<string>(REES_ANALYZER_NAMES);
+const REES_PROFILE_NAMES = ["fast", "balanced", "deep"] as const;
+type ReesProfileName = (typeof REES_PROFILE_NAMES)[number];
+const REES_PROFILE_NAME_SET = new Set<string>(REES_PROFILE_NAMES);
 
 function sanitizeEnrichmentPromptSection(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -178,6 +182,21 @@ export function resolveReesAnalyzers(env: Env): string[] | undefined {
   return selected;
 }
 
+export function resolveReesProfile(env: Env): ReesProfileName | undefined {
+  const raw = reesConfig(env).REES_PROFILE?.trim();
+  if (!raw) return undefined;
+  const normalized = raw.toLowerCase();
+  if (REES_PROFILE_NAME_SET.has(normalized)) return normalized as ReesProfileName;
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "rees_profile_config_invalid",
+      profile: raw.slice(0, 40),
+    }),
+  );
+  return undefined;
+}
+
 /** POST the PR to the REES and return the spliceable brief, or undefined on any error/timeout/empty (fail-safe). */
 export async function buildReviewEnrichment(
   env: Env,
@@ -195,6 +214,7 @@ export async function buildReviewEnrichment(
   const timeoutMs = resolveReesTransportTimeoutMs(cfg.REES_TIMEOUT_MS);
   const analyzerBudgetMs = resolveReesAnalyzerBudgetMs(timeoutMs);
   const analyzers = resolveReesAnalyzers(env);
+  const profile = resolveReesProfile(env);
   const requestId = newReesRequestId();
   try {
     const response = await fetch(`${base.replace(/\/+$/, "")}/v1/enrich`, {
@@ -225,6 +245,7 @@ export async function buildReviewEnrichment(
         })),
         diff: input.diff,
         ...(analyzers ? { analyzers } : {}),
+        ...(profile ? { profile } : {}),
         budget: {
           timeoutMs: analyzerBudgetMs,
           maxBriefChars: MAX_ENRICHMENT_PROMPT_SECTION_CHARS,
@@ -249,6 +270,7 @@ export async function buildReviewEnrichment(
           requestId,
           timeoutMs,
           analyzerBudgetMs,
+          reesProfile: profile ?? "default",
           requestedAnalyzers: analyzers ?? "all",
           authConfigured,
           authHeaderSent: authConfigured,
@@ -296,6 +318,7 @@ export async function buildReviewEnrichment(
         requestId,
         timeoutMs,
         analyzerBudgetMs,
+        reesProfile: profile ?? "default",
         requestedAnalyzers: analyzers ?? "all",
         authConfigured,
         authHeaderSent: authConfigured,

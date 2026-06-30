@@ -111,6 +111,9 @@ export interface AnalyzerDegradationContext {
   timeoutMs?: number;
   elapsedMs?: number;
   analyzerStatus?: string;
+  profile?: string;
+  costClass?: string;
+  responseReserveMs?: number;
   partialStatus?: string;
   partialReason?: string;
   phase?: string;
@@ -147,6 +150,9 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     timeoutMs: context.timeoutMs,
     elapsedMs: context.elapsedMs,
     analyzerStatus: context.analyzerStatus,
+    profile: context.profile,
+    costClass: context.costClass,
+    responseReserveMs: context.responseReserveMs,
     partialStatus: context.partialStatus,
     partialReason: context.partialReason,
     phase: context.phase,
@@ -187,6 +193,9 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     if (timeoutTag) scope.setTag("timeoutMs", timeoutTag);
     if (releaseTag) scope.setTag("release", releaseTag);
     const analyzerStatusTag = sentryTagValue(context.analyzerStatus);
+    const profileTag = sentryTagValue(context.profile);
+    const costClassTag = sentryTagValue(context.costClass);
+    const responseReserveTag = sentryTagValue(context.responseReserveMs);
     const partialStatusTag = sentryTagValue(context.partialStatus);
     const phaseTag = sentryTagValue(context.phase);
     const endpointCategoryTag = sentryTagValue(context.endpointCategory);
@@ -197,6 +206,9 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     const cacheHitsTag = sentryTagValue(context.cacheHits);
     const cacheMissesTag = sentryTagValue(context.cacheMisses);
     if (analyzerStatusTag) scope.setTag("analyzerStatus", analyzerStatusTag);
+    if (profileTag) scope.setTag("profile", profileTag);
+    if (costClassTag) scope.setTag("costClass", costClassTag);
+    if (responseReserveTag) scope.setTag("responseReserveMs", responseReserveTag);
     if (partialStatusTag) scope.setTag("partialStatus", partialStatusTag);
     if (phaseTag) scope.setTag("phase", phaseTag);
     if (endpointCategoryTag) scope.setTag("endpointCategory", endpointCategoryTag);

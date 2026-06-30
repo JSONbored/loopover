@@ -11,6 +11,7 @@ import type {
 import type {
   AnalyzerRegistry,
   AnalyzerRunContext,
+  AnalyzerCostClass,
 } from "./analyzers/types.js";
 import {
   createAnalysisContext,
@@ -18,6 +19,14 @@ import {
 } from "./analysis-context.js";
 import { ANALYZERS } from "./analyzers/registry.js";
 import { renderBrief } from "./render.js";
+import {
+  COST_ORDER,
+  analyzerTimeoutMs,
+  costClassConcurrency,
+  planAnalyzers,
+  shouldStartAnalyzer,
+  type AnalyzerPlanItem,
+} from "./scheduler.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
 const DEFAULT_ANALYZER_TIMEOUT_MS = 8000;
@@ -39,6 +48,11 @@ function runWithTimeout<T>(
   ms: number,
   diagnostics: AnalyzerDiagnostics,
   analysis: AnalysisContext,
+  meta: {
+    requestDeadlineMs: number;
+    profile: AnalyzerRunContext["profile"];
+    costClass: AnalyzerCostClass;
+  },
 ): Promise<T> {
   const controller = new AbortController();
   const startedAtMs = Date.now();
@@ -47,6 +61,9 @@ function runWithTimeout<T>(
     timeoutMs: ms,
     startedAtMs,
     deadlineMs: startedAtMs + ms,
+    requestDeadlineMs: meta.requestDeadlineMs,
+    profile: meta.profile,
+    costClass: meta.costClass,
     diagnostics,
     analysis,
   };
@@ -79,6 +96,43 @@ function resultIsPartial(result: unknown): boolean {
       typeof entry === "object" &&
       (entry as { partial?: unknown }).partial === true,
   );
+}
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<void>,
+): Promise<void> {
+  const concurrency = Math.max(1, Math.floor(limit));
+  let index = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const item = items[index];
+      index += 1;
+      if (!item) return;
+      await run(item);
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, items.length) },
+      () => worker(),
+    ),
+  );
+}
+
+function statusFromDiagnostics(
+  diagnostics: AnalyzerDiagnostics,
+  fallback: AnalyzerStatus,
+): AnalyzerStatus {
+  if (diagnostics.partialReason === "analyzer_timeout") return "timeout";
+  if (diagnostics.capped || diagnostics.externalFailureReason === "call_cap") return "capped";
+  return fallback;
+}
+
+function timeoutStatus(error: unknown, diagnostics: AnalyzerDiagnostics): AnalyzerStatus {
+  if (error instanceof Error && error.message === "analyzer_timeout") return "timeout";
+  return statusFromDiagnostics(diagnostics, "degraded");
 }
 
 function captureDegradation(
@@ -147,77 +201,116 @@ export async function buildBrief(
 ): Promise<ReviewBrief> {
   const start = Date.now();
   const all = Object.keys(analyzers) as Array<keyof BriefFindings>;
-  const requested = Array.isArray(req.analyzers)
-    ? all.filter((name) => req.analyzers!.includes(name))
-    : all;
   const budgetMs = resolveAnalyzerTimeoutMs(req.budget?.timeoutMs);
   const analysis = createAnalysisContext(req, {
     startedAtMs: start,
     deadlineMs: start + budgetMs,
+  });
+  const plan = planAnalyzers(req, analyzers, analysis, {
+    budgetMs,
+    startedAtMs: start,
   });
 
   const findings: BriefFindings = {};
   const analyzerStatus: Record<string, AnalyzerStatus> = {};
   let partial = false;
 
-  await Promise.all(
-    requested.map(async (name) => {
-      const analyzerStartedAt = Date.now();
-      const diagnostics: AnalyzerDiagnostics = {
-        partialStatus: "complete",
-      };
-      try {
-        const analyzer = analyzers[name];
-        if (!analyzer) throw new Error("analyzer_unregistered");
-        const result = await runWithTimeout(
-          (context) => analyzer(req, context),
-          budgetMs,
-          diagnostics,
-          analysis,
-        );
-        findings[name] = result as never;
-        if (resultIsPartial(result) || diagnostics.partialStatus === "partial") {
-          analyzerStatus[name] = "degraded";
-          partial = true;
-          diagnostics.partialStatus = "partial";
-          diagnostics.partialReason ??= "analyzer_partial";
-          if (diagnostics.captureDegradation) {
-            attachAnalysisMetrics(diagnostics, analysis);
-            captureDegradation(new Error(diagnostics.partialReason), {
-              analyzer: name,
-              requested,
-              req,
-              timeoutMs: budgetMs,
-              elapsedMs: Date.now() - analyzerStartedAt,
-              analyzerStatus: "degraded",
-              diagnostics,
-              options,
-            });
-          }
-        } else {
-          analyzerStatus[name] = "ok";
-        }
-      } catch (error) {
-        analyzerStatus[name] = "degraded";
+  for (const item of plan.skipped) analyzerStatus[item.name] = "skipped";
+
+  async function runAnalyzer(item: AnalyzerPlanItem): Promise<void> {
+    const name = item.name;
+    const analyzerStartedAt = Date.now();
+    const diagnostics: AnalyzerDiagnostics = {
+      partialStatus: "complete",
+    };
+    const remainingMs = plan.executionDeadlineMs - Date.now();
+    if (!shouldStartAnalyzer(plan.profile, remainingMs)) {
+      analyzerStatus[name] = "capped";
+      partial = true;
+      analysis.metrics.recordCappedWork("analyzer_budget", 1);
+      return;
+    }
+    const timeoutMs = analyzerTimeoutMs(
+      plan.profile,
+      item.descriptor.cost,
+      remainingMs,
+      plan.explicitAnalyzers,
+    );
+    if (timeoutMs <= 0) {
+      analyzerStatus[name] = "capped";
+      partial = true;
+      analysis.metrics.recordCappedWork(`analyzer_${item.descriptor.cost}`, 1);
+      return;
+    }
+    try {
+      const analyzer = analyzers[name];
+      if (!analyzer) throw new Error("analyzer_unregistered");
+      const result = await runWithTimeout(
+        (context) => analyzer(req, context),
+        timeoutMs,
+        diagnostics,
+        analysis,
+        {
+          requestDeadlineMs: plan.executionDeadlineMs,
+          profile: plan.profile,
+          costClass: item.descriptor.cost,
+        },
+      );
+      findings[name] = result as never;
+      if (resultIsPartial(result) || diagnostics.partialStatus === "partial") {
+        const status = statusFromDiagnostics(diagnostics, "degraded");
+        analyzerStatus[name] = status;
         partial = true;
         diagnostics.partialStatus = "partial";
-        diagnostics.partialReason ??= error instanceof Error ? error.message : "analyzer_error";
-        attachAnalysisMetrics(diagnostics, analysis);
-        captureDegradation(error, {
-          analyzer: name,
-          requested,
-          req,
-          timeoutMs: budgetMs,
-          elapsedMs: Date.now() - analyzerStartedAt,
-          analyzerStatus: "degraded",
-          diagnostics,
-          options,
-        });
+        diagnostics.partialReason ??= status === "capped" ? "analyzer_capped" : "analyzer_partial";
+        if (diagnostics.captureDegradation) {
+          attachAnalysisMetrics(diagnostics, analysis);
+          captureDegradation(new Error(diagnostics.partialReason), {
+            analyzer: name,
+            requested: plan.requested,
+            req,
+            timeoutMs,
+            elapsedMs: Date.now() - analyzerStartedAt,
+            analyzerStatus: status,
+            diagnostics,
+            options,
+          });
+        }
+      } else {
+        analyzerStatus[name] = "ok";
       }
-    }),
-  );
+    } catch (error) {
+      const status = timeoutStatus(error, diagnostics);
+      analyzerStatus[name] = status;
+      partial = true;
+      diagnostics.partialStatus = "partial";
+      diagnostics.partialReason ??= error instanceof Error ? error.message : "analyzer_error";
+      attachAnalysisMetrics(diagnostics, analysis);
+      captureDegradation(error, {
+        analyzer: name,
+        requested: plan.requested,
+        req,
+        timeoutMs,
+        elapsedMs: Date.now() - analyzerStartedAt,
+        analyzerStatus: status,
+        diagnostics,
+        options,
+      });
+    }
+  }
+
+  for (const cost of COST_ORDER) {
+    const items = plan.runnable.filter((item) => item.descriptor.cost === cost);
+    if (!items.length) continue;
+    await runWithConcurrency(
+      items,
+      costClassConcurrency(plan.profile, cost, plan.explicitAnalyzers),
+      runAnalyzer,
+    );
+  }
+
   for (const name of all)
-    if (!requested.includes(name)) analyzerStatus[name] = "skipped";
+    if (!plan.requested.includes(name)) analyzerStatus[name] = "skipped";
 
   const { promptSection, systemSuffix } = renderBrief(
     findings,

@@ -345,7 +345,7 @@ function categorizeFile(path: string): FileCategory {
   }
   if (
     /^Dockerfile(?:\..*)?$/.test(basename) ||
-    [".env", ".ini", ".json", ".toml", ".yaml", ".yml"].includes(extension)
+    [".env", ".hcl", ".ini", ".json", ".tf", ".toml", ".yaml", ".yml"].includes(extension)
   ) {
     return { path, extension, category: "config" };
   }

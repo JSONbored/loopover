@@ -218,7 +218,9 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
       repoFullName: "JSONbored/gittensory",
       prNumber: 42,
       headSha: "head-sha",
-      budget: { timeoutMs: 50 },
+      analyzers: ["dependency"],
+      files: [{ path: "package.json", patch: '+    "lodash": "4.17.20",' }],
+      budget: { timeoutMs: 200 },
     },
     {
       dependency: async () => {
@@ -238,17 +240,23 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
   assert.equal(sentry.tags.repo, "JSONbored/gittensory");
   assert.equal(sentry.tags.pullNumber, "42");
   assert.equal(sentry.tags.headShaPrefix, "head-sha");
-  assert.equal(sentry.tags.timeoutMs, "50");
+  const capturedTimeoutMs = Number(sentry.tags.timeoutMs);
+  assert.ok(capturedTimeoutMs > 0);
+  assert.ok(capturedTimeoutMs <= 200);
 });
 
-test("buildBrief returns a degraded partial response before the caller timeout budget is spent", async () => {
+test("buildBrief returns a timed-out partial response before the caller timeout budget is spent", async () => {
   const started = Date.now();
   const brief = await buildBrief(
     {
       repoFullName: "JSONbored/metagraphed",
       prNumber: 2359,
       headSha: "abcdef1234567890",
-      budget: { timeoutMs: 20 },
+      analyzers: ["history"],
+      githubToken: "token",
+      author: "jsonbored",
+      files: [{ path: "src/a.ts", patch: "@@ -1,0 +1,1 @@\n+export const a = 1;" }],
+      budget: { timeoutMs: 300 },
     },
     {
       history: async () => new Promise(() => undefined),
@@ -257,7 +265,7 @@ test("buildBrief returns a degraded partial response before the caller timeout b
   );
 
   assert.equal(brief.partial, true);
-  assert.equal(brief.analyzerStatus.history, "degraded");
+  assert.equal(brief.analyzerStatus.history, "timeout");
   assert.deepEqual(brief.findings, {});
   assert.ok(Date.now() - started < 500);
   assert.ok(brief.elapsedMs < 500);

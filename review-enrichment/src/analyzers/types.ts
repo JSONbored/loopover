@@ -2,6 +2,7 @@ import type {
   AnalyzerDiagnostics,
   BriefFindings,
   EnrichRequest,
+  ReesProfileName,
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import type { AnalyzerRenderHelpers } from "../render-helpers.js";
@@ -39,6 +40,9 @@ export interface AnalyzerRunContext {
   timeoutMs: number;
   startedAtMs: number;
   deadlineMs: number;
+  requestDeadlineMs: number;
+  profile: ReesProfileName;
+  costClass: AnalyzerCostClass;
   diagnostics: AnalyzerDiagnostics;
   analysis: AnalysisContext;
 }

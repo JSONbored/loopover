@@ -66,7 +66,11 @@ declare global {
     OPENAI_AI_MODEL?: string;
     ANTHROPIC_AI_BASE_URL?: string;
     ANTHROPIC_AI_MODEL?: string;
-    AI_REVIEW_PLAN?: { reviewers: Array<{ model: string }>; combine: import("./services/ai-review").CombineStrategy; onMerge?: import("./services/ai-review").OnMerge | undefined };
+    AI_REVIEW_PLAN?: {
+      reviewers: Array<{ model: string }>;
+      combine: import("./services/ai-review").CombineStrategy;
+      onMerge?: import("./services/ai-review").OnMerge | undefined;
+    };
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
@@ -190,6 +194,17 @@ declare global {
      *  unreachable when off). Even when ON, retrieval is INERT until the self-host vector index is populated for
      *  the repo (a cold/missing index degrades to no context). */
     GITTENSORY_REVIEW_RAG?: string;
+    /** Review-enrichment service (REES): when truthy, the self-host review engine POSTs the PR diff/files to
+     *  REES and splices any public-safe brief into the AI reviewer prompt. Requires REES_URL and the repo in
+     *  GITTENSORY_REVIEW_REPOS. REES_ANALYZERS is an optional exact comma-list; unset/"all"/"*" lets REES run its
+     *  full registry. REES_FORWARD_GITHUB_TOKEN defaults off and must be explicitly enabled before
+     *  GitHub read tokens are included in the REES request. REES_SHARED_SECRET is a bearer secret and must never be committed. */
+    GITTENSORY_REVIEW_ENRICHMENT?: string;
+    REES_URL?: string;
+    REES_SHARED_SECRET?: string;
+    REES_TIMEOUT_MS?: string;
+    REES_ANALYZERS?: string;
+    REES_FORWARD_GITHUB_TOKEN?: string;
     /** Convergence flag: the deterministic content/registry SURFACE LANE drives the gate for registry-submission
      *  PRs (metagraphed surfaces[]/providers/candidates). Truthy ON *AND* the repo in GITTENSORY_REVIEW_REPOS —
      *  see review/content-lane-wire. Default OFF: unset/false takes no new branch, runs no fetch, and leaves the

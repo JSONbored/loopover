@@ -19,10 +19,21 @@ export interface EnrichRequest {
     deletions?: number;
   }>;
   diff?: string;
-  /** Short-lived broker token for OSV/license/history fetches. Never logged. */
+  /** Optional GitHub read token for GitHub-backed analyzers. Never logged. */
   githubToken?: string;
+  /** The PR's linked issue, resolved engine-side and passed in the envelope so the history analyzer can judge
+   *  whether the diff covers the issue's stated requirement without an extra fetch. Absent ⇒ alignment omitted. (#1478) */
+  linkedIssue?: EnrichLinkedIssue;
   budget?: { timeoutMs?: number; maxBriefChars?: number };
   analyzers?: string[];
+}
+
+/** A PR's linked issue, as carried in the request envelope. `title`/`body` hold the stated requirement the history
+ *  analyzer measures the diff against; only the number is mandatory. (#1478) */
+export interface EnrichLinkedIssue {
+  number: number;
+  title?: string;
+  body?: string;
 }
 
 /** A known vulnerability for a dependency version, sourced from OSV.dev. */
@@ -79,6 +90,22 @@ export interface InstallScriptFinding {
   version: string;
   hooks: string[];
   publishedAt: string | null;
+}
+
+/** A newly-added/upgraded npm package that is materially heavy but only directly imported/required a few times
+ *  in the changed lines. Size values are package-service bytes and are nullable when that service omits one. */
+export interface HeavyDependencyFinding {
+  ecosystem: "npm";
+  package: string;
+  version: string;
+  from: string | null;
+  direction: "add" | "change";
+  usageCount: number;
+  usageLocations: Array<{ file: string; line: number }>;
+  installSizeBytes: number | null;
+  bundleSizeBytes: number | null;
+  gzipSizeBytes: number | null;
+  dependencyCount: number | null;
 }
 
 /** A third-party GitHub Action referenced by a mutable tag/branch instead of a pinned commit SHA. */
@@ -162,6 +189,84 @@ export interface TyposquatFinding {
   reason: string;
 }
 
+/** A head commit whose signature/author provenance warrants scrutiny: an unsigned/unverified-signature head, an
+ *  author/committer login mismatch, or a never-before-seen committer in a repo that otherwise has verified history
+ *  — supply-chain/impersonation signals the no-checkout reviewer cannot derive. Surfaces ONLY the public GitHub
+ *  verification verdict (`verified` + `reason`) and boolean provenance flags — never tokens, emails, or identities
+ *  beyond the public commit author login GitHub already exposes. (#1517) */
+export interface CommitSignatureFinding {
+  /** GitHub's signature verification verdict for the head commit. */
+  verified: boolean;
+  /** GitHub's machine-readable verification reason (e.g. `unsigned`, `valid`, `unknown_key`). Public-safe string. */
+  reason: string;
+  /** The head commit author's GitHub login, when GitHub resolves one — public, already shown on the PR. */
+  authorLogin?: string;
+  /** True when the commit author login differs from the committer login (a potential authorship mismatch). */
+  authorMismatch: boolean;
+  /** True when the author login has no prior verified commit in a repo that otherwise carries verified history. */
+  newCommitter: boolean;
+}
+
+/** A static IaC / config misconfiguration introduced by the PR. Reports the location + rule only. */
+export interface IacMisconfigFinding {
+  file: string;
+  line: number;
+  kind:
+    | "wildcard-cors-credentials"
+    | "open-ingress"
+    | "public-bucket"
+    | "insecure-cookie"
+    | "tls-verification-disabled"
+    | "prod-debug"
+    | "hardcoded-service-url";
+}
+
+/** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
+ *  (PyPI sdist-only) — a hidden CI cold-start/install cost and a frequent cross-platform breakage source. Reports
+ *  package@version + the factual build property only. (#1512) */
+export interface NativeBuildFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  kind: "native-addon" | "sdist-only";
+  /** npm only: a prebuilt-binary path exists (node-pre-gyp/prebuild or a `binary` field), so a compile is the
+   *  fallback when no prebuilt matches the platform/ABI rather than guaranteed. */
+  prebuiltFallback?: boolean;
+  /** Short, public-safe explanation of the build cost. */
+  reason: string;
+}
+
+/** Public-safe historical context the no-checkout reviewer is blind to and the engine deliberately does NOT compute:
+ *  the author's track record IN THIS repo, past PRs that already changed the same files (with their outcome), and
+ *  whether the diff covers the linked issue's stated requirement. Surfaced as a single block (0-or-1 element array).
+ *  Carries ONLY public GitHub facts — never the engine's internal submitter reputation, trust, reward, or score. (#1478) */
+export interface HistoryFinding {
+  /** Author track record in THIS repo. `null` when no token/author was available to query the GitHub API. */
+  author: {
+    /** Prior PRs by this author in this repo; `null` when the GitHub Search lookup failed / was unavailable. */
+    priorMergedInRepo: number | null;
+    priorClosedInRepo: number | null;
+    accountAgeDays: number | null;
+    /** `true`/`false` ONLY when both PR-count lookups succeeded; `null` when a count was unavailable (never guessed). */
+    firstTimeContributor: boolean | null;
+  } | null;
+  /** Past PRs that already changed the same files, with the outcome of each and the overlapping paths. */
+  similarPastPrs: Array<{
+    number: number;
+    title: string;
+    outcome: "merged" | "reverted";
+    overlapPaths: string[];
+  }>;
+  /** Whether the diff covers the linked issue's stated requirement. `null` when the PR has no linked issue. */
+  linkedIssueAlignment: {
+    issue: number;
+    statedRequirement: string;
+    diffCovers: "full" | "partial" | "none";
+  } | null;
+  /** True when a GitHub sub-query was skipped (no token) or degraded (rate-limit/error), so the block is incomplete. */
+  partial: boolean;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -170,6 +275,7 @@ export interface BriefFindings {
   license?: LicenseFinding[];
   actionPin?: ActionPinFinding[];
   installScript?: InstallScriptFinding[];
+  heavyDependency?: HeavyDependencyFinding[];
   eol?: EolFinding[];
   redos?: RedosFinding[];
   provenance?: ProvenanceFinding[];
@@ -177,9 +283,28 @@ export interface BriefFindings {
   secretLog?: SecretLogFinding[];
   assetWeight?: AssetWeightFinding[];
   typosquat?: TyposquatFinding[];
+  commitSignature?: CommitSignatureFinding[];
+  iacMisconfig?: IacMisconfigFinding[];
+  nativeBuild?: NativeBuildFinding[];
+  history?: HistoryFinding[];
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";
+
+/** Internal, public-safe analyzer diagnostics for Sentry. Never attach request bodies, diffs, tokens, or raw prompts. */
+export interface AnalyzerDiagnostics {
+  phase?: string;
+  subcall?: string;
+  partialStatus?: "complete" | "partial";
+  partialReason?: string;
+  githubEndpointCategory?: string;
+  fileLookupCount?: number;
+  commitLookupCount?: number;
+  prLookupCount?: number;
+  skippedFileCount?: number;
+  capped?: boolean;
+  captureDegradation?: boolean;
+}
 
 /** Service → engine response. `promptSection` is spliced verbatim; `findings` is the structured backing data. */
 export interface ReviewBrief {

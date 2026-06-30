@@ -25,9 +25,9 @@ import type { FocusManifestReviewConfig, ReviewFieldKey } from "./focus-manifest
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
-import { projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
+import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
-import { isDuplicateClusterWinner } from "./duplicate-winner";
+import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
@@ -54,6 +54,7 @@ export type CollisionItem = {
   htmlUrl?: string | null | undefined;
   labels?: string[] | undefined;
   linkedIssues?: number[] | undefined;
+  linkedIssueClaimedAt?: string | null | undefined;
   changedFiles?: string[] | undefined;
   body?: string | null | undefined;
 };
@@ -1009,7 +1010,11 @@ export function buildConfigQuality(
   const lane = buildLaneAdvice(repo, fullName);
   const configuredLabels = Object.keys(repo?.registryConfig?.labelMultipliers ?? {}).sort();
   const observedLabels = [...new Set([...issues, ...pullRequests].flatMap((record) => record.labels))].sort();
-  const notObservedConfiguredLabels = configuredLabels.filter((label) => !observedLabels.includes(label));
+  // Configured keys are fnmatch GLOBS (scoring resolves them via labelMatchesPattern), so a key is "observed"
+  // when it matches any cached label — not only when the literal pattern string appears verbatim. The old
+  // exact `.includes` reported every wildcard key (e.g. `type:*`) as not-observed even when `type:bug-fix` is in
+  // active use, spuriously docking the config-quality score for glob-configured repos. (#1769)
+  const notObservedConfiguredLabels = configuredLabels.filter((pattern) => !observedLabels.some((label) => labelMatchesPattern(label, pattern)));
   const findings: SignalFinding[] = [];
   let score = 100;
 
@@ -1097,10 +1102,14 @@ export function buildLabelAudit(repo: RepositoryRecord | null, repoLabels: RepoL
     .map(([name, count]) => ({
       name,
       count,
-      configured: configuredLabels.includes(name),
+      // Match each observed label against the configured GLOB keys (fnmatch), the same way scoring resolves a
+      // label's multiplier — so a label covered by a `type:*` key is reported as configured, not unconfigured. (#1769)
+      configured: configuredLabels.some((pattern) => labelMatchesPattern(name, pattern)),
       existsOnGitHub: liveLabels.includes(name),
     }));
-  const missingConfiguredLabels = configuredLabels.filter((label) => !liveLabels.includes(label));
+  // A configured key is "missing" only when NO live GitHub label matches it as a glob; a `type:*` key backed by a
+  // real `type:bug` label is present, not missing (the old exact `.includes` flagged every wildcard key missing). (#1769)
+  const missingConfiguredLabels = configuredLabels.filter((pattern) => !liveLabels.some((live) => labelMatchesPattern(live, pattern)));
   // Require a real separator (`:`/`/`/`-`) OR end-of-string after the keyword so this flags prefix-style labels
   // (`status:ready`, `reward/x`) and bare keywords (`bot`) — but NOT mid-word matches like `bottleneck` (`bot`),
   // `scoreboard` (`score`), or `riskier` (`risk`). The old optional+unanchored `[:/-]?` over-matched those.
@@ -4066,6 +4075,7 @@ type PublicSafeCollapsibleArgs = {
   preflight: PreflightResult;
   queueHealth: QueueHealth;
   review?: FocusManifestReviewConfig | undefined;
+  duplicateWinnerEnabled?: boolean | undefined;
 };
 
 /** "Signal definitions" body — a static legend for the readiness signals. No inputs. */
@@ -4090,8 +4100,12 @@ function reviewContextBody(args: PublicSafeCollapsibleArgs): string[] {
     profile: args.profile,
   });
   const confirmedMiner = isOfficialContributorDetection(args.detection);
-  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
-  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
+  const relatedWork = buildDuplicateWinnerRelatedWorkView({
+    pr: args.pr,
+    collisions: args.collisions,
+    preflightCollisions: args.preflight.collisions,
+    duplicateWinnerEnabled: args.duplicateWinnerEnabled,
+  });
   return [
     `- Author: \`${sanitizePanelText(args.pr.authorLogin ?? "unknown")}\``,
     `- Role context: ${sanitizePanelText(roleContext.role)}${roleContext.maintainerLane ? " (maintainer lane)" : ""}`,
@@ -4099,10 +4113,7 @@ function reviewContextBody(args: PublicSafeCollapsibleArgs): string[] {
     `- Lane context: ${sanitizePanelText(buildLaneAdvice(args.repo, args.pr.repoFullName).summary)}`,
     `- Public profile languages: ${args.profile.github.topLanguages.length > 0 ? sanitizePanelText(args.profile.github.topLanguages.join(", ")) : "not available"}`,
     ...(confirmedMiner ? [`- Official Gittensor activity: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s).`] : ["- Contributor context: Public profile only; not a blocker."]),
-    ...relatedWorkDetails(args.pr, scopedOverlapClusters),
-    // `prCollisionClusters` is referenced only to keep this body's derivation identical to the panel's
-    // (the panel computes both cluster sets); the overlap detail uses the scoped set.
-    ...(prCollisionClusters.length === 0 ? [] : []),
+    ...relatedWorkDetails(args.pr, relatedWork.scopedOverlapClusters),
   ];
 }
 
@@ -4135,12 +4146,18 @@ function publicSafeNextSteps(args: PublicSafeCollapsibleArgs): string[] {
     issues: [],
     profile: args.profile,
   });
+  const relatedWork = buildDuplicateWinnerRelatedWorkView({
+    pr: args.pr,
+    collisions: args.collisions,
+    preflightCollisions: args.preflight.collisions,
+    duplicateWinnerEnabled: args.duplicateWinnerEnabled,
+  });
   const readiness = buildPublicReadinessScore({
     pr: args.pr,
     preflight: args.preflight,
     queueHealth: args.queueHealth,
-    linkedDuplicatePrs: linkedIssueDuplicatePullRequests(args.pr, pullRequestSpecificCollisionClusters(args.collisions, args.pr)),
-    scopedOverlapCount: unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions).length,
+    linkedDuplicatePrs: relatedWork.visibleLinkedDuplicatePrs,
+    scopedOverlapCount: relatedWork.scopedOverlapClusters.length,
   });
   const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
   return [
@@ -4178,20 +4195,26 @@ export function buildPublicPrIntelligenceComment(args: {
   review?: FocusManifestReviewConfig | undefined;
   /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
   aiReview?: { notes: string } | undefined;
-  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest open
-   *  sibling number among `linkedDuplicatePrs`), the hard-duplicate panel block is suppressed so the winner's
-   *  panel does not show a blocking duplicate. Default/false ⇒ byte-identical to today. */
+  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the earliest observed linked-issue
+   *  claimant among `linkedDuplicatePrs`, the hard-duplicate panel block is suppressed so the winner's panel
+   *  does not show a blocking duplicate. Default/false ⇒ byte-identical to today. */
   duplicateWinnerEnabled?: boolean | undefined;
 }): string {
   const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
-  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
-  const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
-  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
+  const relatedWork = buildDuplicateWinnerRelatedWorkView({
+    pr: args.pr,
+    collisions: args.collisions,
+    preflightCollisions: args.preflight.collisions,
+    duplicateWinnerEnabled: args.duplicateWinnerEnabled,
+  });
+  const linkedDuplicatePrs = relatedWork.linkedDuplicatePrItems.map((item) => item.number);
+  const visibleLinkedDuplicatePrs = relatedWork.visibleLinkedDuplicatePrs;
+  const scopedOverlapClusters = relatedWork.scopedOverlapClusters;
   const scopedOverlapCount = scopedOverlapClusters.length;
-  const hasRelatedWork = linkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
-  const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
+  const hasRelatedWork = visibleLinkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
+  const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs: visibleLinkedDuplicatePrs, scopedOverlapCount });
   const linkedIssueResult = linkedIssuePanelResult(args.pr);
-  const relatedWorkResult = relatedWorkPanelResult(linkedDuplicatePrs, scopedOverlapCount);
+  const relatedWorkResult = relatedWorkPanelResult(visibleLinkedDuplicatePrs, scopedOverlapCount);
   const roleContext = buildRoleContext({
     login: args.pr.authorLogin ?? args.profile.login,
     repo: args.repo,
@@ -4209,13 +4232,13 @@ export function buildPublicPrIntelligenceComment(args: {
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
-  // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the cluster winner (the
-  // lowest open sibling number), do NOT hard-block it as a duplicate — only the losers block. `linkedDuplicatePrs`
-  // is open-only (collision clusters exclude closed PRs). Flag-OFF (default) short-circuits ⇒ byte-identical.
+  // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
+  // linked-issue claimant, do NOT hard-block it as a duplicate — only the losers block. Sparse legacy rows fall
+  // back to PR-number election so migrated clusters do not all stay blocked.
   const hardDuplicateBlock =
     args.settings.duplicatePrGateMode === "block" &&
     linkedDuplicatePrs.length > 0 &&
-    !(args.duplicateWinnerEnabled && isDuplicateClusterWinner(args.pr.number, linkedDuplicatePrs));
+    visibleLinkedDuplicatePrs.length > 0;
   const fallbackGateConclusion = !gateEnabled
     ? "success"
     : !args.repo
@@ -4265,8 +4288,8 @@ export function buildPublicPrIntelligenceComment(args: {
     ? args.gate?.summary ?? (gateConclusion === "action_required" ? "Gittensory cannot evaluate the repo state closely enough for the enabled gate." : "A repo-configured hard blocker was found.")
     : gateHeld
       ? args.gate?.summary ?? "Gittensory is holding this PR for maintainer review."
-    : linkedDuplicatePrs.length > 0
-      ? `Same-issue duplicate risk found against ${formatPrRefs(linkedDuplicatePrs)}. Maintainers should resolve the overlap before review continues.`
+    : visibleLinkedDuplicatePrs.length > 0
+      ? `Same-issue duplicate risk found against ${formatPrRefs(visibleLinkedDuplicatePrs)}. Maintainers should resolve the overlap before review continues.`
       : hasRelatedWork
         ? "Scoped related-work signals were found for this PR. They are advisory unless the gate reports a blocker."
     : genericOssMode
@@ -4429,26 +4452,32 @@ export function buildPublicPrPanelSignalRows(args: {
   preflight: PreflightResult;
   settings: RepositorySettings;
   gate?: PublicPrPanelGateEvaluation | undefined;
-  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest open
-   *  sibling number among `linkedDuplicatePrs`), the hard-duplicate block is suppressed. Default/false ⇒
-   *  byte-identical to today. Matches `buildPublicPrIntelligenceComment` so both panels agree. */
+  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the earliest observed linked-issue
+   *  claimant among `linkedDuplicatePrs`, the hard-duplicate block is suppressed. Default/false ⇒ byte-identical
+   *  to today. Matches `buildPublicPrIntelligenceComment` so both panels agree. */
   duplicateWinnerEnabled?: boolean | undefined;
 }): { rows: PublicPrPanelSignalRow[]; readinessTotal: number } {
-  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
-  const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
-  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
+  const relatedWork = buildDuplicateWinnerRelatedWorkView({
+    pr: args.pr,
+    collisions: args.collisions,
+    preflightCollisions: args.preflight.collisions,
+    duplicateWinnerEnabled: args.duplicateWinnerEnabled,
+  });
+  const linkedDuplicatePrs = relatedWork.linkedDuplicatePrItems.map((item) => item.number);
+  const visibleLinkedDuplicatePrs = relatedWork.visibleLinkedDuplicatePrs;
+  const scopedOverlapClusters = relatedWork.scopedOverlapClusters;
   const scopedOverlapCount = scopedOverlapClusters.length;
-  const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
+  const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs: visibleLinkedDuplicatePrs, scopedOverlapCount });
   const linkedIssueResult = linkedIssuePanelResult(args.pr);
-  const relatedWorkResult = relatedWorkPanelResult(linkedDuplicatePrs, scopedOverlapCount);
+  const relatedWorkResult = relatedWorkPanelResult(visibleLinkedDuplicatePrs, scopedOverlapCount);
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
-  // Duplicate-winner adjudication (#dup-winner): suppress the winner's hard-duplicate block (see the comment
-  // builder). `linkedDuplicatePrs` is open-only; flag-OFF (default) short-circuits ⇒ byte-identical to today.
+  // Duplicate-winner adjudication (#dup-winner): suppress the earliest known claimant's hard-duplicate block
+  // (see the comment builder). Sparse legacy rows fall back to PR-number election; flag-OFF keeps legacy behavior.
   const hardDuplicateBlock =
     args.settings.duplicatePrGateMode === "block" &&
     linkedDuplicatePrs.length > 0 &&
-    !(args.duplicateWinnerEnabled && isDuplicateClusterWinner(args.pr.number, linkedDuplicatePrs));
+    visibleLinkedDuplicatePrs.length > 0;
   const fallbackGateConclusion = !gateEnabled ? "success" : !args.repo ? "neutral" : hardLinkedIssueBlock || hardDuplicateBlock ? "failure" : "success";
   const gateConclusion = args.gate?.conclusion ?? fallbackGateConclusion;
   const confirmedMiner = isOfficialContributorDetection(args.detection);
@@ -4487,16 +4516,76 @@ export function unionScopedOverlapClusters(
   return [...new Map([...prCollisionClusters, ...preflightCollisions].map((cluster) => [cluster.id, cluster])).values()];
 }
 
-function linkedIssueDuplicatePullRequests(pr: PullRequestRecord, clusters: CollisionCluster[]): number[] {
+export function buildDuplicateWinnerRelatedWorkView(args: {
+  pr: PullRequestRecord;
+  collisions: CollisionReport;
+  preflightCollisions: CollisionCluster[];
+  duplicateWinnerEnabled?: boolean | undefined;
+}): {
+  linkedDuplicatePrItems: CollisionItem[];
+  visibleLinkedDuplicatePrs: number[];
+  scopedOverlapClusters: CollisionCluster[];
+  isDuplicateWinner: boolean;
+} {
+  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
+  const linkedDuplicatePrItems = linkedIssueDuplicatePullRequestItems(args.pr, prCollisionClusters);
+  const linkedDuplicatePrs = linkedDuplicatePrItems.map((item) => item.number);
+  const isDuplicateWinner =
+    Boolean(args.duplicateWinnerEnabled) &&
+    isDuplicateClusterWinnerByClaim(args.pr, linkedDuplicatePrItems);
+  const scopedOverlapClusters = visibleScopedOverlapClustersForDuplicateWinner(
+    args.pr,
+    unionScopedOverlapClusters(args.collisions, args.pr, args.preflightCollisions),
+    isDuplicateWinner,
+  );
+  return {
+    linkedDuplicatePrItems,
+    visibleLinkedDuplicatePrs: isDuplicateWinner ? [] : linkedDuplicatePrs,
+    scopedOverlapClusters,
+    isDuplicateWinner,
+  };
+}
+
+function visibleScopedOverlapClustersForDuplicateWinner(
+  pr: PullRequestRecord,
+  clusters: CollisionCluster[],
+  suppressSameIssueDuplicates: boolean,
+): CollisionCluster[] {
+  if (!suppressSameIssueDuplicates) return clusters;
+  return clusters.flatMap((cluster) => {
+    if (!isSameLinkedIssueOnlyCluster(cluster)) return [cluster];
+    const items = cluster.items.filter((item) => !isSameLinkedIssueDuplicateItem(pr, item));
+    return hasVisibleRelatedWorkItem(pr, items) ? [{ ...cluster, items }] : [];
+  });
+}
+
+function isSameLinkedIssueOnlyCluster(cluster: CollisionCluster): boolean {
+  return /^Open PR work references issue #\d+\.$/.test(cluster.reason) || /^Items reference the same linked issue #\d+\.$/.test(cluster.reason);
+}
+
+function isSameLinkedIssueDuplicateItem(pr: PullRequestRecord, item: CollisionItem): boolean {
+  if (item.type !== "pull_request" || item.number === pr.number) return false;
+  const linkedIssues = new Set(pr.linkedIssues);
+  return (item.linkedIssues ?? []).some((issue) => linkedIssues.has(issue));
+}
+
+function hasVisibleRelatedWorkItem(pr: PullRequestRecord, items: CollisionItem[]): boolean {
+  return items.some((item) => {
+    if (item.type === "issue") return false;
+    return !(item.type === "pull_request" && item.number === pr.number);
+  });
+}
+
+function linkedIssueDuplicatePullRequestItems(pr: PullRequestRecord, clusters: CollisionCluster[]): CollisionItem[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
   const duplicates = clusters.flatMap((cluster) =>
     cluster.items.flatMap((item) => {
       if (item.type !== "pull_request" || item.number === pr.number) return [];
-      return (item.linkedIssues ?? []).some((issue) => linkedIssues.has(issue)) ? [item.number] : [];
+      return (item.linkedIssues ?? []).some((issue) => linkedIssues.has(issue)) ? [item] : [];
     }),
   );
-  return [...new Set(duplicates)].sort((left, right) => left - right);
+  return [...new Map(duplicates.map((item) => [item.number, item])).values()].sort((left, right) => left.number - right.number);
 }
 
 function linkedIssuePanelResult(pr: PullRequestRecord): { result: string; evidence: string; action: string } {
@@ -5026,6 +5115,7 @@ function prItem(pr: PullRequestRecord): CollisionItem {
     htmlUrl: pr.htmlUrl,
     labels: pr.labels,
     linkedIssues: pr.linkedIssues,
+    linkedIssueClaimedAt: pr.linkedIssueClaimedAt,
     body: pr.body,
   };
 }

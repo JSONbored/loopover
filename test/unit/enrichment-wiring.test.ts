@@ -74,22 +74,39 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
+      GITHUB_PUBLIC_TOKEN: "public-read-token",
     });
     // The REES vars are self-host runtime env (not declared on the Worker Env type) — set them as the self-host does.
     Object.assign(env, {
       GITTENSORY_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
+      REES_FORWARD_GITHUB_TOKEN: "true",
+      REES_ANALYZERS: "secret,actionPin,redos",
     });
     await seedRepoFile(env, "acme/widgets");
-    let reesUrl = "";
-    let reesAuth: string | null = null;
+    const reesRequest: {
+      url?: string;
+      auth?: string | null;
+      body?: {
+        analyzers?: string[];
+        baseSha?: string | null;
+        author?: string;
+        githubToken?: string;
+      };
+    } = {};
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (url, init) => {
         if (String(url).includes("/v1/enrich")) {
-          reesUrl = String(url);
-          reesAuth = new Headers(init?.headers).get("authorization");
+          reesRequest.url = String(url);
+          reesRequest.auth = new Headers(init?.headers).get("authorization");
+          reesRequest.body = JSON.parse(String(init?.body ?? "{}")) as {
+            analyzers?: string[];
+            baseSha?: string | null;
+            author?: string;
+            githubToken?: string;
+          };
           return new Response(
             JSON.stringify({
               promptSection: "## EXTERNAL REVIEW BRIEF\n- CVE-1 in lodash",
@@ -108,14 +125,23 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
           number: 7,
           title: "Add a feature",
           body: "Implements the thing.",
+          baseSha: "base7",
         },
         author: "alice",
         confirmedContributor: true,
         advisory: adv("acme/widgets"),
       });
       // The enrichment build branch executed: the REES was POSTed at /v1/enrich with the shared-secret bearer.
-      expect(reesUrl).toBe("https://rees.example/v1/enrich");
-      expect(reesAuth).toBe("Bearer sek");
+      expect(reesRequest.url).toBe("https://rees.example/v1/enrich");
+      expect(reesRequest.auth).toBe("Bearer sek");
+      expect(reesRequest.body?.analyzers).toEqual([
+        "secret",
+        "actionPin",
+        "redos",
+      ]);
+      expect(reesRequest.body?.baseSha).toBe("base7");
+      expect(reesRequest.body?.author).toBe("alice");
+      expect(reesRequest.body?.githubToken).toBe("public-read-token");
       // The brief's content flows into the user prompt, but the system prompt carries our FIXED
       // enrichment suffix — the REES-supplied systemSuffix is untrusted and is never spliced in.
       expect(seenUser[0] ?? "").toContain("## EXTERNAL REVIEW BRIEF");
@@ -152,6 +178,53 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
         advisory: adv("acme/off"),
       });
       expect(reesCalled).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not forward a GitHub token unless REES_FORWARD_GITHUB_TOKEN is true", async () => {
+    const run = vi.fn(async () => ({ response: notesJson }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      GITHUB_PUBLIC_TOKEN: "public-read-token",
+    });
+    Object.assign(env, {
+      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      REES_URL: "https://rees.example",
+      REES_SHARED_SECRET: "sek",
+      REES_ANALYZERS: "codeowners,assetWeight",
+    });
+    await seedRepoFile(env, "acme/widgets");
+    let reesBody: { author?: string; githubToken?: string } | undefined;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url, init) => {
+        if (String(url).includes("/v1/enrich")) {
+          reesBody = JSON.parse(String(init?.body ?? "{}")) as {
+            author?: string;
+            githubToken?: string;
+          };
+          return new Response(JSON.stringify({ promptSection: "brief" }), {
+            status: 200,
+          });
+        }
+        return new Response("nope", { status: 404 });
+      });
+    try {
+      await runAiReviewForAdvisory(env, {
+        settings: { aiReviewMode: "advisory" } as RepositorySettings,
+        repoFullName: "acme/widgets",
+        pr: { number: 7, title: "t", body: "b" },
+        author: "alice",
+        confirmedContributor: true,
+        advisory: adv("acme/widgets"),
+      });
+      expect(reesBody?.author).toBe("alice");
+      expect(reesBody?.githubToken).toBeUndefined();
     } finally {
       fetchSpy.mockRestore();
     }

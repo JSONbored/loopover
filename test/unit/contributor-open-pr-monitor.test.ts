@@ -184,27 +184,38 @@ describe("contributor open PR monitor", () => {
     expect(monitor.guidance.length).toBeGreaterThan(0);
   });
 
-  it("groups case-variant repoFullName for one repo into a single open-PR set", async () => {
+  it("loads signals and files with each PR casing in a case-variant repo group", async () => {
     const env = createTestEnv();
     vi.spyOn(repositories, "listRepositories").mockResolvedValue([
       { fullName: "entrius/allways-ui", owner: "entrius", name: "allways-ui", isInstalled: true, isRegistered: true, isPrivate: false },
     ] as Awaited<ReturnType<typeof repositories.listRepositories>>);
-    // The same repo arrives under two casings — these must be one group, not two.
-    vi.spyOn(repositories, "listContributorPullRequests").mockResolvedValue([
+    const pullRequests = [
       pr({ number: 30, repoFullName: "entrius/allways-ui" }),
       pr({ number: 31, repoFullName: "Entrius/Allways-UI" }),
-    ]);
-    const listPrSpy = vi.spyOn(repositories, "listPullRequests").mockResolvedValue([pr({ number: 30 }), pr({ number: 31 })]);
-    vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([]);
+    ];
+    vi.spyOn(repositories, "listContributorPullRequests").mockResolvedValue(pullRequests);
+    vi.spyOn(repositories, "listPullRequestReviews").mockImplementation(async (_env, repo, pullNumber) =>
+      repo === pullRequests.find((entry) => entry.number === pullNumber)?.repoFullName ? [{ ...approvedReview(pullNumber), repoFullName: repo }] : [],
+    );
     vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
-    vi.spyOn(repositories, "listPullRequestFiles").mockResolvedValue([]);
+    const fileSpy = vi.spyOn(repositories, "listPullRequestFiles").mockImplementation(async (_env, repo, pullNumber) =>
+      repo === pullRequests.find((entry) => entry.number === pullNumber)?.repoFullName
+        ? [
+            { repoFullName: repo, pullNumber, path: `src/${pullNumber}.ts`, additions: 1, deletions: 0, changes: 1, status: "modified", payload: {} },
+            { repoFullName: repo, pullNumber, path: `src/${pullNumber}.test.ts`, additions: 1, deletions: 0, changes: 1, status: "added", payload: {} },
+          ]
+        : [],
+    );
 
     const monitor = await buildContributorOpenPrMonitor(env, "miner-a");
     expect(monitor.openPrCount).toBe(2);
-    // One merged group → the case-sensitive per-repo query runs only against a real repo casing, never the
-    // case-variant. Before the fix the two casings split into two groups and queried both.
-    expect(listPrSpy).toHaveBeenCalledWith(env, "entrius/allways-ui");
-    expect(listPrSpy).not.toHaveBeenCalledWith(env, "Entrius/Allways-UI");
+    expect(monitor.pullRequests.map((entry) => [entry.number, entry.classification])).toEqual([
+      [30, "approved"],
+      [31, "approved"],
+    ]);
+    expect(monitor.pendingScenarios[0]?.detection.pendingMergedPrCount).toBe(2);
+    expect(fileSpy).toHaveBeenCalledWith(env, "entrius/allways-ui", 30);
+    expect(fileSpy).toHaveBeenCalledWith(env, "Entrius/Allways-UI", 31);
   });
 
   it("keeps public monitor output free of forbidden private language", async () => {

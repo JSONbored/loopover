@@ -16,6 +16,12 @@ import { scanPatch, scanSecrets } from "../dist/analyzers/secret-scan.js";
 import { scanLicenses } from "../dist/analyzers/license-check.js";
 import { scanInstallScripts } from "../dist/analyzers/install-scripts.js";
 import {
+  countPackagePatchUsages,
+  isHeavyPackageWeight,
+  queryPackageWeight,
+  scanHeavyDependencies,
+} from "../dist/analyzers/heavy-dependency.js";
+import {
   scanWorkflowPins,
   scanActionPins,
 } from "../dist/analyzers/actions-pin.js";
@@ -47,6 +53,11 @@ import {
   scanPatchForSecretLog,
   scanSecretLog,
 } from "../dist/analyzers/secret-log.js";
+import {
+  isRelevantConfigPath,
+  scanPatchForIacMisconfig,
+  scanIacMisconfig,
+} from "../dist/analyzers/iac-misconfig.js";
 
 const NOW = new Date("2026-06-26").getTime();
 const eolFetch =
@@ -945,6 +956,275 @@ test("buildBrief: install-script analyzer runs alongside the others", async () =
   }
 });
 
+test("countPackagePatchUsages: line-cites import, require, dynamic import, and subpath usage", () => {
+  const usage = countPackagePatchUsages(
+    [
+      {
+        path: "src/app.ts",
+        patch: [
+          "@@ -10,0 +10,4 @@",
+          '+import get from "lodash/get";',
+          '+const fp = require("lodash/fp");',
+          '+const x = await import("lodash");',
+          '+import other from "left-pad";',
+        ].join("\n"),
+      },
+    ],
+    "lodash",
+  );
+
+  assert.equal(usage.usageCount, 3);
+  assert.deepEqual(usage.usageLocations, [
+    { file: "src/app.ts", line: 10 },
+    { file: "src/app.ts", line: 11 },
+  ]);
+});
+
+test("countPackagePatchUsages: matches scoped package subpaths and ignores malformed scoped imports", () => {
+  const usage = countPackagePatchUsages(
+    [
+      {
+        path: "src/scoped.ts",
+        patch: [
+          "@@ -20,0 +20,3 @@",
+          '+import thing from "@scope/heavy/subpath";',
+          '+import bad from "@scope";',
+          '+import other from "@scope/other";',
+        ].join("\n"),
+      },
+    ],
+    "@scope/heavy",
+  );
+
+  assert.equal(usage.usageCount, 1);
+  assert.deepEqual(usage.usageLocations, [{ file: "src/scoped.ts", line: 20 }]);
+});
+
+test("queryPackageWeight: maps bundlephobia size fields and degrades on non-ok", async () => {
+  const weight = await queryPackageWeight("lodash", "4.17.21", async () => ({
+    ok: true,
+    json: async () => ({
+      installSize: 1_400_000,
+      size: 72_000,
+      gzip: 25_500,
+      dependencyCount: 1,
+    }),
+  }));
+
+  assert.deepEqual(weight, {
+    installSizeBytes: 1_400_000,
+    bundleSizeBytes: 72_000,
+    gzipSizeBytes: 25_500,
+    dependencyCount: 1,
+  });
+  assert.equal(
+    await queryPackageWeight("x", "1.0.0", async () => ({
+      ok: false,
+      json: async () => ({}),
+    })),
+    null,
+  );
+});
+
+test("isHeavyPackageWeight: flags install, bundle, or gzip threshold hits", () => {
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: 500_000,
+      bundleSizeBytes: null,
+      gzipSizeBytes: null,
+      dependencyCount: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: null,
+      bundleSizeBytes: 80_000,
+      gzipSizeBytes: null,
+      dependencyCount: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: null,
+      bundleSizeBytes: null,
+      gzipSizeBytes: 25_000,
+      dependencyCount: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({
+      installSizeBytes: 100_000,
+      bundleSizeBytes: 10_000,
+      gzipSizeBytes: 2_000,
+      dependencyCount: 0,
+    }),
+    false,
+  );
+});
+
+test("scanHeavyDependencies: flags heavy npm deps used trivially and skips non-trivial usage", async () => {
+  const controller = new AbortController();
+  const findings = await scanHeavyDependencies(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          patch: [
+            '+    "lodash": "4.17.21",',
+            '+    "tiny": "1.0.0",',
+            '+    "many": "2.0.0",',
+          ].join("\n"),
+        },
+        {
+          path: "src/app.ts",
+          patch: [
+            "@@ -1,0 +1,6 @@",
+            '+import get from "lodash/get";',
+            '+import tiny from "tiny";',
+            '+import one from "many/one";',
+            '+import two from "many/two";',
+            '+import three from "many/three";',
+          ].join("\n"),
+        },
+      ],
+    },
+    async (url, init) => {
+      assert.ok(init?.signal instanceof AbortSignal);
+      const u = String(url);
+      if (u.includes("tiny"))
+        return { ok: true, json: async () => ({ installSize: 10_000 }) };
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 72_000,
+          gzip: 25_500,
+          dependencyCount: 1,
+        }),
+      };
+    },
+    { signal: controller.signal },
+  );
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "lodash");
+  assert.equal(findings[0].usageCount, 1);
+  assert.deepEqual(findings[0].usageLocations, [
+    { file: "src/app.ts", line: 1 },
+  ]);
+});
+
+test("scanHeavyDependencies: lookup budget ignores unused dependency changes", async () => {
+  const unusedDeps = Array.from(
+    { length: 20 },
+    (_, i) => `+    "unused-${i}": "1.0.0",`,
+  );
+  let lookups = 0;
+  const findings = await scanHeavyDependencies(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        {
+          path: "package.json",
+          patch: [...unusedDeps, '+    "late-heavy": "1.0.0",'].join("\n"),
+        },
+        {
+          path: "src/app.ts",
+          patch: '@@ -1,0 +1,1 @@\n+import heavy from "late-heavy";',
+        },
+      ],
+    },
+    async (url) => {
+      lookups += 1;
+      assert.match(String(url), /late-heavy%401\.0\.0/);
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 90_000,
+          gzip: 30_000,
+          dependencyCount: 3,
+        }),
+      };
+    },
+  );
+
+  assert.equal(lookups, 1);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "late-heavy");
+});
+
+test("renderBrief: renders the heavy-dependency block with size evidence", () => {
+  const r = renderBrief({
+    heavyDependency: [
+      {
+        ecosystem: "npm",
+        package: "lodash",
+        version: "4.17.21",
+        from: null,
+        direction: "add",
+        usageCount: 1,
+        usageLocations: [{ file: "src/app.ts", line: 1 }],
+        installSizeBytes: 1_400_000,
+        bundleSizeBytes: 72_000,
+        gzipSizeBytes: 25_500,
+        dependencyCount: 1,
+      },
+    ],
+  });
+
+  assert.match(r.promptSection, /Heavy dependencies used trivially/);
+  assert.match(r.promptSection, /`lodash@4\.17\.21` \(npm\)/);
+  assert.match(r.promptSection, /`src\/app\.ts:1`/);
+  assert.match(r.promptSection, /install 1\.4 MB, bundle 72 KB, gzip 26 KB/);
+});
+
+test("buildBrief: heavy-dependency analyzer runs alongside the others", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("bundlephobia"))
+      return {
+        ok: true,
+        json: async () => ({
+          installSize: 1_400_000,
+          size: 72_000,
+          gzip: 25_500,
+          dependencyCount: 1,
+        }),
+      };
+    if (u.includes("deps.dev"))
+      return { ok: true, json: async () => ({ licenses: ["MIT"] }) };
+    if (u.includes("attestations"))
+      return { ok: true, json: async () => ({ attestations: [{}] }) };
+    return { ok: true, json: async () => ({ vulns: [], versions: {} }) };
+  };
+  try {
+    const brief = await buildBrief({
+      repoFullName: "o/r",
+      prNumber: 1,
+      files: [
+        { path: "package.json", patch: '+    "lodash": "4.17.21",' },
+        {
+          path: "src/app.ts",
+          patch: '@@ -1,0 +1,1 @@\n+import get from "lodash/get";',
+        },
+      ],
+    });
+    assert.equal(brief.analyzerStatus.heavyDependency, "ok");
+    assert.equal(brief.findings.heavyDependency.length, 1);
+    assert.match(brief.promptSection, /Heavy dependencies used trivially/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("scanWorkflowPins: flags unpinned third-party actions, skips official + SHA-pinned + local, line-cited", () => {
   const patch = [
     "@@ -1,1 +1,5 @@",
@@ -1025,6 +1305,179 @@ test("buildBrief: action-pin analyzer runs (pure, no network)", async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("isRelevantConfigPath: matches infra/config targets and skips code files", () => {
+  assert.equal(isRelevantConfigPath("infra/main.tf"), true);
+  assert.equal(isRelevantConfigPath("deploy/values.prod.yaml"), true);
+  assert.equal(isRelevantConfigPath("Dockerfile"), true);
+  assert.equal(isRelevantConfigPath("src/server.ts"), false);
+});
+
+test("scanPatchForIacMisconfig: flags paired and direct config risks with line citations", () => {
+  const patch = [
+    "@@ -1,0 +1,13 @@",
+    "+cors:",
+    "+  origin: '*'",
+    "+  credentials: true",
+    "+security_group_rules:",
+    '+  cidr_blocks = ["0.0.0.0/0"]',
+    '+bucket_acl = "public-read"',
+    "+cookie:",
+    "+  sameSite: none",
+    "+  secure: false",
+    "+production:",
+    "+  debug: true",
+    '+  API_URL: "https://internal.example.com"',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanPatchForIacMisconfig("infra/stack.yaml", patch).map(
+      ({ line, kind }) => ({ line, kind }),
+    ),
+    [
+      { line: 3, kind: "wildcard-cors-credentials" },
+      { line: 5, kind: "open-ingress" },
+      { line: 6, kind: "public-bucket" },
+      { line: 9, kind: "insecure-cookie" },
+      { line: 11, kind: "prod-debug" },
+      { line: 12, kind: "hardcoded-service-url" },
+    ],
+  );
+});
+
+test("scanPatchForIacMisconfig: flags TLS verification disabled and handles debug before prod", () => {
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    "+DEBUG=true",
+    "+rejectUnauthorized: false",
+    "+verify=False",
+    "+NODE_ENV=production",
+  ].join("\n");
+
+  assert.deepEqual(
+    scanPatchForIacMisconfig("Dockerfile", patch).map(({ line, kind }) => ({
+      line,
+      kind,
+    })),
+    [
+      { line: 2, kind: "tls-verification-disabled" },
+      { line: 3, kind: "tls-verification-disabled" },
+      { line: 4, kind: "prod-debug" },
+    ],
+  );
+});
+
+test("scanPatchForIacMisconfig: flags public bucket settings with quoted JSON keys", () => {
+  const patch = [
+    "@@ -1,0 +1,4 @@",
+    '+  "public_access": true,',
+    '+  "public": true,',
+    '+  "block_public_acls": false,',
+    '+  "bucket_acl": "public-read"',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanPatchForIacMisconfig("infra/bucket.json", patch).map(
+      ({ line, kind }) => ({ line, kind }),
+    ),
+    [
+      { line: 1, kind: "public-bucket" },
+      { line: 2, kind: "public-bucket" },
+      { line: 3, kind: "public-bucket" },
+      { line: 4, kind: "public-bucket" },
+    ],
+  );
+});
+
+test("scanPatchForIacMisconfig: respects the finding budget", () => {
+  const findings = scanPatchForIacMisconfig(
+    "infra/main.tf",
+    [
+      "@@ -1,0 +1,3 @@",
+      '+cidr_blocks = ["0.0.0.0/0"]',
+      "+rejectUnauthorized: false",
+      '+BASE_URL = "https://svc.example.com"',
+    ].join("\n"),
+    { maxFindings: 2 },
+  );
+
+  assert.deepEqual(
+    findings.map(({ line, kind }) => ({ line, kind })),
+    [
+      { line: 1, kind: "open-ingress" },
+      { line: 2, kind: "tls-verification-disabled" },
+    ],
+  );
+});
+
+test("scanIacMisconfig: scans only matching config files and forwards abort", async () => {
+  const findings = await scanIacMisconfig({
+    repoFullName: "o/r",
+    prNumber: 1,
+    files: [
+      {
+        path: "infra/main.tf",
+        patch: '@@ -1,0 +1,1 @@\n+cidr_blocks = ["0.0.0.0/0"]',
+      },
+      {
+        path: "src/index.ts",
+        patch: '@@ -1,0 +1,1 @@\n+const baseUrl = "https://svc.example.com";',
+      },
+    ],
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "open-ingress");
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () =>
+      scanIacMisconfig(
+        {
+          repoFullName: "o/r",
+          prNumber: 1,
+          files: [
+            {
+              path: "infra/main.tf",
+              patch: '@@ -1,0 +1,1 @@\n+cidr_blocks = ["0.0.0.0/0"]',
+            },
+          ],
+        },
+        controller.signal,
+      ),
+    /analyzer_aborted/,
+  );
+});
+
+test("renderBrief: renders the IaC misconfig block", () => {
+  const r = renderBrief({
+    iacMisconfig: [
+      { file: "infra/main.tf", line: 14, kind: "open-ingress" },
+      { file: "deploy/values.yaml", line: 9, kind: "insecure-cookie" },
+    ],
+  });
+  assert.match(r.promptSection, /IaC \/ config misconfigurations/);
+  assert.match(r.promptSection, /`infra\/main\.tf:14`/);
+  assert.match(r.promptSection, /world-accessible/);
+  assert.match(r.promptSection, /SameSite=None/);
+});
+
+test("buildBrief: iac-misconfig analyzer runs and renders findings", async () => {
+  const brief = await buildBrief({
+    repoFullName: "o/r",
+    prNumber: 1,
+    analyzers: ["iacMisconfig"],
+    files: [
+      {
+        path: "infra/main.tf",
+        patch: '@@ -1,0 +1,1 @@\n+cidr_blocks = ["0.0.0.0/0"]',
+      },
+    ],
+  });
+  assert.equal(brief.analyzerStatus.iacMisconfig, "ok");
+  assert.equal(brief.findings.iacMisconfig.length, 1);
+  assert.match(brief.promptSection, /IaC \/ config misconfigurations/);
 });
 
 test("hasCatastrophicBacktracking: flags nested unbounded quantifiers, not linear/bounded shapes", () => {
@@ -2186,14 +2639,16 @@ test("buildBrief: provenance analyzer runs, flags binary file and missing npm at
     const brief = await buildBrief({
       repoFullName: "o/r",
       prNumber: 1,
+      analyzers: ["provenance"],
       files: [
         { path: "native/tool.exe", status: "added" },
         { path: "package.json", patch: '+    "no-attest": "1.0.0",' },
       ],
     });
     assert.equal(brief.analyzerStatus.provenance, "ok");
-    assert.ok(brief.findings.provenance.length >= 2);
+    assert.equal(brief.findings.provenance.length, 2);
     assert.match(brief.promptSection, /provenance/);
+    assert.match(brief.promptSection, /Binary files committed/);
   } finally {
     globalThis.fetch = realFetch;
   }

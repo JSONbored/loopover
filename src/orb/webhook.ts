@@ -10,6 +10,7 @@
 import type { Context } from "hono";
 import type { GitHubWebhookPayload } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
+import { parsePositiveInt } from "../utils/json";
 import { upsertOrbInstallation } from "./installations";
 import { recordOrbPrOutcome } from "./outcomes";
 import { forwardOrbEvent, storeRelayFailure } from "./relay";
@@ -138,13 +139,6 @@ async function recordOrbWebhookEvent(
   )
     .bind(e.deliveryId, e.eventName, e.action, e.installationId, e.repositoryFullName, e.payloadHash, e.status)
     .run();
-}
-
-function parsePositiveInt(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
 }
 
 async function readBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {

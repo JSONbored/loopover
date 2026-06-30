@@ -11,6 +11,7 @@ import {
   buildContributorScoringProfile,
   buildContributorStrategy,
   buildBurdenForecast,
+  buildDuplicateWinnerRelatedWorkView,
   buildIssueQualityReport,
   buildLabelAudit,
   buildLaneAdvice,
@@ -773,9 +774,19 @@ describe("signal coverage edge cases", () => {
   it("#dup-winner: panel hard-duplicate block is suppressed for the winner, kept for the loser, byte-identical when flag OFF", () => {
     const directRepo = repo("owner/dupwin");
     const dupIssue = issue(directRepo.fullName, 42, "Cache invalidation race");
-    // Two open PRs on the same issue: 70 is the lowest open number (the winner), 88 is the loser.
-    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", { authorLogin: "miner", linkedIssues: [42], body: "Fixes #42" });
-    const loserPr = pr(directRepo.fullName, 88, "Also fixes the cache race", { authorLogin: "other", linkedIssues: [42], body: "Fixes #42" });
+    // Two open PRs on the same issue: 70 claimed the issue first (the winner), 88 is the later claimant.
+    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", {
+      authorLogin: "miner",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
+      body: "Fixes #42",
+    });
+    const loserPr = pr(directRepo.fullName, 88, "Also fixes the cache race", {
+      authorLogin: "other",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z",
+      body: "Fixes #42",
+    });
     const collisions = buildCollisionReport(directRepo.fullName, [dupIssue], [winnerPr, loserPr]);
     const queueHealth = buildQueueHealth(directRepo, [dupIssue], [winnerPr, loserPr], collisions);
     const blockSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const };
@@ -811,10 +822,101 @@ describe("signal coverage edge cases", () => {
     const winnerComment = buildPublicPrIntelligenceComment({ ...baseFor(winnerPr), duplicateWinnerEnabled: true });
     const loserComment = buildPublicPrIntelligenceComment({ ...baseFor(loserPr), duplicateWinnerEnabled: true });
     expect(winnerComment).not.toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(winnerComment).not.toContain("#88");
+    expect(buildPublicPrPanelSignalRows({ ...baseFor(winnerPr), duplicateWinnerEnabled: true }).rows.find((r) => r.key === "relatedWork")!.cells[1]).toContain("No active overlap");
     expect(loserComment).toContain("Gittensory Orb Review Agent is blocking merge");
     // Flag OFF on the winner is byte-identical to a blocking panel (today's behavior).
     const offWinnerComment = buildPublicPrIntelligenceComment(baseFor(winnerPr));
     expect(offWinnerComment).toContain("Gittensory Orb Review Agent is blocking merge");
+  });
+
+  it("#dup-winner: hides duplicate-only same-issue evidence while preserving mixed scoped overlap context", () => {
+    const directRepo = repo("owner/dupmixed");
+    const duplicateIssue = issue(directRepo.fullName, 42, "Cache invalidation race");
+    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", {
+      authorLogin: "miner",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
+      body: "Fixes #42",
+    });
+    const siblingPr = pr(directRepo.fullName, 88, "Also fixes the cache race", {
+      authorLogin: "other",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z",
+      body: "Fixes #42",
+    });
+    const collisions: CollisionReport = {
+      repoFullName: directRepo.fullName,
+      generatedAt: "2026-06-29T10:02:00.000Z",
+      summary: { clusterCount: 2, highRiskCount: 1, itemsReviewed: 3 },
+      clusters: [
+        {
+          id: "issue-42",
+          risk: "high",
+          reason: "Open PR work references issue #42.",
+          items: [
+            { type: "issue", number: duplicateIssue.number, title: duplicateIssue.title, linkedIssues: [42] },
+            { type: "pull_request", number: winnerPr.number, title: winnerPr.title, linkedIssues: [42], linkedIssueClaimedAt: winnerPr.linkedIssueClaimedAt },
+            { type: "pull_request", number: siblingPr.number, title: siblingPr.title, linkedIssues: [42], linkedIssueClaimedAt: siblingPr.linkedIssueClaimedAt },
+          ],
+        },
+        {
+          id: "mixed-scope",
+          risk: "medium",
+          reason: "Titles/paths share 3 meaningful terms.",
+          items: [
+            { type: "pull_request", number: winnerPr.number, title: winnerPr.title, linkedIssues: [42], linkedIssueClaimedAt: winnerPr.linkedIssueClaimedAt },
+            { type: "pull_request", number: siblingPr.number, title: siblingPr.title, linkedIssues: [42], linkedIssueClaimedAt: siblingPr.linkedIssueClaimedAt },
+          ],
+        },
+      ],
+    };
+    const baseArgs = {
+      repo: directRepo,
+      pr: winnerPr,
+      profile: buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []),
+      detection: { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 },
+      queueHealth: buildQueueHealth(directRepo, [duplicateIssue], [winnerPr, siblingPr], collisions),
+      collisions,
+      preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: winnerPr.title, body: winnerPr.body ?? undefined, linkedIssues: winnerPr.linkedIssues }, directRepo, [duplicateIssue], [winnerPr, siblingPr]),
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const },
+      duplicateWinnerEnabled: true,
+    };
+    const retainedSameIssueView = buildDuplicateWinnerRelatedWorkView({
+      pr: winnerPr,
+      collisions: {
+        ...collisions,
+        summary: { ...collisions.summary, clusterCount: collisions.summary.clusterCount + 1, itemsReviewed: collisions.summary.itemsReviewed + 1 },
+        clusters: [
+          ...collisions.clusters,
+          {
+            id: "issue-42-with-sparse-peer",
+            risk: "medium",
+            reason: "Items reference the same linked issue #42.",
+            items: [
+              { type: "pull_request", number: winnerPr.number, title: winnerPr.title, linkedIssues: [42], linkedIssueClaimedAt: winnerPr.linkedIssueClaimedAt },
+              { type: "pull_request", number: siblingPr.number, title: siblingPr.title, linkedIssues: [42], linkedIssueClaimedAt: siblingPr.linkedIssueClaimedAt },
+              { type: "pull_request", number: 99, title: "Nearby cache cleanup" },
+            ],
+          },
+        ],
+      },
+      preflightCollisions: [],
+      duplicateWinnerEnabled: true,
+    });
+    const retainedSparseCluster = retainedSameIssueView.scopedOverlapClusters.find((cluster) => cluster.id === "issue-42-with-sparse-peer");
+
+    const relatedRow = buildPublicPrPanelSignalRows(baseArgs).rows.find((r) => r.key === "relatedWork")!;
+    const comment = buildPublicPrIntelligenceComment(baseArgs);
+
+    expect(retainedSameIssueView.visibleLinkedDuplicatePrs).toEqual([]);
+    expect(retainedSparseCluster?.items.map((item) => (item.type === "pull_request" ? item.number : item.type))).toEqual([winnerPr.number, 99]);
+    expect(relatedRow.cells[1]).toContain("1 scoped overlap");
+    expect(relatedRow.cells[1]).not.toContain("#88");
+    expect(comment).toContain("Titles/paths share 3 meaningful terms");
+    expect(comment).toContain("PR #88");
+    expect(comment).not.toContain("Same-issue duplicate risk found against #88");
+    expect(comment).not.toContain("Open PR work references issue #42.");
   });
 
   it("renders opt-in gate panel states for collision and repo evaluation blockers", () => {
@@ -1673,6 +1775,36 @@ describe("signal coverage edge cases", () => {
 
     expect(audit.observedLabels.slice(0, 2).map((label) => label.name)).toEqual(["bug", "feature"]);
     expect(audit.findings.map((finding) => finding.code)).toContain("suspicious_configured_labels");
+  });
+
+  it("matches configured glob label keys against observed and live labels, not literal strings (#1769)", () => {
+    // `type:*` is a wildcard multiplier key; `area:*` matches nothing in use; `bug` is a plain literal key.
+    const globRepo = repo("owner/glob-labels", { labelMultipliers: { "type:*": 1.3, "area:*": 1.2, bug: 1.1 }, trustedLabelPipeline: true });
+
+    // buildConfigQuality: a glob key with a matching cached label is "observed" (not flagged); one with no match is.
+    const quality = buildConfigQuality(
+      globRepo,
+      [issue(globRepo.fullName, 1, "Crash", { labels: ["type:bug-fix"] })],
+      [pr(globRepo.fullName, 2, "Fix", { labels: ["bug"] })],
+      globRepo.fullName,
+    );
+    expect(quality.notObservedConfiguredLabels).toEqual(["area:*"]);
+    expect(quality.notObservedConfiguredLabels).not.toContain("type:*");
+    expect(quality.findings.map((finding) => finding.code)).toContain("configured_labels_not_observed");
+
+    // buildLabelAudit: live `type:bug` satisfies the `type:*` glob; `area:*` has no live label → it alone is missing.
+    const liveLabels: RepoLabelRecord[] = [
+      { repoFullName: globRepo.fullName, name: "type:bug", isConfigured: true, observedCount: 2, payload: {}, lastSeenAt: "2026-05-25T00:00:00.000Z" },
+      { repoFullName: globRepo.fullName, name: "bug", isConfigured: true, observedCount: 1, payload: {}, lastSeenAt: "2026-05-25T00:00:00.000Z" },
+      { repoFullName: globRepo.fullName, name: "wontfix", isConfigured: false, observedCount: 1, payload: {}, lastSeenAt: "2026-05-25T00:00:00.000Z" },
+    ];
+    const audit = buildLabelAudit(globRepo, liveLabels, [], [], globRepo.fullName);
+    expect(audit.missingConfiguredLabels).toEqual(["area:*"]);
+    expect(audit.missingConfiguredLabels).not.toContain("type:*");
+    // `type:bug` is covered by the `type:*` glob (configured: true); the unrelated `wontfix` label is not (false).
+    const byName = new Map(audit.observedLabels.map((label) => [label.name, label.configured]));
+    expect(byName.get("type:bug")).toBe(true);
+    expect(byName.get("wontfix")).toBe(false);
   });
 
   it("awards the personalFit language bonus only on a real repo-language match", () => {

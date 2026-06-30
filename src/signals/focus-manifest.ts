@@ -2,6 +2,7 @@ import { parse as parseYaml } from "yaml";
 import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
+import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
 export type FocusManifestLinkedIssuePolicy = "required" | "preferred" | "optional";
@@ -284,15 +285,20 @@ const EMPTY_MANIFEST: FocusManifest = {
   warnings: [],
 };
 
+// This surface's economic/identity term vocabulary is intentionally richer than the canonical
+// PUBLIC_UNSAFE_TERMS (extra phrases like "public score estimate"), so it stays a local literal. The local
+// filesystem paths, however, compose from the canonical PUBLIC_LOCAL_PATH_INLINE in redaction.ts (which also
+// covers `/var/`, previously missed here, plus `/root/` and the forward-slash Windows form `C:/Users/`) so this
+// guard cannot drift from the canonical boundary on a leaking root.
+const FOCUS_MANIFEST_TERMS = /\b(reward\w*|score\w*|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|farming|payouts?|rankings?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|private[-\s]?reviewability|reviewability(?:[-\s]?internals?)?|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)s?|estimated[-\s]?scores?|score[-\s]?(?:estimate|prediction|preview)s?)\b/i;
+const FOCUS_MANIFEST_LOCAL_PATH_PATTERN = new RegExp(PUBLIC_LOCAL_PATH_INLINE, "i");
+
 /**
  * Public-safe redaction guard shared with the local-branch packet renderer. Public manifest
  * text must not leak reward, wallet/key, ranking, or local filesystem path material.
  */
 export function isFocusManifestPublicSafe(text: string): boolean {
-  // Local filesystem path alternatives mirror the canonical PUBLIC_UNSAFE_PATTERN in redaction.ts: include
-  // `/root/` (container/CI home) and accept the forward-slash Windows form (`C:/Users/`), not only the
-  // backslash one — otherwise a `/root/...` or `C:/Users/...` path leaks through this public-safe guard.
-  return !/\b(reward\w*|score\w*|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|farming|payouts?|rankings?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|private[-\s]?reviewability|reviewability(?:[-\s]?internals?)?|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)s?|estimated[-\s]?scores?|score[-\s]?(?:estimate|prediction|preview)s?)\b|\/Users\/|\/home\/|\/root\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i.test(text);
+  return !FOCUS_MANIFEST_TERMS.test(text) && !FOCUS_MANIFEST_LOCAL_PATH_PATTERN.test(text);
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {

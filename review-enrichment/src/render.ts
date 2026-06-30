@@ -1,43 +1,23 @@
 // Render structured findings into the public-safe prompt block the engine splices into the review. Kept separate
 // so each analyzer's rendering is one function and the brief stays deterministic + cap-bounded.
 import type { BriefFindings } from "./types.js";
+import { getAnalyzerDescriptor } from "./analyzers/registry.js";
+import type { AnalyzerName } from "./analyzers/types.js";
+import {
+  bytesLabel,
+  formatBytes,
+  promptText,
+  RENDER_HELPERS,
+  safeCodeSpan,
+  SEVERITY_RANK,
+} from "./render-helpers.js";
 
-const CODE_SPAN_UNSAFE = /[`\u0000-\u001f\u007f]/g;
-
-const CODE_SPAN_REPLACEMENTS: Record<string, string> = {
-  "`": "\u02cb",
-  "\n": "\u2424",
-  "\r": "\u240d",
-  "\t": "\u2409",
-};
-
-function safeCodeSpan(value: string): string {
-  return `\`${value.replace(
-    CODE_SPAN_UNSAFE,
-    (char) => CODE_SPAN_REPLACEMENTS[char] ?? "\ufffd",
-  )}\``;
-}
-
-const SEVERITY_RANK: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-  unknown: 4,
-};
-
-function promptText(value: string): string {
-  return value
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/([*_{}[\]()#+.!|-])/g, "\\$1");
-}
-
-function formatBytes(n: number): string {
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MiB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(0)} KiB`;
-  return `${n} B`;
+function renderDescriptorSection(name: AnalyzerName, result: unknown): string[] {
+  if (!result) return [];
+  const renderer = getAnalyzerDescriptor(name)?.render as
+    | ((value: never, helpers: typeof RENDER_HELPERS) => string[])
+    | undefined;
+  return renderer ? renderer(result as never, RENDER_HELPERS) : [];
 }
 
 /** Build the `promptSection` (verbatim splice) + a one-line `systemSuffix` from the findings. Empty when nothing found. */
@@ -47,25 +27,7 @@ export function renderBrief(
 ): { promptSection: string; systemSuffix: string } {
   const lines: string[] = [];
 
-  const deps = findings.dependency ?? [];
-  if (deps.length) {
-    lines.push("### Dependency vulnerabilities (OSV.dev)");
-    const flat = deps
-      .flatMap((dep) => dep.cves.map((cve) => ({ dep, cve })))
-      .sort(
-        (a, b) =>
-          (SEVERITY_RANK[a.cve.severity] ?? 4) -
-          (SEVERITY_RANK[b.cve.severity] ?? 4),
-      );
-    for (const { dep, cve } of flat) {
-      const fix = cve.fixedIn
-        ? ` — fixed in ${safeCodeSpan(cve.fixedIn)}`
-        : "";
-      lines.push(
-        `- ${safeCodeSpan(`${dep.package}@${dep.to}`)} (${dep.ecosystem}): **${cve.severity}** ${safeCodeSpan(cve.id)} — ${promptText(cve.summary)}${fix}`,
-      );
-    }
-  }
+  lines.push(...renderDescriptorSection("dependency", findings.dependency));
 
   const lockfileDrift = findings.lockfileDrift ?? [];
   if (lockfileDrift.length) {
@@ -88,17 +50,7 @@ export function renderBrief(
     }
   }
 
-  const secrets = findings.secret ?? [];
-  if (secrets.length) {
-    lines.push(
-      "### Potential leaked secrets (value-redacted — verify + rotate)",
-    );
-    for (const secret of secrets) {
-      lines.push(
-        `- ${safeCodeSpan(`${secret.file}:${secret.line}`)} — ${secret.kind} (${secret.confidence} confidence)`,
-      );
-    }
-  }
+  lines.push(...renderDescriptorSection("secret", findings.secret));
 
   const licenses = findings.license ?? [];
   if (licenses.length) {
@@ -121,6 +73,26 @@ export function renderBrief(
         : "";
       lines.push(
         `- \`${promptText(dep.package)}@${promptText(dep.version)}\` runs ${promptText(dep.hooks.join("/"))} on install${when}`,
+      );
+    }
+  }
+
+  const heavyDependencies = findings.heavyDependency ?? [];
+  if (heavyDependencies.length) {
+    lines.push(
+      "### Heavy dependencies used trivially (consider native code or a small helper)",
+    );
+    for (const dep of heavyDependencies) {
+      const locations = dep.usageLocations
+        .map((location) => safeCodeSpan(`${location.file}:${location.line}`))
+        .join(", ");
+      const dependencyCount =
+        dep.dependencyCount === null
+          ? "unknown deps"
+          : `${dep.dependencyCount} deps`;
+      const sizes = `install ${bytesLabel(dep.installSizeBytes)}, bundle ${bytesLabel(dep.bundleSizeBytes)}, gzip ${bytesLabel(dep.gzipSizeBytes)}`;
+      lines.push(
+        `- ${safeCodeSpan(`${dep.package}@${dep.version}`)} (${dep.ecosystem}): used ${dep.usageCount} time${dep.usageCount === 1 ? "" : "s"} at ${locations}; ${sizes}, ${dependencyCount}`,
       );
     }
   }
@@ -251,6 +223,120 @@ export function renderBrief(
       lines.push(
         `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${detail}`,
       );
+    }
+  }
+
+  const commitSignatures = findings.commitSignature ?? [];
+  if (commitSignatures.length) {
+    lines.push(
+      "### Head-commit signature / author provenance (verify before merging)",
+    );
+    for (const item of commitSignatures) {
+      const status = item.verified
+        ? "signature **verified**"
+        : "signature **unverified**";
+      const flags: string[] = [];
+      if (item.authorMismatch)
+        flags.push("commit author and committer logins differ");
+      if (item.newCommitter)
+        flags.push(
+          "author has no verified history in a repo that otherwise carries verified commits",
+        );
+      const who = item.authorLogin
+        ? ` by ${safeCodeSpan(item.authorLogin)}`
+        : "";
+      const detail = flags.length ? ` — ${flags.join("; ")}` : "";
+      lines.push(
+        `- head commit${who}: ${status} (${safeCodeSpan(item.reason)})${detail}`,
+      );
+    }
+  }
+
+  const iacMisconfigs = findings.iacMisconfig ?? [];
+  if (iacMisconfigs.length) {
+    const explain = (
+      kind: (typeof iacMisconfigs)[number]["kind"],
+    ): string => {
+      switch (kind) {
+        case "wildcard-cors-credentials":
+          return "allows wildcard CORS together with credentials; browsers can send authenticated cross-origin requests";
+        case "open-ingress":
+          return "opens ingress to `0.0.0.0/0`; verify the service is not world-accessible";
+        case "public-bucket":
+          return "makes object storage public; verify this bucket is intended for anonymous access";
+        case "insecure-cookie":
+          return "sets `SameSite=None` without `Secure=true`; browsers can send the cookie cross-site over insecure transport";
+        case "tls-verification-disabled":
+          return "disables TLS certificate verification; this permits man-in-the-middle interception";
+        case "prod-debug":
+          return "enables debug mode in production configuration; this can expose internals or sensitive data";
+        case "hardcoded-service-url":
+          return "hardcodes a service URL in config; prefer environment-specific injection or secrets-managed config";
+      }
+    };
+
+    lines.push("### IaC / config misconfigurations (review before merging)");
+    for (const item of iacMisconfigs) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+      );
+    }
+  }
+
+  const nativeBuilds = findings.nativeBuild ?? [];
+  if (nativeBuilds.length) {
+    lines.push(
+      "### Native-build / install-cost dependencies (CI cold-start + cross-platform build cost)",
+    );
+    for (const item of nativeBuilds) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): ${item.reason}`,
+      );
+    }
+  }
+
+  const history = findings.history ?? [];
+  for (const item of history) {
+    const entries: string[] = [];
+    if (item.author) {
+      const a = item.author;
+      let record: string;
+      if (
+        a.firstTimeContributor === null ||
+        a.priorMergedInRepo === null ||
+        a.priorClosedInRepo === null
+      ) {
+        record = "prior PR history unavailable";
+      } else if (a.firstTimeContributor) {
+        record = "first-time contributor to this repo";
+      } else {
+        record = `${a.priorMergedInRepo} merged / ${a.priorClosedInRepo} closed prior PRs here`;
+      }
+      const age =
+        a.accountAgeDays === null
+          ? "account age unknown"
+          : `account ${a.accountAgeDays}d old`;
+      entries.push(`- Author: ${record}; ${age}`);
+    }
+    for (const pr of item.similarPastPrs) {
+      const paths = pr.overlapPaths.length
+        ? pr.overlapPaths.map((p) => safeCodeSpan(p)).join(", ")
+        : "unknown paths";
+      entries.push(
+        `- This area was previously changed in #${pr.number} (${pr.outcome}): ${promptText(pr.title)} — overlaps ${paths}`,
+      );
+    }
+    if (item.linkedIssueAlignment) {
+      const al = item.linkedIssueAlignment;
+      entries.push(
+        `- Linked issue #${al.issue} coverage: **${al.diffCovers}** — ${promptText(al.statedRequirement)}`,
+      );
+    }
+    if (entries.length) {
+      lines.push("### Author & change-area history (public GitHub record)");
+      if (item.partial)
+        lines.push("- _(partial — some history could not be retrieved)_");
+      lines.push(...entries);
     }
   }
 

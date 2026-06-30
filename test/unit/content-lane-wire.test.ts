@@ -41,7 +41,7 @@ describe("surfaceVerdictToGate", () => {
     expect(evaluation.blockers).toHaveLength(1);
     expect(evaluation.blockers[0]?.severity).toBe("critical");
     expect(finding?.code).toBe("surface_lane_reject");
-    // Regression guard: a deterministic surface close must never be refutable by green CI.
+    // Regression guard: deterministic surface blockers remain outside AI-judgment telemetry.
     expect(AI_JUDGMENT_BLOCKER_CODES.has(evaluation.blockers[0]!.code)).toBe(false);
   });
 

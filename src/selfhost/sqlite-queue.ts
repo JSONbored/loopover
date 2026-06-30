@@ -6,6 +6,7 @@
 import type { SqliteDriver } from "./d1-adapter";
 import { logAudit, extractPayloadType } from "./audit";
 import { incr } from "./metrics";
+import { withOtelSpan } from "./otel";
 import { captureError } from "./sentry";
 import {
   consumingRetryDelayMs,
@@ -282,7 +283,12 @@ export function createSqliteQueue(
         return true;
       }
       try {
-        await consume(message);
+        await withOtelSpan(
+          "selfhost.queue.job",
+          { "job.type": message.type, "queue.backend": "sqlite", "job.attempt": job.attempts + 1 },
+          () => consume(message),
+          { parentTraceParent: message.type === "github-webhook" ? message.traceParent : undefined },
+        );
         driver.query(`DELETE FROM ${TABLE} WHERE id=?`, [job.id]);
         recordQueueMetric(driver, "gittensory_jobs_processed_total");
         logAudit({

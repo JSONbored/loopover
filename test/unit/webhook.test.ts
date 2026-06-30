@@ -3,6 +3,10 @@ import type { Context } from "hono";
 import { handleGitHubWebhook, handleOrbRelay } from "../../src/github/webhook";
 import { getWebhookEvent, recordWebhookEvent } from "../../src/db/repositories";
 import { relaySignature } from "../../src/orb/relay";
+import {
+  clearSelfHostRequestTraceParent,
+  setSelfHostRequestTraceParent,
+} from "../../src/selfhost/trace-context";
 import { createTestEnv } from "../helpers/d1";
 
 describe("github webhook body reader edge cases", () => {
@@ -214,6 +218,41 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "queued" });
     expect(webhookSends).toBe(1); // routed to the dedicated webhook lane
     expect(jobsSends).toBe(0); // never the shared maintenance queue
+  });
+
+  it("copies the internal self-host traceparent onto queued webhook jobs", async () => {
+    const env = createTestEnv();
+    const sent: import("../../src/types").JobMessage[] = [];
+    env.WEBHOOKS = { send: async (message: unknown) => void sent.push(message as import("../../src/types").JobMessage) } as unknown as Queue;
+    const rawBody = JSON.stringify({ action: "opened", repository: { full_name: "JSONbored/gittensory" }, installation: { id: 1 } });
+    const signature = await signWebhook(rawBody, env.GITHUB_WEBHOOK_SECRET);
+    const request = new Request("https://example.com/webhook", { method: "POST", body: rawBody });
+    const traceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
+    setSelfHostRequestTraceParent(request, traceParent);
+    const headers: Record<string, string> = {
+      "x-github-delivery": "traceparent-1",
+      "x-github-event": "pull_request",
+      "x-hub-signature-256": signature,
+    };
+    const context = {
+      req: {
+        raw: request,
+        header(name: string) {
+          return headers[name.toLowerCase()] ?? null;
+        },
+      },
+      env,
+      json(payload: unknown, status?: number) {
+        return Response.json(payload, status === undefined ? undefined : { status });
+      },
+    } as unknown as Context<{ Bindings: Env }>;
+
+    const response = await handleGitHubWebhook(context);
+    clearSelfHostRequestTraceParent(request);
+
+    expect(response.status).toBe(202);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: "github-webhook", traceParent });
   });
 
   it("drops self-authored app comment webhooks before they add queue pressure", async () => {

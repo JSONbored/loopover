@@ -571,7 +571,7 @@ describe("BYOK provider dispatch", () => {
     expect(run).not.toHaveBeenCalled(); // advisory mode + BYOK → no Workers AI call
   });
 
-  it("preserves public unstructured BYOK text as manual-review fallback diagnostics", async () => {
+  it("withholds unstructured BYOK text while recording diagnostics", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -600,9 +600,7 @@ describe("BYOK provider dispatch", () => {
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
     expect(result.status === "ok" && result.inconclusive).toBe(true);
-    expect(result.status === "ok" && result.advisoryNotes).toContain(
-      "queue cache branch",
-    );
+    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
     expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
       expect.objectContaining({
         status: "unparseable_output",
@@ -734,7 +732,7 @@ describe("BYOK provider dispatch", () => {
 });
 
 describe("Workers AI fallback + degraded output", () => {
-  it("tries the per-slot fallback model then preserves public fallback notes when every opinion is unparseable", async () => {
+  it("tries the per-slot fallback model then withholds unparseable output from public notes", async () => {
     const run = vi.fn(async (_model: string) => ({
       response: "this is not json at all",
     }));
@@ -745,7 +743,7 @@ describe("Workers AI fallback + degraded output", () => {
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     const result = await runGittensoryAiReview(env, baseInput);
-    expect(result.status === "ok" && result.advisoryNotes).toContain("this is not json at all");
+    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
     expect(result.status === "ok" && result.inconclusive).toBe(true);
     // primary 3× + fallback 3× retries, all unparseable.
     expect(run).toHaveBeenCalledTimes(6);
@@ -861,7 +859,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
     expect(seen).toEqual(["claude-code"]); // the decision reviewer ran once; the advisory came from BYOK (fetch)
   });
 
-  it("single + BYOK: drops unsafe provider fallback text but keeps public reviewer fallback text", async () => {
+  it("single + BYOK: withholds unsafe provider and reviewer fallback text", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -892,8 +890,21 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
     });
     if (result.status !== "ok") throw new Error("expected ok");
     expect(result.inconclusive).toBe(true);
-    expect(result.advisoryNotes).toContain("recommends manual review");
-    expect(result.advisoryNotes).not.toContain("wallet");
+    expect(result.advisoryNotes).toBeNull();
+    expect(result.reviewDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: "claude-3-5-sonnet-latest",
+          status: "unparseable_output",
+        }),
+        expect.objectContaining({
+          model: "claude-code",
+          status: "unparseable_output",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(result)).not.toContain("wallet secret");
+    expect(JSON.stringify(result)).not.toContain("recommends manual review");
   });
 
   it("explicit input.reviewers/combine/onMerge override the env plan", async () => {
@@ -1324,7 +1335,7 @@ describe("pure helpers", () => {
     const run = vi.fn(async () => ({ response: "not json at all" }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const result = await runWorkersOpinion(env, "primary-model", "", "sys", "user", 256);
-    expect(result).toEqual({ review: null, fallbackNote: "not json at all" });
+    expect(result).toEqual({ review: null });
     expect(
       logSpy.mock.calls
         .map((c) => c[0])

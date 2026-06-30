@@ -6,54 +6,53 @@ import type {
   ReviewBrief,
   BriefFindings,
   AnalyzerStatus,
+  AnalyzerDiagnostics,
 } from "./types.js";
-import { scanDependencies } from "./analyzers/dependency-scan.js";
-import { scanLockfileDrift } from "./analyzers/lockfile-drift.js";
-import { scanSecrets } from "./analyzers/secret-scan.js";
-import { scanLicenses } from "./analyzers/license-check.js";
-import { scanInstallScripts } from "./analyzers/install-scripts.js";
-import { scanActionPins } from "./analyzers/actions-pin.js";
-import { scanEol } from "./analyzers/eol-check.js";
-import { scanRedos } from "./analyzers/redos.js";
-import { scanProvenance } from "./analyzers/provenance.js";
-import { scanCodeowners } from "./analyzers/codeowners.js";
-import { scanSecretLog } from "./analyzers/secret-log.js";
-import { scanAssetWeight } from "./analyzers/asset-weight.js";
-import { scanTyposquat } from "./analyzers/typosquat.js";
+import type {
+  AnalyzerRegistry,
+  AnalyzerRunContext,
+} from "./analyzers/types.js";
+import { ANALYZERS } from "./analyzers/registry.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
 
-type AnalyzerFn = (req: EnrichRequest, signal: AbortSignal) => Promise<unknown>;
-type AnalyzerRegistry = Partial<Record<keyof BriefFindings, AnalyzerFn>>;
+const DEFAULT_ANALYZER_TIMEOUT_MS = 8000;
+const MIN_ANALYZER_TIMEOUT_MS = 1;
 
-// The analyzer registry. More land behind this same shape: license (#1475), secret (#1476), static (#1477), history (#1478).
-const ANALYZERS: Record<keyof BriefFindings, AnalyzerFn> = {
-  dependency: (req, signal) => scanDependencies(req, fetch, { signal }),
-  lockfileDrift: (req, signal) => scanLockfileDrift(req, fetch, { signal }),
-  secret: (req) => scanSecrets(req),
-  license: (req) => scanLicenses(req),
-  installScript: (req) => scanInstallScripts(req),
-  actionPin: (req) => scanActionPins(req),
-  eol: (req) => scanEol(req),
-  redos: (req) => scanRedos(req),
-  provenance: (req, signal) => scanProvenance(req, fetch, { signal }),
-  codeowners: (req, signal) => scanCodeowners(req, fetch, { signal }),
-  secretLog: (req, signal) => scanSecretLog(req, signal),
-  assetWeight: (req, signal) => scanAssetWeight(req, fetch, { signal }),
-  typosquat: (req, signal) => scanTyposquat(req, fetch, { signal }),
-};
+interface BuildBriefOptions {
+  requestId?: string;
+  traceId?: string;
+}
+
+function resolveAnalyzerTimeoutMs(value: number | undefined): number {
+  const parsed = Number(value ?? DEFAULT_ANALYZER_TIMEOUT_MS);
+  if (!Number.isFinite(parsed)) return DEFAULT_ANALYZER_TIMEOUT_MS;
+  return Math.max(MIN_ANALYZER_TIMEOUT_MS, Math.floor(parsed));
+}
 
 function runWithTimeout<T>(
-  run: (signal: AbortSignal) => Promise<T>,
+  run: (context: AnalyzerRunContext) => Promise<T>,
   ms: number,
+  diagnostics: AnalyzerDiagnostics,
 ): Promise<T> {
   const controller = new AbortController();
+  const startedAtMs = Date.now();
+  const context: AnalyzerRunContext = {
+    signal: controller.signal,
+    timeoutMs: ms,
+    startedAtMs,
+    deadlineMs: startedAtMs + ms,
+    diagnostics,
+  };
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      diagnostics.partialStatus = "partial";
+      diagnostics.partialReason ??= "analyzer_timeout";
+      diagnostics.captureDegradation = true;
       controller.abort();
       reject(new Error("analyzer_timeout"));
     }, ms);
-    run(controller.signal).then(
+    run(context).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -66,16 +65,64 @@ function runWithTimeout<T>(
   });
 }
 
+function resultIsPartial(result: unknown): boolean {
+  if (!Array.isArray(result)) return false;
+  return result.some(
+    (entry) =>
+      Boolean(entry) &&
+      typeof entry === "object" &&
+      (entry as { partial?: unknown }).partial === true,
+  );
+}
+
+function captureDegradation(
+  error: unknown,
+  input: {
+    analyzer: keyof BriefFindings;
+    requested: Array<keyof BriefFindings>;
+    req: EnrichRequest;
+    timeoutMs: number;
+    elapsedMs: number;
+    analyzerStatus: AnalyzerStatus;
+    diagnostics: AnalyzerDiagnostics;
+    options: BuildBriefOptions;
+  },
+): void {
+  captureAnalyzerDegradation(error, {
+    analyzer: input.analyzer,
+    requestedAnalyzers: input.requested,
+    repoFullName: input.req.repoFullName,
+    prNumber: input.req.prNumber,
+    headSha: input.req.headSha,
+    timeoutMs: input.timeoutMs,
+    elapsedMs: input.elapsedMs,
+    analyzerStatus: input.analyzerStatus,
+    partialStatus: input.diagnostics.partialStatus,
+    partialReason: input.diagnostics.partialReason,
+    phase: input.diagnostics.phase,
+    subcall: input.diagnostics.subcall,
+    fileLookupCount: input.diagnostics.fileLookupCount,
+    commitLookupCount: input.diagnostics.commitLookupCount,
+    prLookupCount: input.diagnostics.prLookupCount,
+    skippedFileCount: input.diagnostics.skippedFileCount,
+    githubEndpointCategory: input.diagnostics.githubEndpointCategory,
+    capped: input.diagnostics.capped,
+    requestId: input.options.requestId,
+    traceId: input.options.traceId,
+  });
+}
+
 export async function buildBrief(
   req: EnrichRequest,
   analyzers: AnalyzerRegistry = ANALYZERS,
+  options: BuildBriefOptions = {},
 ): Promise<ReviewBrief> {
   const start = Date.now();
   const all = Object.keys(analyzers) as Array<keyof BriefFindings>;
-  const requested = req.analyzers?.length
+  const requested = Array.isArray(req.analyzers)
     ? all.filter((name) => req.analyzers!.includes(name))
     : all;
-  const budgetMs = req.budget?.timeoutMs ?? 8000;
+  const budgetMs = resolveAnalyzerTimeoutMs(req.budget?.timeoutMs);
 
   const findings: BriefFindings = {};
   const analyzerStatus: Record<string, AnalyzerStatus> = {};
@@ -83,24 +130,53 @@ export async function buildBrief(
 
   await Promise.all(
     requested.map(async (name) => {
+      const analyzerStartedAt = Date.now();
+      const diagnostics: AnalyzerDiagnostics = {
+        partialStatus: "complete",
+      };
       try {
         const analyzer = analyzers[name];
         if (!analyzer) throw new Error("analyzer_unregistered");
         const result = await runWithTimeout(
-          (signal) => analyzer(req, signal),
+          (context) => analyzer(req, context),
           budgetMs,
+          diagnostics,
         );
         findings[name] = result as never;
-        analyzerStatus[name] = "ok";
+        if (resultIsPartial(result)) {
+          analyzerStatus[name] = "degraded";
+          partial = true;
+          diagnostics.partialStatus = "partial";
+          diagnostics.partialReason ??= "analyzer_partial";
+          if (diagnostics.captureDegradation) {
+            captureDegradation(new Error(diagnostics.partialReason), {
+              analyzer: name,
+              requested,
+              req,
+              timeoutMs: budgetMs,
+              elapsedMs: Date.now() - analyzerStartedAt,
+              analyzerStatus: "degraded",
+              diagnostics,
+              options,
+            });
+          }
+        } else {
+          analyzerStatus[name] = "ok";
+        }
       } catch (error) {
         analyzerStatus[name] = "degraded";
         partial = true;
-        captureAnalyzerDegradation(error, {
+        diagnostics.partialStatus = "partial";
+        diagnostics.partialReason ??= error instanceof Error ? error.message : "analyzer_error";
+        captureDegradation(error, {
           analyzer: name,
-          repoFullName: req.repoFullName,
-          prNumber: req.prNumber,
-          headSha: req.headSha,
+          requested,
+          req,
           timeoutMs: budgetMs,
+          elapsedMs: Date.now() - analyzerStartedAt,
+          analyzerStatus: "degraded",
+          diagnostics,
+          options,
         });
       }
     }),

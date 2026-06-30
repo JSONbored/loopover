@@ -59,6 +59,19 @@ import {
   installStructuredLogForwarding,
 } from "./selfhost/sentry";
 import {
+  currentOtelTraceParent,
+  initOpenTelemetry,
+  selfHostHttpRequestAttributes,
+  selfHostHttpResponseAttributes,
+  setCurrentOtelSpanAttributes,
+  shutdownOpenTelemetry,
+  withOtelSpan,
+} from "./selfhost/otel";
+import {
+  clearSelfHostRequestTraceParent,
+  setSelfHostRequestTraceParent,
+} from "./selfhost/trace-context";
+import {
   setLocalManifestReader,
   setLocalReviewContextReader,
 } from "./signals/focus-manifest-loader";
@@ -233,6 +246,10 @@ function buildSqliteBackend(
 
 async function main(): Promise<void> {
   loadFileSecrets();
+  /* v8 ignore start -- importing this entrypoint starts the Node server; init behavior is covered in selfhost/otel tests. */
+  if (await initOpenTelemetry(process.env))
+    console.log(JSON.stringify({ event: "selfhost_otel", traces: "otlp" }));
+  /* v8 ignore stop */
   // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
   // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
@@ -664,44 +681,56 @@ async function main(): Promise<void> {
             );
           }
         }
-        // Instrument real app traffic — status-class counter + latency histogram. (Infra endpoints
-        // /health /ready /metrics and the setup wizard already returned above and are not counted.)
-        const startedReq = Date.now();
-        const record = (status: number): void => {
-          incr("gittensory_http_requests_total", {
-            status: `${Math.floor(status / 100)}xx`,
-          });
-          observe(
-            "gittensory_http_request_duration_seconds",
-            (Date.now() - startedReq) / 1000,
-          );
-        };
-        // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.
-        // We mark only AFTER a successful response — failed/rejected webhooks must be retryable.
-        const isWebhook =
-          webhookCache &&
-          path === "/v1/github/webhook" &&
-          request.method === "POST";
-        const deliveryId = isWebhook
-          ? request.headers.get("x-github-delivery")
-          : null;
-        if (deliveryId) {
-          const seen = await webhookCache!.get(`delivery:${deliveryId}`);
-          if (seen) {
-            incr("gittensory_webhook_dedup_total");
-            record(204);
-            return new Response(null, { status: 204 });
-          }
-        }
-        const response = await worker.fetch(request, env, ctx);
-        if (deliveryId && response.ok) {
-          // Best-effort — never block the response on a cache write failure
-          void webhookCache!
-            .set(`delivery:${deliveryId}`, "1", 300)
-            .catch(() => undefined);
-        }
-        record(response.status);
-        return response;
+        return await withOtelSpan(
+          "selfhost.http.request",
+          selfHostHttpRequestAttributes(request, path),
+          async () => {
+            const traceParent = currentOtelTraceParent();
+            if (traceParent) setSelfHostRequestTraceParent(request, traceParent);
+            try {
+              // Instrument real app traffic — status-class counter + latency histogram. (Infra endpoints
+              // /health /ready /metrics and the setup wizard already returned above and are not counted.)
+              const startedReq = Date.now();
+              const finish = (response: Response): Response => {
+                incr("gittensory_http_requests_total", {
+                  status: `${Math.floor(response.status / 100)}xx`,
+                });
+                observe(
+                  "gittensory_http_request_duration_seconds",
+                  (Date.now() - startedReq) / 1000,
+                );
+                setCurrentOtelSpanAttributes(selfHostHttpResponseAttributes(response.status));
+                return response;
+              };
+              // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.
+              // We mark only AFTER a successful response — failed/rejected webhooks must be retryable.
+              const isWebhook =
+                webhookCache &&
+                path === "/v1/github/webhook" &&
+                request.method === "POST";
+              const deliveryId = isWebhook
+                ? request.headers.get("x-github-delivery")
+                : null;
+              if (deliveryId) {
+                const seen = await webhookCache!.get(`delivery:${deliveryId}`);
+                if (seen) {
+                  incr("gittensory_webhook_dedup_total");
+                  return finish(new Response(null, { status: 204 }));
+                }
+              }
+              const response = await worker.fetch(request, env, ctx);
+              if (deliveryId && response.ok) {
+                // Best-effort — never block the response on a cache write failure
+                void webhookCache!
+                  .set(`delivery:${deliveryId}`, "1", 300)
+                  .catch(() => undefined);
+              }
+              return finish(response);
+            } finally {
+              clearSelfHostRequestTraceParent(request);
+            }
+          },
+        );
       },
       port,
     },
@@ -816,6 +845,8 @@ async function main(): Promise<void> {
     clearInterval(cron);
     server.close();
     await backend.shutdown();
+    /* v8 ignore next -- graceful process signal path is not imported in unit tests; shutdown helper is covered. */
+    await shutdownOpenTelemetry();
     await flushSentry();
     process.exit(0);
   };
@@ -826,5 +857,6 @@ async function main(): Promise<void> {
 main().catch((error) => {
   captureError(error, { kind: "boot" });
   console.error(error);
-  void flushSentry().finally(() => process.exit(1));
+  /* v8 ignore next -- boot failure exits the process; shutdown helper is covered independently. */
+  void Promise.all([shutdownOpenTelemetry(), flushSentry()]).finally(() => process.exit(1));
 });

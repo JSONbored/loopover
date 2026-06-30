@@ -133,8 +133,9 @@ describe("advisory rules", () => {
       headSha: "abc123",
       labels: [],
       linkedIssues: [4],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
     };
-    const higherSibling: PullRequestRecord = { ...winner, number: 13, title: "Alternative registry sync" };
+    const higherSibling: PullRequestRecord = { ...winner, number: 13, title: "Alternative registry sync", linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" };
 
     const advisory = buildPullRequestAdvisory(repo, winner, { otherOpenPullRequests: [higherSibling], duplicateWinnerEnabled: true });
 
@@ -152,8 +153,9 @@ describe("advisory rules", () => {
       headSha: "abc123",
       labels: [],
       linkedIssues: [4],
+      linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z",
     };
-    const lowerSibling: PullRequestRecord = { ...loser, number: 12, title: "Add registry sync" };
+    const lowerSibling: PullRequestRecord = { ...loser, number: 12, title: "Add registry sync", linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z" };
 
     const advisory = buildPullRequestAdvisory(repo, loser, { otherOpenPullRequests: [lowerSibling], duplicateWinnerEnabled: true });
 
@@ -171,8 +173,9 @@ describe("advisory rules", () => {
       headSha: "abc123",
       labels: [],
       linkedIssues: [4],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
     };
-    const higherSibling: PullRequestRecord = { ...wouldBeWinner, number: 13, title: "Alternative registry sync" };
+    const higherSibling: PullRequestRecord = { ...wouldBeWinner, number: 13, title: "Alternative registry sync", linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" };
 
     const advisory = buildPullRequestAdvisory(repo, wouldBeWinner, { otherOpenPullRequests: [higherSibling], duplicateWinnerEnabled: false });
 
@@ -190,8 +193,9 @@ describe("advisory rules", () => {
       headSha: "abc123",
       labels: [],
       linkedIssues: [4],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
     };
-    const unrelated: PullRequestRecord = { ...lonePr, number: 13, title: "Unrelated change", linkedIssues: [99] };
+    const unrelated: PullRequestRecord = { ...lonePr, number: 13, title: "Unrelated change", linkedIssues: [99], linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z" };
 
     const advisory = buildPullRequestAdvisory(repo, lonePr, { otherOpenPullRequests: [unrelated], duplicateWinnerEnabled: true });
 
@@ -1078,7 +1082,7 @@ describe("firstAddedLineFromPatch", () => {
     });
   });
 
-describe("CI-refutation of the public comment gate (#ai-ci-refutation)", () => {
+describe("green-CI compatibility reconciliation of the public comment gate", () => {
   const finding = (code: string): import("../../src/types").AdvisoryFinding => ({ code, severity: "critical", title: `t:${code}`, detail: `d:${code}` });
   const failure = (codes: string[]): import("../../src/rules/advisory").GateCheckEvaluation => ({
     enabled: true,
@@ -1096,22 +1100,20 @@ describe("CI-refutation of the public comment gate (#ai-ci-refutation)", () => {
     expect(isAiJudgmentOnlyFailure(failure(["ai_consensus_defect", "duplicate_open_pr"]))).toBe(false);
     expect(isAiJudgmentOnlyFailure(failure(["slop_high"]))).toBe(false);
     expect(isAiJudgmentOnlyFailure(failure(["ai_review_inconclusive"]))).toBe(false);
-    // An empty blocker list is not a refutable AI-only failure.
+    // An empty blocker list is not an AI-only failure.
     expect(isAiJudgmentOnlyFailure({ ...failure([]), conclusion: "failure" })).toBe(false);
     // A non-failure conclusion is never AI-only-failure.
     expect(isAiJudgmentOnlyFailure({ ...failure(["ai_consensus_defect"]), conclusion: "success" })).toBe(false);
   });
 
-  it("enabled + green CI + AI-judgment-only failure → SUCCESS with cleared blockers (matches the merge disposition)", () => {
-    const out = reconcileGateEvaluationForGreenCi(failure(["ai_consensus_defect"]), "passed", true);
-    expect(out.conclusion).toBe("success");
-    expect(out.blockers).toEqual([]);
-    expect(out.title).toBe("Gittensory Orb Review Agent passed");
-    expect(out.summary).toContain("advisory, not blocking");
+  it("enabled + green CI + AI-judgment-only failure stays a failure", () => {
+    const fail = failure(["ai_consensus_defect"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "passed", true)).toBe(fail);
   });
 
-  it("enabled + green CI + split-only failure → SUCCESS too", () => {
-    expect(reconcileGateEvaluationForGreenCi(failure(["ai_review_split"]), "passed", true).conclusion).toBe("success");
+  it("enabled + green CI + split-only failure stays a failure too", () => {
+    const fail = failure(["ai_review_split"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "passed", true)).toBe(fail);
   });
 
   it("is GATED by `enabled` — enabled=false returns the failure UNCHANGED even on green CI", () => {

@@ -340,7 +340,7 @@ function computeScoreCore(
   const totalTokenScore =
     input.totalTokenScore === undefined ? nonNegative(derivedTotalTokenScore) : applyNonCodeCapToTotal(input.totalTokenScore, input, cappedNonCodeTokenScore);
   const sourceLines = Math.max(1, nonNegative(input.sourceLines ?? sourceTokenScore));
-  const fixedBaseScore = input.fixedBaseScore ?? config?.fixedBaseScore ?? undefined;
+  const fixedBaseScore = clampFixedBaseScore(input.fixedBaseScore ?? config?.fixedBaseScore);
   const rawDensity = sourceTokenScore / sourceLines;
   // Density branch (#812): upstream is on the saturation model, but `current_density_model` is still a
   // supported `activeModel` (types.ts union, the public OpenAPI schema, the DB parser, ~20 test fixtures, and
@@ -895,6 +895,16 @@ function selectLabelMultiplier(labels: string[], multipliers: Record<string, num
   return matched.length > 0 ? Math.max(...matched) : fallback || 1;
 }
 
+/** True when `label` matches the configured multiplier `pattern` under the SAME case-insensitive fnmatch glob
+ *  semantics scoring uses to resolve label multipliers (see {@link labelPatternToRegExp}). Exported so the
+ *  signals surfaces that audit configured label keys (config-quality, label-audit) match them as the GLOBS they
+ *  are: a `type:*` key must count `type:bug-fix` as observed/configured, not silently report it missing because
+ *  the literal pattern never appears verbatim on a real issue/PR. A literal key (no glob metacharacter) still
+ *  matches only its exact label, so existing configs behave identically. */
+export function labelMatchesPattern(label: string, pattern: string): boolean {
+  return labelPatternToRegExp(pattern.toLowerCase()).test(label.toLowerCase());
+}
+
 // Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
 // literal string: `fnmatch(label.lower(), pattern.lower())` in
 // gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or
@@ -1261,7 +1271,11 @@ export function calculateTimeDecay(prAgeHours: number, constants: Record<string,
 }
 
 function saturationScore(sourceTokenScore: number, totalTokenScore: number, constants: Record<string, number>): number {
-  const scale = Math.max(constant(constants, "SRC_TOK_SATURATION_SCALE"), 1);
+  // SRC_TOK_SATURATION_SCALE is per-repo overridable only within [10, 500] upstream; a snapshot value outside
+  // that band (a bad override, a parse glitch) would otherwise distort the saturation curve — at scale 1 the
+  // component saturates almost immediately, well above the documented floor. Clamp to the documented range so
+  // the curve stays within upstream bounds (the prior Math.max(...,1) only guarded the divide-by-zero edge).
+  const scale = clampSaturationScale(constant(constants, "SRC_TOK_SATURATION_SCALE"));
   return (
     constant(constants, "MERGED_PR_BASE_SCORE") * (1 - Math.exp(-sourceTokenScore / scale)) +
     saturationContributionBonus(totalTokenScore, constants)
@@ -1289,6 +1303,24 @@ function nonNegative(value: number | undefined): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+// Bounds documented by upstream for the two repo-configurable scoring inputs the preview consumes directly.
+const FIXED_BASE_SCORE_MIN = 0;
+const FIXED_BASE_SCORE_MAX = 100;
+const SRC_TOK_SATURATION_SCALE_MIN = 10;
+const SRC_TOK_SATURATION_SCALE_MAX = 500;
+
+// A repo's fixed_base_score override forces base_score to a constant within [0, 100]. The value reaches the
+// preview unbounded above — the API schema only enforces `.min(0)` and registry normalization accepts any
+// finite number — so a misconfigured 150 would otherwise mint a base score above the model ceiling. Clamp to
+// the documented range; a non-finite/absent value falls through to the token-derived base score.
+function clampFixedBaseScore(value: number | null | undefined): number | undefined {
+  return Number.isFinite(value) ? clamp(value as number, FIXED_BASE_SCORE_MIN, FIXED_BASE_SCORE_MAX) : undefined;
+}
+
+function clampSaturationScale(value: number): number {
+  return clamp(value, SRC_TOK_SATURATION_SCALE_MIN, SRC_TOK_SATURATION_SCALE_MAX);
 }
 
 function roundScore(value: number): number {

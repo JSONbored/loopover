@@ -164,6 +164,7 @@ import { normalizeContributorBlacklist } from "../settings/contributor-blacklist
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
+import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
 
 const MAX_STORED_BODY_CHARS = 4000;
 const SIGNAL_FRESHNESS_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
@@ -303,7 +304,21 @@ export async function upsertPullRequestFromGitHub(
 ): Promise<PullRequestRecord> {
   const record = toPullRequestRecord(repoFullName, pr);
   const db = getDb(env.DB);
-  const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? nowIso()) : null;
+  const syncedAt = nowIso();
+  const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? syncedAt) : null;
+  const linkedIssuesJson = jsonString(record.linkedIssues);
+  const observedLinkedIssueClaimedAt = record.linkedIssues.length > 0 ? syncedAt : null;
+  const existingClaimRows = await db
+    .select({ linkedIssuesJson: pullRequests.linkedIssuesJson, linkedIssueClaimedAt: pullRequests.linkedIssueClaimedAt })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
+    .limit(1);
+  const linkedIssueClaimedAt = resolveLinkedIssueClaimedAt(
+    record.linkedIssues,
+    linkedIssuesJson,
+    existingClaimRows[0],
+    observedLinkedIssueClaimedAt,
+  );
   await db
     .insert(pullRequests)
     .values({
@@ -320,10 +335,11 @@ export async function upsertPullRequestFromGitHub(
       mergedAt: pr.merged_at ?? undefined,
       htmlUrl: pr.html_url,
       labelsJson: jsonString(record.labels),
-      linkedIssuesJson: jsonString(record.linkedIssues),
+      linkedIssuesJson,
+      linkedIssueClaimedAt,
       lastSeenOpenAt,
       payloadJson: jsonString(compactGitHubPayload(pr)),
-      updatedAt: nowIso(),
+      updatedAt: syncedAt,
     })
     .onConflictDoUpdate({
       target: [pullRequests.repoFullName, pullRequests.number],
@@ -338,13 +354,39 @@ export async function upsertPullRequestFromGitHub(
         mergedAt: pr.merged_at ?? undefined,
         htmlUrl: pr.html_url,
         labelsJson: jsonString(record.labels),
-        linkedIssuesJson: jsonString(record.linkedIssues),
+        linkedIssuesJson,
+        linkedIssueClaimedAt,
         lastSeenOpenAt,
         payloadJson: jsonString(compactGitHubPayload(pr)),
-        updatedAt: nowIso(),
+        updatedAt: syncedAt,
       },
     });
-  return record;
+  return { ...record, linkedIssueClaimedAt };
+}
+
+function resolveLinkedIssueClaimedAt(
+  linkedIssues: number[],
+  linkedIssuesJson: string,
+  existing:
+    | {
+        linkedIssuesJson: string;
+        linkedIssueClaimedAt: string | null;
+      }
+    | undefined,
+  observedLinkedIssueClaimedAt: string | null,
+): string | null {
+  if (linkedIssues.length === 0) return null;
+  if (!existing) return observedLinkedIssueClaimedAt;
+  if (existing.linkedIssuesJson === linkedIssuesJson) return existing.linkedIssueClaimedAt ?? observedLinkedIssueClaimedAt;
+  if (existing.linkedIssueClaimedAt && linkedIssuesOverlap(parseJson<number[]>(existing.linkedIssuesJson, []), linkedIssues)) {
+    return existing.linkedIssueClaimedAt;
+  }
+  return observedLinkedIssueClaimedAt;
+}
+
+function linkedIssuesOverlap(left: number[], right: number[]): boolean {
+  const rightIssues = new Set(right);
+  return left.some((issue) => rightIssues.has(issue));
 }
 
 export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issue: GitHubIssuePayload, options: { seenOpenAt?: string } = {}): Promise<IssueRecord> {
@@ -1361,7 +1403,12 @@ export async function upsertDigestSubscription(
 
 export async function listDigestSubscriptionsForLogin(env: Env, login: string): Promise<DigestSubscriptionRecord[]> {
   const db = getDb(env.DB);
-  const rows = await db.select().from(digestSubscriptions).where(eq(digestSubscriptions.login, login.toLowerCase())).orderBy(desc(digestSubscriptions.updatedAt)).limit(20);
+  const rows = await db
+    .select()
+    .from(digestSubscriptions)
+    .where(sql`lower(${digestSubscriptions.login}) = ${login.toLowerCase()}`)
+    .orderBy(desc(digestSubscriptions.updatedAt))
+    .limit(20);
   return rows.map(toDigestSubscriptionRecord);
 }
 
@@ -4195,6 +4242,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
     closedAt: payload.closed_at,
+    linkedIssueClaimedAt: row.linkedIssueClaimedAt,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,
@@ -5307,7 +5355,9 @@ const PRODUCT_USAGE_SENSITIVE_KEY =
   /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
 const PRODUCT_USAGE_SENSITIVE_VALUE =
   /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
-const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/root|\/var|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
+// Compose from the canonical scrubber in redaction.ts so this surface cannot drift from the boundary;
+// it already covered /root/ and /var/, and now unifies the Windows form (also accepts `C:/Users/`).
+const PRODUCT_USAGE_LOCAL_PATH = PUBLIC_LOCAL_PATH_SCRUB_PATTERN;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
 

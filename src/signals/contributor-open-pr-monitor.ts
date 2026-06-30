@@ -1,4 +1,4 @@
-import { listContributorPullRequests, listPullRequestFiles, listPullRequests, listRepositories } from "../db/repositories";
+import { listContributorPullRequests, listPullRequestFiles, listRepositories } from "../db/repositories";
 import { sanitizePublicComment } from "../github/commands";
 import {
   classifyOpenPullRequest,
@@ -60,8 +60,8 @@ export async function buildContributorOpenPrMonitor(env: Env, login: string): Pr
   const packets: ContributorOpenPrNextStepPacket[] = [];
 
   for (const repoOpen of byRepo.values()) {
-    // The bucket is keyed case-insensitively (see groupByRepo); use a PR's original repoFullName casing for
-    // the case-sensitive DB lookups below so the per-repo open-PR set stays whole and queries still resolve.
+    // The bucket is keyed case-insensitively (see groupByRepo); keep one representative casing for
+    // repo-level context, but use each PR's stored casing for exact DB lookups below.
     const repoFullName = repoOpen[0]!.repoFullName;
     const repo = repositories.find((entry) => entry.fullName.toLowerCase() === repoFullName.toLowerCase()) ?? null;
     const roleContext = buildRoleContext({
@@ -73,13 +73,13 @@ export async function buildContributorOpenPrMonitor(env: Env, login: string): Pr
       profile: null,
     });
     const signals = await loadContributorRepoOpenPrSignals(env, repoFullName, repoOpen);
-    const repoPullRequests = await listPullRequests(env, repoFullName);
+    const repoPullRequests = pullRequests.filter((pr) => pr.repoFullName.toLowerCase() === repoFullName.toLowerCase());
     const duplicateNumbers = duplicatePronePullNumbers(repoOpen);
 
     for (const pr of repoOpen) {
       const reviews = signals.reviewsByPullNumber.get(pr.number) ?? [];
       const checks = signals.checksByPullNumber.get(pr.number) ?? [];
-      const files = await listPullRequestFiles(env, repoFullName, pr.number);
+      const files = await listPullRequestFiles(env, pr.repoFullName, pr.number);
       const classified = classifyOpenPullRequest({
         pr,
         roleContext,

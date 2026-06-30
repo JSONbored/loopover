@@ -10,6 +10,7 @@ import type { CombineStrategy, OnMerge } from "../services/ai-review";
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
 import { incr } from "./metrics";
+import { withOtelSpan } from "./otel";
 import { delimiter } from "node:path";
 
 interface AiRunOptions {
@@ -594,7 +595,7 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
       const failures: Array<{ provider: string; error: string }> = [];
       for (const p of providers) {
         try {
-          return await p.ai.run(model, options);
+          return await runProviderWithOtel(p, model, options);
         } catch (error) {
           lastError = error;
           failures.push({ provider: p.name, error: errorMessage(error) });
@@ -615,6 +616,22 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
       throw lastError instanceof Error ? lastError : new Error("all_ai_providers_failed");
     },
   };
+}
+
+function requestKind(options: AiRunOptions): "embedding" | "review" {
+  return Array.isArray(options.text) ? "embedding" : "review";
+}
+
+function runProviderWithOtel(
+  provider: { name: string; ai: SelfHostAi },
+  model: string,
+  options: AiRunOptions,
+): Promise<AiResult> {
+  return withOtelSpan(
+    "selfhost.ai.provider",
+    { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKind(options) },
+    () => provider.ai.run(model, options),
+  );
 }
 
 /** Build one provider adapter by name. Provider config stays explicit so dual-provider setups cannot accidentally
@@ -667,7 +684,9 @@ export function routeProviders(providers: Array<{ name: string; ai: SelfHostAi }
       const colon = trimmed.indexOf(":");
       const name = (colon < 0 ? trimmed : trimmed.slice(0, colon)).toLowerCase();
       const direct = byName.get(name);
-      return direct ? direct.run(colon < 0 ? "" : trimmed.slice(colon + 1), options) : chain.run(model, options);
+      return direct
+        ? runProviderWithOtel({ name, ai: direct }, colon < 0 ? "" : trimmed.slice(colon + 1), options)
+        : chain.run(model, options);
     },
   };
 }

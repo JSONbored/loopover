@@ -5,6 +5,7 @@
 import type { Pool } from "pg";
 import { logAudit, extractPayloadType } from "./audit";
 import { incr } from "./metrics";
+import { withOtelSpan } from "./otel";
 import { captureError } from "./sentry";
 import {
   consumingRetryDelayMs,
@@ -339,7 +340,12 @@ export function createPgQueue(
         return true;
       }
       try {
-        await consume(message);
+        await withOtelSpan(
+          "selfhost.queue.job",
+          { "job.type": message.type, "queue.backend": "postgres", "job.attempt": Number(job.attempts) + 1 },
+          () => consume(message),
+          { parentTraceParent: message.type === "github-webhook" ? message.traceParent : undefined },
+        );
         await pool.query(`DELETE FROM ${TABLE} WHERE id=$1`, [job.id]);
         await recordQueueMetric("gittensory_jobs_processed_total");
         logAudit({

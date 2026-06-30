@@ -1603,11 +1603,32 @@ describe("v2 signal builders", () => {
       repoFullName: repo.fullName,
       pullNumber: 10,
     });
+    // Two open PRs linking the same issue form a collision cluster. This uses the SAME high-quality inputs as
+    // `clean` (which yields review_now on score) to also pin precedence: the collision check runs before the
+    // score thresholds, so a duplicate cluster routes to likely_duplicate even when the score would say review_now.
+    const duplicateTarget = { ...cleanPr, state: "open" as const };
+    const duplicate = buildPullRequestReviewability({
+      repo,
+      pullRequest: duplicateTarget,
+      issues: [],
+      pullRequests: [duplicateTarget, { ...duplicateTarget, number: 11 }],
+      files: [
+        { repoFullName: repo.fullName, pullNumber: 10, path: "src/github/webhook.ts", additions: 20, deletions: 2, changes: 22, payload: {} },
+        { repoFullName: repo.fullName, pullNumber: 10, path: "test/unit/webhook.test.ts", additions: 25, deletions: 0, changes: 25, payload: {} },
+      ],
+      reviews: [{ id: "approved", repoFullName: repo.fullName, pullNumber: 10, state: "APPROVED", payload: {} }],
+      checks: [{ id: "ok", repoFullName: repo.fullName, pullNumber: 10, name: "test", status: "completed", conclusion: "success", payload: {} }],
+      recentMergedPullRequests: [],
+      repoFullName: repo.fullName,
+      pullNumber: 10,
+    });
 
     expect(clean.action).toBe("review_now");
     expect(closed.action).toBe("close_or_redirect");
     expect(maintainer.action).toBe("maintainer_lane");
     expect(watch.action).toBe("watch");
+    expect(duplicate.action).toBe("likely_duplicate");
+    expect(duplicate.whyThisHelps).toContain("Checking overlap first prevents maintainers from reviewing duplicate or soon-obsolete work.");
     expect(clean.maintainerNextSteps[0]).toContain("Review");
     expect(closed.maintainerNextSteps[0]).toContain("Redirect");
     expect(maintainer.maintainerNextSteps[0]).toContain("stewardship");

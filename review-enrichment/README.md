@@ -16,16 +16,64 @@ treats any timeout/error as "no brief" and proceeds.
 | `GET /ready`      | Readiness.                                                                      |
 | `POST /v1/enrich` | `Authorization: Bearer <REES_SHARED_SECRET>` → `EnrichRequest` → `ReviewBrief`. |
 
-See `src/server.ts` for the `EnrichRequest` / `ReviewBrief` contract.
+See `src/types.ts` for the `EnrichRequest` / `ReviewBrief` contract. When the engine is configured with
+`REES_FORWARD_GITHUB_TOKEN=true`, requests can include a GitHub read token so token-aware analyzers can read
+CODEOWNERS and blob sizes. Token forwarding is off by default and should be enabled only when the REES endpoint is
+inside the operator's trust boundary. The engine prefers a short-lived installation token and falls back to
+`GITHUB_PUBLIC_TOKEN`. The service must never log request bodies, diffs, or tokens.
 
-## Analyzers (added behind the contract)
+## Analyzers
 
-- **#1474** dependency-diff + OSV.dev CVE
-- **#1502** lockfile-only transitive vulnerability drift via OSV.dev
-- **#1475** SPDX license policy
-- **#1476** gitleaks-grade secret scan (value-redacted)
-- **#1477** static analysis + complexity (lint/semgrep over the diff)
-- **#1478** history (author track record, similar past PRs, linked-issue alignment)
+| Analyzer        | Purpose                                                                      | Network/token behavior                                       |
+| --------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `dependency`    | Direct dependency CVEs from changed manifests.                               | Calls OSV.dev.                                               |
+| `lockfileDrift` | Vulnerable transitive versions introduced only through lockfiles.            | Calls OSV.dev querybatch.                                    |
+| `secret`        | Credential-shaped values in added diff lines. Values are never returned.     | Pure local.                                                  |
+| `license`       | Copyleft or unknown dependency licenses.                                     | Calls deps.dev.                                              |
+| `installScript` | npm packages that run install lifecycle hooks.                               | Calls the npm registry.                                      |
+| `actionPin`     | Third-party GitHub Actions pinned to mutable refs.                           | Pure local.                                                  |
+| `eol`           | Runtime/base-image pins that are EOL or close to EOL.                        | Calls endoflife.date.                                        |
+| `redos`         | Regex literals with catastrophic-backtracking structure.                     | Pure local.                                                  |
+| `provenance`    | Missing package attestations plus binary/vendored/minified additions.        | Calls npm/PyPI for attestations; path checks are local.      |
+| `codeowners`    | Changed files owned by CODEOWNERS entries that do not include the PR author. | Calls GitHub API; needs author and token for private repos.  |
+| `secretLog`     | Secrets, PII, or request/session objects written to logs/stdout.             | Pure local.                                                  |
+| `assetWeight`   | Heavy binary assets added or grown.                                          | Calls GitHub API; needs headSha, baseSha for growth, and token for private repos. |
+| `typosquat`     | New dependency names that look squatted or publicly claimable.               | Uses bundled popular-package lists plus npm/PyPI lookups.    |
+| `commitSignature` | Head commit signature/author provenance worth checking.                    | Calls GitHub API; needs headSha and token for private repos. |
+| `iacMisconfig`  | Risky IaC/config changes like public buckets, open ingress, or insecure CORS. | Pure local.                                                 |
+| `nativeBuild`   | Newly-added dependencies that compile native code or ship sdist-only builds. | Calls npm/PyPI registries.                                  |
+| `history`       | Author track record, same-file PR history, and linked-issue alignment.       | Calls GitHub API with bounded fanout; needs author/token for private repos. |
+
+The engine can send `analyzers: ["secret", "actionPin"]` to run a subset. If the field is omitted, REES runs the
+full registry. An explicit empty array runs no analyzers; the engine uses that fail-closed shape when an
+operator-configured analyzer list contains no valid names.
+
+## Analyzer manifests
+
+Analyzer runtime metadata lives in `src/analyzers/registry.ts` as `AnalyzerDescriptor` entries. New analyzer work
+should prefer the modular shape introduced for `dependency` and `secret`:
+
+| File                                      | Purpose                                                        |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `src/analyzers/<name>/descriptor.ts`      | Analyzer name, title, category, cost, requirements, docs, run function, and optional renderer. |
+| `src/analyzers/<name>.ts`                 | Pure scanner helpers and the analyzer implementation.          |
+| `test/<name>.test.ts`                     | Focused tests for scanner behavior, rendering, and degradation. |
+
+Descriptors are the extension point future REES runtime work will use for profiles, docs generation, scheduler cost
+classes, per-analyzer limits, and self-host configuration. When adding or migrating an analyzer:
+
+- Keep the public analyzer name stable; it is what `REES_ANALYZERS` and the engine request body use.
+- Put operator-facing metadata in the descriptor: `category`, `cost`, `defaultEnabled`, `requires`, `limits`, and
+  `docs`.
+- Keep renderer output public-safe. Never include tokens, request bodies, diffs, raw prompts, comments, or private
+  config values.
+- Make external-call analyzers fail open and respect the orchestrator abort signal when the scanner supports it.
+- Prefer a focused analyzer test file instead of expanding the shared `enrichment.test.ts` mega-test.
+
+The engine also sends `budget.timeoutMs` with one second of headroom below `REES_TIMEOUT_MS`, so REES can return a
+partial/degraded brief before the caller aborts the HTTP request. If Railway is still running an older REES build,
+temporarily raise the engine-side `REES_TIMEOUT_MS` above the REES analyzer budget, or set `REES_ANALYZERS` to a
+bounded list that excludes `history` until the budget-aware build is deployed.
 
 ## Run locally
 
@@ -53,28 +101,28 @@ exact post-injection `dist/` files, records a deploy, removes source maps from t
 
 Set these Railway service variables:
 
-| Variable                    | Purpose                                                                 |
-| --------------------------- | ----------------------------------------------------------------------- |
-| `SENTRY_DSN`                | Enables REES error capture. Unset means the SDK is a no-op.             |
-| `SENTRY_AUTH_TOKEN`         | Allows the runtime uploader to create releases and upload source maps.  |
-| `SENTRY_ORG`                | Sentry organization slug.                                               |
-| `SENTRY_PROJECT`            | Sentry project slug.                                                    |
-| `SENTRY_ENVIRONMENT`        | Optional; defaults to Railway's environment name, then `production`.    |
-| `SENTRY_TRACES_SAMPLE_RATE` | Optional; defaults to `0`, so errors report without tracing.            |
-| `SENTRY_RELEASE`            | Optional override. Only set it when that exact REES bundle is uploaded. |
-| `SENTRY_URL`                | Optional Sentry API URL; defaults to `https://sentry.io`.               |
-| `SENTRY_REPOSITORY`         | Optional; defaults to `JSONbored/gittensory` for commit association.    |
-| `REES_SENTRY_UPLOAD_STRICT` | Optional. Set `true` to fail startup if source-map upload fails.        |
-| `REES_SENTRY_VALIDATE_RELEASE` | Optional. Set `false` only to disable post-upload release validation. |
+| Variable                       | Purpose                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `SENTRY_DSN`                   | Enables REES error capture. Unset means the SDK is a no-op.             |
+| `SENTRY_AUTH_TOKEN`            | Allows the runtime uploader to create releases and upload source maps.  |
+| `SENTRY_ORG`                   | Sentry organization slug.                                               |
+| `SENTRY_PROJECT`               | Sentry project slug.                                                    |
+| `SENTRY_ENVIRONMENT`           | Optional; defaults to Railway's environment name, then `production`.    |
+| `SENTRY_TRACES_SAMPLE_RATE`    | Optional; defaults to `0`, so errors report without tracing.            |
+| `SENTRY_RELEASE`               | Optional override. Only set it when that exact REES bundle is uploaded. |
+| `SENTRY_URL`                   | Optional Sentry API URL; defaults to `https://sentry.io`.               |
+| `SENTRY_REPOSITORY`            | Optional; defaults to `JSONbored/gittensory` for commit association.    |
+| `REES_SENTRY_UPLOAD_STRICT`    | Optional. Set `true` to fail startup if source-map upload fails.        |
+| `REES_SENTRY_VALIDATE_RELEASE` | Optional. Set `false` only to disable post-upload release validation.   |
 
 By default the release id is `gittensory-rees@<RAILWAY_GIT_COMMIT_SHA>`, using Railway's Git metadata. The Sentry
 GitHub code mapping should be:
 
-| Sentry field      | Value               |
-| ----------------- | ------------------- |
-| Stack Trace Root  | `/app`              |
-| Source Code Root  | `review-enrichment` |
-| Branch            | `main`              |
+| Sentry field     | Value               |
+| ---------------- | ------------------- |
+| Stack Trace Root | `/app`              |
+| Source Code Root | `review-enrichment` |
+| Branch           | `main`              |
 
 Do **not** pass `SENTRY_AUTH_TOKEN` as a Docker build arg. Railway deploys this service from Git, and Docker build args
 can leak through image metadata. Keeping the upload at runtime means Sentry sees the same `dist/` files that the service
@@ -86,9 +134,11 @@ the release must exist, be finalized, include the deployed commit, and include t
 `rees_sentry_sourcemap_upload_failed` warning so the problem is visible without blocking startup.
 
 Analyzer failures are still fail-open: the `/v1/enrich` response marks the analyzer as `degraded` and returns a partial
-brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags for
-`analyzer`, `repo`, `pullNumber`, `headSha`, `release`, `environment`, and `timeoutMs`. Use those tags to spot a broken
-analyzer without exposing request bodies, diffs, tokens, or review content.
+brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags/context for
+`analyzer`, requested analyzer list, `repo`, `pullNumber`, head SHA prefix, `release`, `environment`, timeout budget,
+elapsed time, partial/analyzer status, history lookup counts, GitHub endpoint category, request id, and trace id. Use
+those fields to spot a broken analyzer without exposing request bodies, diffs, tokens, prompts, comments, or private
+config.
 
 If Sentry still shows frames such as `/app/dist/server.js`, check:
 

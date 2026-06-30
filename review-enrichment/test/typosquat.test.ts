@@ -18,6 +18,12 @@ const npmAdd = (name, version = "1.0.0") => ({
   files: [{ path: "package.json", patch: `@@ -1,0 +1,1 @@\n+  "${name}": "^${version}"` }],
 });
 
+const npmAliasAdd = (alias, target, version = "1.0.0") => ({
+  repoFullName: "o/r",
+  prNumber: 1,
+  files: [{ path: "package.json", patch: `@@ -1,0 +1,1 @@\n+  "${alias}": "npm:${target}@${version}"` }],
+});
+
 // Fetch stubs returning a minimal Response-like shape (status + ok), matching the other analyzer tests.
 const status = (code) => async () => ({ status: code, ok: code >= 200 && code < 300 });
 const throwingFetch = async () => {
@@ -103,6 +109,27 @@ test("scanTyposquat flags dependency-confusion on a 404 unscoped name", async ()
   const findings = await scanTyposquat(npmAdd("acme-internal-utils"), status(404));
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "confusion");
+  assert.match(findings[0].reason, /publicly claimable/);
+});
+
+test("scanTyposquat scans npm alias targets for typosquats", async () => {
+  let called = false;
+  const findings = await scanTyposquat(npmAliasAdd("lodash", "l0dash", "^1.0.0"), async () => {
+    called = true;
+    return status(404)();
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "typosquat");
+  assert.equal(findings[0].package, "l0dash");
+  assert.equal(findings[0].version, "1.0.0");
+  assert.equal(called, false);
+});
+
+test("scanTyposquat scans npm alias targets for dependency-confusion", async () => {
+  const findings = await scanTyposquat(npmAliasAdd("react", "acme-internal-utils"), status(404));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "confusion");
+  assert.equal(findings[0].package, "acme-internal-utils");
   assert.match(findings[0].reason, /publicly claimable/);
 });
 

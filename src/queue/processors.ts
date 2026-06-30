@@ -79,6 +79,7 @@ import {
   fetchLivePullRequestHeadSha,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
+  fetchLiveReviewThreadBlockers,
   fetchLivePullRequestState,
   fetchOpenPullRequestNumbersForCommit,
   fetchRequiredStatusContexts,
@@ -245,6 +246,7 @@ import {
   buildContributorProfile,
   buildContributorScoringProfile,
   buildContributorStrategy,
+  buildDuplicateWinnerRelatedWorkView,
   buildContributorIntakeHealth,
   buildIssueQualityReport,
   buildLabelAudit,
@@ -259,10 +261,9 @@ import {
   buildRoleContext,
   detectGittensorContributor,
   PR_PANEL_RETRIGGER_MARKER,
-  unionScopedOverlapClusters,
   type ContributorProfile,
 } from "../signals/engine";
-import { isDuplicateClusterWinner } from "../signals/duplicate-winner";
+import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff } from "../review/review-diff";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { isRetryableJobError, RetryableJobError } from "./retryable";
@@ -320,7 +321,6 @@ import {
   isPlannerEnabled,
 } from "../review/planner";
 import {
-  aiCiRefutationActive,
   buildReviewGroundingText,
   checkSummaryText as checkFailureSummaryText,
   isGroundingEnabled,
@@ -329,9 +329,11 @@ import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
+  isReesGithubTokenForwardingEnabled,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
+import { reviewThreadBlockerFinding } from "../review/review-thread-findings";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import {
   isReputationEnabled,
@@ -1203,10 +1205,9 @@ export function applyPrecisionBreakers(
 }
 
 /**
- * #1177: a red CI may bypass the hard-guardrail manual hold (#ci-fail-closes-guarded) ONLY when we proved the
- * failing checks are required branch-protection contexts. A null fetch (unreadable branch protection) or an
- * EMPTY required set means `fetchLiveCiAggregate` may have folded an optional / third-party red into `failed`,
- * which must keep a guarded PR held for a human rather than auto-close it.
+ * Historical compatibility helper for callers/tests that still need to know whether branch-protection contexts
+ * were readable. The disposition planner no longer uses this to soften red CI: any visible completed red
+ * check/status is adverse, while required contexts still matter for missing/pending detection.
  */
 export function hasVerifiedRequiredContexts(
   requiredContexts: Set<string> | null,
@@ -1363,15 +1364,9 @@ async function maybeRunAgentMaintenance(
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
-    // CI-refutation (#ai-ci-refutation): thread the blocker CODES + the active gate so the planner suppresses an
-    // AI-judgment-only failure (ai_consensus_defect / ai_review_split) on a green-CI PR — the deterministic
-    // validator overrules the model hallucination, so a clean+green PR MERGES instead of being false-closed.
-    // `aiCiRefutationEnabled` is the SAME grounding+convergence gate the public-comment reconciliation uses, passed
-    // as a single boolean so the refutation condition is unit-tested in the planner and this site carries no branch.
-    // Enabled=false (non-convergence / grounding-off) ⇒ the refutation is a no-op ⇒ byte-identical verdict. The
-    // codes are public-safe finding identifiers (no rubric/scoring/reward terms).
+    // Public-safe finding identifiers retained for telemetry/action reasons. They no longer refute a blocker on
+    // green CI; once the gate says failure, the close/hold decision follows that verdict.
     gateBlockerCodes: gate.blockers.map((blocker) => blocker.code),
-    aiCiRefutationEnabled: aiCiRefutationActive(env, repoFullName),
     autonomy: settings.autonomy,
     autoMaintain: settings.autoMaintain,
     slopGateMinScore: settings.slopGateMinScore,
@@ -1404,10 +1399,11 @@ async function maybeRunAgentMaintenance(
       // reason ("duplicate of another open PR" via agent-actions when count > 0). When the flag is ON and this
       // PR is the cluster winner, force the count to 0 so the winner's close reason OMITS the duplicate cause
       // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
-      // count is used (byte-identical). The sibling numbers are open-only, so the lowest is the open winner.
+      // count is used (byte-identical). Sparse legacy rows fall back to PR-number election.
       linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
-        linkedIssueDuplicatePullRequestsForGate(pr, otherOpenPullRequests),
+        linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests),
         pr.number,
+        pr.linkedIssueClaimedAt,
         env.GITTENSORY_DUPLICATE_WINNER === "true",
       ),
       headSha: pr.headSha,
@@ -1583,6 +1579,7 @@ async function reReviewStoredPullRequest(
     advisory,
     {
       deliveryId,
+      baseSha: live?.base?.sha ?? null,
       ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
       ...(options.skipAiReview ? { skipAiReview: true } : {}),
     },
@@ -3048,7 +3045,7 @@ async function processGitHubWebhook(
       }
       if (
         installationId &&
-        shouldProcessPullRequestPublicSurface(payload.action)
+        shouldProcessPullRequestPublicSurface(eventName, payload.action)
       ) {
         if (
           shouldCollectSlopEvidence(settings) ||
@@ -3087,6 +3084,7 @@ async function processGitHubWebhook(
               deliveryId,
               authorType: payload.pull_request.user?.type,
               action: payload.action,
+              baseSha: payload.pull_request.base?.sha ?? null,
             },
           ).catch((error) => {
             if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
@@ -3370,8 +3368,18 @@ export function shouldRunSlopAiAdvisory(
 }
 
 function shouldProcessPullRequestPublicSurface(
+  eventName: string,
   action: string | undefined,
 ): boolean {
+  if (eventName === "pull_request_review_comment") {
+    return action === "created" || action === "edited" || action === "deleted";
+  }
+  if (eventName === "pull_request_review_thread") {
+    return action === "resolved" || action === "unresolved";
+  }
+  if (eventName === "pull_request_review") {
+    return action === "submitted" || action === "edited" || action === "dismissed";
+  }
   return (
     PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") ||
     PR_GATE_CLOSED_ACTIONS.has(action ?? "")
@@ -3418,7 +3426,7 @@ export function gateCheckPolicy(
     slopRisk: slopRisk ?? null,
     confirmedContributor: confirmedContributorForPack,
     // PR-size + guardrail manual-review HOLD (#gate-size / #gate-guardrail): the MODE comes from config; the
-    // thresholds default to 10 files / 500 lines (advisory.ts constants); the live counts + guardrail-hit come from
+    // thresholds default to 10 files / 1000 lines (advisory.ts constants); the live counts + guardrail-hit come from
     // the per-PR sizeContext threaded by the caller.
     sizeGateMode: settings.sizeGateMode,
     changedFileCount: sizeContext?.changedFileCount ?? null,
@@ -3609,13 +3617,31 @@ export function shouldRequirePublicAiReviewForAdvisory(
   return true;
 }
 
+async function resolveReviewEnrichmentGithubToken(
+  env: Env,
+  repoFullName: string,
+): Promise<string | undefined> {
+  const repo = await getRepository(env, repoFullName);
+  const installationToken = repo?.installationId
+    ? await createInstallationToken(env, repo.installationId).catch(
+        () => undefined,
+      )
+    : undefined;
+  return installationToken ?? env.GITHUB_PUBLIC_TOKEN;
+}
+
 export async function runAiReviewForAdvisory(
   env: Env,
   args: {
     settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
     repoFullName: string;
-    pr: { number: number; title: string; body?: string | null | undefined };
+    pr: {
+      number: number;
+      title: string;
+      body?: string | null | undefined;
+      baseSha?: string | null | undefined;
+    };
     author: string | null;
     confirmedContributor: boolean;
     // Pre-resolved PR files (the caller's resolvePullRequestFilesForReview output). When provided, the AI
@@ -3678,7 +3704,7 @@ export async function runAiReviewForAdvisory(
   // block, falling back to the `convergedRepoAllowed` allowlist when unset (byte-identical default). The (cached)
   // manifest is loaded once and shared, and ONLY when at least one of the two features is globally enabled — so a
   // deploy with both flags off does no extra read (preserves the no-op default). Grounding deliberately stays on
-  // `convergedRepoAllowed` here so it remains coherent with the disposition-side CI-refutation gate (#deferred).
+  // `convergedRepoAllowed` here so prompt grounding remains tied to the converged review allowlist.
   const featureManifest =
     isReputationEnabled(env) || isRagEnabled(env)
       ? await loadRepoFocusManifest(env, args.repoFullName).catch(() => null)
@@ -3789,7 +3815,15 @@ export async function runAiReviewForAdvisory(
             repoFullName: args.repoFullName,
             prNumber: args.pr.number,
             headSha: args.advisory.headSha,
+            baseSha: args.pr.baseSha ?? null,
             title: args.pr.title,
+            author: args.author,
+            githubToken: isReesGithubTokenForwardingEnabled(env)
+              ? await resolveReviewEnrichmentGithubToken(
+                  env,
+                  args.repoFullName,
+                )
+              : undefined,
             files,
             diff: enrichmentDiff,
           })
@@ -4084,16 +4118,17 @@ export async function runAiSlopForAdvisory(
  * when count > 0). Flag-OFF (default) returns the real sibling count — byte-identical to today.
  */
 export function dupWinnerLinkedDuplicateCount(
-  openSiblingNumbers: number[],
+  openSiblings: Pick<PullRequestRecord, "number" | "linkedIssueClaimedAt">[],
   prNumber: number,
+  linkedIssueClaimedAt: string | null | undefined,
   duplicateWinnerEnabled: boolean,
 ): number {
   if (
     duplicateWinnerEnabled &&
-    isDuplicateClusterWinner(prNumber, openSiblingNumbers)
+    isDuplicateClusterWinnerByClaim({ number: prNumber, linkedIssueClaimedAt }, openSiblings)
   )
     return 0;
-  return openSiblingNumbers.length;
+  return openSiblings.length;
 }
 
 /**
@@ -4156,18 +4191,23 @@ export function linkedIssueDuplicatePullRequestsForGate(
   pr: PullRequestRecord,
   pullRequests: PullRequestRecord[],
 ): number[] {
+  return linkedIssueDuplicatePullRequestRecordsForGate(pr, pullRequests).map((otherPr) => otherPr.number);
+}
+
+export function linkedIssueDuplicatePullRequestRecordsForGate(
+  pr: PullRequestRecord,
+  pullRequests: PullRequestRecord[],
+): PullRequestRecord[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
   return [
-    ...new Set(
+    ...new Map(
       pullRequests.flatMap((otherPr) => {
         if (otherPr.number === pr.number || otherPr.state !== "open") return [];
-        return otherPr.linkedIssues.some((issue) => linkedIssues.has(issue))
-          ? [otherPr.number]
-          : [];
+        return otherPr.linkedIssues.some((issue) => linkedIssues.has(issue)) ? [[otherPr.number, otherPr] as const] : [];
       }),
-    ),
-  ].sort((left, right) => left - right);
+    ).values(),
+  ].sort((left, right) => left.number - right.number);
 }
 
 async function auditGateCheckPermissionMissing(
@@ -4228,6 +4268,7 @@ async function maybePublishPrPublicSurface(
     deliveryId: string;
     authorType?: string | undefined;
     action?: string | undefined;
+    baseSha?: string | null | undefined;
     previewPollAttempt?: number | undefined;
     skipAiReview?: boolean | undefined;
   },
@@ -4484,24 +4525,26 @@ async function maybePublishPrPublicSurface(
     // penalty (below), and the public panel builders (further down) so they agree by construction. Flag-OFF
     // (default) ⇒ duplicateWinnerEnabled is false and isDupWinner is false ⇒ every guard short-circuits
     // (byte-identical).
-    const linkedDuplicatePrsForGate = linkedIssueDuplicatePullRequestsForGate(
+    const linkedDuplicatePrsForGate = linkedIssueDuplicatePullRequestRecordsForGate(
       pr,
       repoPullRequests,
     );
     const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
     const isDupWinner =
       duplicateWinnerEnabled &&
-      isDuplicateClusterWinner(pr.number, linkedDuplicatePrsForGate);
+      isDuplicateClusterWinnerByClaim(pr, linkedDuplicatePrsForGate);
+    const relatedWork = buildDuplicateWinnerRelatedWorkView({
+      pr,
+      collisions,
+      preflightCollisions: preflight.collisions,
+      duplicateWinnerEnabled,
+    });
     const readiness = buildPublicReadinessScore({
       pr,
       preflight,
       queueHealth,
-      linkedDuplicatePrs: isDupWinner ? [] : linkedDuplicatePrsForGate,
-      scopedOverlapCount: unionScopedOverlapClusters(
-        collisions,
-        pr,
-        preflight.collisions,
-      ).length,
+      linkedDuplicatePrs: isDupWinner ? [] : linkedDuplicatePrsForGate.map((otherPr) => otherPr.number),
+      scopedOverlapCount: relatedWork.scopedOverlapClusters.length,
     });
 
     if (gateEnabled && author && !publicSurfaceSkipped && !official) {
@@ -4740,7 +4783,7 @@ async function maybePublishPrPublicSurface(
           settings,
           advisory,
           repoFullName,
-          pr,
+          pr: { ...pr, baseSha: webhook.baseSha ?? null },
           author,
           confirmedContributor,
           files: await getReviewFiles(),
@@ -4796,6 +4839,24 @@ async function maybePublishPrPublicSurface(
       pullNumber: pr.number,
       files: await getReviewFiles(),
     });
+
+    // Unresolved GitHub review threads (for example external security scanner inline findings) are blocking
+    // review facts. Fetch them before gate evaluation so the normal blocker path drives the check-run, comment,
+    // and disposition consistently. Fail-open on GitHub/GraphQL errors: a transient thread-read failure should not
+    // invent a blocker, but any thread we can see must be resolved before approval/merge.
+    if (gateEnabled) {
+      const reviewThreadToken =
+        (await createInstallationToken(env, installationId).catch(
+          () => undefined,
+        )) ?? env.GITHUB_PUBLIC_TOKEN;
+      const reviewThreadBlockers = await fetchLiveReviewThreadBlockers(
+        env,
+        repoFullName,
+        pr.number,
+        reviewThreadToken,
+      ).catch(() => []);
+      advisory.findings.push(...reviewThreadBlockers.map(reviewThreadBlockerFinding));
+    }
 
     // First-time-contributor grace (#552): compute the author's complete per-repo PR history
     // (excluding this PR) with an aggregate DB query. Do not derive policy-enforcement history from
@@ -5142,7 +5203,8 @@ async function maybePublishPrPublicSurface(
       const ciToken = await createInstallationToken(env, installationId).catch(
         () => undefined,
       );
-      // RC2: only branch-protection-required checks gate the PR; a red codecov/* is surfaced but never blocks.
+      // Required contexts still detect missing/pending required CI, but every visible completed red check/status is
+      // adverse and blocks the PR.
       const requiredContexts = await fetchRequiredStatusContexts(
         env,
         repoFullName,
@@ -5190,8 +5252,7 @@ async function maybePublishPrPublicSurface(
           : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };
-      // The public comment must match the authoritative Gate check-run conclusion. Planner-level CI refutation can
-      // affect auto-actions, but it must never recolor the review comment green while the posted Gate is red.
+      // The public comment must match the authoritative Gate check-run conclusion.
       const commentGate = gateEvaluation;
       // Observability (#reviews-dashboard): record the would-be gate verdict so the Grafana panel shows the
       // merge/close/hold mix — the "are we rubber-stamping?" signal — even in advisory/dryRun (this is the rendered verdict).
@@ -5324,6 +5385,7 @@ async function maybePublishPrPublicSurface(
           preflight,
           queueHealth,
           ...(reviewConfig !== undefined ? { review: reviewConfig } : {}),
+          duplicateWinnerEnabled,
         }),
         footerMarkdown: gittensoryFooter({
           earnUrl: repo?.isRegistered

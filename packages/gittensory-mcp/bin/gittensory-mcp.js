@@ -1779,7 +1779,7 @@ function printHelp() {
   gittensory-mcp changelog [--json]
   gittensory-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
   gittensory-mcp cache status|clear [--json]
-  gittensory-mcp init-client --print codex|claude|cursor|mcp [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
+  gittensory-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
   gittensory-mcp decision-pack --login <github-login> [--json]
   gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
@@ -2319,7 +2319,7 @@ function shellArg(value) {
 
 function initClient(options) {
   const client = String(options.print ?? options.client ?? "").toLowerCase();
-  if (!client) throw new Error("Pass --print codex, --print claude, --print cursor, or --print mcp.");
+  if (!client) throw new Error("Pass --print codex, --print claude, --print cursor, --print mcp, or --print vscode.");
   const command = options.command ?? "gittensory-mcp";
   const snippet = clientSnippet(client, command);
   const agentProfile = resolveAgentProfile(options.agentProfile);
@@ -2725,7 +2725,24 @@ function clientSnippet(client, command) {
       2,
     );
   }
-  throw new Error(`Unsupported client: ${client}. Use codex, claude, cursor, or mcp.`);
+  // VS Code's native MCP support uses a `servers` map with an explicit transport type, not the
+  // `mcpServers` shape the other JSON hosts use, so it needs its own snippet (see .vscode/mcp.json).
+  if (client === "vscode") {
+    return JSON.stringify(
+      {
+        servers: {
+          gittensory: {
+            type: "stdio",
+            command,
+            args: ["--stdio"],
+          },
+        },
+      },
+      null,
+      2,
+    );
+  }
+  throw new Error(`Unsupported client: ${client}. Use codex, claude, cursor, mcp, or vscode.`);
 }
 
 async function getDecisionPackWithCache(login) {

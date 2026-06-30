@@ -200,7 +200,9 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
-SENTRY_RELEASE="${SENTRY_RELEASE:-$(env_get SENTRY_RELEASE || true)}"
+# Default to the current checkout on every deploy. Do not reuse a persisted .env value here:
+# that value is written by the previous deploy and would make future updates report stale
+# release/version metadata unless the operator remembered to override it manually.
 SENTRY_RELEASE="${SENTRY_RELEASE:-gittensory-selfhost@$(git rev-parse --short=8 HEAD)}"
 export SENTRY_RELEASE
 

@@ -77,6 +77,23 @@ INTERNAL_JOB_TOKEN=<random-32-byte-token>`}
         <code>FOO</code> wins over the file variant.
       </p>
 
+      <h2>GitHub API cache</h2>
+      <p>
+        Redis backs shared caching for stable GitHub GET responses, including repeated installation,
+        repo/user metadata, and branch-protection required-status reads. Keys include the caller
+        identity and response-shaping headers, and cold misses are single-flighted so concurrent
+        jobs do not stampede GitHub.
+      </p>
+      <CodeBlock filename=".env" code={`GITHUB_CACHE_TTL_SECONDS=20`} />
+      <Callout variant="note">
+        <code>GITHUB_CACHE_TTL_SECONDS</code> is the short default for repeated safe GitHub GETs.
+        Stable repo/user metadata and branch-protection required-status reads use longer internal
+        TTLs. Live CI status, check-run, check-suite, pull/issue subresources, pull mergeability,
+        token minting, rate-limit, and collaborator-permission endpoints are never served from this
+        cache. Prometheus exports <code>gittensory_github_response_cache_total</code>, and the
+        bundled self-host Grafana dashboard includes the hit/miss/coalesced/error breakdown.
+      </Callout>
+
       <h2>Per-PR feature flags</h2>
       <p>
         Most review capabilities need both their own flag and the repo in{" "}

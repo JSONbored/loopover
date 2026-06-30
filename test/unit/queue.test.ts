@@ -3621,10 +3621,9 @@ describe("queue processors", () => {
       if (url.includes("/check-runs/971") && method === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
         patchBodies.push(body);
-        // First PATCH = the gate completion. A rate-limit 403 must propagate to the queue instead of being
-        // swallowed as nonfatal; the pending check remains in_progress while the queue backs off and retries.
-        if (patchBodies.length === 1) return new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit" }), { status: 403 });
-        return Response.json({ id: 971 });
+        // Gate completion stays rate-limited through the inline retry budget. It must propagate to the queue instead
+        // of being swallowed as nonfatal; the pending check remains in_progress while the queue backs off and retries.
+        return new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit" }), { status: 403, headers: { "retry-after": "0" } });
       }
       return new Response("not found", { status: 404 });
     });
@@ -3643,7 +3642,7 @@ describe("queue processors", () => {
       }),
     ).rejects.toThrow(/rate limit/i);
 
-    expect(patchBodies).toHaveLength(1);
+    expect(patchBodies).toHaveLength(4); // initial attempt + GITHUB_RATE_LIMIT_MAX_RETRIES (3)
     expect(patchBodies[0]?.status).toBe("completed");
   });
 

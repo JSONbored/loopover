@@ -67,6 +67,7 @@ import {
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
+import { isGitHubResponseCacheReplay, timeoutFetch } from "./client";
 
 type GitHubLabelPayload = {
   name: string;
@@ -2687,10 +2688,12 @@ async function githubJsonWithHeaders<T>(
 ): Promise<{ data: T; link: string | null; etag: string | null; lastModified: string | null }> {
   const { owner, name } = repoParts(repoFullName);
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}${path}`;
-  let response = await fetch(url, { headers: githubRestHeaders(token) });
-  await recordGitHubResponse(env, repoFullName, path, response, "rest");
+  let response = await timeoutFetch(url, { headers: githubRestHeaders(token) });
+  if (!isGitHubResponseCacheReplay(response)) {
+    await recordGitHubResponse(env, repoFullName, path, response, "rest");
+  }
   if (response.status === 404 && token && token === env.GITHUB_PUBLIC_TOKEN) {
-    response = await fetch(url, { headers: githubRestHeaders() });
+    response = await timeoutFetch(url, { headers: githubRestHeaders() });
     // Do not persist unauthenticated fallback rate-limit headers into the shared REST backoff state.
     // GitHub's unauthenticated REST bucket is capped below LOW_REST_RATE_LIMIT_REMAINING, so recording
     // successful fallback responses can incorrectly stall later token-backed segment jobs.

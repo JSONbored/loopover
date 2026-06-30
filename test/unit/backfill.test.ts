@@ -40,12 +40,18 @@ import {
   refreshInstallationHealth,
   refreshPullRequestDetails,
 } from "../../src/github/backfill";
+import {
+  clearGitHubResponseCacheForTest,
+  setGitHubResponseCache,
+  type CachedGitHubResponse,
+} from "../../src/github/client";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 
 describe("GitHub backfill", () => {
   afterEach(() => {
+    clearGitHubResponseCacheForTest();
     vi.unstubAllGlobals();
   });
 
@@ -3988,6 +3994,41 @@ describe("GitHub backfill", () => {
       });
       const required = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
       expect([...(required as Set<string>)].sort()).toEqual(["Superagent Security Scan", "validate"]);
+    });
+
+    it("uses the shared GitHub GET cache for raw branch-protection reads without double-counting rate-limit observations", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const store = new Map<string, CachedGitHubResponse>();
+      setGitHubResponseCache({
+        get: async (key) => store.get(key) ?? null,
+        set: async (key, value) => void store.set(key, value),
+      });
+      let fetches = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        fetches += 1;
+        expect(input.toString()).toContain("/branches/main/protection/required_status_checks");
+        return Response.json(
+          { contexts: ["validate"], checks: [] },
+          { headers: { "x-ratelimit-limit": "5000", "x-ratelimit-remaining": "4999", "x-ratelimit-reset": "1782802800" } },
+        );
+      });
+
+      const first = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+      const second = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+
+      expect([...(first as Set<string>)]).toEqual(["validate"]);
+      expect([...(second as Set<string>)]).toEqual(["validate"]);
+      expect(fetches).toBe(1);
+      expect([...store.keys()].some((key) => key.includes("/branches/main/protection/required_status_checks"))).toBe(true);
+      const observations = await listLatestGitHubRateLimitObservations(env);
+      expect(observations).toHaveLength(1);
+      expect(observations[0]).toMatchObject({
+        repoFullName: "JSONbored/gittensory",
+        resource: "rest",
+        path: "/branches/main/protection/required_status_checks",
+        statusCode: 200,
+        remaining: 4999,
+      });
     });
 
     it("returns null when the live read fails, even if a stale global fallback is configured (conservative fold-all)", async () => {

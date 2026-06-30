@@ -2,6 +2,10 @@
 // env-gated, dynamically-imported selfhost-integration pattern (Redis/Qdrant/embed-provider in server.ts).
 // @sentry/node is NEVER imported at module top level — it loads lazily inside initSentry(), so it never enters
 // the Worker bundle (src/index.ts) and cloudflare:* stubbing stays clean. All helpers are safe to call when off.
+import {
+  PUBLIC_LOCAL_PATH_SCRUB_PATTERN,
+  PUBLIC_UNSAFE_TERMS,
+} from "../signals/redaction";
 import { currentOtelTraceIds } from "./otel";
 
 type SentryNs = typeof import("@sentry/node");
@@ -17,6 +21,36 @@ let sentryEnvironment = "production";
 
 const SECRET_KEY =
   /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
+const PAYLOAD_KEY =
+  /(^|[_-])(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content)([_-]|$)|^(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content)$/i;
+const SECRET_VALUE = new RegExp(
+  [
+    `${"github" + "_pat_"}[A-Za-z0-9_]+`,
+    String.raw`gh[opsru]_[A-Za-z0-9_]{20,}`,
+    String.raw`sk-[A-Za-z0-9_-]{20,}`,
+    String.raw`xox[baprs]-[A-Za-z0-9-]+`,
+    String.raw`Bearer\s+[A-Za-z0-9._~+/=-]{12,}`,
+    String.raw`-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----`,
+  ].join("|"),
+  "gi",
+);
+const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+const QUERY_SECRET_VALUE =
+  /([?&;][^=\s&#;]*(?:token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)[^=\s&#;]*=)[^&#\s;]+/gi;
+const PRIVATE_TEXT =
+  /\b(raw[-_\s]?score|scoring context|private rubric|gate prompt|review prompt|guardrail paths?|pull request body|pr body|pr title|raw diff)\b/gi;
+const PUBLIC_UNSAFE_SCRUB = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
+const ALLOWED_CONTEXTS = new Set([
+  "gittensory",
+  "review",
+  "log",
+  "sentry_monitor",
+  "otel",
+  "trace",
+  "runtime",
+  "os",
+]);
+const REDACTED = "[redacted]";
 
 function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -105,28 +139,154 @@ export function resolveSentryRelease(
 }
 
 /** beforeSend scrubber — redact anything token/secret-like before an event leaves the box (privacy boundary). */
-export function scrubEvent<T>(event: T): T {
-  const redact = (obj: unknown, depth: number): void => {
-    if (!obj || typeof obj !== "object" || depth > 6) return;
-    for (const key of Object.keys(obj as Record<string, unknown>)) {
-      const rec = obj as Record<string, unknown>;
-      if (SECRET_KEY.test(key)) rec[key] = "[redacted]";
-      else if (typeof rec[key] === "object") redact(rec[key], depth + 1);
-    }
-  };
+export function scrubEvent<T>(event: T): T | null {
   try {
     const e = event as {
-      request?: { headers?: unknown };
-      contexts?: unknown;
-      extra?: unknown;
+      request?: Record<string, unknown>;
+      contexts?: Record<string, unknown>;
+      extra?: Record<string, unknown>;
+      tags?: Record<string, unknown>;
+      breadcrumbs?: Array<Record<string, unknown>>;
+      exception?: unknown;
+      logentry?: unknown;
+      message?: unknown;
+      spans?: unknown;
+      transaction?: unknown;
+      user?: unknown;
     };
-    redact(e.request?.headers, 0);
-    redact(e.contexts, 0);
-    redact(e.extra, 0);
+    scrubRequest(e.request);
+    scrubAllowedContexts(e.contexts);
+    scrubRecord(e.extra, 0);
+    scrubRecord(e.tags, 0);
+    scrubRecord(e.exception, 0);
+    scrubRecord(e.logentry, 0);
+    scrubRecord(e.spans, 0);
+    delete e.user;
+    if (typeof e.message === "string") e.message = scrubString(e.message);
+    if (typeof e.transaction === "string") e.transaction = scrubString(e.transaction);
+    if (Array.isArray(e.breadcrumbs)) {
+      for (const breadcrumb of e.breadcrumbs) scrubRecord(breadcrumb, 0);
+    }
   } catch {
-    /* scrubbing must never break the send */
+    return null;
   }
   return event;
+}
+
+function shouldRedactKey(key: string): boolean {
+  const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return (
+    SECRET_KEY.test(key) ||
+    PAYLOAD_KEY.test(key) ||
+    /(body|payload|patch|diff|prompt|rubric|guardrail|header|cookie|title|config|reviewtext|reviewcontent|prcontent|pullrequest)/.test(compact)
+  );
+}
+
+function scrubString(value: string): string {
+  return value
+    .replace(QUERY_SECRET_VALUE, `$1${REDACTED}`)
+    .replace(SECRET_VALUE, REDACTED)
+    .replace(JWT_VALUE, REDACTED)
+    .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
+    .replace(PUBLIC_UNSAFE_SCRUB, "private context")
+    .replace(PRIVATE_TEXT, "private context");
+}
+
+function scrubRecord(obj: unknown, depth: number): void {
+  if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const value = obj[i];
+      if (typeof value === "string") obj[i] = scrubString(value);
+      else if (value && typeof value === "object") {
+        if (depth >= 6) obj[i] = REDACTED;
+        else scrubRecord(value, depth + 1);
+      }
+    }
+    return;
+  }
+  const rec = obj as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (shouldRedactKey(key)) {
+      rec[key] = REDACTED;
+      continue;
+    }
+    const value = rec[key];
+    if (typeof value === "string") rec[key] = scrubStringField(key, value);
+    else if (value && typeof value === "object") {
+      if (depth >= 6) rec[key] = REDACTED;
+      else scrubRecord(value, depth + 1);
+    }
+  }
+}
+
+function scrubStringField(key: string, value: string): string {
+  if (isUrlKey(key)) return scrubUrl(value);
+  if (isQueryKey(key)) return scrubQueryString(value);
+  return scrubString(value);
+}
+
+function isUrlKey(key: string): boolean {
+  return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase().endsWith("url");
+}
+
+function isQueryKey(key: string): boolean {
+  const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return compact === "query" || compact === "querystring";
+}
+
+function scrubUrl(value: string): string {
+  const scrubbed = scrubString(value);
+  const queryStart = scrubbed.indexOf("?");
+  if (queryStart === -1) return scrubbed;
+  try {
+    const parsed = new URL(scrubbed);
+    parsed.search = scrubQueryString(parsed.search);
+    return parsed.toString();
+  } catch {
+    return `${scrubbed.slice(0, queryStart + 1)}${scrubQueryString(
+      scrubbed.slice(queryStart + 1),
+    )}`;
+  }
+}
+
+function scrubQueryString(value: string): string {
+  const hasQuestionMark = value.startsWith("?");
+  const source = hasQuestionMark ? value.slice(1) : value;
+  const params = new URLSearchParams(source);
+  for (const key of Array.from(new Set(params.keys()))) {
+    const values = params.getAll(key);
+    params.delete(key);
+    for (const entry of values) {
+      params.append(key, shouldRedactKey(key) ? REDACTED : scrubString(entry));
+    }
+  }
+  const scrubbed = params.toString();
+  return hasQuestionMark ? `?${scrubbed}` : scrubbed;
+}
+
+function scrubRequest(request: Record<string, unknown> | undefined): void {
+  if (!request) return;
+  scrubRecord(request.headers, 0);
+  for (const key of ["url", "query_string", "queryString", "query"] as const) {
+    const value = request[key];
+    if (typeof value === "string") request[key] = scrubStringField(key, value);
+    else if (value && typeof value === "object") scrubRecord(value, 0);
+  }
+  for (const key of ["body", "data", "payload", "cookies"] as const) {
+    if (key in request) delete request[key];
+  }
+}
+
+function scrubAllowedContexts(contexts: Record<string, unknown> | undefined): void {
+  if (!contexts) return;
+  for (const key of Object.keys(contexts)) {
+    if (!ALLOWED_CONTEXTS.has(key)) {
+      delete contexts[key];
+      continue;
+    }
+    scrubRecord(contexts[key], 0);
+  }
 }
 
 /** Initialize Sentry from the environment. Returns false (and stays a no-op) when SENTRY_DSN is unset. */
@@ -142,6 +302,7 @@ export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
     tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE ?? "0"),
     serverName: env.PUBLIC_API_ORIGIN,
     beforeSend: (e) => scrubEvent(e),
+    beforeSendTransaction: (e) => scrubEvent(e),
   });
   active = true;
   return true;

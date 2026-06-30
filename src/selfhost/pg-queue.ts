@@ -5,7 +5,7 @@
 import type { Pool } from "pg";
 import { logAudit, extractPayloadType } from "./audit";
 import { incr } from "./metrics";
-import { withOtelSpan } from "./otel";
+import { withReviewSpan } from "./tracing";
 import { captureError } from "./sentry";
 import {
   consumingRetryDelayMs,
@@ -370,7 +370,7 @@ export function createPgQueue(
         return true;
       }
       try {
-        await withOtelSpan(
+        await withReviewSpan(
           "selfhost.queue.job",
           { "job.type": message.type, "queue.backend": "postgres", "job.attempt": Number(job.attempts) + 1 },
           () => consume(message),

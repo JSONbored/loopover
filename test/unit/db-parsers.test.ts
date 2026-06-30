@@ -92,7 +92,7 @@ describe("database row parser hardening", () => {
     );
   });
 
-  it("REGRESSION: adding another linked issue preserves the original shared-issue claim time", async () => {
+  it("REGRESSION: adding another linked issue resets the PR-level claim time", async () => {
     const env = createTestEnv();
 
     vi.useFakeTimers();
@@ -136,7 +136,7 @@ describe("database row parser hardening", () => {
     expect(expanded).toMatchObject({
       title: "Expanded claim",
       linkedIssues: [1, 2],
-      linkedIssueClaimedAt: first?.linkedIssueClaimedAt,
+      linkedIssueClaimedAt: "2026-06-29T10:05:00.000Z",
     });
 
     vi.setSystemTime(new Date("2026-06-29T10:10:00.000Z"));

@@ -378,15 +378,7 @@ function resolveLinkedIssueClaimedAt(
   if (linkedIssues.length === 0) return null;
   if (!existing) return observedLinkedIssueClaimedAt;
   if (existing.linkedIssuesJson === linkedIssuesJson) return existing.linkedIssueClaimedAt ?? observedLinkedIssueClaimedAt;
-  if (existing.linkedIssueClaimedAt && linkedIssuesOverlap(parseJson<number[]>(existing.linkedIssuesJson, []), linkedIssues)) {
-    return existing.linkedIssueClaimedAt;
-  }
   return observedLinkedIssueClaimedAt;
-}
-
-function linkedIssuesOverlap(left: number[], right: number[]): boolean {
-  const rightIssues = new Set(right);
-  return left.some((issue) => rightIssues.has(issue));
 }
 
 export async function upsertIssueFromGitHub(env: Env, repoFullName: string, issue: GitHubIssuePayload, options: { seenOpenAt?: string } = {}): Promise<IssueRecord> {

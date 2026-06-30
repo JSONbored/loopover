@@ -291,6 +291,21 @@ export interface BriefFindings {
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped";
 
+/** Internal, public-safe analyzer diagnostics for Sentry. Never attach request bodies, diffs, tokens, or raw prompts. */
+export interface AnalyzerDiagnostics {
+  phase?: string;
+  subcall?: string;
+  partialStatus?: "complete" | "partial";
+  partialReason?: string;
+  githubEndpointCategory?: string;
+  fileLookupCount?: number;
+  commitLookupCount?: number;
+  prLookupCount?: number;
+  skippedFileCount?: number;
+  capped?: boolean;
+  captureDegradation?: boolean;
+}
+
 /** Service → engine response. `promptSection` is spliced verbatim; `findings` is the structured backing data. */
 export interface ReviewBrief {
   schemaVersion: 1;

@@ -21,6 +21,12 @@ import {
 
 const app = new Hono();
 const sentryEnabled = await initSentry(process.env);
+const TRACEPARENT_RE = /^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$/i;
+
+function traceIdFromTraceparent(value: string | undefined): string | undefined {
+  const match = value?.trim().match(TRACEPARENT_RE);
+  return match?.[1]?.toLowerCase();
+}
 
 if (sentryEnabled) {
   console.log(
@@ -59,7 +65,10 @@ app.post("/v1/enrich", async (c) => {
     return c.json({ error: "bad_request" }, 400);
   }
 
-  const brief = await buildBrief(payload);
+  const brief = await buildBrief(payload, undefined, {
+    requestId: c.req.header("x-gittensory-request-id") ?? c.req.header("x-request-id"),
+    traceId: traceIdFromTraceparent(c.req.header("traceparent")),
+  });
   return c.json(brief);
 });
 

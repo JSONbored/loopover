@@ -205,6 +205,106 @@ test("scanHistory: a thrown GitHub fetch degrades safely", async () => {
   assert.deepEqual(out[0].similarPastPrs, []);
 });
 
+test("scanHistory: stops GitHub fanout when the remaining analyzer budget is exhausted", async () => {
+  let calls = 0;
+  const diagnostics = {};
+  const out = await scanHistory(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      author: "dev",
+      githubToken: "t",
+      files: [{ path: "src/slow.ts", status: "modified" }],
+    },
+    async () => {
+      calls++;
+      return res({});
+    },
+    { now: NOW, deadlineMs: Date.now() - 1, diagnostics },
+  );
+
+  assert.equal(calls, 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].partial, true);
+  assert.deepEqual(out[0].similarPastPrs, []);
+  assert.equal(diagnostics.partialReason, "history_budget_exhausted");
+  assert.equal(diagnostics.captureDegradation, true);
+  assert.equal(diagnostics.fileLookupCount, 0);
+  assert.equal(diagnostics.prLookupCount, 0);
+});
+
+test("scanHistory: aborts slow GitHub subcalls and degrades instead of waiting for the analyzer timeout", async () => {
+  let calls = 0;
+  const diagnostics = {};
+  const slowFetch = async (_url, init = {}) => {
+    calls++;
+    return await new Promise((resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+  };
+
+  const out = await scanHistory(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      author: "dev",
+      githubToken: "t",
+      files: [],
+    },
+    slowFetch,
+    { now: NOW, deadlineMs: Date.now() + 1000, githubSubcallTimeoutMs: 5, diagnostics },
+  );
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0].partial, true);
+  assert.ok(calls >= 1);
+  assert.equal(diagnostics.partialReason, "github_subcall_aborted");
+  assert.equal(diagnostics.captureDegradation, true);
+  assert.equal(diagnostics.githubEndpointCategory, "user");
+});
+
+test("scanHistory: caps file and commit-to-PR fanout and records lookup counts", async () => {
+  let fileCalls = 0;
+  let pullCalls = 0;
+  const diagnostics = {};
+  const shas = Array.from({ length: 10 }, (_, index) => `${index}`.repeat(40).slice(0, 40).replace(/[^0-9]/g, "a"));
+  const fetchImpl = async (url) => {
+    if (String(url).includes("/search/issues")) return res({ total_count: 1 });
+    if (String(url).includes("/users/dev")) return res({ created_at: "2020-01-01T00:00:00Z" });
+    if (String(url).includes("/commits?path=")) {
+      fileCalls++;
+      return res(shas.map((sha, index) => ({ sha, commit: { message: `touch ${index}` } })));
+    }
+    if (String(url).includes("/pulls")) {
+      pullCalls++;
+      return res([{ number: 100 + pullCalls, title: `past ${pullCalls}` }]);
+    }
+    return notOk(404);
+  };
+
+  const out = await scanHistory(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      author: "dev",
+      githubToken: "t",
+      files: Array.from({ length: 7 }, (_, index) => ({ path: `src/file-${index}.ts`, status: "modified" })),
+    },
+    fetchImpl,
+    { now: NOW, deadlineMs: Date.now() + 10_000, diagnostics },
+  );
+
+  assert.equal(fileCalls, 5);
+  assert.equal(pullCalls, 12);
+  assert.equal(out[0].partial, true);
+  assert.equal(out[0].similarPastPrs.length, 8);
+  assert.equal(diagnostics.fileLookupCount, 5);
+  assert.equal(diagnostics.commitLookupCount, 50);
+  assert.equal(diagnostics.prLookupCount, 12);
+  assert.equal(diagnostics.skippedFileCount, 2);
+  assert.equal(diagnostics.capped, true);
+});
+
 test("scanHistory: an unsafe repoFullName is rejected before any fetch", async () => {
   const out = await scanHistory(
     { repoFullName: "o/r/../x", prNumber: 1, author: "dev", githubToken: "t", files: [] },

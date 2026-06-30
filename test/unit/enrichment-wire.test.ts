@@ -4,6 +4,8 @@ import {
   buildReviewEnrichment,
   isReesGithubTokenForwardingEnabled,
   resolveReesAnalyzers,
+  resolveReesAnalyzerBudgetMs,
+  resolveReesTransportTimeoutMs,
 } from "../../src/review/enrichment-wire";
 
 const env = (o: Record<string, string>) => o as unknown as Env;
@@ -94,6 +96,9 @@ describe("buildReviewEnrichment", () => {
     expect(
       (calls[0]!.init.headers as Record<string, string>)["user-agent"],
     ).toBe("gittensory-selfhost/1.0");
+    expect(
+      (calls[0]!.init.headers as Record<string, string>)["x-gittensory-request-id"],
+    ).toMatch(/^[-0-9a-fA-Fa-z]+$/);
     expect((calls[0]!.init.headers as Record<string, string>).accept).toBe(
       "application/json",
     );
@@ -103,6 +108,7 @@ describe("buildReviewEnrichment", () => {
     expect(body.author).toBe("alice");
     expect(body.githubToken).toBe("gh-read-token");
     expect(body.analyzers).toBeUndefined();
+    expect(body.budget).toEqual({ timeoutMs: 11000, maxBriefChars: 8000 });
     expect(body.files).toEqual([
       {
         path: "a.ts",
@@ -118,6 +124,31 @@ describe("buildReviewEnrichment", () => {
       },
       { path: "b.ts", status: undefined, patch: undefined },
     ]);
+  });
+
+  it("sends an analyzer budget below the transport timeout and accepts partial degraded briefs", async () => {
+    let body: { budget?: { timeoutMs?: number; maxBriefChars?: number } } | undefined;
+    globalThis.fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
+      body = JSON.parse(String(init.body ?? "{}")) as {
+        budget?: { timeoutMs?: number; maxBriefChars?: number };
+      };
+      return {
+        ok: true,
+        json: async () => ({
+          promptSection: "  degraded history brief  ",
+          systemSuffix: "suffix",
+          partial: true,
+          analyzerStatus: { history: "degraded" },
+          elapsedMs: 6900,
+        }),
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    const r = await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+
+    expect(body?.budget).toEqual({ timeoutMs: 7000, maxBriefChars: 8000 });
+    expect(r?.promptSection).toBe("degraded history brief");
+    expect(r?.systemSuffix).toContain("REVIEW ENRICHMENT");
   });
 
   it("sends a configured analyzer subset to REES", async () => {
@@ -234,14 +265,18 @@ describe("buildReviewEnrichment", () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
     expect(
-      await buildReviewEnrichment(env({ REES_URL: "https://r" }), input),
+      await buildReviewEnrichment(env({ REES_URL: "https://r" }), {
+        ...input,
+        headSha: null,
+      }),
     ).toBeUndefined();
     // A broken/slow REES backend now surfaces at level:error (central Sentry forwarder) instead of degrading silently.
     expect(
       errSpy.mock.calls.some(
         (c) =>
           String(c[0]).includes("review_context_fetch_failed") &&
-          String(c[0]).includes('"contextType":"enrichment"'),
+          String(c[0]).includes('"contextType":"enrichment"') &&
+          !String(c[0]).includes("headShaPrefix"),
       ),
     ).toBe(true);
     errSpy.mockRestore();
@@ -429,6 +464,36 @@ describe("resolveReesAnalyzers", () => {
     warnSpy.mockRestore();
   });
 
+  it("accepts every REES analyzer currently registered by the service", () => {
+    expect(
+      resolveReesAnalyzers(
+        env({
+          REES_ANALYZERS:
+            "dependency,lockfileDrift,secret,license,installScript,heavyDependency,actionPin,eol,redos,provenance,codeowners,secretLog,assetWeight,typosquat,commitSignature,iacMisconfig,nativeBuild,history",
+        }),
+      ),
+    ).toEqual([
+      "dependency",
+      "lockfileDrift",
+      "secret",
+      "license",
+      "installScript",
+      "heavyDependency",
+      "actionPin",
+      "eol",
+      "redos",
+      "provenance",
+      "codeowners",
+      "secretLog",
+      "assetWeight",
+      "typosquat",
+      "commitSignature",
+      "iacMisconfig",
+      "nativeBuild",
+      "history",
+    ]);
+  });
+
   it("returns an explicit empty list when every configured analyzer name is invalid", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(
@@ -443,5 +508,18 @@ describe("resolveReesAnalyzers", () => {
       ),
     ).toBe(true);
     warnSpy.mockRestore();
+  });
+});
+
+describe("REES timeout budget helpers", () => {
+  it("keeps analyzer execution below the HTTP transport timeout", () => {
+    expect(resolveReesTransportTimeoutMs(undefined)).toBe(8000);
+    expect(resolveReesTransportTimeoutMs("12000")).toBe(12000);
+    expect(resolveReesTransportTimeoutMs("bad")).toBe(8000);
+    expect(resolveReesTransportTimeoutMs("100")).toBe(1000);
+    expect(resolveReesAnalyzerBudgetMs(8000)).toBe(7000);
+    expect(resolveReesAnalyzerBudgetMs(12000)).toBe(11000);
+    expect(resolveReesAnalyzerBudgetMs(1000)).toBe(500);
+    expect(resolveReesAnalyzerBudgetMs(Number.NaN)).toBe(7000);
   });
 });

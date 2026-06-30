@@ -21,6 +21,8 @@ const MAX_SYMBOLS_SEARCHED = 8; // Code Search is rate-limited (~10/min); bound 
 const MAX_DEAD_REPORTED = 10; // cap dead-on-arrival findings (diff-only, no network)
 const MAX_CALLER_FILES = 10; // cap caller files listed per symbol
 const CODE_SEARCH_PER_PAGE = 20;
+const MAX_SEARCH_PAGES = 5; // pages one symbol may walk (≤100 hits) to see past filtered noise on page 1
+const MAX_TOTAL_SEARCH_REQUESTS = 10; // global Code Search request budget per review (respects the ~10/min secondary limit)
 
 const REPO_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const ENTRYPOINT_RE = /(^|\/)index\.[cm]?[jt]sx?$|\.d\.ts$/; // public-API files: skip dead-on-arrival here
@@ -214,7 +216,11 @@ export function isReferencedInDiff(symbol: string, addedLines: string[]): boolea
   return false;
 }
 
-/** Unchanged files (outside `changed`) that reference `symbol` on the default branch, or null on error/non-OK. */
+/** Unchanged CODE files (outside `changed`) whose matched fragment uses `symbol` as a real reference. Walks Code
+ *  Search pages until MAX_CALLER_FILES confirmed callers are found, GitHub reports no more items, the per-symbol page
+ *  cap is hit, or the shared request `budget` is spent — because page 1 can be filled with filtered-out noise (changed
+ *  files, comments, docs) while a real caller sits on a later page. Returns null on a non-OK reply / network error
+ *  (drops this symbol only). A hit with no `text_matches` can't be confirmed, so it is conservatively NOT counted. */
 async function searchExternalCallers(
   symbol: string,
   owner: string,
@@ -222,40 +228,51 @@ async function searchExternalCallers(
   changed: Set<string>,
   token: string,
   fetchImpl: typeof fetch,
+  budget: { remaining: number },
   signal?: AbortSignal,
 ): Promise<string[] | null> {
-  try {
-    const query = `"${symbol}" repo:${owner}/${repo}`;
-    const url = `${GITHUB_API}/search/code?q=${encodeURIComponent(query)}&per_page=${CODE_SEARCH_PER_PAGE}`;
-    // text-match media type returns the matched fragments, so a hit can be confirmed as a real reference rather than
-    // a doc/comment/string mention (Code Search itself is a plain text search).
-    const res = await fetchImpl(url, {
-      headers: { ...githubHeaders(token), Accept: "application/vnd.github.text-match+json" },
-      signal,
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as {
+  const files = new Set<string>();
+  const query = `"${symbol}" repo:${owner}/${repo}`;
+  for (let page = 1; page <= MAX_SEARCH_PAGES && budget.remaining > 0; page++) {
+    budget.remaining--;
+    let json: {
+      total_count?: number;
       items?: Array<{ path?: string; text_matches?: Array<{ fragment?: string }> }>;
     };
-    const files = new Set<string>();
-    for (const item of json.items ?? []) {
+    try {
+      const url = `${GITHUB_API}/search/code?q=${encodeURIComponent(query)}&per_page=${CODE_SEARCH_PER_PAGE}&page=${page}`;
+      // text-match media type returns the matched fragments, so a hit can be confirmed as a real reference rather
+      // than a doc/comment/string mention (Code Search itself is a plain text search).
+      const res = await fetchImpl(url, {
+        headers: { ...githubHeaders(token), Accept: "application/vnd.github.text-match+json" },
+        signal,
+      });
+      if (!res.ok) return null;
+      json = (await res.json()) as typeof json;
+    } catch {
+      return null;
+    }
+    const items = json.items ?? [];
+    for (const item of items) {
       const path = item.path;
-      // A caller must be an UNCHANGED CODE file whose matched fragment uses the symbol as a real reference.
       if (typeof path !== "string" || changed.has(path) || !CODE_FILE_RE.test(path)) {
         continue;
       }
       if ((item.text_matches ?? []).some((m) => referencesSymbol(m.fragment ?? "", symbol))) {
         files.add(path);
+        if (files.size >= MAX_CALLER_FILES) return [...files];
       }
     }
-    return [...files].slice(0, MAX_CALLER_FILES);
-  } catch {
-    return null;
+    // No more results to page through: a short page, or we've covered the reported total.
+    if (items.length < CODE_SEARCH_PER_PAGE) break;
+    if (typeof json.total_count === "number" && page * CODE_SEARCH_PER_PAGE >= json.total_count) break;
   }
+  return [...files].slice(0, MAX_CALLER_FILES);
 }
 
 /** Analyzer entrypoint. Flags removed/renamed/changed exports that still have external callers, plus dead-on-arrival
- *  new exports. Fail-safe: returns [] without a token or changed exports; a failed search drops that symbol only. */
+ *  new exports. The Code-Search caller path needs a token (skipped without one); the diff-only dead-on-arrival path
+ *  runs regardless. Fail-safe: returns [] without a repo or changed exports; a failed search drops that symbol only. */
 export async function scanCallerImpact(
   req: EnrichRequest,
   fetchImpl: typeof fetch = fetch,
@@ -280,14 +297,17 @@ export async function scanCallerImpact(
   // Removed / renamed / signature-changed exports → callers in unchanged files. Needs the token for Code Search;
   // skipped without one. Bounded by the Code Search rate budget.
   if (token) {
+    // Shared Code Search request budget across all symbols (each may walk several pages), so a common symbol can't
+    // exhaust the rate budget for the rest.
+    const searchBudget = { remaining: MAX_TOTAL_SEARCH_REQUESTS };
     let searched = 0;
     for (const [symbol, removedText] of removed) {
-      if (searched >= MAX_SYMBOLS_SEARCHED) break;
+      if (searched >= MAX_SYMBOLS_SEARCHED || searchBudget.remaining <= 0) break;
       const addedText = added.get(symbol);
       // Present on both sides with an IDENTICAL declaration ⇒ moved/reformatted, not a real change ⇒ skip.
       if (addedText !== undefined && addedText === removedText) continue;
       searched++;
-      const callerFiles = await searchExternalCallers(symbol, repo.owner, repo.repo, changed, token, fetchImpl, options.signal);
+      const callerFiles = await searchExternalCallers(symbol, repo.owner, repo.repo, changed, token, fetchImpl, searchBudget, options.signal);
       if (!callerFiles || callerFiles.length === 0) continue;
       findings.push({
         symbol,

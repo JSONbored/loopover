@@ -252,6 +252,39 @@ test("scanCallerImpact: a rate-limited Code Search drops that symbol without thr
   assert.deepEqual(out, []);
 });
 
+test("scanCallerImpact: pages past a noisy first page to find a real caller on page 2", async () => {
+  // Page 1 is a FULL page of non-callers (the changed file, a comment-only hit, and markdown docs); the real
+  // unchanged caller is only on page 2, so the analyzer must paginate to find it.
+  const page1 = [
+    { path: "src/lib.ts", text_matches: [{ fragment: "export function foo() {}" }] }, // changed file → excluded
+    { path: "src/note.ts", text_matches: [{ fragment: "// foo is nice" }] }, // comment-only → not a reference
+    { path: "docs/x.md", text_matches: [{ fragment: "the foo helper" }] }, // markdown → excluded
+  ];
+  while (page1.length < 20) page1.push({ path: "docs/pad.md", text_matches: [{ fragment: "foo" }] });
+  const fetchImpl = async (url) => {
+    if (url.includes("&page=1")) return res({ total_count: 21, items: page1 });
+    if (url.includes("&page=2")) {
+      return res({
+        total_count: 21,
+        items: [{ path: "src/real-caller.ts", text_matches: [{ fragment: "import { foo } from './lib';\nfoo();" }] }],
+      });
+    }
+    return res({ items: [] });
+  };
+  const out = await scanCallerImpact(
+    {
+      repoFullName: "o/r",
+      prNumber: 1,
+      githubToken: "t",
+      files: [{ path: "src/lib.ts", patch: "@@ -1,1 +0,0 @@\n-export function foo(): void;" }],
+    },
+    fetchImpl,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, "removed-with-callers");
+  assert.deepEqual(out[0].callerFiles, ["src/real-caller.ts"]);
+});
+
 test("scanCallerImpact: an unsafe repoFullName is rejected before any fetch", async () => {
   const out = await scanCallerImpact(
     { repoFullName: "o/r/../x", prNumber: 1, githubToken: "t", files: [{ path: "a.ts", patch: "@@ @@\n-export const z = 1;" }] },

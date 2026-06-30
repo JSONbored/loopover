@@ -86,6 +86,77 @@ const SELFHOST_STATIC_ROUTES = new Set([
   "/v1/orb/webhook",
 ]);
 
+const GITHUB_WEBHOOK_EVENTS = new Set([
+  "branch_protection_configuration",
+  "branch_protection_rule",
+  "check_run",
+  "check_suite",
+  "code_scanning_alert",
+  "commit_comment",
+  "create",
+  "delete",
+  "dependabot_alert",
+  "deploy_key",
+  "deployment",
+  "deployment_protection_rule",
+  "deployment_review",
+  "deployment_status",
+  "discussion",
+  "discussion_comment",
+  "fork",
+  "github_app_authorization",
+  "gollum",
+  "installation",
+  "installation_repositories",
+  "installation_target",
+  "issue_comment",
+  "issues",
+  "label",
+  "marketplace_purchase",
+  "member",
+  "membership",
+  "merge_group",
+  "meta",
+  "milestone",
+  "org_block",
+  "organization",
+  "package",
+  "page_build",
+  "personal_access_token_request",
+  "ping",
+  "project",
+  "project_card",
+  "project_column",
+  "projects_v2_item",
+  "public",
+  "pull_request",
+  "pull_request_review",
+  "pull_request_review_comment",
+  "pull_request_review_thread",
+  "push",
+  "registry_package",
+  "release",
+  "repository",
+  "repository_advisory",
+  "repository_dispatch",
+  "repository_import",
+  "repository_ruleset",
+  "repository_vulnerability_alert",
+  "secret_scanning_alert",
+  "secret_scanning_alert_location",
+  "security_advisory",
+  "security_and_analysis",
+  "sponsorship",
+  "star",
+  "status",
+  "team",
+  "team_add",
+  "watch",
+  "workflow_dispatch",
+  "workflow_job",
+  "workflow_run",
+]);
+
 function selfHostHttpRoute(path: string): string {
   if (SELFHOST_STATIC_ROUTES.has(path)) return path;
   if (path.startsWith("/v1/internal/")) return "/v1/internal/*";
@@ -99,7 +170,7 @@ export function selfHostHttpRequestAttributes(request: Request, path = new URL(r
     "http.route": route,
   };
   const eventName = request.headers.get("x-github-event")?.trim();
-  if (eventName && (route === "/v1/github/webhook" || route === "/v1/orb/relay" || route === "/v1/orb/webhook"))
+  if (eventName && GITHUB_WEBHOOK_EVENTS.has(eventName) && (route === "/v1/github/webhook" || route === "/v1/orb/relay" || route === "/v1/orb/webhook"))
     attrs["github.webhook.event"] = eventName;
   if (route === "/v1/github/webhook") attrs["selfhost.webhook.transport"] = "github";
   else if (route === "/v1/orb/relay") attrs["selfhost.webhook.transport"] = "orb-relay";

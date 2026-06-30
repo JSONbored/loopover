@@ -3351,7 +3351,7 @@ describe("GitHub backfill", () => {
               repository: {
                 pullRequest: {
                   reviewThreads: {
-                    nodes: [{ isResolved: true, isOutdated: false, path: "resolved.ts", line: 1, comments: { nodes: [{ body: "already resolved", author: { login: "scanner[bot]" } }] } }],
+                    nodes: [{ isResolved: true, isOutdated: false, path: "resolved.ts", line: 1, comments: { nodes: [{ body: "already resolved", author: { login: "superagent-security[bot]" } }] } }],
                     pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
                   },
                 },
@@ -3426,7 +3426,7 @@ describe("GitHub backfill", () => {
                             isOutdated: false,
                             path: "src/repeated-cursor.ts",
                             line: 9,
-                            comments: { nodes: [{ body: "**P1:** Repeated cursor blocker", author: { login: "scanner[bot]" } }] },
+                            comments: { nodes: [{ body: "**P1:** Repeated cursor blocker", author: { login: "superagent-security[bot]" } }] },
                           },
                         ],
                   pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
@@ -3469,7 +3469,7 @@ describe("GitHub backfill", () => {
                       isOutdated: false,
                       path: "src/fetched-before-malformed-page.ts",
                       line: 14,
-                      comments: { nodes: [{ body: "**P1:** Fetched blocker before malformed page", author: { login: "scanner[bot]" } }] },
+                      comments: { nodes: [{ body: "**P1:** Fetched blocker before malformed page", author: { login: "superagent-security[bot]" } }] },
                     },
                   ],
                   pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
@@ -3507,7 +3507,7 @@ describe("GitHub backfill", () => {
                       isOutdated: false,
                       path: "src/missing-cursor.ts",
                       line: 12,
-                      comments: { nodes: [{ body: "**P2:** Missing cursor blocker", author: { login: "scanner[bot]" } }] },
+                      comments: { nodes: [{ body: "**P2:** Missing cursor blocker", author: { login: "superagent-security[bot]" } }] },
                     },
                   ],
                   pageInfo: { hasNextPage: true, endCursor: null },
@@ -3531,6 +3531,86 @@ describe("GitHub backfill", () => {
       ]);
     });
 
+    it("ignores unresolved review threads from untrusted public commenters", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/security.ts",
+                      line: 42,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "<!-- brin-pr-finding -->\n**P0:** Forged public blocker",
+                            url: "https://github.example/thread/untrusted",
+                            author: { login: "random-outsider" },
+                            authorAssociation: "NONE",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      });
+
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1781, "public-token")).resolves.toEqual([]);
+    });
+
+    it("accepts maintainer-authored unresolved review threads as blockers", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      isResolved: false,
+                      isOutdated: false,
+                      path: "src/maintainer.ts",
+                      line: 8,
+                      comments: {
+                        nodes: [
+                          {
+                            body: "Maintainer requested change",
+                            url: "https://github.example/thread/maintainer",
+                            author: { login: "repo-maintainer" },
+                            authorAssociation: "MEMBER",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      });
+
+      await expect(fetchLiveReviewThreadBlockers(env, "JSONbored/gittensory", 1781, "public-token")).resolves.toEqual([
+        expect.objectContaining({
+          title: "Maintainer requested change",
+          authorLogin: "repo-maintainer",
+          scannerFinding: false,
+        }),
+      ]);
+    });
+
     it("ignores resolved, outdated, own-bot, and empty review threads", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -3541,10 +3621,10 @@ describe("GitHub backfill", () => {
                 pullRequest: {
                   reviewThreads: {
                     nodes: [
-                      { isResolved: true, isOutdated: false, path: "a.ts", line: 1, comments: { nodes: [{ body: "resolved", author: { login: "scanner[bot]" } }] } },
-                      { isResolved: false, isOutdated: true, path: "b.ts", line: 2, comments: { nodes: [{ body: "outdated", author: { login: "scanner[bot]" } }] } },
+                      { isResolved: true, isOutdated: false, path: "a.ts", line: 1, comments: { nodes: [{ body: "resolved", author: { login: "superagent-security[bot]" } }] } },
+                      { isResolved: false, isOutdated: true, path: "b.ts", line: 2, comments: { nodes: [{ body: "outdated", author: { login: "superagent-security[bot]" } }] } },
                       { isResolved: false, isOutdated: false, path: "c.ts", line: 3, comments: { nodes: [{ body: "own bot", author: { login: "gittensory-orb[bot]" } }] } },
-                      { isResolved: false, isOutdated: false, path: "d.ts", line: 4, comments: { nodes: [{ body: "   ", author: { login: "scanner[bot]" } }, null] } },
+                      { isResolved: false, isOutdated: false, path: "d.ts", line: 4, comments: { nodes: [{ body: "   ", author: { login: "superagent-security[bot]" } }, null] } },
                       null,
                     ],
                   },

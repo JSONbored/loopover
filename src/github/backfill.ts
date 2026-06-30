@@ -2233,6 +2233,7 @@ type GitHubReviewThreadNode = {
       body?: string | null;
       url?: string | null;
       author?: { login?: string | null } | null;
+      authorAssociation?: string | null;
     } | null> | null;
   } | null;
 };
@@ -2257,7 +2258,8 @@ type GitHubReviewThreadResponse = {
 
 /** Fetch unresolved GitHub review threads that should block merge readiness. GraphQL is required because REST
  *  review comments do not expose thread resolution; if GraphQL is unavailable this fails open to [] rather than
- *  guessing. Own gittensory-authored inline-comment threads are ignored so the bot never blocks on itself. */
+ *  guessing. Only maintainer/collaborator comments or known scanner-bot comments can create blockers, so
+ *  public review comments from untrusted actors cannot influence merge/close state. */
 export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<ReviewThreadBlocker[]> {
   if (!token) return [];
   const [owner, name] = repoFullName.split("/");
@@ -2281,6 +2283,7 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
                   body
                   url
                   author { login }
+                  authorAssociation
                 }
               }
             }
@@ -2316,11 +2319,12 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
                 body: comment.body,
                 url: comment.url,
                 authorLogin: comment.author?.login,
+                authorAssociation: comment.authorAssociation,
               },
             ]
           : [],
       )
-      .filter((comment) => !isOwnReviewThreadAuthor(comment.authorLogin));
+      .filter((comment) => isAuthorizedReviewThreadAuthor(comment.authorLogin, comment.authorAssociation));
     const blocker = buildReviewThreadBlocker({
       path: thread.path,
       line: thread.line,
@@ -2329,6 +2333,19 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
     if (blocker) blockers.push(blocker);
   }
   return blockers;
+}
+
+function isAuthorizedReviewThreadAuthor(login: string | null | undefined, association: string | null | undefined): boolean {
+  if (isOwnReviewThreadAuthor(login)) return false;
+  return isMaintainerReviewThreadAuthor(association) || isTrustedScannerReviewThreadAuthor(login);
+}
+
+function isMaintainerReviewThreadAuthor(association: string | null | undefined): boolean {
+  return association === "OWNER" || association === "MEMBER" || association === "COLLABORATOR";
+}
+
+function isTrustedScannerReviewThreadAuthor(login: string | null | undefined): boolean {
+  return /^(?:superagent|brin)(?:[-\w]*)?\[bot\]$/i.test(login ?? "");
 }
 
 function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {

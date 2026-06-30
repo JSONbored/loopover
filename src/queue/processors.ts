@@ -3825,6 +3825,7 @@ export async function runAiReviewForAdvisory(
             headSha: args.advisory.headSha,
             baseSha: args.pr.baseSha ?? null,
             title: args.pr.title,
+            body: args.pr.body ?? undefined,
             author: args.author,
             githubToken: isReesGithubTokenForwardingEnabled(env)
               ? await resolveReviewEnrichmentGithubToken(

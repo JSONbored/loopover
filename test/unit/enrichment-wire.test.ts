@@ -83,6 +83,7 @@ describe("buildReviewEnrichment", () => {
       {
         ...input,
         baseSha: "baseabc",
+        body: "Fixes #12",
         author: "alice",
         githubToken: "gh-read-token",
       },
@@ -106,6 +107,7 @@ describe("buildReviewEnrichment", () => {
     const body = JSON.parse(calls[0]!.init.body as string);
     expect(body.repoFullName).toBe("o/r");
     expect(body.baseSha).toBe("baseabc");
+    expect(body.body).toBe("Fixes #12");
     expect(body.author).toBe("alice");
     expect(body.githubToken).toBe("gh-read-token");
     expect(body.analyzers).toBeUndefined();

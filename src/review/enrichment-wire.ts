@@ -135,13 +135,21 @@ function headShaPrefix(headSha: string | null | undefined): string | undefined {
   return text ? text.slice(0, 12) : undefined;
 }
 
+export interface EnrichmentLinkedIssue {
+  number: number;
+  title?: string;
+  body?: string;
+}
+
 interface EnrichmentInput {
   repoFullName: string;
   prNumber: number;
   headSha: string | null;
   baseSha?: string | null;
   title?: string | undefined;
+  body?: string | undefined;
   author?: string | null | undefined;
+  linkedIssue?: EnrichmentLinkedIssue | undefined;
   githubToken?: string | undefined;
   files: PullRequestFileRecord[];
   diff: string;
@@ -232,7 +240,9 @@ export async function buildReviewEnrichment(
         headSha: input.headSha,
         baseSha: input.baseSha ?? null,
         title: input.title,
+        ...(input.body ? { body: input.body } : {}),
         author: input.author ?? undefined,
+        ...(input.linkedIssue ? { linkedIssue: input.linkedIssue } : {}),
         ...(input.githubToken ? { githubToken: input.githubToken } : {}),
         files: input.files.map((file) => ({
           path: file.path,

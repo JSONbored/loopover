@@ -260,7 +260,7 @@ describe("self-host queue common helpers", () => {
           segment: "labels",
           mode: "resume",
           force: true,
-          cursor: "page-2",
+          cursor: "  page-2  ",
         }),
       ),
     ).toBe("backfill-repo-segment:jsonbored/gittensory:labels:resume:1:page-2");
@@ -303,7 +303,27 @@ describe("self-host queue common helpers", () => {
           paths: ["README.md", "src/a.ts", "README.md"],
         }),
       ),
-    ).toBe("rag-index-repo:jsonbored/gittensory:README.md,src/a.ts");
+    ).toBe('rag-index-repo:jsonbored/gittensory:["README.md","src/a.ts"]');
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/Gittensory",
+          paths: ["a,b", "c"],
+        }),
+      ),
+    ).toBe('rag-index-repo:jsonbored/gittensory:["a,b","c"]');
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "schedule",
+          repoFullName: "JSONbored/Gittensory",
+          paths: ["a", "b,c"],
+        }),
+      ),
+    ).toBe('rag-index-repo:jsonbored/gittensory:["a","b,c"]');
     expect(jobCoalesceKey(payload({ type: "prune-retention", requestedBy: "schedule", dryRun: true }))).toBe(
       "prune-retention:1",
     );

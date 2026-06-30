@@ -387,8 +387,8 @@ describe("createSqliteQueue (durable #980)", () => {
       "backfill-registered-repos:jsonbored/gittensory:light:1",
       "generate-weekly-value-report:operator:7",
       "generate-weekly-value-report:public:7",
-      "rag-index-repo:jsonbored/gittensory:src/a.ts,src/b.ts",
-      "rag-index-repo:jsonbored/gittensory:src/c.ts",
+      'rag-index-repo:jsonbored/gittensory:["src/a.ts","src/b.ts"]',
+      'rag-index-repo:jsonbored/gittensory:["src/c.ts"]',
     ]);
     expect(rows.map((row) => JSON.parse(row.payload).requestedBy)).toEqual([
       "api",

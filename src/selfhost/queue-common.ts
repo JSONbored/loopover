@@ -402,8 +402,14 @@ function normalizedDate(value: unknown): string | null {
 
 function normalizedPathScope(value: unknown): string | null {
   if (!Array.isArray(value)) return null;
-  const paths = [...new Set(value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim()))].sort();
-  return paths.length > 0 ? paths.join(",") : null;
+  const paths = [
+    ...new Set(
+      value
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim()),
+    ),
+  ].sort();
+  return paths.length > 0 ? JSON.stringify(paths) : null;
 }
 
 function boolFlag(value: unknown): string {

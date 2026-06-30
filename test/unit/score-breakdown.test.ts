@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildScorePreview } from "../../src/scoring/preview";
 import { explainScoreBreakdown } from "../../src/services/score-breakdown";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
+import type { LinkedIssueMultiplierContext } from "../../src/scoring/preview";
 
 const FORBIDDEN = /\b(wallet|hotkey|coldkey|mnemonic|farming|payout|raw[-_\s]?trust)\b/i;
 
@@ -117,6 +118,30 @@ describe("explainScoreBreakdown", () => {
     );
     expect(blocked.components.find((entry) => entry.component === "mergedHistoryMultiplier")).toMatchObject({ band: "blocked", leverageScore: 100 });
     expect(blocked.highestLeverageLever.lever).toMatch(/merge/i);
+    expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
+  });
+
+  it("explains the issue-discovery validity floor as neutral (unobserved), full (meets floors), and blocked (below floors)", () => {
+    const standardContext: LinkedIssueMultiplierContext = { status: "raw", source: "github_cache", issueNumbers: [12] };
+
+    // Unobserved evidence -> floors not enforced -> neutral.
+    const unobserved = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "standard", linkedIssueContext: standardContext } }),
+    );
+    expect(unobserved.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({ band: "neutral" });
+
+    // Observed + both floors met -> full.
+    const meets = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "standard", linkedIssueContext: standardContext, validSolvedIssues: 5, issueCredibility: 0.95 } }),
+    );
+    expect(meets.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({ band: "full" });
+
+    // Observed + below floors -> blocked, and the issue-discovery lever surfaces as highest-leverage.
+    const blocked = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "standard", linkedIssueContext: standardContext, validSolvedIssues: 1, issueCredibility: 0.5 } }),
+    );
+    expect(blocked.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({ band: "blocked", leverageScore: 100 });
+    expect(blocked.highestLeverageLever.lever).toMatch(/issue/i);
     expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
   });
 

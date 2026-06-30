@@ -131,6 +131,45 @@ function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
   };
 }
 
+// Sibling of mergedHistoryBreakdown for the issue-discovery validity floor (upstream MIN_VALID_SOLVED_ISSUES +
+// MIN_ISSUE_CREDIBILITY): a contributor whose observed valid solved-issue count or issue credibility is below
+// the upstream floors has the entire issue-discovery preview zeroed. Explained here so a miner in the
+// issue-discovery lane sees the same actionable breakdown the merged-PR history floor already provides.
+function issueDiscoveryHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { issueDiscoveryHistoryMultiplier } = preview.scoreEstimate;
+  const {
+    validSolvedIssuesFloor,
+    issueCredibilityFloor,
+    validSolvedIssues,
+    issueCredibility,
+  } = preview.gates;
+  // Either evidence dimension unobserved => the floor is not enforced for this preview => neutral (mirrors
+  // preview.ts:410 issueDiscoveryHistoryKnown).
+  if (validSolvedIssues === undefined || issueCredibility === undefined) {
+    return {
+      component: "issueDiscoveryHistoryMultiplier",
+      band: "neutral",
+      summary: `Issue-discovery validity floor is not enforced for this preview (no solved-issue evidence observed; upstream floors are ${validSolvedIssuesFloor} valid solved / ${issueCredibilityFloor.toFixed(2)} credibility).`,
+      lever: "No action needed for this preview; the upstream issue-discovery floors apply once solved-issue evidence is observed.",
+      leverageScore: 0,
+    };
+  }
+  const meetsFloor =
+    validSolvedIssues >= validSolvedIssuesFloor && issueCredibility >= issueCredibilityFloor;
+  const band = bandForMultiplier(issueDiscoveryHistoryMultiplier);
+  return {
+    component: "issueDiscoveryHistoryMultiplier",
+    band,
+    summary: meetsFloor
+      ? `Solved-issue evidence (${validSolvedIssues} valid solved, ${issueCredibility.toFixed(2)} credibility) meets the upstream floors (${validSolvedIssuesFloor} / ${issueCredibilityFloor.toFixed(2)}).`
+      : `Solved-issue evidence (${validSolvedIssues} valid solved, ${issueCredibility.toFixed(2)} credibility) is below the upstream floors (${validSolvedIssuesFloor} valid solved, ${issueCredibilityFloor.toFixed(2)} credibility), so this issue-discovery preview is zeroed.`,
+    lever: meetsFloor
+      ? "Keep resolving valid open issues with solved-by-PR evidence to maintain issue-discovery eligibility."
+      : "Land more solved-by-PR-validated issues and grow issue credibility to clear the upstream floors before relying on this preview.",
+    leverageScore: meetsFloor ? 5 : 100,
+  };
+}
+
 function credibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { credibilityMultiplier } = preview.scoreEstimate;
   const { credibilityObserved, credibilityFloor } = preview.gates;
@@ -272,6 +311,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     openPrBreakdown(preview),
     openIssueBreakdown(preview),
     mergedHistoryBreakdown(preview),
+    issueDiscoveryHistoryBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

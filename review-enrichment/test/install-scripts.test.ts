@@ -46,3 +46,18 @@ test("scanInstallScripts still accepts legacy packument-shaped test fixtures", a
   assert.deepEqual(findings[0].hooks, ["preinstall"]);
   assert.equal(findings[0].publishedAt, "2026-06-29T00:00:00.000Z");
 });
+
+test("scanInstallScripts uses exact version metadata when custom versions field is present", async () => {
+  const findings = await scanInstallScripts(npmAdd("malicious"), async () =>
+    jsonResponse({
+      scripts: { postinstall: "node ./postinstall.js" },
+      time: "2026-06-30T00:00:00.000Z",
+      versions: { "1.0.0": {} },
+    }),
+  );
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "malicious");
+  assert.deepEqual(findings[0].hooks, ["postinstall"]);
+  assert.equal(findings[0].publishedAt, "2026-06-30T00:00:00.000Z");
+});

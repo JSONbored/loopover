@@ -57,11 +57,17 @@ interface NpmPackumentMeta {
   versions?: Record<string, NpmVersionMeta>;
 }
 
+function hasNpmVersionMeta(
+  data: NpmVersionMeta | NpmPackumentMeta,
+): data is NpmVersionMeta {
+  return "gypfile" in data || "binary" in data || "scripts" in data;
+}
+
 function isNpmPackumentMeta(
   data: NpmVersionMeta | NpmPackumentMeta,
 ): data is NpmPackumentMeta {
   const versions = (data as NpmPackumentMeta).versions;
-  return Boolean(versions && typeof versions === "object");
+  return Boolean(versions && typeof versions === "object" && !hasNpmVersionMeta(data));
 }
 
 function npmVersionMeta(
@@ -69,6 +75,7 @@ function npmVersionMeta(
   version: string,
 ): NpmVersionMeta | undefined {
   if (!data) return undefined;
+  if (hasNpmVersionMeta(data)) return data;
   return isNpmPackumentMeta(data) ? data.versions?.[version] : data;
 }
 

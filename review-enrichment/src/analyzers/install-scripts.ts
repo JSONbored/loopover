@@ -39,13 +39,28 @@ interface NpmPackumentMetadata {
 function isPackumentMetadata(
   data: NpmVersionMetadata | NpmPackumentMetadata,
 ): data is NpmPackumentMetadata {
-  return "versions" in data;
+  return Boolean(
+    "versions" in data &&
+      data.versions &&
+      typeof data.versions === "object" &&
+      !hasVersionMetadata(data),
+  );
+}
+
+function hasVersionMetadata(
+  data: NpmVersionMetadata | NpmPackumentMetadata,
+): data is NpmVersionMetadata {
+  return Boolean(
+    "scripts" in data ||
+      ("time" in data && (typeof data.time === "string" || data.time === undefined)),
+  );
 }
 
 function versionMetadata(
   data: NpmVersionMetadata | NpmPackumentMetadata,
   version: string,
 ): NpmVersionMetadata | undefined {
+  if (hasVersionMetadata(data)) return data;
   return isPackumentMetadata(data) ? data.versions?.[version] : data;
 }
 
@@ -53,8 +68,8 @@ function publishedAt(
   data: NpmVersionMetadata | NpmPackumentMetadata,
   version: string,
 ): string | null {
-  if (isPackumentMetadata(data)) return data.time?.[version] ?? null;
-  return data.time ?? null;
+  if (hasVersionMetadata(data)) return data.time ?? null;
+  return isPackumentMetadata(data) ? data.time?.[version] ?? null : null;
 }
 
 function isSafeNpmChange(name: string, version: string): boolean {

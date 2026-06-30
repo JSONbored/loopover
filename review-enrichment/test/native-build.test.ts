@@ -79,6 +79,19 @@ test("scanNativeBuild fetches exact npm version metadata, not the full packument
   assert.equal(findings[0].package, "bcrypt");
 });
 
+test("scanNativeBuild uses exact version metadata when custom versions field is present", async () => {
+  const findings = await scanNativeBuild(npmAdd("malicious"), async () =>
+    jsonResponse({
+      gypfile: true,
+      versions: { "1.0.0": {} },
+    }),
+  );
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "malicious");
+  assert.equal(findings[0].kind, "native-addon");
+});
+
 test("scanNativeBuild: a pure-JS npm dependency is not flagged", async () => {
   assert.deepEqual(await scanNativeBuild(npmAdd("lodash"), npmFetch({ scripts: { build: "tsc" } })), []);
 });

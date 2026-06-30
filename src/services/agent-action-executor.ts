@@ -3,7 +3,7 @@ import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
-import { fetchPullRequestFreshness, pullRequestFreshnessDetail, type PullRequestFreshness } from "../github/pr-freshness";
+import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
@@ -61,19 +61,6 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
   // globalPaused folds the env-var brake AND the DB-backed kill-switch (#audit-§5.2) so an operator can halt the
   // fleet instantly via one DB row, without a redeploy.
   const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
-  const freshnessByHead = new Map<string, Promise<PullRequestFreshness>>();
-  const freshnessFor = (expectedHeadSha: string): Promise<PullRequestFreshness> => {
-    const existing = freshnessByHead.get(expectedHeadSha);
-    if (existing) return existing;
-    const freshness = fetchPullRequestFreshness(env, {
-      installationId: ctx.installationId,
-      repoFullName: ctx.repoFullName,
-      pullNumber: ctx.pullNumber,
-      expectedHeadSha,
-    });
-    freshnessByHead.set(expectedHeadSha, freshness);
-    return freshness;
-  };
 
   for (const action of planned) {
     const autonomyLevel = resolveAutonomy(ctx.autonomy, action.actionClass);
@@ -117,7 +104,12 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("denied", "live PR head guard unavailable — action not executed");
       continue;
     }
-    const freshness = await freshnessFor(expectedHeadSha);
+    const freshness = await fetchPullRequestFreshness(env, {
+      installationId: ctx.installationId,
+      repoFullName: ctx.repoFullName,
+      pullNumber: ctx.pullNumber,
+      expectedHeadSha,
+    });
     if (freshness.status !== "current") {
       await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
       continue;

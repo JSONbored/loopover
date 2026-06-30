@@ -84,7 +84,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "closing");
     expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
     expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
-    expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(1);
+    expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(6);
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
   });
 
@@ -243,6 +243,33 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(outcomes.find((outcome) => outcome.actionClass === "update_branch")?.detail).toContain("PR head changed from sha7 to newsha");
     const audit = await auditFor(env, "merge");
     expect(audit?.outcome).toBe("denied");
+  });
+
+  it("LIVE: rechecks freshness after update_branch before later PR-visible actions", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness)
+      .mockResolvedValueOnce({
+        status: "current",
+        liveHeadSha: "sha7",
+        liveState: "open",
+      })
+      .mockResolvedValueOnce({
+        status: "stale",
+        reason: "head_changed",
+        expectedHeadSha: "sha7",
+        liveHeadSha: "sha8",
+        liveState: "open",
+      });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [updateBranch, approve]);
+
+    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["completed", "denied"]);
+    expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+    expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(2);
+    expect(fetchPullRequestFreshness).toHaveBeenNthCalledWith(1, env, expect.objectContaining({ expectedHeadSha: "sha7" }));
+    expect(fetchPullRequestFreshness).toHaveBeenNthCalledWith(2, env, expect.objectContaining({ expectedHeadSha: "sha7" }));
+    expect(outcomes[1]?.detail).toContain("PR head changed from sha7 to sha8");
   });
 
   it("LIVE: denies mutations when the PR is already closed", async () => {

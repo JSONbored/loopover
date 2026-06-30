@@ -2520,6 +2520,73 @@ describe("queue processors", () => {
     }
   });
 
+  it("suppresses public review output for no-head reviews when the live PR is closed", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "off",
+      aiReviewMode: "off",
+    });
+    let commentPosts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/61/files")) return Response.json([{ filename: "src/no-head.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const noHead = true;" }]);
+      if (url.includes("/issues/61/comments") && method === "POST") {
+        commentPosts += 1;
+        return Response.json({ id: 1 }, { status: 201 });
+      }
+      if (url.includes("/issues/61/comments") && method === "GET") return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValue(classifyPullRequestFreshness({ state: "closed", head: {} }, null));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "no-head-closed-before-public-output",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 61, title: "No head before publish", state: "open", user: { login: "contributor" }, head: {}, labels: [], body: "Fixes #1" },
+      },
+    });
+
+    expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ expectedHeadSha: null }));
+    expect(commentPosts).toBe(0);
+    const stale = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_review_stale")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(stale?.detail).toContain("PR is no longer open");
+    expect(JSON.parse(stale?.metadata_json ?? "{}")).toMatchObject({
+      phase: "pre_public_output",
+      reason: "closed",
+      expectedHeadSha: null,
+      liveHeadSha: null,
+      liveState: "closed",
+    });
+    const published = await env.DB.prepare("select event_type from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_published")
+      .all();
+    expect(published.results).toEqual([]);
+  });
+
   it("still suppresses stale public output when the stale audit write fails", async () => {
     const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
     let staleAuditWrites = 0;

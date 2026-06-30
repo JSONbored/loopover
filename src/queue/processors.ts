@@ -4722,23 +4722,16 @@ async function maybePublishPrPublicSurface(
   let aiReviewExpected = false;
   let gateFinalized = false;
   const reviewedHeadSha = reviewedPullRequestHeadSha(pr.headSha, advisory.headSha);
-  const currentFreshness: PullRequestFreshness = {
-    status: "current",
-    liveHeadSha: null,
-    liveState: null,
-  };
   const freshnessForReviewOutput = (phase: string): Promise<PullRequestFreshness> =>
-    reviewedHeadSha && (gateEnabled || prelimHasPublicOutput)
-      ? reviewTargetFreshness(env, {
-          installationId,
-          repoFullName,
-          pullNumber: pr.number,
-          expectedHeadSha: reviewedHeadSha,
-          deliveryId: webhook.deliveryId,
-          phase,
-          actor: author,
-        })
-      : Promise.resolve(currentFreshness);
+    reviewTargetFreshness(env, {
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      expectedHeadSha: reviewedHeadSha,
+      deliveryId: webhook.deliveryId,
+      phase,
+      actor: author,
+    });
   const skipStaleReviewOutput = async (freshness: PullRequestFreshness): Promise<boolean> => {
     if (!freshnessBlocksReviewOutput(freshness)) return false;
     if (gateEnabled && pendingGateCheckRunId !== undefined && !gateFinalized) {

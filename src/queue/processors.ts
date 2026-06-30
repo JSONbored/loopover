@@ -75,6 +75,7 @@ import {
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
+  type LiveCiAggregate,
   fetchLivePullRequest,
   fetchLivePullRequestHeadSha,
   fetchLivePullRequestMergeState,
@@ -134,7 +135,7 @@ import {
   ensurePullRequestLabel,
   removePullRequestLabel,
 } from "../github/labels";
-import { resolveRepoActionMode } from "../github/client";
+import { githubRateLimitAdmissionKeyForInstallation, resolveRepoActionMode } from "../github/client";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
@@ -335,6 +336,8 @@ import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
   isReesGithubTokenForwardingEnabled,
+  resolveEnrichmentLinkedIssue,
+  resolveEnrichmentLinkedIssueNumbers,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
@@ -408,6 +411,182 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
 ]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 const ISSUE_PLAN_COOLDOWN_MS = 10 * 60 * 1000;
+
+interface LiveGithubFacts {
+  requiredContexts: Map<string, Promise<Set<string> | null>>;
+  ciAggregates: Map<string, Promise<LiveCiAggregate>>;
+  mergeStates: Map<string, Promise<string | undefined>>;
+}
+
+function createLiveGithubFacts(): LiveGithubFacts {
+  return {
+    requiredContexts: new Map(),
+    ciAggregates: new Map(),
+    mergeStates: new Map(),
+  };
+}
+
+function liveFactKey(...parts: Array<string | number | null | undefined>): string {
+  return JSON.stringify(parts.map((part) => [typeof part, part]));
+}
+
+function liveFactTokenPart(token: string | undefined): string {
+  if (!token) return "token:none";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `token:${token.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function primeLiveMergeState(
+  facts: LiveGithubFacts,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  mergeState: unknown,
+): void {
+  if (typeof mergeState !== "string") return;
+  facts.mergeStates.set(
+    liveFactKey(repoFullName, prNumber, liveFactTokenPart(token)),
+    Promise.resolve(mergeState),
+  );
+}
+
+function cachedRequiredStatusContexts(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+): Promise<Set<string> | null> {
+  const key = liveFactKey(repoFullName, baseRef, liveFactTokenPart(token));
+  const cached = facts.requiredContexts.get(key);
+  if (cached) return cached;
+  const next = evictLiveFactOnReject(
+    facts.requiredContexts,
+    key,
+    fetchRequiredStatusContexts(env, repoFullName, baseRef, token),
+  );
+  facts.requiredContexts.set(key, next);
+  return next;
+}
+
+function evictLiveFactOnReject<T>(
+  cache: Map<string, Promise<T>>,
+  key: string,
+  promise: Promise<T>,
+): Promise<T> {
+  return promise.catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
+}
+
+function fetchLiveCiAggregateWithRequiredContexts(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+): Promise<LiveCiAggregate> {
+  // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay request-cached.
+  return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token)
+    .catch(() => null)
+    .then((requiredContexts) =>
+      fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts),
+    );
+}
+
+function cachedLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+): Promise<LiveCiAggregate> {
+  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token));
+  const cached = facts.ciAggregates.get(key);
+  if (cached) return cached;
+  const next = evictLiveFactOnReject(
+    facts.ciAggregates,
+    key,
+    fetchLiveCiAggregateWithRequiredContexts(
+      env,
+      repoFullName,
+      facts,
+      headSha,
+      baseRef,
+      token,
+    ),
+  );
+  facts.ciAggregates.set(key, next);
+  return next;
+}
+
+function refreshLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+): Promise<LiveCiAggregate> {
+  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token));
+  const next = evictLiveFactOnReject(
+    facts.ciAggregates,
+    key,
+    fetchLiveCiAggregateWithRequiredContexts(
+      env,
+      repoFullName,
+      facts,
+      headSha,
+      baseRef,
+      token,
+    ),
+  );
+  facts.ciAggregates.set(key, next);
+  return next;
+}
+
+function cachedLiveMergeState(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  token: string | undefined,
+): Promise<string | undefined> {
+  const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
+  const cached = facts.mergeStates.get(key);
+  if (cached) return cached;
+  const next = evictLiveFactOnReject(
+    facts.mergeStates,
+    key,
+    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token),
+  );
+  facts.mergeStates.set(key, next);
+  return next;
+}
+
+function refreshLiveMergeState(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  token: string | undefined,
+): Promise<string | undefined> {
+  const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
+  const next = evictLiveFactOnReject(
+    facts.mergeStates,
+    key,
+    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token),
+  );
+  facts.mergeStates.set(key, next);
+  return next;
+}
 
 /**
  * Run (or dry-run) the data-retention prune across the configured log/snapshot tables and audit the
@@ -1244,6 +1423,7 @@ async function maybeRunAgentMaintenance(
     otherOpenPullRequests: PullRequestRecord[];
     deliveryId: string;
     gate: ReturnType<typeof evaluateGateCheck> | undefined;
+    liveFacts: LiveGithubFacts;
   },
 ): Promise<void> {
   const {
@@ -1282,6 +1462,8 @@ async function maybeRunAgentMaintenance(
   const ciToken = await createInstallationToken(env, installationId).catch(
     () => undefined,
   );
+  const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const baseRef = pr.baseRef ?? args.repo?.defaultBranch;
   const [
     changedFiles,
     hardGuardrailGlobs,
@@ -1297,37 +1479,29 @@ async function maybeRunAgentMaintenance(
     loadHardGuardrailGlobs(env, repoFullName),
     // RC2: branch-protection REQUIRED status contexts, so only a required red check gates the PR (a red
     // codecov/* is surfaced but never blocks merge/approve or forces request_changes). null ⇒ fold all red.
-    fetchRequiredStatusContexts(
+    cachedRequiredStatusContexts(
       env,
       repoFullName,
-      pr.baseRef ?? args.repo?.defaultBranch,
-      ciToken ?? env.GITHUB_PUBLIC_TOKEN,
+      args.liveFacts,
+      baseRef,
+      token,
     ),
-    // Live mergeable_state — the stored one lags GitHub's async recompute after the bot's own approve, which
-    // otherwise leaves a green+approved PR stuck OPEN at mergeState=CLEAN (never auto-merged).
-    fetchLivePullRequestMergeState(
-      env,
-      repoFullName,
-      pr.number,
-      ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-    ),
+    // Live mergeable_state after the gate's own publish/review/check mutations. Readiness may have seen the PR as
+    // blocked before the bot approval/check landed, so this boundary must refresh instead of replaying the cache.
+    refreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token),
     // RC1: live reviewDecision so the approve/request-changes dedup is accurate. The STORED reviewDecision is
     // only written by the open-PR backfill and goes stale → the planner re-posted a review every cycle (the
     // re-review loop with 14-23 stacked reviews). With the live value, an already-approved/changes-requested PR
     // is not re-reviewed for the same state.
-    fetchLivePullRequestReviewDecision(
-      env,
-      repoFullName,
-      pr.number,
-      ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-    ),
+    fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token),
   ]);
-  const ciAggregate = await fetchLiveCiAggregate(
+  const ciAggregate = await refreshLiveCiAggregate(
     env,
     repoFullName,
+    args.liveFacts,
     pr.headSha,
-    ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-    requiredContexts,
+    baseRef,
+    token,
   );
   const changedPaths = changedPathsForGuardrail(changedFiles);
   const repoOwner = repoFullName.includes("/")
@@ -1496,6 +1670,7 @@ async function reReviewStoredPullRequest(
   ]);
   let pr = await getPullRequest(env, repoFullName, prNumber);
   if (!pr || pr.state !== "open") return;
+  const liveFacts = createLiveGithubFacts();
   // #sweep-resync: RESYNC the stored PR to its LIVE head before reviewing. The self-host relay can drop the
   // `synchronize` webhook (relay down), so a push/rebase never refreshes the stored head SHA + cached files; the
   // sweep would then review a STALE diff and the AI fail-closes it as INCOHERENT_DIFF, stranding the PR in "held".
@@ -1511,6 +1686,7 @@ async function reReviewStoredPullRequest(
     prNumber,
     resyncToken,
   );
+  primeLiveMergeState(liveFacts, repoFullName, prNumber, resyncToken, live?.mergeable_state);
   if (live?.head?.sha && live.head.sha !== pr.headSha) {
     await upsertPullRequestFromGitHub(env, repoFullName, live).catch(
       () => undefined,
@@ -1524,8 +1700,8 @@ async function reReviewStoredPullRequest(
   // Operator review flow: rebase-if-behind → wait for ALL CI to finish → only THEN review. Defers (returns) when
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
   // once the head is current and CI has settled (the sweep backstops a missed event). REST-budget dedup
-  // (#audit-rate-headroom): thread the already-fetched live PR's `mergeable_state` so prReadyForReview reuses it
-  // instead of issuing a second `GET /pulls/{n}` for the behind-base check.
+  // (#audit-rate-headroom): seed the request-local facts from the resync payload, then share them with the
+  // readiness check, public surface, and auto-maintain planner.
   if (
     !(await prReadyForReview(
       env,
@@ -1534,7 +1710,7 @@ async function reReviewStoredPullRequest(
       pr,
       settings,
       deliveryId,
-      { liveMergeState: live?.mergeable_state ?? undefined },
+      liveFacts,
     ))
   )
     return;
@@ -1585,6 +1761,7 @@ async function reReviewStoredPullRequest(
     {
       deliveryId,
       baseSha: live?.base?.sha ?? null,
+      liveFacts,
       ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
       ...(options.skipAiReview ? { skipAiReview: true } : {}),
     },
@@ -1612,6 +1789,7 @@ async function reReviewStoredPullRequest(
     otherOpenPullRequests,
     deliveryId,
     gate,
+    liveFacts,
   }).catch((error) => {
     console.error(
       JSON.stringify({
@@ -1643,12 +1821,9 @@ async function prReadyForReview(
   pr: PullRequestRecord,
   settings: RepositorySettings,
   deliveryId: string,
-  // REST-budget dedup (#audit-rate-headroom): the re-gate sweep already fetched the FULL live PR once (the resync
-  // `GET /pulls/{n}`), whose `mergeable_state` is exactly what the behind-base check needs. When the caller passes
-  // it, REUSE it instead of issuing a second `GET /pulls/{n}` here. `undefined` ⇒ no payload (the webhook path,
-  // which has no pre-fetched live PR) ⇒ fall back to the live fetch. The shared installation REST bucket is one
-  // hourly budget across all repos, so removing the duplicate GET halves the per-regate `GET /pulls/{n}` cost.
-  options: { liveMergeState?: string | undefined } = {},
+  // REST-budget dedup (#audit-rate-headroom): callers thread a request-local live-facts bag through readiness,
+  // public rendering, and auto-maintain so one review/regate job only pays for each mutable GitHub read once.
+  liveFacts: LiveGithubFacts,
 ): Promise<boolean> {
   // Only gate an OPEN, non-draft, agent-configured PR. A closed PR (the live path also runs on `closed` to
   // finalize / record reputation) must NOT be rebased or CI-waited — proceed so finalization runs.
@@ -1664,14 +1839,10 @@ async function prReadyForReview(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return true;
-  // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. Reuse a
-  // caller-supplied mergeable_state (the sweep's resync payload) to skip a redundant `GET /pulls/{n}`; fall back to
-  // the live fetch only when no payload was threaded (the webhook path). fetchLivePullRequestMergeState fails open
-  // internally (swallows its own fetch errors → undefined), so the fallback needs no extra catch — mirroring the
-  // resync's fetchLivePullRequest call above.
-  const liveMergeState =
-    options.liveMergeState ??
-    (await fetchLivePullRequestMergeState(env, repoFullName, pr.number, token));
+  // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. The
+  // request-local facts may already be seeded from the sweep's resync payload, and the fallback live merge-state
+  // fetch fails open internally (swallows its own fetch errors → undefined).
+  const liveMergeState = await cachedLiveMergeState(env, repoFullName, liveFacts, pr.number, token);
   if (liveMergeState === "behind") {
     const autonomyLevel = resolveAutonomy(settings.autonomy, "update_branch");
     const installation = await getInstallation(env, installationId);
@@ -1704,19 +1875,7 @@ async function prReadyForReview(
   }
   // 2) wait for CI to finish before running the Gittensory review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
-  const requiredContexts = await fetchRequiredStatusContexts(
-    env,
-    repoFullName,
-    pr.baseRef,
-    token,
-  ).catch(() => null);
-  const ci = await fetchLiveCiAggregate(
-    env,
-    repoFullName,
-    pr.headSha,
-    token,
-    requiredContexts,
-  ).catch(() => undefined);
+  const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token).catch(() => undefined);
   if (ci?.hasPending) {
     // Staleness cap: genuinely-running CI settles in minutes. A required check that stays pending far longer
     // (an orphaned / never-completing check — e.g. a fork check that never reports back) would otherwise make us
@@ -3067,6 +3226,7 @@ async function processGitHubWebhook(
         let gate:
           | Awaited<ReturnType<typeof maybePublishPrPublicSurface>>
           | undefined;
+        const liveFacts = createLiveGithubFacts();
         if (
           await prReadyForReview(
             env,
@@ -3075,6 +3235,7 @@ async function processGitHubWebhook(
             pr,
             settings,
             deliveryId,
+            liveFacts,
           )
         ) {
           gate = await maybePublishPrPublicSurface(
@@ -3090,6 +3251,7 @@ async function processGitHubWebhook(
               authorType: payload.pull_request.user?.type,
               action: payload.action,
               baseSha: payload.pull_request.base?.sha ?? null,
+              liveFacts,
             },
           ).catch((error) => {
             if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
@@ -3117,6 +3279,7 @@ async function processGitHubWebhook(
             otherOpenPullRequests,
             deliveryId,
             gate,
+            liveFacts,
           }).catch((error) => {
             /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
             console.error(
@@ -3646,6 +3809,7 @@ export async function runAiReviewForAdvisory(
       title: string;
       body?: string | null | undefined;
       baseSha?: string | null | undefined;
+      linkedIssues?: number[] | undefined;
     };
     author: string | null;
     confirmedContributor: boolean;
@@ -3827,6 +3991,14 @@ export async function runAiReviewForAdvisory(
             title: args.pr.title,
             body: args.pr.body ?? undefined,
             author: args.author,
+            linkedIssue: await resolveEnrichmentLinkedIssue(
+              env,
+              args.repoFullName,
+              resolveEnrichmentLinkedIssueNumbers(
+                args.pr.linkedIssues,
+                args.pr.body,
+              ),
+            ),
             githubToken: isReesGithubTokenForwardingEnabled(env)
               ? await resolveReviewEnrichmentGithubToken(
                   env,
@@ -4295,6 +4467,7 @@ async function maybePublishPrPublicSurface(
     baseSha?: string | null | undefined;
     previewPollAttempt?: number | undefined;
     skipAiReview?: boolean | undefined;
+    liveFacts: LiveGithubFacts;
   },
 ): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
@@ -5228,31 +5401,15 @@ async function maybePublishPrPublicSurface(
       const ciToken = await createInstallationToken(env, installationId).catch(
         () => undefined,
       );
+      const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
+      const baseRef = pr.baseRef ?? repo?.defaultBranch;
       // Required contexts still detect missing/pending required CI, but every visible completed red check/status is
       // adverse and blocks the PR.
-      const requiredContexts = await fetchRequiredStatusContexts(
-        env,
-        repoFullName,
-        pr.baseRef ?? repo?.defaultBranch,
-        ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-      );
-      const liveCi = await fetchLiveCiAggregate(
-        env,
-        repoFullName,
-        pr.headSha,
-        ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-        requiredContexts,
-      );
+      const liveCi = await refreshLiveCiAggregate(env, repoFullName, webhook.liveFacts, pr.headSha, baseRef, token);
       // Live merge-state too — the SAME source the disposition uses (planAgentMaintenanceActions reads liveMergeState).
-      // The stored pr.mergeableState lags GitHub's async recompute, so a base-conflicting PR could read `clean` here
-      // ("✅ safe to merge") while the disposition reads the live `dirty` and auto-CLOSES it — the exact #4220
-      // contradiction. (#review-audit / #ready-needs-mergeable)
-      const liveMergeState = await fetchLivePullRequestMergeState(
-        env,
-        repoFullName,
-        pr.number,
-        ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-      ).catch(() => undefined);
+      // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
+      // also advance mergeability after readiness ran, so refresh at this post-publish boundary.
+      const liveMergeState = await refreshLiveMergeState(env, repoFullName, webhook.liveFacts, pr.number, token).catch(() => undefined);
       const mergeStateLabel = liveMergeState ?? pr.mergeableState; // fail-safe to the stored value
       const ciState: MergeReadiness["ciState"] =
         liveCi.ciState === "passed"
@@ -5341,6 +5498,7 @@ async function maybePublishPrPublicSurface(
               previewFromChecks: true,
             },
             visualFiles,
+            githubRateLimitAdmissionKeyForInstallation(installationId),
           );
           beforeAfter = capture.routes;
           // Visual self-poll: the FIRST capture returns a "loading" placeholder for the AFTER shot when the
@@ -6221,6 +6379,7 @@ async function maybeProcessPrPanelRetrigger(
   ) {
     await refreshPullRequestDetails(env, repoFullName, pr.number);
   }
+  const liveFacts = createLiveGithubFacts();
   if (
     !(await prReadyForReview(
       env,
@@ -6229,6 +6388,7 @@ async function maybeProcessPrPanelRetrigger(
       pr,
       settings,
       deliveryId,
+      liveFacts,
     ))
   ) {
     await recordAuditEvent(env, {
@@ -6252,6 +6412,7 @@ async function maybeProcessPrPanelRetrigger(
     {
       deliveryId,
       action: "manual_retrigger",
+      liveFacts,
     },
   );
   await recordGithubProductUsage(env, "pr_panel_retriggered", {

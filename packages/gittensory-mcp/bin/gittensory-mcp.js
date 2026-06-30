@@ -1404,7 +1404,10 @@ async function runCli(args) {
   if (command === "init-client") return initClient(options);
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
-  if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}. Run \`gittensory-mcp --help\` to list commands.`);
+  if (command !== "analyze-branch" && command !== "preflight") {
+    const suggestion = suggestCommand(command);
+    throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`gittensory-mcp --help\` to list commands.`);
+  }
   const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
   const result = await analyzeCurrentBranch({
@@ -1683,6 +1686,38 @@ function buildCompletionScript(shell) {
   if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
   if (shell === "fish") return buildFishCompletion(topLevel, withSubcommands);
   return buildPowershellCompletion(topLevel, withSubcommands);
+}
+
+// Suggest the closest known command for a typo, so an unknown command can offer a "did you mean".
+// Only suggests within a small edit-distance budget that scales with input length, so unrelated
+// input gets no (misleading) suggestion.
+function suggestCommand(input) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const candidate of Object.keys(CLI_COMMAND_SPEC)) {
+    const distance = levenshteinDistance(input, candidate);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  const budget = Math.max(2, Math.floor(input.length / 3));
+  return best !== null && bestDistance > 0 && bestDistance <= budget ? best : null;
+}
+
+function levenshteinDistance(a, b) {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+    }
+    previous = current;
+  }
+  return previous[b.length];
 }
 
 function buildBashCompletion(topLevel, withSubcommands) {

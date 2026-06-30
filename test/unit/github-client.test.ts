@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearGitHubResponseCacheForTest,
   forcedSelfhostMode,
+  githubRateLimitAdmissionKeyForInstallation,
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
   githubResponseCacheTtlSeconds,
   isCacheableGithubUrl,
   isRateLimitedResponse,
+  latestGitHubRestRateLimitObservation,
   makeInstallationOctokit,
   resolveRepoActionMode,
   setGitHubResponseCache,
@@ -39,6 +41,7 @@ afterEach(() => {
   resetMetrics();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("makeInstallationOctokit", () => {
@@ -169,6 +172,95 @@ describe("timeoutFetch", () => {
     expect(injected).toBeInstanceOf(AbortSignal);
   });
 
+  it("records only live GitHub core REST rate-limit observations", async () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    const key = githubRateLimitAdmissionKeyForInstallation(123);
+    const otherKey = githubRateLimitAdmissionKeyForInstallation(456);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    let headers = new Headers({
+      "x-ratelimit-resource": "core",
+      "x-ratelimit-remaining": "42",
+      "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000)),
+    });
+    vi.stubGlobal("fetch", async () => new Response("ok", { headers }));
+
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", { githubRateLimitAdmission: true });
+    expect(latestGitHubRestRateLimitObservation(key)).toBeNull();
+
+    await timeoutFetch("https://api.github.com/repos/o/r/issues", { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: key });
+    expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+      remaining: 42,
+      resetAt: "2026-06-24T12:10:00.000Z",
+      observedAtMs: now,
+    });
+    expect(latestGitHubRestRateLimitObservation(otherKey)).toBeNull();
+
+    headers = new Headers({
+      "x-ratelimit-resource": "search",
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:30:00.000Z") / 1000)),
+    });
+    await timeoutFetch("https://api.github.com/search/issues?q=repo:o/r", { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: key });
+    await timeoutFetch("https://example.test/health");
+    headers = new Headers({
+      "x-ratelimit-resource": "core",
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:40:00.000Z") / 1000)),
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/pulls");
+    headers = new Headers();
+    await timeoutFetch("https://api.github.com/repos/o/r/comments", { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: key });
+    headers = new Headers({
+      "x-ratelimit-resource": "core",
+      "x-ratelimit-remaining": "not-a-number",
+      "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:40:00.000Z") / 1000)),
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/pulls", { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: key });
+    headers = new Headers({
+      "x-ratelimit-resource": "core",
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:50:00.000Z") / 1000)),
+    });
+    await timeoutFetch("https://example.test/health", { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: key });
+
+    expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+      remaining: 42,
+      resetAt: "2026-06-24T12:10:00.000Z",
+      observedAtMs: now,
+    });
+  });
+
+  it("records keyed REST admission telemetry from installation Octokit reads", async () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    const key = githubRateLimitAdmissionKeyForInstallation(789);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        Response.json(
+          [{ id: 1 }],
+          {
+            headers: {
+              "x-ratelimit-resource": "core",
+              "x-ratelimit-remaining": "12",
+              "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000)),
+            },
+          },
+        ),
+    );
+    const octokit = makeInstallationOctokit(createTestEnv(), "tok", "live", key);
+
+    await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", { owner: "o", repo: "r", issue_number: 1 });
+
+    expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+      remaining: 12,
+      resetAt: "2026-06-24T12:10:00.000Z",
+      observedAtMs: now,
+    });
+  });
+
   it("serves stable installation Octokit metadata GETs from the shared GitHub response cache", async () => {
     const store = installMemoryResponseCache();
     let getFetches = 0;
@@ -288,6 +380,99 @@ describe("timeoutFetch", () => {
     expect(replay.headers.get("last-modified")).toBe("Mon, 29 Jun 2026 20:00:00 GMT");
     expect(replay.headers.get("x-ratelimit-remaining")).toBeNull();
     expect(getFetches).toBe(1);
+  });
+
+  it("negative-caches stable branch-protection permission and missing-resource responses", async () => {
+    installMemoryResponseCache();
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      getFetches += 1;
+      const branch = String(input).includes("/branches/dev/");
+      return Response.json(
+        { message: branch ? "Branch not found" : "Resource not accessible by integration" },
+        { status: branch ? 404 : 403 },
+      );
+    });
+
+    const forbiddenUrl = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
+    const missingUrl = "https://api.github.com/repos/o/r/branches/dev/protection/required_status_checks";
+    const forbidden = await timeoutFetch(forbiddenUrl);
+    const forbiddenReplay = await timeoutFetch(forbiddenUrl);
+    const missing = await timeoutFetch(missingUrl);
+    const missingReplay = await timeoutFetch(missingUrl);
+
+    expect(forbidden.status).toBe(403);
+    expect(forbiddenReplay.status).toBe(403);
+    expect(forbiddenReplay.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("hit");
+    expect(await forbiddenReplay.json()).toEqual({ message: "Resource not accessible by integration" });
+    expect(missing.status).toBe(404);
+    expect(missingReplay.status).toBe(404);
+    expect(missingReplay.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("hit");
+    expect(await missingReplay.json()).toEqual({ message: "Branch not found" });
+    expect(getFetches).toBe(2);
+  });
+
+  it("does not cache GitHub rate-limit 403 responses as branch-protection metadata", async () => {
+    installMemoryResponseCache();
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      return Response.json(
+        { message: getFetches === 1 ? "API rate limit exceeded" : "Resource not accessible by integration" },
+        getFetches === 1
+          ? { status: 403, headers: { "x-ratelimit-remaining": "0" } }
+          : { status: 403 },
+      );
+    });
+
+    const url = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
+    const first = await timeoutFetch(url);
+    const second = await timeoutFetch(url);
+    const replay = await timeoutFetch(url);
+
+    expect(first.status).toBe(403);
+    expect(second.status).toBe(403);
+    expect(replay.status).toBe(403);
+    expect(replay.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("hit");
+    expect(await replay.json()).toEqual({ message: "Resource not accessible by integration" });
+    expect(getFetches).toBe(2);
+  });
+
+  it("does not cache a branch-protection 403 while every inline retry is still rate-limited", async () => {
+    const set = vi.fn(async () => undefined);
+    setGitHubResponseCache({
+      get: async () => null,
+      set,
+    });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      return Response.json(
+        { message: "API rate limit exceeded" },
+        { status: 403, headers: { "retry-after": "0", "x-ratelimit-remaining": "0" } },
+      );
+    });
+
+    const response = await timeoutFetch("https://api.github.com/repos/o/r/branches/main/protection/required_status_checks");
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ message: "API rate limit exceeded" });
+    expect(getFetches).toBe(4);
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("does not negative-cache stable metadata denials outside branch protection", async () => {
+    installMemoryResponseCache();
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      return Response.json({ message: `denied-${getFetches}` }, { status: 403 });
+    });
+
+    const url = "https://api.github.com/repos/o/r";
+    expect(await (await timeoutFetch(url)).json()).toEqual({ message: "denied-1" });
+    expect(await (await timeoutFetch(url)).json()).toEqual({ message: "denied-2" });
+    expect(getFetches).toBe(2);
   });
 
   it("defaults cached replays to application/json when GitHub omits content-type", async () => {
@@ -426,6 +611,214 @@ describe("timeoutFetch", () => {
     expect(await renderMetrics()).toContain(`gittensory_github_response_cache_total{class="sensitive",result="bypassed"} ${mutableCases.length * 2}`);
   });
 
+  it("single-flights concurrent mutable GitHub GETs without persisting them in Redis", async () => {
+    const cacheGet = vi.fn(async () => ({
+      status: 200,
+      body: JSON.stringify({ state: "stale" }),
+      contentType: "application/json",
+    }));
+    const cacheSet = vi.fn(async () => undefined);
+    setGitHubResponseCache({ get: cacheGet, set: cacheSet });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      if (getFetches === 1) {
+        markFetchStarted();
+        await fetchGate;
+      }
+      return Response.json([{ state: `live-${getFetches}` }]);
+    });
+
+    const url = "https://api.github.com/repos/o/r/pulls/7/reviews?per_page=100&page=1";
+    const init = { headers: { authorization: "Bearer volatile-token" } };
+    const first = timeoutFetch(url, init);
+    await fetchStarted;
+    await Promise.resolve();
+    const second = timeoutFetch(url, init);
+    releaseFetch();
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    const later = await timeoutFetch(url, init);
+
+    expect(await firstResponse.json()).toEqual([{ state: "live-1" }]);
+    expect(await secondResponse.json()).toEqual([{ state: "live-1" }]);
+    expect(secondResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("coalesced");
+    expect(await later.json()).toEqual([{ state: "live-2" }]);
+    expect(getFetches).toBe(2);
+    expect(cacheGet).not.toHaveBeenCalled();
+    expect(cacheSet).not.toHaveBeenCalled();
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_response_cache_total{class="sensitive",result="bypassed"} 2');
+    expect(metrics).toContain('gittensory_github_response_cache_total{class="sensitive",result="coalesced"} 1');
+  });
+
+  it("single-flights concurrent mutable GitHub GETs even when Redis is disabled", async () => {
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      if (getFetches === 1) {
+        markFetchStarted();
+        await fetchGate;
+      }
+      return Response.json([{ state: `live-${getFetches}` }]);
+    });
+
+    const url = "https://api.github.com/repos/o/r/issues/7/events?per_page=100&page=1";
+    const first = timeoutFetch(url);
+    await fetchStarted;
+    const second = timeoutFetch(url);
+    releaseFetch();
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    const later = await timeoutFetch(url);
+
+    expect(await firstResponse.json()).toEqual([{ state: "live-1" }]);
+    expect(await secondResponse.json()).toEqual([{ state: "live-1" }]);
+    expect(secondResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("coalesced");
+    expect(await later.json()).toEqual([{ state: "live-2" }]);
+    expect(getFetches).toBe(2);
+  });
+
+  it("falls back to a fresh mutable GET when the volatile leader cannot be replayed", async () => {
+    class UncloneableResponse extends Response {
+      override clone(): Response {
+        throw new Error("cannot replay");
+      }
+    }
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      if (getFetches === 1) {
+        markFetchStarted();
+        await fetchGate;
+        return new UncloneableResponse(JSON.stringify({ state: "leader-only" }), { headers: { "content-type": "application/json" } });
+      }
+      return Response.json({ state: "fresh-follower" });
+    });
+
+    const url = "https://api.github.com/repos/o/r/pulls/7/reviews?per_page=100&page=1";
+    const first = timeoutFetch(url);
+    await fetchStarted;
+    const second = timeoutFetch(url);
+    releaseFetch();
+
+    await expect(first.then((response) => response.json())).resolves.toEqual({ state: "leader-only" });
+    await expect(second.then((response) => response.json())).resolves.toEqual({ state: "fresh-follower" });
+    expect(getFetches).toBe(2);
+  });
+
+  it("does not volatile-single-flight raw contents reads that callers stream-cap", async () => {
+    setGitHubResponseCache({
+      get: async () => null,
+      set: async () => undefined,
+    });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      const fetchId = (getFetches += 1);
+      await fetchGate;
+      return new Response(`body-${fetchId}`, { headers: { "content-type": "text/plain" } });
+    });
+
+    const url = "https://api.github.com/repos/o/r/contents/src/big.ts?ref=main";
+    const init = { headers: { accept: "application/vnd.github.raw+json" } };
+    const first = timeoutFetch(url, init);
+    const second = timeoutFetch(url, init);
+    await Promise.resolve();
+    expect(getFetches).toBe(2);
+    releaseFetch();
+
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    expect(firstResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(secondResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(await firstResponse.text()).toBe("body-1");
+    expect(await secondResponse.text()).toBe("body-2");
+  });
+
+  it("keeps volatile single-flight scoped by exact authorization identity", async () => {
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      getFetches += 1;
+      await fetchGate;
+      const authorization = new Headers(init?.headers).get("authorization");
+      return Response.json({ caller: authorization?.endsWith("token-a") ? "a" : "b" });
+    });
+
+    const url = "https://api.github.com/repos/o/r/pulls/7/reviews?per_page=100&page=1";
+    const firstA = timeoutFetch(url, { headers: { authorization: "Bearer token-a" } });
+    const firstB = timeoutFetch(url, { headers: { authorization: "Bearer token-b" } });
+    await Promise.resolve();
+    expect(getFetches).toBe(2);
+    releaseFetch();
+
+    expect(await (await firstA).json()).toEqual({ caller: "a" });
+    expect(await (await firstB).json()).toEqual({ caller: "b" });
+  });
+
+  it("lets a coalesced mutable GitHub GET follower honor its own abort signal", async () => {
+    setGitHubResponseCache({
+      get: async () => null,
+      set: async () => undefined,
+    });
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    vi.stubGlobal("fetch", async () => {
+      markFetchStarted();
+      await fetchGate;
+      return Response.json({ state: "live" });
+    });
+
+    const url = "https://api.github.com/repos/o/r/pulls/7/reviews?per_page=100&page=1";
+    const first = timeoutFetch(url);
+    await fetchStarted;
+    const preAborted = new AbortController();
+    preAborted.abort("caller stopped");
+    await expect(timeoutFetch(new Request(url, { signal: preAborted.signal }))).rejects.toThrow("The operation was aborted.");
+    const controller = new AbortController();
+    const second = timeoutFetch(url, { signal: controller.signal });
+    controller.abort(new Error("caller aborted"));
+
+    await expect(second).rejects.toThrow("caller aborted");
+    releaseFetch();
+    await expect(first.then((response) => response.json())).resolves.toEqual({ state: "live" });
+    expect(await renderMetrics()).toContain('gittensory_github_response_cache_total{class="sensitive",result="coalesced"} 2');
+  });
+
   it("bypasses conditional GitHub GETs so validator headers keep shaping the live response", async () => {
     const store = installMemoryResponseCache();
     let getFetches = 0;
@@ -501,13 +894,16 @@ describe("timeoutFetch", () => {
     });
 
     const url = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
-    const first = timeoutFetch(url).then((response) => response.status);
+    const first = timeoutFetch(url);
     const second = timeoutFetch(url);
     await bothCacheReads;
     releaseFetch();
 
-    await expect(first).resolves.toBe(500);
-    await expect(second.then((response) => response.json())).resolves.toEqual({ contexts: ["after-fallback"] });
+    const responses = await Promise.all([first, second]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 500]);
+    const replayable = responses.find((response) => response.status === 200);
+    expect(replayable).toBeDefined();
+    expect(await replayable!.json()).toEqual({ contexts: ["after-fallback"] });
     expect(getFetches).toBe(2);
   });
 

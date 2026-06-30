@@ -120,6 +120,7 @@ describe("createSqliteQueue (durable #980)", () => {
         `CREATE TABLE github_rate_limit_observations (
           id TEXT PRIMARY KEY,
           repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
           resource TEXT NOT NULL,
           path TEXT NOT NULL,
           status_code INTEGER NOT NULL,
@@ -131,15 +132,20 @@ describe("createSqliteQueue (durable #980)", () => {
         [],
       );
       driver.query(
-        `INSERT INTO github_rate_limit_observations (id, repo_full_name, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
-         VALUES (?, ?, 'rest', ?, 200, 5000, 120, ?, ?)`,
-        ["rl-bg", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, ?, 'rest', ?, 200, 5000, 120, ?, ?)`,
+        ["rl-bg-installation", "owner/other-repo", "installation:123", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 200, 5000, 120, ?, ?)`,
+        ["rl-bg-legacy", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
       );
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
 
       await q.binding.send({ type: "agent-regate-pr", deliveryId: "sweep:owner/repo#7", repoFullName: "owner/repo", prNumber: 7, installationId: 123 });
-      await q.binding.send({ type: "rag-index-repo", requestedBy: "schedule" });
+      await q.binding.send({ type: "rag-index-repo", requestedBy: "schedule", repoFullName: "owner/repo" });
       await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: {} });
       await q.drain();
 
@@ -167,6 +173,357 @@ describe("createSqliteQueue (durable #980)", () => {
     }
   });
 
+  it("pre-yields GitHub-budget background jobs without repo fields from global REST observations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 200, 5000, 120, ?, ?)`,
+        ["rl-bg-global", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "agent-regate-sweep", requestedBy: "schedule" });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit background admission",
+      });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("pre-yields repo-scoped background jobs from global unkeyed REST observations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 200, 5000, 120, ?, ?)`,
+        ["rl-bg-global-repo", "owner/other-repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "rag-index-repo", requestedBy: "schedule", repoFullName: "owner/repo" });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit background admission",
+      });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("pre-yields webhook jobs when the persisted REST bucket is exhausted", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, ?, 'rest', ?, 403, 5000, 50, ?, ?)`,
+        ["rl-webhook", "owner/other-repo", "installation:123", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit webhook admission",
+      });
+      expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 1 });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("pre-yields webhook jobs from global legacy observations when an installation id is present", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 403, 5000, 50, ?, ?)`,
+        ["rl-webhook-legacy", "owner/other-repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit webhook admission",
+      });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("pre-yields from legacy repo exhaustion before older healthy exact observations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, ?, 'rest', ?, 200, 5000, 4000, ?, ?)`,
+        ["rl-webhook-installation-old", "owner/other-repo", "installation:123", "/x", "2026-06-24T12:20:00.000Z", "2026-06-24T11:59:00.000Z"],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 403, 5000, 0, ?, ?)`,
+        ["rl-webhook-legacy-new", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit webhook admission",
+      });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("pre-yields from exact admission exhaustion before newer legacy repo observations", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, ?, 'rest', ?, 403, 5000, 0, ?, ?)`,
+        ["rl-webhook-installation-old", "owner/other-repo", "installation:123", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T11:59:00.000Z"],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 200, 5000, 4000, ?, ?)`,
+        ["rl-webhook-legacy-new", "owner/repo", "/x", "2026-06-24T12:20:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit webhook admission",
+      });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const driver = makeDriver();
+    driver.query(
+      `CREATE TABLE github_rate_limit_observations (
+        id TEXT PRIMARY KEY,
+        repo_full_name TEXT NOT NULL,
+        admission_key TEXT,
+        resource TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        limit_value INTEGER,
+        remaining INTEGER,
+        reset_at TEXT,
+        observed_at TEXT NOT NULL
+      )`,
+      [],
+    );
+    driver.query(
+      `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+       VALUES (?, ?, ?, 'rest', ?, 403, 5000, 0, ?, ?)`,
+      ["rl-webhook", "owner/repo-a", "installation:456", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+    );
+    const seen: string[] = [];
+    const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+    await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo-b" } } });
+    await q.drain();
+
+    expect(seen).toEqual(["github-webhook"]);
+    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+  });
+
   it("skips the background-admission metric when the defer update changes no rows", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
@@ -189,6 +546,7 @@ describe("createSqliteQueue (durable #980)", () => {
         `CREATE TABLE github_rate_limit_observations (
           id TEXT PRIMARY KEY,
           repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
           resource TEXT NOT NULL,
           path TEXT NOT NULL,
           status_code INTEGER NOT NULL,
@@ -200,15 +558,15 @@ describe("createSqliteQueue (durable #980)", () => {
         [],
       );
       driver.query(
-        `INSERT INTO github_rate_limit_observations (id, repo_full_name, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
-         VALUES (?, ?, 'rest', ?, 200, 5000, 120, ?, ?)`,
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 200, 5000, 120, ?, ?)`,
         ["rl-bg", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
       );
       const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
 
-      await q.binding.send({ type: "rag-index-repo", requestedBy: "schedule" });
+      await q.binding.send({ type: "rag-index-repo", requestedBy: "schedule", repoFullName: "owner/repo" });
       await q.drain();
 
       expect(seen).toEqual([]);
@@ -310,6 +668,96 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(rows.map((row) => JSON.parse(row.payload).deliveryId).filter(Boolean).sort()).toEqual(["ci-2", "pr-2"]);
     expect(q.stats()).toMatchObject({
       gittensory_jobs_enqueued_total: 3,
+      gittensory_jobs_coalesced_total: 3,
+    });
+  });
+
+  it("coalesces recurring maintenance jobs by semantic scope and keeps distinct scopes separate", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      mode: "resume",
+      force: true,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "api",
+      repoFullName: "JSONbored/gittensory",
+      mode: "resume",
+      force: true,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "backfill-registered-repos",
+      requestedBy: "api",
+      repoFullName: "JSONbored/gittensory",
+      mode: "light",
+      force: true,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "schedule",
+      variant: "operator",
+      days: 7,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "api",
+      variant: "operator",
+      days: 7,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "generate-weekly-value-report",
+      requestedBy: "api",
+      variant: "public",
+      days: 7,
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts", "src/a.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts", "src/b.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/c.ts"],
+    }, { delaySeconds: 60 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+
+    expect(rows).toHaveLength(6);
+    expect(rows.map((row) => row.job_key)).toEqual([
+      "backfill-registered-repos:jsonbored/gittensory:resume:1",
+      "backfill-registered-repos:jsonbored/gittensory:light:1",
+      "generate-weekly-value-report:operator:7",
+      "generate-weekly-value-report:public:7",
+      'rag-index-repo:jsonbored/gittensory:["src/a.ts","src/b.ts"]',
+      'rag-index-repo:jsonbored/gittensory:["src/c.ts"]',
+    ]);
+    expect(rows.map((row) => JSON.parse(row.payload).requestedBy)).toEqual([
+      "api",
+      "api",
+      "api",
+      "api",
+      "schedule",
+      "schedule",
+    ]);
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 6,
       gittensory_jobs_coalesced_total: 3,
     });
   });

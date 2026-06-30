@@ -15,6 +15,7 @@ const INJECTION_SOURCE = [
   "\\b(?:approve|merge|accept|whitelist|allow|pass)\\s+(?:this|the)\\s+(?:submission|pr|pull[ -]?request|entry|request|content|review)\\b",
   "\\bas an?\\s+(?:ai|assistant|language model)\\b[^.\\n]{0,30}\\b(?:you must|ignore|approve)\\b",
   "\\b(?:print|reveal|output|repeat|leak)\\b[^.\\n]{0,30}\\b(?:system prompt|rubric|instructions?)\\b",
+  "\\b(?:pretend|roleplay)\\b[^.\\n]{0,24}\\b(?:you\\s+are|to\\s+be)\\b",
 ].join("|");
 
 export const PROMPT_INJECTION_RE = new RegExp(INJECTION_SOURCE, "i");

@@ -4,6 +4,9 @@ import test, { afterEach } from "node:test";
 import { buildBrief } from "../dist/brief.js";
 import {
   captureAnalyzerDegradation,
+  captureRouteError,
+  captureSourcemapUploadFailure,
+  captureUnhandledError,
   resetSentryForTest,
   setSentryForTest,
 } from "../dist/sentry.js";
@@ -76,8 +79,6 @@ test("captureAnalyzerDegradation tags and fingerprints sanitized analyzer failur
   assert.equal(sentry.tags.analyzer, "dependency");
   assert.equal(sentry.tags.repo, "JSONbored/gittensory");
   assert.equal(sentry.tags.pullNumber, "7");
-  assert.equal(sentry.tags.headShaPrefix, "abc123");
-  assert.equal(sentry.tags.timeoutMs, "8000");
   assert.equal(sentry.tags.release, "gittensory-rees@test");
   assert.equal(sentry.tags.environment, "test");
   assert.equal(sentry.captured[0].message, "registry timeout");
@@ -114,7 +115,6 @@ test("captureAnalyzerDegradation filters tag values before sending them", () => 
   assert.deepEqual(sentry.fingerprints, [["rees-analyzer-degraded", "[Filtered]"]]);
   assert.equal(sentry.tags.analyzer, "[Filtered]");
   assert.equal(sentry.tags.repo, "JSONbored/[Filtered]");
-  assert.equal(sentry.tags.headShaPrefix, "[Filtered]");
 });
 
 test("captureAnalyzerDegradation attaches safe attribution context for history failures", () => {
@@ -161,20 +161,6 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
   assert.equal(sentry.tags.analyzer, "history");
   assert.equal(sentry.tags.repo, "JSONbored/metagraphed");
   assert.equal(sentry.tags.pullNumber, "2359");
-  assert.equal(sentry.tags.headShaPrefix, "abcdef123456");
-  assert.equal(sentry.tags.timeoutMs, "7000");
-  assert.equal(sentry.tags.analyzerStatus, "degraded");
-  assert.equal(sentry.tags.profile, "balanced");
-  assert.equal(sentry.tags.costClass, "github-heavy");
-  assert.equal(sentry.tags.responseReserveMs, "750");
-  assert.equal(sentry.tags.partialStatus, "partial");
-  assert.equal(sentry.tags.phase, "similar_past_prs");
-  assert.equal(sentry.tags.endpointCategory, "github-commit-pulls");
-  assert.equal(sentry.tags.externalFailureReason, "timeout");
-  assert.equal(sentry.tags.githubEndpointCategory, "commit_pulls");
-  assert.equal(sentry.tags.cacheHits, "4");
-  assert.equal(sentry.tags.cacheMisses, "9");
-  assert.equal(sentry.tags.requestId, "req-123");
   const analyzerContext = sentry.contexts.rees_analyzer as Record<string, unknown>;
   assert.deepEqual(analyzerContext, {
     event: "rees_analyzer_degraded",
@@ -252,10 +238,78 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
   assert.equal(sentry.tags.analyzer, "dependency");
   assert.equal(sentry.tags.repo, "JSONbored/gittensory");
   assert.equal(sentry.tags.pullNumber, "42");
-  assert.equal(sentry.tags.headShaPrefix, "head-sha");
-  const capturedTimeoutMs = Number(sentry.tags.timeoutMs);
+  assert.equal(sentry.tags.event, "rees_analyzer_degraded");
+  const analyzerContext = sentry.contexts.rees_analyzer as Record<string, unknown>;
+  const capturedTimeoutMs = Number(analyzerContext.timeoutMs);
   assert.ok(capturedTimeoutMs > 0);
   assert.ok(capturedTimeoutMs <= 200);
+});
+
+test("captureRouteError applies the route-level fingerprint and allowlisted tags", () => {
+  const sentry = sentryHarness();
+
+  captureRouteError(new Error("boom"), {
+    route: "/v1/enrich",
+    method: "POST",
+  });
+
+  assert.deepEqual(sentry.levels, ["error"]);
+  assert.deepEqual(sentry.fingerprints, [["rees-route-error", "/v1/enrich", "POST"]]);
+  assert.equal(sentry.tags.event, "rees_route_error");
+  assert.equal(sentry.tags.route, "/v1/enrich");
+  assert.equal(sentry.tags.method, "POST");
+  assert.equal(sentry.tags.release, "gittensory-rees@test");
+  assert.equal(sentry.tags.environment, "test");
+  assert.deepEqual(sentry.contexts.rees_route, {
+    event: "rees_route_error",
+    route: "/v1/enrich",
+    method: "POST",
+    release: "gittensory-rees@test",
+    environment: "test",
+  });
+});
+
+test("captureUnhandledError fingerprints process-level failures by event class", () => {
+  const sentry = sentryHarness();
+
+  captureUnhandledError(new Error("kaboom"), { event: "rees_uncaught_exception" });
+
+  assert.deepEqual(sentry.fingerprints, [["rees-process-error", "rees_uncaught_exception"]]);
+  assert.equal(sentry.tags.event, "rees_uncaught_exception");
+  assert.equal(sentry.tags.release, "gittensory-rees@test");
+  assert.equal(sentry.tags.environment, "test");
+  assert.deepEqual(sentry.contexts.rees_process, {
+    event: "rees_uncaught_exception",
+    release: "gittensory-rees@test",
+    environment: "test",
+  });
+});
+
+test("captureSourcemapUploadFailure applies stable upload grouping and safe tags", () => {
+  const sentry = sentryHarness();
+
+  captureSourcemapUploadFailure(new Error("upload failed"), {
+    release: "gittensory-rees@test",
+    railwayDeploymentId: "railway-deploy-123",
+    strict: true,
+    sha: "abcdef1234567890",
+    stage: "upload",
+  });
+
+  assert.deepEqual(sentry.fingerprints, [["rees-sourcemap-upload-failed"]]);
+  assert.equal(sentry.tags.event, "rees_sourcemap_upload_failed");
+  assert.equal(sentry.tags.release, "gittensory-rees@test");
+  assert.equal(sentry.tags.environment, "test");
+  assert.equal(sentry.tags.railwayDeploymentId, "railway-deploy-123");
+  assert.deepEqual(sentry.contexts.rees_sourcemap_upload, {
+    event: "rees_sourcemap_upload_failed",
+    release: "gittensory-rees@test",
+    railwayDeploymentId: "railway-deploy-123",
+    strict: true,
+    sha: "abcdef1234567890",
+    stage: "upload",
+    environment: "test",
+  });
 });
 
 test("buildBrief normalizes unsafe analyzer partial reasons before response telemetry", async () => {

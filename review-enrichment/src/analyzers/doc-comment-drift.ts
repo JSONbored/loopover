@@ -103,11 +103,45 @@ export function parseDocParams(jsdoc: string): string[] {
   return names;
 }
 
-/** Split a parameter-list source on top-level commas, tracking ()/{}/[] depth and string literals. Angle brackets
- *  are intentionally NOT tracked: `<`/`>` are ambiguous between generics and comparison/arrow operators, so a
- *  default like `n = max > 0 ? max : 1` would be mis-balanced. A comma inside a generic (`Map<K, V>`) therefore
- *  splits, but the resulting type-argument fragment is dropped by `parseFunctionParams`. Returns null only if the
- *  unambiguous brackets never balance. */
+/** If `src[open]` is `<` opening a balanced generic argument list, return the index of its matching `>`; otherwise
+ *  −1 (a comparison operator). Tracks nested `<…>` and skips string literals; it does NOT reject `{`/`=>`/etc.
+ *  because TS type arguments legitimately contain object types (`Result<string, { x: number }>`) and function
+ *  types (`Map<K, (v: V) => void>`). Generic vs comparison is decided by the char after the matching `>`: a
+ *  comparison's `>` is followed by an operand (digit/identifier/string — `removed>0`); a generic close is followed
+ *  by a type terminator (`,` `)` `(` `[` `>` `|` `&` whitespace or end). */
+function matchAngle(src: string, open: number): number {
+  let angle = 0;
+  let quote: string | null = null;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]!;
+    if (quote) {
+      if (ch === quote && src[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "<") {
+      if (src[i + 1] === "=") i += 1; // `<=` is a comparison operator, not a generic open
+      else angle += 1;
+    } else if (ch === ">" && src[i - 1] !== "=") {
+      // (a `=>` arrow inside a function type — e.g. `Map<K, (v: V) => void>` — is not an angle close.)
+      if (src[i + 1] === "=") return -1; // `>=` is a comparison operator, never a generic close
+      angle -= 1;
+      if (angle === 0) {
+        let j = i + 1;
+        while (j < src.length && /\s/.test(src[j]!)) j += 1; // the next NON-whitespace token decides
+        const next = src[j];
+        return next !== undefined && /[\w$"'`]/.test(next) ? -1 : i;
+      }
+    }
+  }
+  return -1;
+}
+
+/** Split a parameter-list source on top-level commas, tracking ()/{}/[] depth, balanced generic `<…>` regions, and
+ *  string literals. A `<` that abuts an identifier (`Map<`, `makeMap<`) is probed by `matchAngle`, which accepts it
+ *  as a generic only when the closing `>` is followed by a type terminator — covering type annotations
+ *  (`a: Map<K, V>`), generic calls/constructors (`makeMap<K, V>()`, `new Map<K, V>()`), and casts (`x as Map<K, V>`)
+ *  — and rejects comparison operators (`x < y`, `z > q`). Returns null only if the unambiguous brackets never balance. */
 function splitParams(src: string): string[] | null {
   const parts: string[] = [];
   let depth = 0;
@@ -124,6 +158,9 @@ function splitParams(src: string): string[] | null {
     else if (ch === ")" || ch === "}" || ch === "]") {
       depth -= 1;
       if (depth < 0) return null;
+    } else if (ch === "<" && i > 0 && /[A-Za-z0-9_$]/.test(src[i - 1]!)) {
+      const close = matchAngle(src, i);
+      if (close !== -1) i = close; // skip the whole generic argument list, including its commas
     } else if (ch === "," && depth === 0) {
       parts.push(src.slice(start, i));
       start = i + 1;
@@ -134,12 +171,11 @@ function splitParams(src: string): string[] | null {
   return parts;
 }
 
-/** Parameter names of a function from its parenthesised source, or null when not confidently enumerable.
- *  Each comma-separated segment yields its leading identifier (after an optional rest marker). A destructured
- *  segment (`{…}`/`[…]`) makes the set ambiguous → null. A segment whose identifier is immediately followed by
- *  `<`/`>` is a generic type-argument fragment left over from splitting a generic (`Map<K, V>`), not a real
- *  parameter, and is dropped — so comparison defaults and callback params stay enumerable without ever inventing
- *  a name. Pure. */
+/** Parameter names of a function from its parenthesised source, or null when not confidently enumerable. Each
+ *  comma-separated segment (commas inside generics/brackets/strings don't split) yields its leading identifier
+ *  after an optional rest marker. A destructured segment (`{…}`/`[…]`) or a segment without a leading identifier
+ *  makes the set ambiguous → null. Generic-typed and defaulted params (`cache = new Map<K, V>()`) enumerate
+ *  cleanly because the generic's comma no longer splits the list. Pure. */
 export function parseFunctionParams(paramSrc: string): string[] | null {
   const trimmed = paramSrc.trim();
   if (!trimmed) return [];
@@ -154,9 +190,6 @@ export function parseFunctionParams(paramSrc: string): string[] | null {
     if (!name) return null; // not a plain identifier — ambiguous
     const id = name[1]!;
     // After the name a real parameter has only a type (`:`), an optional marker (`?`), a default (`=`), or nothing.
-    // Anything else means this segment is a generic type-argument fragment left over from splitting a generic
-    // (e.g. `readonly V[]>` from `Map<K, readonly V[]>`) — fail closed and skip the whole function rather than
-    // invent a parameter name.
     const rest = part.slice(id.length).trimStart();
     if (rest && !/^[:?=]/.test(rest)) return null;
     if (id === "this") continue; // a TS `this` pseudo-parameter is not a real argument

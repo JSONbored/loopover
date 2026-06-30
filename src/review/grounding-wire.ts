@@ -12,6 +12,7 @@
 // fail-safe: any missing CI data / fetch error degrades to "no grounding" and the review proceeds on the diff.
 
 import { createInstallationToken } from "../github/app";
+import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
 import { isConvergenceRepoAllowed } from "./cutover-gate";
@@ -114,8 +115,10 @@ function toGroundingFiles(files: PullRequestFileRecord[]): PullRequestFile[] {
 export async function makeGithubFileFetcher(env: Env, repoFullName: string, installationId: number | null | undefined): Promise<FileFetcher> {
   // Resolve the token once (best-effort): installation token > public token > none.
   let token: string | undefined;
+  let admissionKey: GitHubRateLimitAdmissionKey | undefined;
   if (installationId) {
     token = await createInstallationToken(env, installationId).catch(() => undefined);
+    admissionKey = token !== undefined ? githubRateLimitAdmissionKeyForInstallation(installationId) : undefined;
   }
   token = token ?? env.GITHUB_PUBLIC_TOKEN;
   const { owner, name } = repoParts(repoFullName);
@@ -129,8 +132,10 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10_000);
         try {
-          const response = await fetch(url, {
+          const response = await timeoutFetch(url, {
             signal: controller.signal,
+            githubRateLimitAdmission: admissionKey !== undefined,
+            ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
             headers: {
               // raw media type returns the file body directly (no base64 envelope to decode).
               accept: "application/vnd.github.raw+json",

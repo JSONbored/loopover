@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
+import * as backfillModule from "../../src/github/backfill";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as sentryModule from "../../src/selfhost/sentry";
 import {
@@ -801,40 +802,182 @@ describe("queue processors", () => {
     resyncUpsertSpy.mockRestore();
   });
 
-  // REST-budget dedup (#audit-rate-headroom): the sweep resync already fetched the full live PR (its mergeable_state
-  // covers the behind-base check), so prReadyForReview must REUSE it instead of issuing its own `GET /pulls/{n}`. The
-  // only bare `GET /pulls/7` reads in the per-PR re-review are now the resync (1) + auto-maintain's merge-state (1) —
-  // never a third from prReadyForReview. (This pins the redundancy removal: before the dedup there were three.)
-  it("#audit-rate-headroom: the per-PR re-review reuses the resync payload's merge state — prReadyForReview issues NO extra GET /pulls/{n}", async () => {
+  // REST-budget dedup (#audit-rate-headroom): one per-PR re-review threads request-local live GitHub facts through
+  // readiness and auto-maintain, while post-gate planning refreshes facts that can change after the bot publishes
+  // review/check state. Mergeability can advance to clean; CI can flip red and must still suppress merge.
+  it("#audit-rate-headroom: the per-PR re-review refreshes merge state and CI after the gate publication boundary", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write" }, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
-    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
-    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
     let barePullGets = 0;
+    let branchProtectionGets = 0;
+    let liveCheckRunsGets = 0;
+    let statusGets = 0;
+    let mergeAttempts = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = (init?.method ?? "GET").toUpperCase();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      // The full PR payload carries mergeable_state CLEAN (not behind) + the live head. Count only the bare
-      // `GET /pulls/7` (no sub-resource, GET only) — the redundant prReadyForReview fetch would be a third here.
+      // Count only the bare `GET /pulls/7` (no sub-resource, GET only). The resync payload starts blocked, then the
+      // post-gate maintenance read observes the bot's newly published review/check state as clean.
       if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") {
         barePullGets += 1;
-        return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+        return Response.json({
+          number: 7,
+          title: "Clean PR",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "a7" },
+          mergeable_state: barePullGets === 1 ? "blocked" : "clean",
+          labels: [],
+          body: "Closes #1",
+        });
       }
       if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
-      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
-      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/a7/check-runs") && url.includes("per_page=100")) {
+        liveCheckRunsGets += 1;
+        return Response.json({ total_count: 0, check_runs: [] });
+      }
+      if (url.includes("/commits/a7/status")) {
+        statusGets += 1;
+        return Response.json(
+          statusGets === 1
+            ? { state: "success", statuses: [] }
+            : {
+                state: "failure",
+                statuses: [
+                  {
+                    context: "codecov/patch",
+                    state: "failure",
+                    description: "patch coverage below target",
+                    target_url: "https://ci.example.test/codecov",
+                  },
+                ],
+              },
+        );
+      }
+      if (url.includes("/pulls/7/merge") && method === "PUT") {
+        mergeAttempts += 1;
+        return Response.json({ merged: true, sha: "merged-a7" });
+      }
       if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
-      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url.includes("/branches/")) {
+        branchProtectionGets += 1;
+        return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      }
       return Response.json({});
     });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
 
     await processJob(env, { type: "agent-regate-pr", deliveryId: "dedup-pulls-get", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
 
-    // Resync (1) + auto-maintain merge-state (1) = 2; the deduped prReadyForReview adds NONE (was 3 before the fix).
+    // Readiness reuses the resync payload, but auto-maintain refreshes merge-state and CI after gate publication.
     expect(barePullGets).toBe(2);
+    expect(branchProtectionGets).toBe(1);
+    expect(liveCheckRunsGets).toBe(2);
+    expect(statusGets).toBe(2);
+    expect(mergeAttempts).toBe(0);
+  });
+
+  it("#audit-rate-headroom: auto-maintain falls back to the public token when a post-gate mint fails", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token" });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", approve: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    let gateFinalized = false;
+    let failedMaintenanceMint = false;
+    let publicFallbackUsed = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      const headersText = init?.headers instanceof Headers ? JSON.stringify([...init.headers.entries()]) : JSON.stringify(init?.headers ?? {});
+      if (url.includes("/access_tokens")) {
+        if (gateFinalized && !failedMaintenanceMint) {
+          failedMaintenanceMint = true;
+          return new Response("mint failed", { status: 500 });
+        }
+        return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+      }
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main", sha: "base" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/a7/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/branches/")) {
+        if (gateFinalized && headersText.includes("public-token")) publicFallbackUsed = true;
+        return Response.json({ contexts: [] });
+      }
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string };
+        if (body.status !== "in_progress" || body.conclusion) {
+          gateFinalized = true;
+          clearInstallationTokenCacheForTest();
+        }
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      if (url.includes("/check-runs/901") && method === "PATCH") {
+        gateFinalized = true;
+        clearInstallationTokenCacheForTest();
+        return Response.json({ id: 901 });
+      }
+      return Response.json({});
+    });
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "dedup-public-token-fallback", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    expect(failedMaintenanceMint).toBe(true);
+    expect(publicFallbackUsed).toBe(true);
+  });
+
+  it("#audit-rate-headroom: required-context lookup failures still fetch pending CI before review", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Pending CI", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    const requiredContextsSpy = vi
+      .spyOn(backfillModule, "fetchRequiredStatusContexts")
+      .mockRejectedValue(new Error("branch protection unavailable"));
+    let checkRunsFetched = false;
+    let gateChecks = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Pending CI", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) {
+        checkRunsFetched = true;
+        return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "in_progress", conclusion: null, app: { slug: "github-actions" } }] });
+      }
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "pending", statuses: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        gateChecks += 1;
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    try {
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "ci-required-contexts-fail", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+      expect(requiredContextsSpy).toHaveBeenCalled();
+      expect(checkRunsFetched).toBe(true);
+      expect(gateChecks).toBe(0);
+      const deferred = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.review_deferred_ci_pending")
+        .first<{ n: number }>();
+      expect(deferred?.n).toBe(1);
+    } finally {
+      requiredContextsSpy.mockRestore();
+    }
   });
 
   it("#sweep-resync: a failing resync upsert is swallowed (fail-open) — the sweep never throws", async () => {
@@ -4815,7 +4958,7 @@ describe("queue processors", () => {
   // comment. Mirrors the legacy panel-posting setup (confirmed miner + comment_and_label) but flips the flag
   // and enables the gate so `maybePublishPrPublicSurface` takes the flag-ON branch.
   it("renders the unified PR-review comment when the flag is on and the gate evaluates", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -4836,9 +4979,21 @@ describe("queue processors", () => {
       gateCheckMode: "enabled",
       backfillEnabled: true,
       privateTrustEnabled: true,
+      autonomy: { update_branch: "auto" },
     });
     let postedBody = "";
     const calls = { comments: 0, gateChecks: 0 };
+    let gateFinalized = false;
+    let failedPostGateMint = false;
+    const liveCiSpy = vi
+      .spyOn(backfillModule, "fetchLiveCiAggregate")
+      .mockRejectedValueOnce(new Error("transient CI read failed"))
+      .mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+      });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
@@ -4884,7 +5039,13 @@ describe("queue processors", () => {
       if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
       if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 2, followers: 1 });
       if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) {
+        if (gateFinalized && !failedPostGateMint) {
+          failedPostGateMint = true;
+          return new Response("mint failed", { status: 500 });
+        }
+        return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+      }
       // PR files — the unified branch (re)fetches them to count changed files for the readiness chip.
       if (url.includes("/pulls/3/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
       // #review-audit: the LIVE merge-state the comment now reads — the base just advanced with a conflict, so the
@@ -4895,10 +5056,17 @@ describe("queue processors", () => {
       if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/check-runs") && method === "POST") {
         calls.gateChecks += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string };
+        if (body.status !== "in_progress" || body.conclusion) {
+          gateFinalized = true;
+          clearInstallationTokenCacheForTest();
+        }
         return Response.json({ id: 901 }, { status: 201 });
       }
       if (url.includes("/check-runs/901") && method === "PATCH") {
         calls.gateChecks += 1;
+        gateFinalized = true;
+        clearInstallationTokenCacheForTest();
         return Response.json({ id: 901 });
       }
       if (url.includes("/issues/3/comments") && method === "GET") return Response.json([]);
@@ -4910,44 +5078,53 @@ describe("queue processors", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await processJob(env, {
-      type: "github-webhook",
-      deliveryId: "pr-unified-comment",
-      eventName: "pull_request",
-      payload: {
-        action: "synchronize",
-        installation: {
-          id: 123,
-          account: { login: "JSONbored", id: 1, type: "User" },
-          repository_selection: "selected",
-          permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "pr-unified-comment",
+        eventName: "pull_request",
+        payload: {
+          action: "synchronize",
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+            repository_selection: "selected",
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+            events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 3,
+            title: "Fix webhook duplicate delivery again",
+            state: "open",
+            user: { login: "oktofeesh1" },
+            head: { sha: "unified123" },
+            labels: [{ name: "bug" }],
+            body: "Fixes #1\n\nValidation: npm test",
+          },
         },
-        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
-        pull_request: {
-          number: 3,
-          title: "Fix webhook duplicate delivery again",
-          state: "open",
-          user: { login: "oktofeesh1" },
-          head: { sha: "unified123" },
-          labels: [{ name: "bug" }],
-          body: "Fixes #1\n\nValidation: npm test",
-        },
-      },
-    });
+      });
 
-    expect(calls.comments).toBe(2);
-    // Still leads with the panel marker → the upsert updates the SAME sticky comment in place (no duplicate).
-    expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
-    // The UNIFIED shape, which the legacy body never emits: a full-comment GitHub alert wrapper…
-    expect(postedBody).toMatch(/> \[!(TIP|NOTE|WARNING|CAUTION)\]/);
-    // …and the renderer's synthesized "Code review" signal row (bold first table label).
-    expect(postedBody).toContain("**Code review**");
-    // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
-    expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
-    // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must
-    // NOT headline "safe to merge" while the disposition would auto-close the base-conflicting PR.
-    expect(postedBody).not.toMatch(/safe to merge/i);
+      const installationTokenCiReads = liveCiSpy.mock.calls.filter(
+        ([, , , token]) => token === "installation-token",
+      );
+      expect(installationTokenCiReads).toHaveLength(2);
+      expect(calls.comments).toBe(2);
+      expect(failedPostGateMint).toBe(true);
+      // Still leads with the panel marker → the upsert updates the SAME sticky comment in place (no duplicate).
+      expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
+      // The UNIFIED shape, which the legacy body never emits: a full-comment GitHub alert wrapper…
+      expect(postedBody).toMatch(/> \[!(TIP|NOTE|WARNING|CAUTION)\]/);
+      // …and the renderer's synthesized "Code review" signal row (bold first table label).
+      expect(postedBody).toContain("**Code review**");
+      // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
+      expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
+      // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must
+      // NOT headline "safe to merge" while the disposition would auto-close the base-conflicting PR.
+      expect(postedBody).not.toMatch(/safe to merge/i);
+    } finally {
+      liveCiSpy.mockRestore();
+    }
   });
 
   // FIX B + FIX D3 at the processor call site: a unified comment for a PR whose CI has a FAILED check, with the

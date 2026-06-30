@@ -1702,6 +1702,7 @@ describe("local MCP git metadata collection", () => {
     const { collectLocalBranchMetadata, parseGitRemote } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
     expect(parseGitRemote("git@github.com:entrius/allways-ui.git")).toBe("entrius/allways-ui");
     expect(parseGitRemote("https://github.com/JSONbored/gittensory.git")).toBe("JSONbored/gittensory");
+    expect(parseGitRemote("https://github.com/JSONbored/gittensory/")).toBe("JSONbored/gittensory");
 
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
     git(tempDir, "init");

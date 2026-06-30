@@ -29,6 +29,8 @@ const EXPECTED_ANALYZERS = [
   "nativeBuild",
   "history",
   "docCommentDrift",
+  "duplication",
+  "churnHotspot",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

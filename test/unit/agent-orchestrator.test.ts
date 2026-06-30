@@ -791,6 +791,55 @@ describe("agent orchestrator", () => {
     expect(card.publicSafe.summary).not.toMatch(/\/root\/work|\/var\/log|C:\/Users\/alice/);
   });
 
+  it("does not split a surrogate pair when truncating a card field at the 300-character cap", () => {
+    // A string is well-formed UTF-16 iff it has no lone surrogate (a high surrogate not followed by a
+    // low one, or a low surrogate not preceded by a high one). Equivalent to String#isWellFormed without
+    // requiring the es2024 lib.
+    const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    // The 😀 (U+1F600) astral char straddles the 300th UTF-16 code unit: indices 0..298 are 'a',
+    // index 299 is the emoji's HIGH surrogate, and its LOW surrogate falls at index 300 (cut off).
+    // A naive slice(0, 300) would leave the lone high surrogate, producing invalid UTF-16.
+    const split = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "recommended",
+      why: [],
+      riskImpact: "a".repeat(299) + "😀" + "tail",
+      blockedBy: [],
+      publicSafeSummary: "",
+      safetyClass: "public_safe",
+    });
+    expect(split.risk).toHaveLength(299);
+    expect(split.risk.endsWith("a")).toBe(true);
+    expect(/[\uD800-\uDBFF]$/.test(split.risk)).toBe(false); // no dangling high surrogate
+    expect(loneSurrogate.test(split.risk)).toBe(false);
+
+    // A complete emoji whose LOW surrogate lands exactly on the 300th unit is a full pair and is kept.
+    const exactPair = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "recommended",
+      why: [],
+      riskImpact: "a".repeat(298) + "😀" + "more",
+      blockedBy: [],
+      publicSafeSummary: "",
+      safetyClass: "public_safe",
+    });
+    expect(exactPair.risk).toHaveLength(300);
+    expect(exactPair.risk.endsWith("😀")).toBe(true);
+    expect(loneSurrogate.test(exactPair.risk)).toBe(false);
+
+    // A short field containing emoji is preserved untouched (well under the cap, no over-trimming).
+    const shortEmoji = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "recommended",
+      why: [],
+      riskImpact: "ship 😀 now",
+      blockedBy: [],
+      publicSafeSummary: "",
+      safetyClass: "public_safe",
+    });
+    expect(shortEmoji.risk).toBe("ship 😀 now");
+  });
+
   it("covers local action ready and blocker-free branches from prepared metadata", () => {
     const run = __agentOrchestratorInternals.buildRunRecord({
       objective: "local ready branch",

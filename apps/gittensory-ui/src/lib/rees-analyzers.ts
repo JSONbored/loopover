@@ -505,6 +505,60 @@ export const REES_ANALYZERS = [
         "Conservative: only named function declarations with confidently-enumerable params; non-parameter signature edits are not reported.",
     },
   },
+  {
+    name: "duplication",
+    title: "Near-verbatim duplicated code",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["files", "github-token", "head-sha"],
+    limits: {
+      minRun: 8,
+      maxCandidates: 40,
+      maxFetches: 30,
+      maxFindings: 25,
+      maxFileBytes: 500000,
+    },
+    docs: {
+      summary:
+        "Flags added code that is a near-verbatim duplicate of a block already present elsewhere in the repo.",
+      looksAt:
+        "Added diff hunks in changed source files compared against same-extension repo files fetched from the git tree at headSha.",
+      reports:
+        "The head file:line, the existing source file:line it duplicates, and the matched line count.",
+      network:
+        "Calls the GitHub API for the git tree and candidate blobs. Requires headSha and token forwarding for private repos.",
+      notes:
+        "Conservative: trivial/boilerplate lines are dropped and a long contiguous run is required, so incidental overlap is not flagged. Never returns code content.",
+    },
+  },
+  {
+    name: "churnHotspot",
+    title: "Churn hotspots",
+    category: "history",
+    cost: "github-heavy",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["files", "github-token"],
+    limits: {
+      maxFilesProbed: 8,
+      windowDays: 90,
+      perPage: 100,
+    },
+    docs: {
+      summary:
+        "Flags changed files that are statistical fragility hotspots — high commit frequency and a high fix/revert fraction.",
+      looksAt:
+        "Each changed file's recent commit history (a 90-day window), excluding lockfiles, generated output, and binaries.",
+      reports:
+        "File, commit count, fix/revert count, and the window — counts only, never file contents.",
+      network:
+        "Calls the GitHub commits API once per probed file. Requires GitHub token forwarding for private repos.",
+      notes:
+        "Distinct from the history analyzer's author track record; this scores the change AREA's defect density.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

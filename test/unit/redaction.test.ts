@@ -51,6 +51,9 @@ describe("isPublicSafeText (#542 shared public/private boundary)", () => {
     expect(isPublicSafeText("/tmp/scratch")).toBe(false);
     expect(isPublicSafeText("C:\\Users\\carol\\repo")).toBe(false);
     expect(isPublicSafeText("C:/Users/carol/repo")).toBe(false);
+    expect(isPublicSafeText("/opt/homebrew/var/log")).toBe(false);
+    expect(isPublicSafeText("C:\\Program Files\\App\\config.json")).toBe(false);
+    expect(isPublicSafeText("C:/Program Files/App/config.json")).toBe(false);
   });
 
   it("is case-insensitive", () => {
@@ -74,6 +77,7 @@ describe("shared local-path constants (#1418 drift fix)", () => {
     expect("clone at /home/me/repo done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("clone at <p> done");
     expect("clone at /root/work/repo done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("clone at <p> done");
     expect("log at /var/log/app.log done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("log at <p> done");
+    expect("brew at /opt/homebrew/var/log done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("brew at <p> done");
     expect("tmp at /tmp/build done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("tmp at <p> done");
     expect("win at C:\\Users\\me\\repo done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("win at <p> done");
     expect("win at C:/Users/me/repo done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("win at <p> done");
@@ -81,6 +85,7 @@ describe("shared local-path constants (#1418 drift fix)", () => {
     // flag (the `/g`-only scrubber in miner-dashboard-recommendations.ts) still redacts it (#1418 regression).
     expect("win at c:\\Users\\bob\\repo done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("win at <p> done");
     expect("win at c:/Users/bob/repo done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("win at <p> done");
+    expect("win at C:/Program Files/App/x done".replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<p>")).toBe("win at <p> done");
   });
 
   it("the lower-case Windows drive is matched by the raw source even without the `i` flag", () => {

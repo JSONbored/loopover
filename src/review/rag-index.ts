@@ -23,6 +23,7 @@
 // GitHub call, and does no adapter use — the deploy is byte-identical to today.
 
 import { createInstallationToken } from "../github/app";
+import { githubRateLimitAdmissionKeyForInstallation, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { repoParts } from "../utils/json";
 import { createReviewAdapters } from "./adapters";
 import {
@@ -51,10 +52,12 @@ const GITHUB_FETCH_TIMEOUT_MS = 10_000;
 
 /** Resolve the read token once for a repo: installation token (private-repo read) → public token → none.
  *  Best-effort — a token failure degrades to the next fallback, never throws. (Mirrors makeGithubFileFetcher.) */
-async function resolveReadToken(env: Env, installationId: number | null | undefined): Promise<string | undefined> {
-  let token: string | undefined;
-  if (installationId) token = await createInstallationToken(env, installationId).catch(() => undefined);
-  return token ?? env.GITHUB_PUBLIC_TOKEN;
+async function resolveReadToken(env: Env, installationId: number | null | undefined): Promise<{ token: string | undefined; admissionKey?: GitHubRateLimitAdmissionKey | undefined }> {
+  if (installationId) {
+    const token = await createInstallationToken(env, installationId).catch(() => undefined);
+    if (token) return { token, admissionKey: githubRateLimitAdmissionKeyForInstallation(installationId) };
+  }
+  return { token: env.GITHUB_PUBLIC_TOKEN };
 }
 
 /** Shared GitHub headers for the read calls (raw media type returns file bodies directly). */
@@ -73,11 +76,16 @@ function ghHeaders(token: string | undefined, accept: string): Record<string, st
  * (fail-safe: a tree we can't read = nothing to index). `truncated` is honored (GitHub truncates very large
  * trees) — we index whatever it returned; the MAX_CHUNKS cap is the real bound anyway.
  */
-async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token: string | undefined): Promise<TreeEntry[] | null> {
+async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise<TreeEntry[] | null> {
   try {
     const { owner, name } = repoParts(repoFullName);
     const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
-    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github+json"), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
+    const response = await timeoutFetch(url, {
+      headers: ghHeaders(token, "application/vnd.github+json"),
+      signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      githubRateLimitAdmission: admissionKey !== undefined,
+      ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
+    });
     if (!response.ok) return null;
     const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number }> } | null;
     const entries: TreeEntry[] = [];
@@ -133,6 +141,7 @@ async function fetchFileText(
   path: string,
   ref: string,
   token: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
   maxBytes = MAX_FILE_BYTES,
 ): Promise<string | null> {
   try {
@@ -141,7 +150,12 @@ async function fetchFileText(
       .split("/")
       .map(encodeURIComponent)
       .join("/")}?ref=${encodeURIComponent(ref)}`;
-    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github.raw+json"), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
+    const response = await timeoutFetch(url, {
+      headers: ghHeaders(token, "application/vnd.github.raw+json"),
+      signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+      githubRateLimitAdmission: admissionKey !== undefined,
+      ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
+    });
     if (!response.ok) return null;
     return await readTextCapped(response, maxBytes);
   } catch {
@@ -237,13 +251,13 @@ export async function indexRepo(
     const repoFullName = repo.fullName;
     const [, repoName] = splitRepo(repoFullName);
     const namespace = ragNamespace(project, repoName);
-    const token = await resolveReadToken(env, repo.installationId);
+    const { token, admissionKey } = await resolveReadToken(env, repo.installationId);
     const ref = indexRef(repo.defaultBranch);
 
     // 1. Fetch the tree, filter to indexable code/docs, and prune retained chunks for files that disappeared
     //    or moved to a non-indexable path. If the tree fetch fails (null), skip pruning to avoid deleting good
     //    chunks during a transient GitHub/API failure.
-    const rawTree = await fetchRepoTree(env, repoFullName, ref, token);
+    const rawTree = await fetchRepoTree(env, repoFullName, ref, token, admissionKey);
     if (rawTree === null) return empty;
     const tree = rawTree
       .filter((entry) => isIndexablePath(entry.path, entry.size))
@@ -261,7 +275,7 @@ export async function indexRepo(
         capped = true;
         break;
       }
-      const text = await fetchFileText(env, repoFullName, entry.path, ref, token);
+      const text = await fetchFileText(env, repoFullName, entry.path, ref, token, admissionKey);
       if (text === null) continue;
       const chunks = chunkFile(entry.path, text, namespace);
       if (chunks.length === 0) continue;
@@ -313,7 +327,7 @@ export async function reindexChangedPaths(
     // 2. Re-index the ones that are still indexable code/docs at the default branch.
     const indexable = unique.filter((path) => isIndexablePath(path));
     if (indexable.length === 0) return { indexed: 0, files: 0, capped: false };
-    const token = await resolveReadToken(env, repo.installationId);
+    const { token, admissionKey } = await resolveReadToken(env, repo.installationId);
     const ref = indexRef(repo.defaultBranch);
     let stored = await countRepoChunks(infra.storage, project, repoName);
     let upserted = 0;
@@ -324,7 +338,7 @@ export async function reindexChangedPaths(
         capped = true;
         break;
       }
-      const text = await fetchFileText(env, repoFullName, path, ref, token);
+      const text = await fetchFileText(env, repoFullName, path, ref, token, admissionKey);
       if (text === null) continue; // file deleted at head, oversized, or unreadable — already removed above, leave it gone
       const chunks = chunkFile(path, text, namespace);
       if (chunks.length === 0) continue;

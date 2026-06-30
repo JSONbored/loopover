@@ -1,3 +1,5 @@
+import { timeoutFetch } from "./client";
+
 export type PublicContributorProfile = {
   login: string;
   name?: string | null | undefined;
@@ -75,15 +77,15 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
   try {
     const signal = AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS);
     const [userResponse, reposResponse] = await Promise.all([
-      fetch(`https://api.github.com/users/${safeLogin}`, { headers, signal }),
-      fetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`, { headers, signal }),
+      timeoutFetch(`https://api.github.com/users/${safeLogin}`, { headers, signal }),
+      timeoutFetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`, { headers, signal }),
     ]);
     if (!userResponse.ok) throw new Error(`GitHub user lookup failed (${userResponse.status})`);
     const user = (await userResponse.json()) as GitHubUserResponse;
     const repos: GitHubRepoResponse[] = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
     let linkHeader = reposResponse.ok ? reposResponse.headers.get("link") : null;
     for (let page = 2; page <= MAX_REPO_PAGES && linkHeader?.includes('rel="next"'); page += 1) {
-      const nextResponse = await fetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`, { headers, signal });
+      const nextResponse = await timeoutFetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`, { headers, signal });
       if (!nextResponse.ok) break;
       const batch = (await nextResponse.json()) as GitHubRepoResponse[];
       repos.push(...batch);
@@ -153,7 +155,7 @@ function publicRepoFullName(owner: string, repo: string): string {
 
 async function fetchRepoStatsFromGitHub(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, repoFullName: string, nowMs: number): Promise<PublicRepoStats> {
   const [owner, repo] = repoFullName.split("/") as [string, string];
-  const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+  const response = await timeoutFetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
     headers: {
       accept: "application/vnd.github+json",
       "user-agent": "gittensory/0.1",

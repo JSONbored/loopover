@@ -82,9 +82,11 @@ describe("explainScoreBreakdown", () => {
         "branchEligibility",
         "credibilityMultiplier",
         "reviewPenaltyMultiplier",
+        "reviewCollateralMultiplier",
         "openPrMultiplier",
         "openIssueMultiplier",
         "mergedHistoryMultiplier",
+        "timeDecayMultiplier",
       ]),
     );
     for (const component of breakdown.components) {
@@ -325,6 +327,29 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.highestLeverageLever.lever).toMatch(/Land, merge, or close/i);
   });
 
+  it("explains the time-decay multiplier as neutral (fresh / disabled) and reduced (aged with decay on)", () => {
+    // Default preview: applyTimeDecay is off / PR is fresh => multiplier is 1 => breakdown neutral, surface
+    // the decay-disable context so a contributor understands why there is no age penalty here.
+    const fresh = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none" } }),
+    );
+    expect(fresh.components.find((entry) => entry.component === "timeDecayMultiplier")).toMatchObject({ band: "neutral" });
+
+    // Opt-in + aged PR => upstream sigmoid reduces the multiplier => breakdown reduced with the aged-PR lever.
+    const aged = buildScorePreview({
+      repo,
+      snapshot,
+      input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none", applyTimeDecay: true, prAgeHours: 480 },
+    });
+    const agedBreakdown = explainScoreBreakdown(aged);
+    const decayed = agedBreakdown.components.find((entry) => entry.component === "timeDecayMultiplier")!;
+    expect(decayed.band).not.toBe("neutral");
+    expect(decayed.band).not.toBe("full");
+    expect(decayed.summary).toMatch(/time-decayed|decay/i);
+    expect(decayed.lever).toMatch(/fresh|time-decay curve|sigmoid/i);
+    expect(JSON.stringify(agedBreakdown)).not.toMatch(FORBIDDEN);
+  });
+
   it("includes gate highlights without leaking forbidden language", () => {
     const preview = buildScorePreview({
       repo,
@@ -373,6 +398,101 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.components.find((entry) => entry.component === "openPrMultiplier")).toMatchObject({ band: "full" });
     expect(breakdown.components.find((entry) => entry.component === "credibilityMultiplier")).toMatchObject({ band: "full" });
     expect(breakdown.components.find((entry) => entry.component === "reviewPenaltyMultiplier")).toMatchObject({ band: "full" });
+    expect(breakdown.components.find((entry) => entry.component === "reviewCollateralMultiplier")).toMatchObject({ band: "neutral" });
+  });
+
+  it("explains elevated open-PR review collateral as reduced strength and baseline as neutral", () => {
+    const baseline = explainScoreBreakdown(
+      buildScorePreview({
+        repo,
+        snapshot,
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 80,
+          totalTokenScore: 100,
+          sourceLines: 50,
+          openPrCount: 1,
+          credibility: 1,
+          changesRequestedCount: 0,
+        },
+      }),
+    );
+    expect(baseline.components.find((entry) => entry.component === "reviewCollateralMultiplier")).toMatchObject({
+      band: "neutral",
+      summary: expect.stringMatching(/baseline fraction/i),
+    });
+
+    const elevated = explainScoreBreakdown(
+      buildScorePreview({
+        repo,
+        snapshot: {
+          ...snapshot,
+          constants: { ...snapshot.constants, MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0 },
+        },
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 80,
+          totalTokenScore: 100,
+          sourceLines: 50,
+          openPrCount: 1,
+          credibility: 1,
+          changesRequestedCount: 4,
+        },
+      }),
+    );
+    const collateral = elevated.components.find((entry) => entry.component === "reviewCollateralMultiplier");
+    expect(collateral).toMatchObject({ band: "reduced" });
+    expect(collateral?.summary).toMatch(/elevated|CHANGES_REQUESTED/i);
+    expect(collateral?.summary).toMatch(/0\.32/);
+    expect(collateral?.lever).toMatch(/change requests/i);
+    expect(JSON.stringify(elevated)).not.toMatch(FORBIDDEN);
+
+    const capped = explainScoreBreakdown(
+      buildScorePreview({
+        repo,
+        snapshot: {
+          ...snapshot,
+          constants: { ...snapshot.constants, MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0 },
+        },
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 80,
+          totalTokenScore: 100,
+          sourceLines: 50,
+          openPrCount: 1,
+          credibility: 1,
+          changesRequestedCount: 10,
+        },
+      }),
+    );
+    expect(capped.components.find((entry) => entry.component === "reviewCollateralMultiplier")).toMatchObject({
+      band: "reduced",
+      summary: expect.stringMatching(/0\.4/),
+    });
+  });
+
+  it("prioritizes open PR blocking above elevated review collateral", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot: {
+        ...snapshot,
+        constants: { ...snapshot.constants, MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0 },
+      },
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 80,
+        totalTokenScore: 100,
+        sourceLines: 50,
+        openPrCount: 8,
+        existingContributorTokenScore: 50,
+        credibility: 1,
+        changesRequestedCount: 4,
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "reviewCollateralMultiplier")).toMatchObject({ band: "reduced" });
+    expect(breakdown.highestLeverageLever.component).toBe("openPrMultiplier");
   });
 
   it("marks penalty label multipliers as reduced strength (#994)", () => {

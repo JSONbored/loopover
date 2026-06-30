@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 export function parseGitRemote(remoteUrl) {
-  const trimmed = String(remoteUrl ?? "").trim();
+  const trimmed = String(remoteUrl ?? "").trim().replace(/\/+$/, "");
   const patterns = [
     /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/,
     /^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/,

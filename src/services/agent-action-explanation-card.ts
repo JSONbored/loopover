@@ -130,5 +130,10 @@ function sanitizePublicCardText(value: string): string {
 }
 
 function compactText(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 300);
+  const compact = value.replace(/\s+/g, " ").trim().slice(0, 300);
+  // `slice(0, 300)` counts UTF-16 code units, so the 300-unit cap can fall between the high and low
+  // halves of an astral character (an emoji) and leave a lone, unpaired high surrogate — invalid UTF-16
+  // that renders as the replacement character and can break strict JSON/UTF-8 consumers of the API and
+  // public-safe card text. Drop a dangling high surrogate so truncation never splits a pair.
+  return /[\uD800-\uDBFF]$/.test(compact) ? compact.slice(0, -1) : compact;
 }

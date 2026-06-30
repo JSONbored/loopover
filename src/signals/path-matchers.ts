@@ -43,6 +43,9 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "deno.lock",
   "pubspec.lock",
   "podfile.lock",
+  "mix.lock",
+  "package.resolved",
+  "gradle.lockfile",
 ]);
 
 const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
-import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertRepositoryFromGitHub, upsertIssueFromGitHub } from "../../src/db/repositories";
 import type { Advisory, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import * as enrichmentWire from "../../src/review/enrichment-wire";
 
 const notesJson = JSON.stringify({
   assessment: "Looks fine.",
@@ -85,6 +86,17 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       REES_ANALYZERS: "secret,actionPin,redos",
     });
     await seedRepoFile(env, "acme/widgets");
+    await upsertIssueFromGitHub(env, "acme/widgets", {
+      number: 42,
+      title: "Linked bug",
+      body: "Issue context for history analyzer.",
+      state: "open",
+      user: { login: "reporter" },
+      labels: [],
+      html_url: "https://github.com/acme/widgets/issues/42",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
     const reesRequest: {
       url?: string;
       auth?: string | null;
@@ -94,6 +106,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
         author?: string;
         body?: string;
         githubToken?: string;
+        linkedIssue?: { number: number; title?: string; body?: string };
       };
     } = {};
     const fetchSpy = vi
@@ -108,6 +121,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
             author?: string;
             body?: string;
             githubToken?: string;
+            linkedIssue?: { number: number; title?: string; body?: string };
           };
           return new Response(
             JSON.stringify({
@@ -128,6 +142,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
           title: "Add a feature",
           body: "Implements the thing.",
           baseSha: "base7",
+          linkedIssues: [42],
         },
         author: "alice",
         confirmedContributor: true,
@@ -145,6 +160,11 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       expect(reesRequest.body?.author).toBe("alice");
       expect(reesRequest.body?.body).toBe("Implements the thing.");
       expect(reesRequest.body?.githubToken).toBe("public-read-token");
+      expect(reesRequest.body?.linkedIssue).toEqual({
+        number: 42,
+        title: "Linked bug",
+        body: "Issue context for history analyzer.",
+      });
       // The brief's content flows into the user prompt, but the system prompt carries our FIXED
       // enrichment suffix — the REES-supplied systemSuffix is untrusted and is never spliced in.
       expect(seenUser[0] ?? "").toContain("## EXTERNAL REVIEW BRIEF");
@@ -155,7 +175,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
     }
   });
 
-  it("FLAG-OFF (default): the REES is never called", async () => {
+  it("FLAG-OFF (default): the REES is never called and linked issues are not resolved", async () => {
     const run = vi.fn(async () => ({ response: notesJson }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
@@ -164,6 +184,10 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     await seedRepoFile(env, "acme/off");
+    const linkedIssueSpy = vi.spyOn(
+      enrichmentWire,
+      "resolveEnrichmentLinkedIssue",
+    );
     let reesCalled = false;
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -175,13 +199,15 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       await runAiReviewForAdvisory(env, {
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/off",
-        pr: { number: 7, title: "t", body: "b" },
+        pr: { number: 7, title: "t", body: "Fixes #42", linkedIssues: [42] },
         author: "alice",
         confirmedContributor: true,
         advisory: adv("acme/off"),
       });
       expect(reesCalled).toBe(false);
+      expect(linkedIssueSpy).not.toHaveBeenCalled();
     } finally {
+      linkedIssueSpy.mockRestore();
       fetchSpy.mockRestore();
     }
   });
@@ -228,6 +254,69 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       });
       expect(reesBody?.author).toBe("alice");
       expect(reesBody?.githubToken).toBeUndefined();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("derives linkedIssue from Fixes #N in the PR body when linkedIssues is empty", async () => {
+    const run = vi.fn(async () => ({ response: notesJson }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    Object.assign(env, {
+      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      REES_URL: "https://rees.example",
+      REES_SHARED_SECRET: "sek",
+    });
+    await seedRepoFile(env, "acme/widgets");
+    await upsertIssueFromGitHub(env, "acme/widgets", {
+      number: 55,
+      title: "Body-linked bug",
+      body: "Parsed from PR description.",
+      state: "open",
+      user: { login: "reporter" },
+      labels: [],
+      html_url: "https://github.com/acme/widgets/issues/55",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    let reesBody: { linkedIssue?: { number: number; title?: string; body?: string } } | undefined;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url, init) => {
+        if (String(url).includes("/v1/enrich")) {
+          reesBody = JSON.parse(String(init?.body ?? "{}")) as {
+            linkedIssue?: { number: number; title?: string; body?: string };
+          };
+          return new Response(JSON.stringify({ promptSection: "brief" }), {
+            status: 200,
+          });
+        }
+        return new Response("nope", { status: 404 });
+      });
+    try {
+      await runAiReviewForAdvisory(env, {
+        settings: { aiReviewMode: "advisory" } as RepositorySettings,
+        repoFullName: "acme/widgets",
+        pr: {
+          number: 7,
+          title: "Fix the bug",
+          body: "Fixes #55",
+          linkedIssues: [],
+        },
+        author: "alice",
+        confirmedContributor: true,
+        advisory: adv("acme/widgets"),
+      });
+      expect(reesBody?.linkedIssue).toEqual({
+        number: 55,
+        title: "Body-linked bug",
+        body: "Parsed from PR description.",
+      });
     } finally {
       fetchSpy.mockRestore();
     }

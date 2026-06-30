@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
 } from "./security";
 import { recordAuditEvent } from "../db/repositories";
+import { timeoutFetch } from "../github/client";
 import type { JsonValue } from "../types";
 
 type GitHubDeviceCodeResponse = {
@@ -178,7 +179,7 @@ export async function createSessionFromGitHubToken(
     });
     throw new Error("github_token_audience_invalid");
   }
-  const response = await fetch("https://api.github.com/user", {
+  const response = await timeoutFetch("https://api.github.com/user", {
     headers: {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${githubToken}`,
@@ -206,7 +207,7 @@ export async function createSessionFromGitHubToken(
 // isn't configured, the token can't be vouched for, so it is rejected.
 async function verifyTokenBelongsToApp(env: Env, githubToken: string): Promise<boolean> {
   if (!env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) return false;
-  const response = await fetch(`https://api.github.com/applications/${env.GITHUB_OAUTH_CLIENT_ID}/token`, {
+  const response = await timeoutFetch(`https://api.github.com/applications/${env.GITHUB_OAUTH_CLIENT_ID}/token`, {
     method: "POST",
     headers: {
       accept: "application/vnd.github+json",

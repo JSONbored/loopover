@@ -992,6 +992,7 @@ export async function recordGitHubRateLimitObservation(env: Env, observation: Gi
   await db.insert(githubRateLimitObservations).values({
     id: observation.id ?? crypto.randomUUID(),
     repoFullName: observation.repoFullName,
+    admissionKey: observation.admissionKey,
     resource: observation.resource,
     path: observation.path,
     statusCode: observation.statusCode,
@@ -4059,6 +4060,7 @@ function toGitHubRateLimitObservationRecord(row: typeof githubRateLimitObservati
   return {
     id: row.id,
     repoFullName: row.repoFullName,
+    admissionKey: row.admissionKey,
     resource: row.resource === "graphql" ? "graphql" : "rest",
     path: row.path,
     statusCode: row.statusCode,

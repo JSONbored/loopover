@@ -161,6 +161,15 @@ describe("gittensory-mcp CLI — basics", () => {
     expect(() => run(["bogus-command"])).toThrow(/gittensory-mcp --help/);
   });
 
+  it("suggests the closest command for a near-miss typo", () => {
+    // The suggestion is interpolated into the message, so matching `status` (not the literal
+    // template token) confirms it ran rather than just matching the throw's printed source line.
+    expect(() => run(["staus"])).toThrow(/Unknown command: staus\. Did you mean `status`\?/);
+    expect(() => run(["verison"])).toThrow(/Did you mean `version`\?/);
+    expect(() => run(["confi"])).toThrow(/Did you mean `config`\?/);
+    expect(() => run(["doctr"])).toThrow(/Did you mean `doctor`\?/);
+  });
+
   it("prints shell completion scripts for bash, zsh, and fish", () => {
     const bash = run(["completion", "bash"]);
     expect(bash).toContain("_gittensory_mcp()");

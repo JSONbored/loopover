@@ -11,6 +11,7 @@
 // preview session, and explicit-route override are intentionally dropped here — gittensory's UI uses the
 // default TanStack route convention; those hooks can return if a per-repo visual config is added.
 import { sha256Hex } from "../../utils/crypto";
+import type { GitHubRateLimitAdmissionKey } from "../../github/client";
 import {
   findPreviewUrlFromChecks,
   findPreviewUrlFromPrComments,
@@ -138,7 +139,7 @@ async function capturePage(
  * collapsible). Fully fail-safe — a missing preview / failed render degrades to placeholders or dashes; this
  * NEVER throws (the caller also wraps it in try/catch so a capture failure can't sink a review).
  */
-export async function buildCapture(env: Env, token: string, target: CaptureTarget, visualFiles: string[]): Promise<CaptureResult> {
+export async function buildCapture(env: Env, token: string, target: CaptureTarget, visualFiles: string[], rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined): Promise<CaptureResult> {
   const repo = parseRepo(target.repoFullName);
   const apiVersion = "2022-11-28";
   // before = production (PUBLIC_SITE_ORIGIN, e.g. https://gittensory.aethereal.dev).
@@ -153,19 +154,19 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
   let previewPending = false;
   if (!previewBase && !previewFailed) {
     try {
-      const status = await getLatestDeploymentStatus({ token, repo, sha: target.headSha, ref: target.headRef, apiVersion });
+      const status = await getLatestDeploymentStatus({ token, repo, sha: target.headSha, ref: target.headRef, apiVersion, rateLimitAdmissionKey });
       previewBase = status.url ?? "";
       previewFailed = status.failed;
     } catch {
       previewBase = "";
     }
     if (!previewBase && !previewFailed && target.previewFromChecks && target.headSha) {
-      previewBase = (await findPreviewUrlFromChecks({ token, repo, sha: target.headSha, apiVersion })) ?? "";
+      previewBase = (await findPreviewUrlFromChecks({ token, repo, sha: target.headSha, apiVersion, rateLimitAdmissionKey })) ?? "";
       if (!previewBase && target.prNumber) {
-        previewBase = (await findPreviewUrlFromPrComments({ token, repo, prNumber: target.prNumber, apiVersion })) ?? "";
+        previewBase = (await findPreviewUrlFromPrComments({ token, repo, prNumber: target.prNumber, apiVersion, rateLimitAdmissionKey })) ?? "";
       }
       if (!previewBase && target.headSha) {
-        const buildState = await getPreviewBuildState({ token, repo, sha: target.headSha, apiVersion });
+        const buildState = await getPreviewBuildState({ token, repo, sha: target.headSha, apiVersion, rateLimitAdmissionKey });
         if (buildState === "failed") previewFailed = true;
         else if (buildState === "building" || buildState === "succeeded") previewPending = true;
       }

@@ -3,7 +3,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveReesSentryRelease, resolveSentryEnvironment } from "./sentry.js";
+import {
+  captureSourcemapUploadFailure,
+  flushSentry,
+  initSentry,
+  resolveReesSentryRelease,
+  resolveSentryEnvironment,
+} from "./sentry.js";
 
 type RunOptions = {
   allowExistingRelease?: boolean;
@@ -127,6 +133,7 @@ function runReleaseValidation(release: string, fields: { sha?: string; deployNam
 }
 
 async function main(): Promise<number> {
+  await initSentry(process.env).catch(() => false);
   const release = resolveReesSentryRelease(process.env);
   const required = {
     SENTRY_AUTH_TOKEN: nonBlank(process.env.SENTRY_AUTH_TOKEN),
@@ -192,6 +199,13 @@ async function main(): Promise<number> {
     log("rees_sentry_sourcemap_upload_complete", { release });
     return 0;
   } catch (error) {
+    captureSourcemapUploadFailure(error, {
+      release,
+      railwayDeploymentId: nonBlank(process.env.RAILWAY_DEPLOYMENT_ID),
+      strict,
+      sha: nonBlank(process.env.SENTRY_COMMIT_SHA) ?? nonBlank(process.env.RAILWAY_GIT_COMMIT_SHA),
+    });
+    await flushSentry();
     warn("rees_sentry_sourcemap_upload_failed", {
       release,
       message: error instanceof Error ? error.message : String(error),

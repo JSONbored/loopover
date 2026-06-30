@@ -168,6 +168,7 @@ export const githubRateLimitObservations = sqliteTable(
   {
     id: text("id").primaryKey(),
     repoFullName: text("repo_full_name"),
+    admissionKey: text("admission_key"),
     resource: text("resource").notNull().default("rest"),
     path: text("path").notNull(),
     statusCode: integer("status_code").notNull(),
@@ -177,6 +178,7 @@ export const githubRateLimitObservations = sqliteTable(
     observedAt: text("observed_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
+    admissionObserved: index("github_rate_limit_observations_admission_observed_idx").on(table.admissionKey, table.observedAt),
     repoObserved: index("github_rate_limit_observations_repo_observed_idx").on(table.repoFullName, table.observedAt),
     reset: index("github_rate_limit_observations_reset_idx").on(table.resetAt),
   }),

@@ -798,6 +798,7 @@ export type PullRequestDetailSyncStateRecord = {
 export type GitHubRateLimitObservationRecord = {
   id?: string | undefined;
   repoFullName?: string | null | undefined;
+  admissionKey?: string | null | undefined;
   resource: "rest" | "graphql";
   path: string;
   statusCode: number;

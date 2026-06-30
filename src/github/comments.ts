@@ -1,5 +1,5 @@
 import { withInstallationTokenRetry } from "./app";
-import { makeInstallationOctokit } from "./client";
+import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
 import type { AgentActionMode } from "../settings/agent-execution";
 
 export const PR_PANEL_COMMENT_MARKER = "<!-- gittensory-pr-panel:v1 -->";
@@ -55,7 +55,7 @@ async function createOrUpdateIssueCommentWithMarker(
 
   return await withInstallationTokenRetry(env, installationId, async (token) => {
     // Non-live mode suppresses the comment create/update writes; the GET marker-search probe below still runs.
-    const octokit = makeInstallationOctokit(env, token, options.mode ?? "live");
+    const octokit = makeInstallationOctokit(env, token, options.mode ?? "live", githubRateLimitAdmissionKeyForInstallation(installationId));
     const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
     const markers = markerAliases(marker);
     const existing: IssueComment[] = [];

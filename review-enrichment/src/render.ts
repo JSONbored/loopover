@@ -353,6 +353,32 @@ export function renderBrief(
     }
   }
 
+  const duplication = findings.duplication ?? [];
+  if (duplication.length) {
+    lines.push(
+      "### Near-verbatim duplicated code (prefer importing the existing implementation)",
+    );
+    for (const item of duplication) {
+      lines.push(
+        `- ${safeCodeSpan(`${item.file}:${item.line}`)} duplicates ${safeCodeSpan(`${item.sourceFile}:${item.sourceLine}`)} (~${item.lines} lines)`,
+      );
+    }
+  }
+
+  const churnHotspots = findings.churnHotspot ?? [];
+  if (churnHotspots.length) {
+    lines.push(
+      "### Churn hotspots (high commit + fix/revert density — historically fragile, scrutinize)",
+    );
+    for (const item of churnHotspots) {
+      const pct = item.commitCount ? Math.round((item.fixCount / item.commitCount) * 100) : 0;
+      const count = `${item.commitCount}${item.capped ? "+" : ""}`;
+      lines.push(
+        `- ${safeCodeSpan(item.file)} — ${count} commits in ${item.windowDays}d, ${item.fixCount} fix/revert (${pct}%)`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

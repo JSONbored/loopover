@@ -67,6 +67,9 @@ describe("isLockfile", () => {
       "deno.lock",
       "pubspec.lock",
       "Podfile.lock",
+      "mix.lock",
+      "Package.resolved",
+      "gradle.lockfile",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }

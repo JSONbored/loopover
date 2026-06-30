@@ -53,6 +53,30 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     });
   });
 
+  it("replays cached branch-protection permission denials and missing resources", async () => {
+    const f = fakeRedis();
+    const cache = createRedisResponseCache(f.redis, 30);
+    const forbidden = {
+      status: 403,
+      body: '{"message":"Resource not accessible by integration"}',
+      contentType: "application/json",
+    };
+    const missing = {
+      status: 404,
+      body: '{"message":"Branch not found"}',
+      contentType: "application/json",
+      link: '<https://api.github.com/repos/o/r/branches/dev/protection/required_status_checks?page=2>; rel="next"',
+      etag: '"abc123"',
+      lastModified: "Tue, 30 Jun 2026 20:00:00 GMT",
+    };
+
+    await cache.set("branch-protection-denied", forbidden, 3600);
+    await cache.set("branch-protection-missing", missing, 3600);
+
+    expect(await cache.get("branch-protection-denied")).toEqual(forbidden);
+    expect(await cache.get("branch-protection-missing")).toEqual(missing);
+  });
+
   it("honors a per-entry TTL override from the shared GitHub client", async () => {
     const f = fakeRedis();
     await createRedisResponseCache(f.redis, 30).set(
@@ -89,7 +113,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
   });
 
-  it("get returns null for non-200 cached responses", async () => {
+  it("get returns null for non-replayable cached responses", async () => {
     const f = fakeRedis();
     f.store.set(
       "gh:resp:" + URL_A,
@@ -100,6 +124,40 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       }),
     );
     expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
+  });
+
+  it("get returns null for malformed replayable status values", async () => {
+    const f = fakeRedis();
+    const cache = createRedisResponseCache(f.redis, 20);
+
+    f.store.set(
+      "gh:resp:string-status",
+      JSON.stringify({
+        status: "403",
+        body: "{}",
+        contentType: "application/json",
+      }),
+    );
+    f.store.set(
+      "gh:resp:too-low-status",
+      JSON.stringify({
+        status: 99,
+        body: "{}",
+        contentType: "application/json",
+      }),
+    );
+    f.store.set(
+      "gh:resp:too-high-status",
+      JSON.stringify({
+        status: 600,
+        body: "{}",
+        contentType: "application/json",
+      }),
+    );
+
+    expect(await cache.get("string-status")).toBeNull();
+    expect(await cache.get("too-low-status")).toBeNull();
+    expect(await cache.get("too-high-status")).toBeNull();
   });
 
   it("ignores malformed optional replay headers while keeping the valid cached response", async () => {

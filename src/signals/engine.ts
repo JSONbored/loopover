@@ -738,6 +738,7 @@ const STOPWORDS = new Set([
 const MAX_COLLISION_PAIRWISE_ISSUES = 80;
 const MAX_COLLISION_PAIRWISE_PULL_REQUESTS = 120;
 const MAX_COLLISION_PAIRWISE_RECENT_MERGES = 40;
+const ISSUE_DISCOVERY_LIFECYCLE_REPORT_CAP = 300;
 const REPO_OUTCOME_STALE_OPEN_DAYS = 30;
 const REPO_OUTCOME_MIN_DECIDED_SAMPLE = 3;
 const REPO_OUTCOME_MERGE_WELL_RATE = 0.7;
@@ -3001,6 +3002,7 @@ export function buildIssueDiscoveryLifecycleReport(
   pullRequests: PullRequestRecord[],
   fullName: string,
   recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
+  pinIssueNumbers: number[] = [],
 ): IssueDiscoveryLifecycleReport {
   const lane = buildLaneAdvice(repo, fullName);
   // One-time PR-by-issue index so each per-issue classification is an O(1) lookup, not a full PR rescan.
@@ -3008,8 +3010,16 @@ export function buildIssueDiscoveryLifecycleReport(
     open: indexPullRequestsByLinkedIssue(pullRequests),
     merged: indexPullRequestsByLinkedIssue(recentMergedPullRequests),
   };
-  const states = issues
-    .slice(0, 300)
+  const cappedIssues = issues.slice(0, ISSUE_DISCOVERY_LIFECYCLE_REPORT_CAP);
+  const cappedNumbers = new Set(cappedIssues.map((issue) => issue.number));
+  const pinnedIssues = pinIssueNumbers
+    .filter((number) => !cappedNumbers.has(number))
+    .map((number) => issues.find((issue) => issue.number === number))
+    .filter((issue): issue is IssueRecord => issue != null);
+  // Pin explicitly requested targets (validate-linked-issue / check-before-start) even when they sit outside
+  // the bulk cap — callers pass issues in updatedAt-desc order, so stale targets beyond 300 were silently skipped.
+  const issuesToClassify = pinnedIssues.length > 0 ? [...cappedIssues, ...pinnedIssues] : cappedIssues;
+  const states = issuesToClassify
     .map((issue) => classifyIssueDiscoveryLifecycle(issue, pullRequests, recentMergedPullRequests, lane, linkedIndex))
     .sort((left, right) => lifecycleRank(left.state) - lifecycleRank(right.state) || left.number - right.number);
   return {
@@ -3060,7 +3070,7 @@ export function buildLinkedIssueValidation(
   issueNumber: number,
   plannedChange: LinkedIssuePlannedChange = {},
 ): LinkedIssueValidationReport {
-  const lifecycle = buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests);
+  const lifecycle = buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests, [issueNumber]);
   const issue = issues.find((candidate) => candidate.number === issueNumber);
   const lifecycleEntry = lifecycle.states.find((entry) => entry.number === issueNumber);
   const open = issue?.state === "open";
@@ -3180,9 +3190,6 @@ export function buildPreStartCheck(
   target: PreStartCheckTarget,
 ): PreStartCheckReport {
   const lane = buildLaneAdvice(repo, fullName);
-  const collisions = buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
-  const quality = buildIssueQualityReport(repo, issues, pullRequests, fullName, [], collisions, recentMergedPullRequests);
-  const lifecycle = buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests);
   const openIssues = issues.filter((issue) => issue.state === "open");
 
   let resolvedIssue: IssueRecord | undefined;
@@ -3210,11 +3217,18 @@ export function buildPreStartCheck(
   }
 
   const resolvedNumber = resolvedIssue?.number;
-  const qualityEntry = resolvedNumber == null ? undefined : quality.issues.find((entry) => entry.number === resolvedNumber);
-  const lifecycleEntry = resolvedNumber == null ? undefined : lifecycle.states.find((entry) => entry.number === resolvedNumber);
+  const pinIssueNumbers =
+    resolvedNumber != null ? [resolvedNumber] : typeof target.issueNumber === "number" ? [target.issueNumber] : [];
+
+  const collisions = buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
+  const quality = buildIssueQualityReport(repo, issues, pullRequests, fullName, [], collisions, recentMergedPullRequests);
+  const lifecycle = buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests, pinIssueNumbers);
 
   const plannedPaths = (target.plannedPaths ?? []).map((path) => path.toLowerCase());
   if (matchedBy === "none" && plannedPaths.length > 0) matchedBy = "planned_paths";
+
+  const qualityEntry = resolvedNumber == null ? undefined : quality.issues.find((entry) => entry.number === resolvedNumber);
+  const lifecycleEntry = resolvedNumber == null ? undefined : lifecycle.states.find((entry) => entry.number === resolvedNumber);
 
   const issueClusters =
     resolvedNumber == null ? [] : collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "issue" && item.number === resolvedNumber));

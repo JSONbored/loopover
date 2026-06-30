@@ -59,15 +59,20 @@ function SelfHostingRag() {
         code={`GITTENSORY_REVIEW_RAG=true
 GITTENSORY_REVIEW_REPOS=owner/repo
 QDRANT_URL=http://qdrant:6333
-QDRANT_DIM=1024
+QDRANT_DIM=768
 AI_EMBED_BASE_URL=http://ollama:11434/v1
-AI_EMBED_MODEL=bge-m3`}
+AI_EMBED_MODEL=nomic-embed-text:latest`}
       />
       <CodeBlock
         lang="bash"
         code={`docker compose --profile qdrant --profile ollama up -d
-docker compose exec ollama ollama pull bge-m3`}
+docker compose exec ollama ollama pull nomic-embed-text:latest`}
       />
+      <p>
+        Use <code>QDRANT_DIM=1024</code> for 1024-dimensional models such as <code>bge-m3</code> or{" "}
+        <code>mxbai-embed-large</code>. If a Qdrant collection already exists, recreate it before
+        changing dimensions.
+      </p>
 
       <h2>Indexing</h2>
       <p>

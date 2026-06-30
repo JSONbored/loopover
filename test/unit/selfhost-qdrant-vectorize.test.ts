@@ -9,6 +9,10 @@ function mockFetch(status: number, body: unknown = {}) {
   return vi.fn(async () => new Response(JSON.stringify(body), { status }));
 }
 
+function collectionInfo(size: number) {
+  return { result: { config: { params: { vectors: { size } } } } };
+}
+
 describe("qdrantReadyzUrl (#1482 regression)", () => {
   it("points readiness probes at Qdrant's unauthenticated /readyz endpoint", () => {
     expect(qdrantReadyzUrl(BASE)).toBe(`${BASE}/readyz`);
@@ -50,9 +54,33 @@ describe("initQdrantCollection (#1217)", () => {
     expect(body.vectors.size).toBe(1024);
   });
 
-  it("ignores a 409 (collection already exists)", async () => {
-    vi.stubGlobal("fetch", mockFetch(409));
+  it("accepts a 409 when the existing collection dimension matches", async () => {
+    const fake = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "exists" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(collectionInfo(1024)), { status: 200 }));
+    vi.stubGlobal("fetch", fake);
     await expect(initQdrantCollection(BASE)).resolves.not.toThrow();
+    expect(fake).toHaveBeenCalledTimes(2);
+    expect(fake.mock.calls[1]?.[0]).toBe(`${BASE}/collections/gittensory`);
+  });
+
+  it("throws on a 409 when the existing collection dimension is wrong", async () => {
+    const fake = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "exists" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(collectionInfo(1024)), { status: 200 }));
+    vi.stubGlobal("fetch", fake);
+    await expect(initQdrantCollection(BASE, "gittensory", 768)).rejects.toThrow(/existing 1024, configured 768/);
+  });
+
+  it("throws when an existing collection cannot be inspected after a 409", async () => {
+    const fake = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "exists" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }));
+    vi.stubGlobal("fetch", fake);
+    await expect(initQdrantCollection(BASE)).rejects.toThrow(/lookup failed: HTTP 503/);
   });
 
   it("throws on any other non-OK status", async () => {

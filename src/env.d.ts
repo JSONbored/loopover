@@ -15,6 +15,8 @@ declare global {
      *  injects Qdrant/sqlite/pg adapters here when configured. Absent ⇒ no RAG, review proceeds with no retrieved
      *  context. */
     VECTORIZE?: Vectorize;
+    /** Self-host RAG vector width. Must match the configured embedding model and vector backend. */
+    QDRANT_DIM?: string;
     /** Optional self-host review audit + visual-capture blob store. The Node runtime injects a filesystem-backed
      *  store when REVIEW_AUDIT_DIR is set; the Cloudflare API worker no longer binds the review R2 bucket. */
     REVIEW_AUDIT?: R2Bucket;

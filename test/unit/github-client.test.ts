@@ -484,16 +484,14 @@ describe("timeoutFetch", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const octokit = makeInstallationOctokit(createTestEnv(), "tok");
-    const first = octokit
-      .request("GET /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks", { owner: "o", repo: "r", branch: "main" })
-      .catch((error: { status?: number }) => error.status);
-    const second = octokit.request("GET /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks", { owner: "o", repo: "r", branch: "main" });
+    const url = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
+    const first = timeoutFetch(url).then((response) => response.status);
+    const second = timeoutFetch(url);
     await bothCacheReads;
     releaseFetch();
 
     await expect(first).resolves.toBe(500);
-    await expect(second).resolves.toEqual(expect.objectContaining({ data: { contexts: ["after-fallback"] } }));
+    await expect(second.then((response) => response.json())).resolves.toEqual({ contexts: ["after-fallback"] });
     expect(getFetches).toBe(2);
   });
 
@@ -528,16 +526,14 @@ describe("timeoutFetch", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const octokit = makeInstallationOctokit(createTestEnv(), "tok");
-    const first = octokit
-      .request("GET /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks", { owner: "o", repo: "r", branch: "main" })
-      .catch((error: Error) => error.message);
-    const second = octokit.request("GET /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks", { owner: "o", repo: "r", branch: "main" });
+    const url = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
+    const first = timeoutFetch(url).catch((error: Error) => error.message);
+    const second = timeoutFetch(url);
     await bothCacheReads;
     releaseFetch();
 
     await expect(first).resolves.toContain("network down");
-    await expect(second).resolves.toEqual(expect.objectContaining({ data: { contexts: ["after-throw"] } }));
+    await expect(second.then((response) => response.json())).resolves.toEqual({ contexts: ["after-throw"] });
     expect(getFetches).toBe(2);
   });
 

@@ -249,6 +249,9 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: RequestInit)
   }
 
   const request = fetchAndMaybeCacheGitHubGet(input, init, url, cacheKey, cls);
+  // Followers can recover with a fresh request when the leader fails; keep the internal leader promise observed
+  // while still letting the leader caller receive the original rejection from `await request` below.
+  void request.catch(() => undefined);
   const shared = request.then(
     (result) => result.cached,
     () => null,

@@ -62,6 +62,12 @@ describe("createReviewAdapters: bundle assembly + graceful degradation", () => {
     expect(infra.inference).toBeDefined();
   });
 
+  it("carries the configured RAG vector dimension into the infra bundle", () => {
+    const { DB } = dbStub();
+    const infra = createReviewAdapters({ DB, VECTORIZE: vectorizeStub(), AI: aiStub(), QDRANT_DIM: "768" } as unknown as Env);
+    expect(infra.embeddingDimensions).toBe(768);
+  });
+
   it("prefers the dedicated AI_EMBED provider for inference, keeping the review chain frontier-only", async () => {
     const { DB } = dbStub();
     const reviewAi = { run: vi.fn(async () => ({ response: "review text" })) }; // would NOT return embed data
@@ -105,6 +111,7 @@ describe("createReviewAdapters: bundle assembly + graceful degradation", () => {
     const infra = createReviewAdapters({ DB } as unknown as Env);
     expect("vector" in infra).toBe(false);
     expect("inference" in infra).toBe(false);
+    expect("embeddingDimensions" in infra).toBe(false);
   });
 });
 

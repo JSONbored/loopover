@@ -68,12 +68,13 @@ export interface RagInfra {
   storage: StorageAdapter;
   vector?: VectorAdapter;
   inference?: InferenceAdapter;
+  embeddingDimensions?: number;
 }
 
 /** bge-m3: large context window → a whole file/function embeds as one coherent chunk (fewer vectors
  *  than 512-token models, which helps both quality and the free-tier vector budget). */
 export const EMBED_MODEL = "@cf/baai/bge-m3";
-/** bge-m3 output dimension — the vector index MUST be created with `--dimensions=1024`. */
+/** Default bge-m3 output dimension. Self-host can override this when QDRANT_DIM selects another model width. */
 export const RAG_DIMENSIONS = 1024;
 
 const CHUNK_CHARS = 16000; // per-file chunk budget; only files larger than this are split
@@ -91,6 +92,11 @@ export type RagChunk = { id: string; path: string; chunkIndex: number; kind: Rag
 
 export function ragNamespace(project: string, repo: string): string {
   return `${project}:${repo}`.toLowerCase().slice(0, 64);
+}
+
+export function ragDimensionsFromEnv(value: string | undefined): number {
+  const dim = Number(value);
+  return Number.isFinite(dim) && dim > 0 ? Math.floor(dim) : RAG_DIMENSIONS;
 }
 
 // ── Filtering: index CODE, not content/data corpora (the primary free-tier cost guard) ───────────
@@ -251,7 +257,7 @@ export async function countRepoChunks(storage: StorageAdapter, project: string, 
 }
 
 // ── Embedding (fail-safe: null on any failure) ────────────────────────────────────────────────────
-export async function embedTexts(inference: InferenceAdapter | undefined, texts: string[]): Promise<number[][] | null> {
+export async function embedTexts(inference: InferenceAdapter | undefined, texts: string[], expectedDimensions = RAG_DIMENSIONS): Promise<number[][] | null> {
   if (!inference || texts.length === 0) return null;
   try {
     const out: number[][] = [];
@@ -260,9 +266,9 @@ export async function embedTexts(inference: InferenceAdapter | undefined, texts:
       const res = (await inference.run(EMBED_MODEL, { text: batch })) as { data?: number[][] } | null;
       const data = res?.data;
       // Validate COUNT and DIMENSION: a self-host embedding endpoint can return a structurally-valid response
-      // with a missing/empty/wrong-width vector (e.g. a non-1024-d model) — without the dim check a bad vector
+      // with a missing/empty/wrong-width vector — without the dim check a bad vector
       // slips through and later fails Vectorize.upsert, dropping the whole batch. Fail the batch early. (#abc-verify)
-      if (!Array.isArray(data) || data.length !== batch.length || data.some((v) => !Array.isArray(v) || v.length !== RAG_DIMENSIONS)) return null;
+      if (!Array.isArray(data) || data.length !== batch.length || data.some((v) => !Array.isArray(v) || v.length !== expectedDimensions)) return null;
       out.push(...data.map((v) => Array.from(v)));
     }
     return out;
@@ -279,7 +285,7 @@ export async function upsertChunks(infra: RagInfra, project: string, repo: strin
   const { storage: db, vector: vec, inference } = infra;
   if (!vec || !inference || chunks.length === 0) return 0;
   const namespace = ragNamespace(project, repo);
-  const vectors = await embedTexts(inference, chunks.map((c) => c.text));
+  const vectors = await embedTexts(inference, chunks.map((c) => c.text), infra.embeddingDimensions ?? RAG_DIMENSIONS);
   if (!vectors) return 0;
   try {
     await vec.upsert(
@@ -360,7 +366,7 @@ export async function retrieveContext(
   // entirely — no point spending an inference call (and vector query budget) on an empty namespace. (#audit cost)
   if (!(await hasIndexedChunks(storage, opts.project, opts.repo, Date.now()))) return "";
   try {
-    const embedded = await embedTexts(inference, [opts.queryText.slice(0, 16000)]);
+    const embedded = await embedTexts(inference, [opts.queryText.slice(0, 16000)], infra.embeddingDimensions ?? RAG_DIMENSIONS);
     const vec = embedded?.[0];
     if (!vec) return "";
     const res = await vectorAdapter.query(vec, {

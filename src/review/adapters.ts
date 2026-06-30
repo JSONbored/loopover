@@ -13,7 +13,7 @@
 // fail-safe on a missing vector/inference adapter ("no vector index → no RAG", "no AI → no context"), so the
 // modules NEVER throw — they degrade to no-context. Storage (D1 `DB`) is always present (the Worker cannot run
 // without it); its wrapper is a thin pass-through with the prepare→bind→all/first/run + batch surface RAG uses.
-import type { InferenceAdapter, RagInfra, StorageAdapter, VectorAdapter } from "./rag";
+import { ragDimensionsFromEnv, type InferenceAdapter, type RagInfra, type StorageAdapter, type VectorAdapter } from "./rag";
 
 // ── Storage (D1 → StorageAdapter). Always present. A thin pass-through over `env.DB` — structurally the
 //    prepare→bind→{all,first,run} + batch surface the ported modules use. Byte-faithful to reviewbot's
@@ -68,6 +68,7 @@ export function reviewInferenceAdapter(ai: Ai): InferenceAdapter {
  *  is satisfied by only assigning a member when its binding is present (never `vector: undefined`). */
 export function createReviewAdapters(env: Env): RagInfra {
   const infra: RagInfra = { storage: reviewStorageAdapter(env) };
+  if (env.QDRANT_DIM !== undefined) infra.embeddingDimensions = ragDimensionsFromEnv(env.QDRANT_DIM);
   if (env.VECTORIZE) infra.vector = reviewVectorAdapter(env.VECTORIZE);
   // Embeddings use the DEDICATED embed provider (env.AI_EMBED) when configured — keeping the review chat chain
   // frontier-only — and fall back to env.AI otherwise (byte-identical to before).

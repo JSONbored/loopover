@@ -14,6 +14,8 @@ import {
   isIndexablePath,
   type RagChunk,
   type RagInfra,
+  RAG_DIMENSIONS,
+  ragDimensionsFromEnv,
   ragNamespace,
   readChunkTexts,
   retrieveContext,
@@ -26,6 +28,7 @@ import {
 // ── Adapter stub helpers (the injected infra replaces reviewbot's raw env bindings) ───────────────
 const aiThatReturns = (data: unknown): InferenceAdapter => ({ run: async () => ({ data }) });
 const ai1024: InferenceAdapter = aiThatReturns([Array(1024).fill(0.1)]);
+const ai768: InferenceAdapter = aiThatReturns([Array(768).fill(0.1)]);
 
 /** A storage stub whose COUNT(*) returns `n` (warm vs cold index) and whose chunk-text SELECT returns rows. */
 function storageStub(opts: { count?: number; rows?: Array<{ id: string; text: string }> } = {}): StorageAdapter {
@@ -63,6 +66,21 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
 
   it("namespaces per repo (bounded to 64 bytes, lowercased)", () => {
     expect(ragNamespace("gittensory", "JSONbored/gittensory")).toBe("gittensory:jsonbored/gittensory");
+  });
+});
+
+describe("ragDimensionsFromEnv", () => {
+  it("uses a positive integer dimension from configuration", () => {
+    expect(ragDimensionsFromEnv("768")).toBe(768);
+    expect(ragDimensionsFromEnv("1536.9")).toBe(1536);
+  });
+
+  it("falls back to the bge-m3 default for unset, invalid, or non-positive values", () => {
+    expect(ragDimensionsFromEnv(undefined)).toBe(RAG_DIMENSIONS);
+    expect(ragDimensionsFromEnv("")).toBe(RAG_DIMENSIONS);
+    expect(ragDimensionsFromEnv("not-a-number")).toBe(RAG_DIMENSIONS);
+    expect(ragDimensionsFromEnv("0")).toBe(RAG_DIMENSIONS);
+    expect(ragDimensionsFromEnv("-5")).toBe(RAG_DIMENSIONS);
   });
 });
 
@@ -164,6 +182,11 @@ describe("rag: fail-safe (never throws; degrades to no context)", () => {
     expect((await embedTexts(ai1024, ["hi"]))?.[0]?.length).toBe(1024);
   });
 
+  it("embedTexts accepts a configured 768-dimension embedder without weakening the default guard", async () => {
+    expect(await embedTexts(ai768, ["hi"])).toBeNull();
+    expect((await embedTexts(ai768, ["hi"], 768))?.[0]?.length).toBe(768);
+  });
+
   it("retrieveContext returns '' when the vector index / AI are unbound", async () => {
     const infra: RagInfra = { storage: storageStub({ count: 5 }) };
     expect(await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "x" })).toBe("");
@@ -225,6 +248,29 @@ describe("rag: fail-safe (never throws; degrades to no context)", () => {
     expect(out).not.toContain("src/changed.ts"); // the file under review is excluded → only RELATED code surfaces
   });
 
+  it("retrieves context with a configured 768-dimension self-host embedder", async () => {
+    let queryVectorLength = 0;
+    const vector = {
+      query: async (vec: number[]) => {
+        queryVectorLength = vec.length;
+        return { matches: [{ id: "src/dim.ts::0", score: 0.9, metadata: { path: "src/dim.ts" } }] };
+      },
+    } as unknown as VectorAdapter;
+    const infra: RagInfra = {
+      storage: storageStub({ count: 1, rows: [{ id: "src/dim.ts::0", text: "export const dim = 768;" }] }),
+      vector,
+      inference: ai768,
+      embeddingDimensions: 768,
+    };
+    const out = await retrieveContext(infra, {
+      project: "dim-proj",
+      repo: "o/dim-repo",
+      queryText: "refactor the embedding pipeline while keeping vector dimensions consistent across providers",
+    });
+    expect(queryVectorLength).toBe(768);
+    expect(out).toContain("export const dim = 768;");
+  });
+
   it("minScore drops low-relevance matches (#rag-observability)", async () => {
     const matches = [
       { id: "src/hit.ts::0", score: 0.82, metadata: { path: "src/hit.ts" } },
@@ -262,6 +308,18 @@ describe("rag: upsertChunks (embed + vector upsert + chunk-text store)", () => {
     expect(upserted[0]?.[0]).toMatchObject({ id: "ns|src/a.ts::0", namespace: ragNamespace("gittensory", "o/r"), metadata: { path: "src/a.ts", chunkIndex: 0, kind: "code" } });
     expect((upserted[0]?.[0]?.values ?? []).length).toBe(1024);
     expect(batched).toBe(1); // one INSERT statement per chunk handed to db.batch
+  });
+
+  it("upserts configured 768-dimension self-host embedding vectors", async () => {
+    const upserted: VectorUpsert[][] = [];
+    const vector = { upsert: async (v: VectorUpsert[]) => { upserted.push(v); } } as unknown as VectorAdapter;
+    const storage = {
+      prepare: () => ({ bind: () => ({ run: async () => undefined }) as unknown as BoundStatement }),
+      batch: async () => undefined,
+    } as unknown as StorageAdapter;
+    const n = await upsertChunks({ storage, vector, inference: ai768, embeddingDimensions: 768 }, "gittensory", "o/r", chunks);
+    expect(n).toBe(1);
+    expect((upserted[0]?.[0]?.values ?? []).length).toBe(768);
   });
 
   it("returns 0 with no vector / no inference / empty chunks (the fail-safe guard)", async () => {

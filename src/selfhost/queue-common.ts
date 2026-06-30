@@ -222,6 +222,62 @@ export type GitHubRateLimitAdmissionTarget = {
   admissionKey: GitHubRateLimitAdmissionKey | null;
 };
 
+export type GitHubRateLimitKeyScope = "installation" | "global" | "other";
+export type GitHubRateLimitMetricLabels = {
+  job_type: string;
+  key_scope: GitHubRateLimitKeyScope;
+  kind: GitHubRateLimitAdmissionKind | "unknown";
+};
+export type GitHubRateLimitMetricContext = {
+  labels: GitHubRateLimitMetricLabels;
+  spanAttributes: {
+    "github.rate_limit.kind": GitHubRateLimitAdmissionKind | "unknown";
+    "github.rate_limit.key_scope": GitHubRateLimitKeyScope;
+  };
+  logFields: {
+    jobType: string;
+    key_scope: GitHubRateLimitKeyScope;
+    kind: GitHubRateLimitAdmissionKind | "unknown";
+  };
+};
+
+export function githubRateLimitAdmissionKeyScope(
+  admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
+): GitHubRateLimitKeyScope {
+  if (!admissionKey) return "global";
+  return admissionKey.startsWith("installation:") ? "installation" : "other";
+}
+
+export function githubRateLimitMetricLabels(
+  message: JobMessage,
+  target: GitHubRateLimitAdmissionTarget | null | undefined,
+): GitHubRateLimitMetricLabels {
+  return {
+    job_type: message.type,
+    key_scope: githubRateLimitAdmissionKeyScope(target?.admissionKey),
+    kind: target?.kind ?? "unknown",
+  };
+}
+
+export function githubRateLimitMetricContext(
+  message: JobMessage,
+  target: GitHubRateLimitAdmissionTarget | null | undefined,
+): GitHubRateLimitMetricContext {
+  const labels = githubRateLimitMetricLabels(message, target);
+  return {
+    labels,
+    spanAttributes: {
+      "github.rate_limit.kind": labels.kind,
+      "github.rate_limit.key_scope": labels.key_scope,
+    },
+    logFields: {
+      jobType: labels.job_type,
+      key_scope: labels.key_scope,
+      kind: labels.kind,
+    },
+  };
+}
+
 export function githubRateLimitAdmissionTargetForJob(
   message: JobMessage,
 ): GitHubRateLimitAdmissionTarget | null {

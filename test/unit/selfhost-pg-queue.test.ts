@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool, QueryResult } from "pg";
 import { createPgQueue } from "../../src/selfhost/pg-queue";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
 
@@ -114,6 +115,7 @@ describe("createPgQueue (durable #977)", () => {
   beforeEach(() => { vi.spyOn(process.stdout, "write").mockImplementation(() => true); });
   afterEach(() => {
     vi.useRealTimers();
+    resetMetrics();
     vi.restoreAllMocks();
   });
 
@@ -549,6 +551,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
         ["gittensory_jobs_rate_limit_deferred_total", 1],
       );
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -635,6 +638,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
         ["gittensory_jobs_rate_limit_deferred_total", 1],
       );
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -929,6 +933,7 @@ describe("createPgQueue (durable #977)", () => {
       expect.stringContaining("DELETE FROM _selfhost_jobs WHERE id=$1"),
       ["2"],
     );
+    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="global",kind="unknown"} 1');
   });
 
   it("defers matching GitHub-budget jobs and coalesces a keyed rate-limit retry into the pending duplicate", async () => {
@@ -1028,6 +1033,9 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
         expect.arrayContaining([expect.stringContaining('"deliveryId":"after-rate-limit"'), expect.any(Number)]),
       );
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+      expect(metrics).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_STARTUP_JITTER_MS;
       else process.env.QUEUE_STARTUP_JITTER_MS = oldJitter;

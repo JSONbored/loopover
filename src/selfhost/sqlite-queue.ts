@@ -14,6 +14,7 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionTargetForJob,
+  githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   jobCoalesceKey,
   jobPriority,
@@ -280,27 +281,40 @@ export function createSqliteQueue(
       const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
       const rateLimitAdmission = rateLimitAdmissionDelayMs(driver, message);
       if (rateLimitAdmission !== null) {
-        const now = Date.now();
-        const retryAfter = now + rateLimitRetryDelayWithJitter(
-          rateLimitAdmission.delayMs,
-          `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+        const rateLimitMetric = githubRateLimitMetricContext(message, rateLimitAdmission);
+        await withOtelSpan(
+          "selfhost.queue.admission_deferred",
+          {
+            "job.type": message.type,
+            "queue.backend": "sqlite",
+            ...rateLimitMetric.spanAttributes,
+          },
+          async () => {
+            const now = Date.now();
+            const retryAfter = now + rateLimitRetryDelayWithJitter(
+              rateLimitAdmission.delayMs,
+              `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+            );
+            const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
+            const { changes } = driver.query(
+              `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+              [retryAfter, lastError, job.id],
+            );
+            if (changes) {
+              recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total");
+              incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
+              console.warn(
+                JSON.stringify({
+                  level: "warn",
+                  event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
+                  ...rateLimitMetric.logFields,
+                  retry_after_ms: Math.max(0, retryAfter - now),
+                }),
+              );
+            }
+          },
+          { parentTraceParent: jobTraceParent },
         );
-        const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
-        const { changes } = driver.query(
-          `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
-          [retryAfter, lastError, job.id],
-        );
-        if (changes) {
-          recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total");
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
-              jobType: message.type,
-              retry_after_ms: Math.max(0, retryAfter - now),
-            }),
-          );
-        }
         return true;
       }
       try {
@@ -329,13 +343,15 @@ export function createSqliteQueue(
           const retryAfter = now + rateLimitRetryDelayWithJitter(rateLimitDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`);
           const target = githubRateLimitAdmissionTargetForJob(message);
           const deferred = target ? deferPendingJobsForRateLimit(driver, rateLimitDelayMs, now, target) : 0;
+          const rateLimitMetric = githubRateLimitMetricContext(message, target);
           if (target !== null && deferred > 0) {
             recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total", deferred);
+            incr("gittensory_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
                 event: "selfhost_queue_rate_limit_budget_deferred",
-                admission_key: target.admissionKey,
+                ...rateLimitMetric.logFields,
                 deferred,
               }),
             );
@@ -349,6 +365,7 @@ export function createSqliteQueue(
             );
           }
           recordQueueMetric(driver, "gittensory_jobs_rate_limited_total");
+          incr("gittensory_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
           logAudit({
             event: "job_rate_limited",
             ts: Date.now(),

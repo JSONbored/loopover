@@ -19,6 +19,8 @@ import type { RepositorySettings } from "../types";
 const GITHUB_FETCH_TIMEOUT_MS = 12_000;
 const GITHUB_API_PREFIX = "https://api.github.com";
 const GITHUB_RESPONSE_CACHE_METRIC = "gittensory_github_response_cache_total";
+const GITHUB_REST_RATE_LIMIT_OBSERVATION_METRIC = "gittensory_github_rest_rate_limit_observations_total";
+const GITHUB_REST_RATE_LIMIT_RESPONSE_METRIC = "gittensory_github_rest_rate_limit_responses_total";
 const DEFAULT_BRANCH_PROTECTION_TTL_SECONDS = 20 * 60;
 const DEFAULT_METADATA_TTL_SECONDS = 10 * 60;
 export const GITHUB_RESPONSE_CACHE_REPLAY_HEADER = "x-gittensory-cache";
@@ -126,6 +128,37 @@ function recordGitHubCacheMetric(result: "hit" | "miss" | "set" | "coalesced" | 
   incr(GITHUB_RESPONSE_CACHE_METRIC, { result, class: cls });
 }
 
+function githubAdmissionKeyScope(admissionKey: GitHubRateLimitAdmissionKey | null | undefined): "installation" | "global" | "other" {
+  if (!admissionKey) return "global";
+  return admissionKey.startsWith("installation:") ? "installation" : "other";
+}
+
+function restRemainingBucket(remaining: number): "0" | "1-75" | "76-150" | "151+" {
+  if (remaining <= 0) return "0";
+  if (remaining <= 75) return "1-75";
+  if (remaining <= 150) return "76-150";
+  return "151+";
+}
+
+function recordGitHubRestRateLimitObservationMetric(admissionKey: GitHubRateLimitAdmissionKey, remaining: number): void {
+  incr(GITHUB_REST_RATE_LIMIT_OBSERVATION_METRIC, {
+    key_scope: githubAdmissionKeyScope(admissionKey),
+    remaining_bucket: restRemainingBucket(remaining),
+  });
+}
+
+function recordGitHubRateLimitResponseMetric(
+  status: number,
+  admissionKey: GitHubRateLimitAdmissionKey | null,
+  retry: "scheduled" | "exhausted",
+): void {
+  incr(GITHUB_REST_RATE_LIMIT_RESPONSE_METRIC, {
+    key_scope: githubAdmissionKeyScope(admissionKey),
+    retry,
+    status: String(status),
+  });
+}
+
 function parseRateLimitInt(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
@@ -144,6 +177,7 @@ function observeGitHubRestRateLimit(url: string, response: Response, admissionKe
     resetAt: new Date(reset * 1000).toISOString(),
     observedAtMs: Date.now(),
   });
+  recordGitHubRestRateLimitObservationMetric(admissionKey, remaining);
 }
 
 export function latestGitHubRestRateLimitObservation(admissionKey: GitHubRateLimitAdmissionKey): LocalGitHubRestRateLimitObservation | null {
@@ -286,7 +320,14 @@ async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: GitHubTimeo
         });
     if (admissionKey) observeGitHubRestRateLimit(requestUrl(input), response, admissionKey);
     // Retry a transient rate-limit (with backoff) instead of surfacing it; stop once exhausted or it's not a limit.
-    if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES || !(await isRateLimitedResponse(response))) break;
+    const rateLimited = await isRateLimitedResponse(response);
+    if (!rateLimited) break;
+    recordGitHubRateLimitResponseMetric(
+      response.status,
+      admissionKey,
+      attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES ? "exhausted" : "scheduled",
+    );
+    if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES) break;
     await sleep(rateLimitRetryMs(response, attempt));
   }
   return response;

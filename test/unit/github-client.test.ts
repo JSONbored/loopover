@@ -194,6 +194,7 @@ describe("timeoutFetch", () => {
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: now,
     });
+    expect(await renderMetrics()).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
     expect(latestGitHubRestRateLimitObservation(otherKey)).toBeNull();
 
     headers = new Headers({
@@ -229,6 +230,44 @@ describe("timeoutFetch", () => {
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: now,
     });
+  });
+
+  it("buckets GitHub REST rate-limit observations by remaining budget and admission-key scope", async () => {
+    const reset = String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000));
+    const remainingByCall = ["0", "75", "150", "151"];
+    vi.stubGlobal("fetch", async () => {
+      const remaining = remainingByCall.shift() ?? "151";
+      return new Response("ok", {
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-remaining": remaining,
+          "x-ratelimit-reset": reset,
+        },
+      });
+    });
+
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=zero", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(1),
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=low", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(2),
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=reserved", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: "pat:shared",
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=healthy", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: "pat:shared",
+    });
+
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="0"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="76-150"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="151+"} 1');
   });
 
   it("records keyed REST admission telemetry from installation Octokit reads", async () => {
@@ -459,6 +498,9 @@ describe("timeoutFetch", () => {
     expect(await response.json()).toEqual({ message: "API rate limit exceeded" });
     expect(getFetches).toBe(4);
     expect(set).not.toHaveBeenCalled();
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="global",retry="scheduled",status="403"} 3');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="global",retry="exhausted",status="403"} 1');
   });
 
   it("does not negative-cache stable metadata denials outside branch protection", async () => {
@@ -939,15 +981,23 @@ describe("timeoutFetch", () => {
     });
 
     const url = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
-    const firstRequest = timeoutFetch(url);
-    void firstRequest.catch(() => undefined);
-    const first = firstRequest.catch((error: Error) => error.message);
-    const second = timeoutFetch(url);
+    const first = timeoutFetch(url).then(
+      (response) => ({ type: "response" as const, response }),
+      (error: Error) => ({ type: "error" as const, message: error.message }),
+    );
+    const second = timeoutFetch(url).then(
+      (response) => ({ type: "response" as const, response }),
+      (error: Error) => ({ type: "error" as const, message: error.message }),
+    );
     await bothCacheReads;
     releaseFetch();
 
-    await expect(first).resolves.toContain("network down");
-    await expect(second.then((response) => response.json())).resolves.toEqual({ contexts: ["after-throw"] });
+    const results = await Promise.all([first, second]);
+    const failed = results.find((result) => result.type === "error");
+    const succeeded = results.find((result) => result.type === "response");
+    expect(failed).toMatchObject({ type: "error", message: "network down" });
+    if (!succeeded || succeeded.type !== "response") throw new Error("missing successful fallback response");
+    await expect(succeeded.response.json()).resolves.toEqual({ contexts: ["after-throw"] });
     expect(getFetches).toBe(2);
   });
 

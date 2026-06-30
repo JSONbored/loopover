@@ -1,4 +1,5 @@
 import type { EnqueueWebhookResult } from "../github/webhook";
+import { incr } from "./metrics";
 import { withSentryMonitor } from "./sentry";
 
 export type OrbRelayEvent = {
@@ -15,6 +16,19 @@ type OrbRelayEnv = {
   ORB_ENROLLMENT_SECRET?: string | undefined;
   ORB_BROKER_URL?: string | undefined;
 };
+
+const ORB_RELAY_METRIC_EVENTS = new Set([
+  "check_suite",
+  "issue_comment",
+  "issues",
+  "pull_request",
+  "pull_request_review",
+  "pull_request_review_comment",
+]);
+
+function orbRelayMetricEvent(eventName: string): string {
+  return ORB_RELAY_METRIC_EVENTS.has(eventName) ? eventName : "other";
+}
 
 export async function runScheduledLoopWithMonitor<T>(
   cron: string,
@@ -57,6 +71,9 @@ export async function drainOrbRelayWithMonitor(args: {
     async () => {
       const events = await args.drain(args.relayEnv, args.state.pendingAck);
       args.state.pendingAck = [];
+      incr("gittensory_orb_relay_drains_total", {
+        result: events.length > 0 ? "events" : "empty",
+      });
       for (const ev of events) {
         const result = await args.enqueue(
           args.env,
@@ -64,6 +81,10 @@ export async function drainOrbRelayWithMonitor(args: {
           ev.eventName,
           ev.rawBody,
         );
+        incr("gittensory_orb_webhook_total", {
+          event: orbRelayMetricEvent(ev.eventName),
+          result,
+        });
         if (result !== "enqueue_failed") args.state.pendingAck.push(ev.deliveryId);
       }
       if (events.length > 0)

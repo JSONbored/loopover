@@ -5,10 +5,80 @@ import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
 import { parsePositiveInt } from "../utils/json";
 import { relayVerify } from "../orb/relay";
 import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
+import { incr } from "../selfhost/metrics";
 import { getSelfHostRequestTraceParent } from "../selfhost/trace-context";
 import { isNonActionableWebhookNoise } from "./self-authored";
 
 const DEFAULT_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+const WEBHOOK_METRIC_EVENTS = new Set([
+  "check_run",
+  "check_suite",
+  "installation",
+  "issue_comment",
+  "issues",
+  "pull_request",
+  "pull_request_review",
+  "pull_request_review_comment",
+  "push",
+]);
+const WEBHOOK_METRIC_ACTIONS = new Set([
+  "assigned",
+  "auto_merge_disabled",
+  "auto_merge_enabled",
+  "closed",
+  "completed",
+  "converted_to_draft",
+  "created",
+  "deleted",
+  "demilestoned",
+  "dequeued",
+  "dismissed",
+  "edited",
+  "enqueued",
+  "labeled",
+  "locked",
+  "milestoned",
+  "new_permissions_accepted",
+  "opened",
+  "pinned",
+  "ready_for_review",
+  "reopened",
+  "requested",
+  "requested_action",
+  "rerequested",
+  "review_request_removed",
+  "review_requested",
+  "submitted",
+  "suspend",
+  "synchronize",
+  "transferred",
+  "unassigned",
+  "unlabeled",
+  "unlocked",
+  "unpinned",
+  "unsuspend",
+]);
+
+function webhookMetricEvent(eventName: string): string {
+  return WEBHOOK_METRIC_EVENTS.has(eventName) ? eventName : "other";
+}
+
+function webhookMetricAction(action: unknown): string {
+  if (typeof action !== "string") return "none";
+  return WEBHOOK_METRIC_ACTIONS.has(action) ? action : "other";
+}
+
+function recordWebhookEnqueueMetric(
+  eventName: string,
+  action: unknown,
+  result: EnqueueWebhookResult,
+): void {
+  incr("gittensory_webhook_enqueue_total", {
+    action: webhookMetricAction(action),
+    event: webhookMetricEvent(eventName),
+    result,
+  });
+}
 
 export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promise<Response> {
   const deliveryId = c.req.header("x-github-delivery") ?? null;
@@ -67,12 +137,16 @@ export type EnqueueWebhookResult = "queued" | "duplicate" | "ignored" | "invalid
  *  now requires the self-host runtime cache so stale Cloudflare review-webhook traffic fails loudly instead of being
  *  accepted into a Worker path that no longer performs reviews. */
 export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventName: string, rawBody: string, traceParent?: string): Promise<EnqueueWebhookResult> {
-  if (!isSelfHostedReviewRuntime(env)) return "review_unavailable";
+  if (!isSelfHostedReviewRuntime(env)) {
+    recordWebhookEnqueueMetric(eventName, undefined, "review_unavailable");
+    return "review_unavailable";
+  }
 
   let payload: GitHubWebhookPayload;
   try {
     payload = JSON.parse(rawBody) as GitHubWebhookPayload;
   } catch {
+    recordWebhookEnqueueMetric(eventName, undefined, "invalid_json");
     return "invalid_json";
   }
 
@@ -83,6 +157,7 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
   // still in flight with the same payload. "error" rows are never suppressed so a failed enqueue/processing
   // can still be retried (#789).
   if (existingEvent && existingEvent.status !== "error" && (existingEvent.status === "processed" || existingEvent.payloadHash === payloadHash)) {
+    recordWebhookEnqueueMetric(eventName, payload.action, "duplicate");
     return "duplicate";
   }
 
@@ -96,10 +171,12 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
   };
   if (isNonActionableWebhookNoise(env, eventName, payload)) {
     await recordWebhookEvent(env, { ...eventRow, status: "processed" });
+    recordWebhookEnqueueMetric(eventName, payload.action, "ignored");
     return "ignored";
   }
   if (!env.WEBHOOKS) {
     await recordWebhookEvent(env, { ...eventRow, status: "error" });
+    recordWebhookEnqueueMetric(eventName, payload.action, "enqueue_failed");
     return "enqueue_failed";
   }
 
@@ -115,9 +192,11 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
     // re-deliver, instead of treating the webhook as handled (#786). Also covers the deploy-ordering case where
     // the WEBHOOKS queue is not yet provisioned — no event is lost.
     await recordWebhookEvent(env, { ...eventRow, status: "error" });
+    recordWebhookEnqueueMetric(eventName, payload.action, "enqueue_failed");
     return "enqueue_failed";
   }
 
+  recordWebhookEnqueueMetric(eventName, payload.action, "queued");
   return "queued";
 }
 

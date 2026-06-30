@@ -99,6 +99,37 @@ groups:
           description: "{{ $value | printf \"%.0f\" }} jobs pending for over 10m — the worker is falling behind the enqueue rate."
           runbook: "Compare rate(gittensory_jobs_enqueued_total) vs rate(gittensory_jobs_processed_total). If enqueue > processed persistently, the worker is the bottleneck (slow AI/DB, or it's stuck). Check worker logs."
 
+  # ── GitHub API budget / queue admission pressure ──────────────────────────
+  - name: gittensory-github-rate-limits
+    rules:
+      - alert: GittensoryGitHubRateLimitResponses
+        # Live 403/429 GitHub rate-limit responses mean admission/caching did not avoid
+        # a depleted bucket. This should be rare; sustained values explain hard queue stalls.
+        expr: sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory is receiving GitHub REST rate-limit responses"
+          description: "GitHub REST rate-limit responses are occurring for over 2m. Check labels status/retry/key_scope on gittensory_github_rest_rate_limit_responses_total."
+          runbook: "Open the GitHub REST Rate Limits panel and compare with Queue Rate-Limit Deferrals. If responses are installation-scoped, lower concurrent GitHub work for that installation; if key_scope=none/other, identify the unaffiliated caller and route it through an admission key."
+
+      - alert: GittensoryQueueRateLimitDeferralsHigh
+        # Jobs are being intentionally parked to preserve GitHub budget. That is better
+        # than burning through the bucket, but a sustained storm means throughput is bound
+        # by GitHub admission rather than worker capacity.
+        expr: |
+          sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) > 0.05
+          or
+          sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory queue is rate-limit deferring jobs"
+          description: "GitHub rate-limit deferrals exceeded 0.05/s for 10m. The queue is protecting the bucket but throughput is GitHub-budget bound."
+          runbook: "Use gittensory_jobs_rate_limit_* labels (kind/key_scope/job_type) to identify the stuck class. Prefer reducing duplicate webhook/regate work or adding cache coverage before raising worker concurrency."
+
   # ── Qdrant vector backend ──────────────────────────────────────────────────
   - name: gittensory-qdrant
     rules:
@@ -150,6 +181,19 @@ groups:
           summary: "gittensory Orb export error rate above 5%"
           description: "{{ $value | humanizePercentage }} of Orb usage-event exports failed over the last 15m (sustained 15m). Billable events may not be reaching Orb."
           runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. Recorded-but-unexported events (gittensory_orb_events_recorded_total vs _exported_total diverging) confirm a stuck exporter."
+
+      - alert: GittensoryWebhookEnqueueFailures
+        # A webhook accepted by the receiver but not durably queued becomes GitHub
+        # redelivery pressure and can look like queue jitter. Any sustained enqueue
+        # failures deserve attention.
+        expr: sum(rate(gittensory_webhook_enqueue_total{result="enqueue_failed"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory webhook enqueue failures detected"
+          description: "Webhook enqueue failures are occurring for over 2m. Labels event/action show which GitHub event class is failing."
+          runbook: "Check WEBHOOKS queue availability and the durable queue backend. If this coincides with Orb relay drains, inspect gittensory_orb_webhook_total{result=\"enqueue_failed\"}."
 
   # ── HTTP serving health (uses the PLANNED status label + duration histogram) ─
   # NOTE: gittensory_http_requests_total is gaining a status="2xx|3xx|4xx|5xx" label,

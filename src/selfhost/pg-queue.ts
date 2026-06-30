@@ -13,6 +13,7 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionTargetForJob,
+  githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   jobCoalesceKey,
   jobPriority,
@@ -337,27 +338,40 @@ export function createPgQueue(
       const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
       const rateLimitAdmission = await rateLimitAdmissionDelayMs(message);
       if (rateLimitAdmission !== null) {
-        const now = Date.now();
-        const retryAfter = now + rateLimitRetryDelayWithJitter(
-          rateLimitAdmission.delayMs,
-          `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+        const rateLimitMetric = githubRateLimitMetricContext(message, rateLimitAdmission);
+        await withOtelSpan(
+          "selfhost.queue.admission_deferred",
+          {
+            "job.type": message.type,
+            "queue.backend": "postgres",
+            ...rateLimitMetric.spanAttributes,
+          },
+          async () => {
+            const now = Date.now();
+            const retryAfter = now + rateLimitRetryDelayWithJitter(
+              rateLimitAdmission.delayMs,
+              `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+            );
+            const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
+            const update = await pool.query(
+              `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+              [retryAfter, lastError, job.id],
+            );
+            if (update.rowCount) {
+              await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total");
+              incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
+              console.warn(
+                JSON.stringify({
+                  level: "warn",
+                  event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
+                  ...rateLimitMetric.logFields,
+                  retry_after_ms: Math.max(0, retryAfter - now),
+                }),
+              );
+            }
+          },
+          { parentTraceParent: jobTraceParent },
         );
-        const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
-        const update = await pool.query(
-          `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
-          [retryAfter, lastError, job.id],
-        );
-        if (update.rowCount) {
-          await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total");
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
-              jobType: message.type,
-              retry_after_ms: Math.max(0, retryAfter - now),
-            }),
-          );
-        }
         return true;
       }
       try {
@@ -386,13 +400,15 @@ export function createPgQueue(
           const retryAfter = now + rateLimitRetryDelayWithJitter(rateLimitDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`);
           const target = githubRateLimitAdmissionTargetForJob(message);
           const deferred = target ? await deferPendingJobsForRateLimit(rateLimitDelayMs, now, target) : 0;
+          const rateLimitMetric = githubRateLimitMetricContext(message, target);
           if (target !== null && deferred > 0) {
             await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total", deferred);
+            incr("gittensory_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
                 event: "selfhost_queue_rate_limit_budget_deferred",
-                admission_key: target.admissionKey,
+                ...rateLimitMetric.logFields,
                 deferred,
               }),
             );
@@ -406,6 +422,7 @@ export function createPgQueue(
             );
           }
           await recordQueueMetric("gittensory_jobs_rate_limited_total");
+          incr("gittensory_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
           logAudit({
             event: "job_rate_limited",
             ts: Date.now(),

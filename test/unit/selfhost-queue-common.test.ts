@@ -3,7 +3,10 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   consumingRetryDelayMs,
   githubRateLimitAdmissionDelayMs,
+  githubRateLimitAdmissionKeyScope,
   githubRateLimitAdmissionKeyForJob,
+  githubRateLimitMetricContext,
+  githubRateLimitMetricLabels,
   githubBackgroundRateLimitDelayMs,
   githubRateLimitRetryDelayMs,
   githubWebhookRateLimitDelayMs,
@@ -68,6 +71,51 @@ describe("self-host queue common helpers", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "backfill-repo-segment", requestedBy: "schedule", repoFullName: "owner/repo", segment: "open_pull_requests" })).toBe(true);
     expect(isGitHubBudgetBackgroundJob({ type: "rag-index-repo", requestedBy: "schedule" })).toBe(true);
     expect(isGitHubBudgetBackgroundJob({ type: "refresh-installation-health", requestedBy: "schedule" })).toBe(false);
+  });
+
+  it("normalizes GitHub rate-limit metric labels without leaking raw admission keys", () => {
+    const webhookJob = {
+      type: "github-webhook",
+      deliveryId: "d1",
+      eventName: "pull_request",
+      payload: {},
+    } as JobMessage;
+
+    expect(githubRateLimitAdmissionKeyScope("installation:123")).toBe("installation");
+    expect(githubRateLimitAdmissionKeyScope(null)).toBe("global");
+    expect(githubRateLimitAdmissionKeyScope("pat:shared")).toBe("other");
+    expect(githubRateLimitMetricLabels(webhookJob, {
+      kind: "webhook",
+      admissionKey: "installation:123",
+    })).toEqual({
+      job_type: "github-webhook",
+      key_scope: "installation",
+      kind: "webhook",
+    });
+    expect(githubRateLimitMetricLabels({ type: "rag-index-repo", requestedBy: "schedule" } as JobMessage, null)).toEqual({
+      job_type: "rag-index-repo",
+      key_scope: "global",
+      kind: "unknown",
+    });
+    expect(githubRateLimitMetricContext(webhookJob, {
+      kind: "webhook",
+      admissionKey: "installation:456",
+    })).toEqual({
+      labels: {
+        job_type: "github-webhook",
+        key_scope: "installation",
+        kind: "webhook",
+      },
+      spanAttributes: {
+        "github.rate_limit.kind": "webhook",
+        "github.rate_limit.key_scope": "installation",
+      },
+      logFields: {
+        jobType: "github-webhook",
+        key_scope: "installation",
+        kind: "webhook",
+      },
+    });
   });
 
   it("derives admission keys from both installation-backed jobs and webhook payloads", () => {

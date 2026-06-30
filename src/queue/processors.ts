@@ -134,7 +134,7 @@ import {
   ensurePullRequestLabel,
   removePullRequestLabel,
 } from "../github/labels";
-import { resolveRepoActionMode } from "../github/client";
+import { githubRateLimitAdmissionKeyForInstallation, resolveRepoActionMode } from "../github/client";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
@@ -5341,6 +5341,7 @@ async function maybePublishPrPublicSurface(
               previewFromChecks: true,
             },
             visualFiles,
+            githubRateLimitAdmissionKeyForInstallation(installationId),
           );
           beforeAfter = capture.routes;
           // Visual self-poll: the FIRST capture returns a "loading" placeholder for the AFTER shot when the

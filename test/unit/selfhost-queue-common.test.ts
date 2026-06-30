@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   consumingRetryDelayMs,
+  githubRateLimitAdmissionDelayMs,
+  githubRateLimitAdmissionKeyForJob,
   githubBackgroundRateLimitDelayMs,
   githubRateLimitRetryDelayMs,
+  githubWebhookRateLimitDelayMs,
   isGitHubBudgetBackgroundJob,
   isForegroundJobPriority,
   jobCoalesceKey,
@@ -15,10 +18,17 @@ import {
   queueStartupJitterMinJobs,
   queueStartupJitterMs,
 } from "../../src/selfhost/queue-common";
+import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, timeoutFetch } from "../../src/github/client";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
 
 const payload = (value: unknown): string => JSON.stringify(value);
+
+afterEach(() => {
+  clearGitHubResponseCacheForTest();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("self-host queue common helpers", () => {
   it("classifies job priority by job type and webhook sender", () => {
@@ -60,6 +70,12 @@ describe("self-host queue common helpers", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "refresh-installation-health", requestedBy: "schedule" })).toBe(false);
   });
 
+  it("derives admission keys from both installation-backed jobs and webhook payloads", () => {
+    expect(githubRateLimitAdmissionKeyForJob({ type: "agent-regate-pr", deliveryId: "sweep:owner/repo#1", repoFullName: "owner/repo", prNumber: 1, installationId: 123 })).toBe("installation:123");
+    expect(githubRateLimitAdmissionKeyForJob({ type: "github-webhook", deliveryId: "d1", eventName: "pull_request", payload: { installation: { id: 456 } } })).toBe("installation:456");
+    expect(githubRateLimitAdmissionKeyForJob({ type: "github-webhook", deliveryId: "d2", eventName: "pull_request", payload: {} })).toBeNull();
+  });
+
   it("computes background admission delays from persisted GitHub REST observations", () => {
     const now = Date.parse("2026-06-24T12:00:00.000Z");
     expect(githubBackgroundRateLimitDelayMs(null, now)).toBeNull();
@@ -70,6 +86,90 @@ describe("self-host queue common helpers", () => {
     expect(githubBackgroundRateLimitDelayMs({ remaining: "120", reset_at: "2026-06-24T12:10:00.000Z" }, now)).toBe(615_000);
     expect(githubBackgroundRateLimitDelayMs({ remaining: 120, resetAt: "2026-06-24T12:00:05.000Z" }, now)).toBe(30_000);
     expect(githubBackgroundRateLimitDelayMs({ remaining: 120, reset_at: "2026-06-24T14:00:00.000Z" }, now)).toBe(900_000);
+  });
+
+  it("computes webhook admission delays only when the shared REST bucket is exhausted", () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    expect(githubWebhookRateLimitDelayMs(null, now)).toBeNull();
+    expect(githubWebhookRateLimitDelayMs({ remaining: 76, reset_at: "2026-06-24T12:10:00.000Z" }, now)).toBeNull();
+    expect(githubWebhookRateLimitDelayMs({ remaining: 75, reset_at: "2026-06-24T12:10:00.000Z" }, now)).toBe(615_000);
+    expect(githubWebhookRateLimitDelayMs({ remaining: "50", reset_at: "2026-06-24T12:10:00.000Z" }, now)).toBe(615_000);
+    expect(githubWebhookRateLimitDelayMs({ remaining: 50, resetAt: "2026-06-24T12:00:05.000Z" }, now)).toBe(30_000);
+    expect(githubWebhookRateLimitDelayMs({ remaining: 50, reset_at: "2026-06-24T11:59:00.000Z" }, now)).toBeNull();
+  });
+
+  it("uses the newest local REST rate-limit observation for admission control", async () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    const key = githubRateLimitAdmissionKeyForInstallation(123);
+    const unrelatedKey = githubRateLimitAdmissionKeyForInstallation(456);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response("{}", {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-ratelimit-resource": "core",
+            "x-ratelimit-remaining": "50",
+            "x-ratelimit-reset": String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000)),
+          },
+        }),
+    );
+
+    await timeoutFetch("https://api.github.com/repos/owner/repo/issues", { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: key });
+
+    expect(githubRateLimitAdmissionDelayMs("webhook", key, null, now)).toBe(615_000);
+    expect(githubRateLimitAdmissionDelayMs("webhook", unrelatedKey, null, now)).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+        now,
+      ),
+    ).toBe(615_000);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:01:00.000Z" },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observedAtMs: now + 60_000 } as unknown as { remaining: number; reset_at: string },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observedAt: "2026-06-24T12:01:00.000Z" },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "not-a-date" },
+        now,
+      ),
+    ).toBe(615_000);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z" },
+        now,
+      ),
+    ).toBe(615_000);
   });
 
   it("demotes bot-authored issue-comment edit webhooks without demoting human reruns", () => {

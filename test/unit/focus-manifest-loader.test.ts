@@ -10,6 +10,7 @@ import {
   upsertRepoFocusManifest,
   REPO_FOCUS_MANIFEST_MAX_AGE_MS,
   REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS,
+  REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL,
 } from "../../src/signals/focus-manifest-loader";
 import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../src/signals/focus-manifest";
 
@@ -152,6 +153,110 @@ describe("focus-manifest loader", () => {
     expect(privateManifest.source).toBe("api_record");
     expect(privateManifest.wantedPaths).toEqual(["private/"]);
     expect(privateManifest.gate.linkedIssue).toBe("block");
+  });
+
+  it("caches public-only repo-file manifests without touching private/API-backed records", async () => {
+    const env = createTestEnv();
+    let fetches = 0;
+    const first = await loadPublicRepoFocusManifest(env, "owner/public-cache", {
+      fetcher: async () => {
+        fetches += 1;
+        return JSON.stringify({ wantedPaths: ["public/"] });
+      },
+    });
+    const second = await loadPublicRepoFocusManifest(env, "owner/public-cache", {
+      fetcher: async () => {
+        throw new Error("should use the public-only cache");
+      },
+    });
+
+    expect(fetches).toBe(1);
+    expect(first.source).toBe("repo_file");
+    expect(second.wantedPaths).toEqual(["public/"]);
+  });
+
+  it("negative-caches absent public-only manifests in the public cache stream", async () => {
+    const env = createTestEnv();
+    await loadPublicRepoFocusManifest(env, "owner/no-public-cache", { fetcher: async () => null });
+    const { listSignalSnapshots } = await import("../../src/db/repositories");
+    const snapshots = await listSignalSnapshots(env, REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL, "owner/no-public-cache");
+    expect(snapshots).toHaveLength(1);
+
+    let fetches = 0;
+    const cached = await loadPublicRepoFocusManifest(env, "owner/no-public-cache", {
+      fetcher: async () => {
+        fetches += 1;
+        return JSON.stringify({ wantedPaths: ["unexpected/"] });
+      },
+    });
+    expect(fetches).toBe(0);
+    expect(cached.present).toBe(false);
+    expect(cached.source).toBe("none");
+  });
+
+  it("ignores unknown-source legacy snapshots on public-only manifest loads", async () => {
+    const env = createTestEnv();
+    const { persistSignalSnapshot } = await import("../../src/db/repositories");
+    const { REPO_FOCUS_MANIFEST_SIGNAL } = await import("../../src/signals/focus-manifest-loader");
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_FOCUS_MANIFEST_SIGNAL,
+      targetKey: "owner/legacy-unknown",
+      repoFullName: "owner/legacy-unknown",
+      payload: { wantedPaths: ["unknown-source/"] },
+      generatedAt: new Date().toISOString(),
+    });
+
+    const manifest = await loadPublicRepoFocusManifest(env, "owner/legacy-unknown", {
+      fetcher: async () => JSON.stringify({ wantedPaths: ["repo-file/"] }),
+    });
+
+    expect(manifest.source).toBe("repo_file");
+    expect(manifest.wantedPaths).toEqual(["repo-file/"]);
+  });
+
+  it("ignores API-backed snapshots in the public cache stream", async () => {
+    const env = createTestEnv();
+    const { persistSignalSnapshot } = await import("../../src/db/repositories");
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL,
+      targetKey: "owner/public-api-cache",
+      repoFullName: "owner/public-api-cache",
+      payload: { source: "api_record", wantedPaths: ["private/"], gate: { linkedIssue: "block", readinessMinScore: 99 } },
+      generatedAt: new Date().toISOString(),
+    });
+
+    const manifest = await loadPublicRepoFocusManifest(env, "owner/public-api-cache", {
+      fetcher: async () => JSON.stringify({ wantedPaths: ["repo-file/"], gate: { linkedIssue: "advisory" } }),
+    });
+
+    expect(manifest.source).toBe("repo_file");
+    expect(manifest.wantedPaths).toEqual(["repo-file/"]);
+    expect(manifest.gate.linkedIssue).toBe("advisory");
+  });
+
+  it("accepts explicit repo-file legacy snapshots on public-only manifest loads", async () => {
+    const env = createTestEnv();
+    const { persistSignalSnapshot } = await import("../../src/db/repositories");
+    const { REPO_FOCUS_MANIFEST_SIGNAL } = await import("../../src/signals/focus-manifest-loader");
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_FOCUS_MANIFEST_SIGNAL,
+      targetKey: "owner/legacy-repo-file",
+      repoFullName: "owner/legacy-repo-file",
+      payload: { source: "repo_file", wantedPaths: ["legacy-repo-file/"] },
+      generatedAt: new Date().toISOString(),
+    });
+
+    const manifest = await loadPublicRepoFocusManifest(env, "owner/legacy-repo-file", {
+      fetcher: async () => {
+        throw new Error("explicit repo-file legacy snapshot should be reused");
+      },
+    });
+
+    expect(manifest.source).toBe("repo_file");
+    expect(manifest.wantedPaths).toEqual(["legacy-repo-file/"]);
   });
 
   it("bulk-loads manifests for many repos with a concurrency cap", async () => {

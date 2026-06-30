@@ -17,6 +17,7 @@ import {
 import type { IssueRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { isMaintainerAssociation } from "../github/commands";
+import { timeoutFetch } from "../github/client";
 import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, repoParts } from "../utils/json";
 import {
@@ -550,7 +551,7 @@ async function createGitHubContributorIssue(env: Env, repoFullName: string, draf
   if (!token) return null;
   const { owner, name } = repoParts(repoFullName);
   if (!owner || !name) return null;
-  const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
+  const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
     method: "POST",
     headers: githubHeaders(token),
     body: jsonString({

@@ -4,6 +4,8 @@ import { MAX_CHUNKS_PER_REPO, MAX_FILE_BYTES, RAG_DIMENSIONS, ragNamespace } fro
 import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
+import * as githubApp from "../../src/github/app";
+import { githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 // A valid bge-m3-width (1024-d) embedding vector — embedTexts rejects any other width.
@@ -202,6 +204,43 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     // aborts (→ the existing fail-safe catches) instead of pinning the index job + its queue consumer indefinitely.
     expect(inits.length).toBeGreaterThan(1);
     expect(inits.every((i) => i?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("uses installation-token reads for private RAG indexing and records admission telemetry", async () => {
+    const { env } = indexEnv();
+    const key = githubRateLimitAdmissionKeyForInstallation(123);
+    const tokenSpy = vi.spyOn(githubApp, "createInstallationToken").mockResolvedValue("install-token");
+    const authHeaders: Array<string | null> = [];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      authHeaders.push(new Headers(init?.headers).get("authorization"));
+      const headers = {
+        "x-ratelimit-resource": "core",
+        "x-ratelimit-remaining": "44",
+        "x-ratelimit-reset": String(Date.parse("2026-06-24T12:10:00.000Z") / 1000),
+      };
+      const url = String(input);
+      if (url.includes("/git/trees/")) return Response.json({ tree: [{ type: "blob", path: "src/private.ts", size: 20 }] }, { headers });
+      if (url.includes("/contents/src/private.ts")) return new Response("export const privateFile = true;\n", { status: 200, headers });
+      return new Response("missing", { status: 404, headers });
+    });
+
+    try {
+      const result = await indexRepo(env, PROJECT, { ...REPO, installationId: 123 });
+
+      expect(result).toMatchObject({ files: 1, indexed: 1, capped: false });
+      expect(tokenSpy).toHaveBeenCalledWith(env, 123);
+      expect(authHeaders).toEqual(["Bearer install-token", "Bearer install-token"]);
+      expect(latestGitHubRestRateLimitObservation(key)).toEqual({
+        remaining: 44,
+        resetAt: "2026-06-24T12:10:00.000Z",
+        observedAtMs: Date.parse("2026-06-24T12:00:00.000Z"),
+      });
+    } finally {
+      tokenSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes) + surfaces it at ERROR for Sentry (#5)", async () => {

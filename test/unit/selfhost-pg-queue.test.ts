@@ -36,17 +36,23 @@ interface MockPool {
   /** Pre-load a job to be returned by the next RETURNING claim query. */
   enqueueJob(id: string, payload: object, attempts?: number, jobKey?: string | null): void;
   setDeferUpdateRowCount(rowCount: number): void;
-  setRateLimitRows(rows: Array<{ remaining: number | string | null; reset_at: string | null }>): void;
+  setRateLimitRows(rows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }>): void;
 }
 
 function makePool(): MockPool {
   const results: Partial<QueryResult>[] = [];
   let deferUpdateRowCount = 1;
-  let rateLimitRows: Array<{ remaining: number | string | null; reset_at: string | null }> = [];
-  const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+  let rateLimitRows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }> = [];
+  const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
     const q = String(sql);
     if (q.includes("FROM github_rate_limit_observations")) {
-      return { rows: rateLimitRows, rowCount: rateLimitRows.length };
+      const value = params?.[0];
+      const rows = typeof value === "string" && q.includes("admission_key=$1")
+        ? rateLimitRows.filter((row) => row.admission_key === value)
+        : typeof value === "string"
+          ? rateLimitRows.filter((row) => row.repo_full_name === value && (row.admission_key === undefined || row.admission_key === null))
+        : rateLimitRows;
+      return { rows, rowCount: rows.length };
     }
     if (q.includes("SET status='pending', run_after=GREATEST")) {
       return { rows: [], rowCount: deferUpdateRowCount };
@@ -399,7 +405,7 @@ describe("createPgQueue (durable #977)", () => {
     process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
     try {
       const m = makePool();
-      m.setRateLimitRows([{ remaining: "120", reset_at: "2026-06-24T12:10:00.000Z" }]);
+      m.setRateLimitRows([{ admission_key: "installation:123", repo_full_name: "owner/other-repo", remaining: "120", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:30.000Z" }]);
       m.enqueueJob("background", {
         type: "agent-regate-pr",
         deliveryId: "sweep:owner/repo#7",
@@ -427,6 +433,53 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
+  it("pre-yields webhook jobs when the persisted REST bucket is exhausted", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const m = makePool();
+      m.setRateLimitRows([{ admission_key: "installation:123", repo_full_name: "owner/other-repo", remaining: "50", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:30.000Z" }]);
+      m.enqueueJob("webhook", { type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+      const seen: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void seen.push(typeOf(j)));
+
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      expect(m.pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("SET status='pending', run_after=GREATEST"),
+        [Date.parse("2026-06-24T12:10:15.000Z"), "github rate-limit webhook admission", "webhook"],
+      );
+      expect(m.pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO _selfhost_job_stats"),
+        ["gittensory_jobs_rate_limit_deferred_total", 1],
+      );
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+    }
+  });
+
+  it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const m = makePool();
+    m.setRateLimitRows([{ admission_key: "installation:456", repo_full_name: "owner/repo-a", remaining: "0", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:30.000Z" }]);
+    m.enqueueJob("webhook", { type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo-b" } } });
+    const seen: string[] = [];
+    const q = createPgQueue(m.pool, async (j) => void seen.push(typeOf(j)));
+
+    await q.drain();
+
+    expect(seen).toEqual(["github-webhook"]);
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status='pending', run_after=GREATEST"),
+      expect.anything(),
+    );
+  });
+
   it("skips the background-admission metric when the defer update changes no rows", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
@@ -435,10 +488,11 @@ describe("createPgQueue (durable #977)", () => {
     try {
       const m = makePool();
       m.setDeferUpdateRowCount(0);
-      m.setRateLimitRows([{ remaining: 120, reset_at: "2026-06-24T12:10:00.000Z" }]);
+      m.setRateLimitRows([{ repo_full_name: "owner/repo", remaining: 120, reset_at: "2026-06-24T12:10:00.000Z" }]);
       m.enqueueJob("background", {
         type: "rag-index-repo",
         requestedBy: "schedule",
+        repoFullName: "owner/repo",
       });
       const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const seen: string[] = [];

@@ -5,6 +5,7 @@ import { featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parse
 import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
+export const REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL = "repo-public-focus-manifest";
 export const REPO_FOCUS_MANIFEST_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 export const REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS = 4;
 
@@ -142,7 +143,9 @@ async function loadRepoFocusManifestWithCachePolicy(
   } catch {
     manifest = parseFocusManifest(null);
   }
-  if (!cachePolicy.publicOnly) {
+  if (cachePolicy.publicOnly) {
+    await persistRepoFocusManifest(env, repoFullName, manifest, REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL);
+  } else {
     // Persist even an ABSENT manifest (negative cache): effective settings are resolved from
     // `.gittensory.yml` on every webhook, so a repo without one must not re-fetch the raw file each time.
     // The TTL still refreshes it, so a newly-added manifest is picked up on the next window.
@@ -218,23 +221,46 @@ export async function upsertRepoFocusManifest(env: Env, repoFullName: string, ra
 }
 
 async function readCachedManifest(env: Env, repoFullName: string, maxAgeMs: number, options: { publicOnly?: boolean } = {}): Promise<FocusManifest | null> {
-  const [latest] = await listSignalSnapshots(env, REPO_FOCUS_MANIFEST_SIGNAL, repoFullName);
+  if (options.publicOnly) {
+    return (
+      (await readCachedManifestSnapshot(env, REPO_PUBLIC_FOCUS_MANIFEST_SIGNAL, repoFullName, maxAgeMs, options)) ??
+      // Back-compat: public previews may reuse old repo-file snapshots written before the dedicated public cache
+      // existed, but must still ignore maintainer/API-backed records.
+      (await readCachedManifestSnapshot(env, REPO_FOCUS_MANIFEST_SIGNAL, repoFullName, maxAgeMs, { ...options, requireRepoFileSource: true }))
+    );
+  }
+  return readCachedManifestSnapshot(env, REPO_FOCUS_MANIFEST_SIGNAL, repoFullName, maxAgeMs, options);
+}
+
+async function readCachedManifestSnapshot(
+  env: Env,
+  signalType: string,
+  repoFullName: string,
+  maxAgeMs: number,
+  options: { publicOnly?: boolean; requireRepoFileSource?: boolean } = {},
+): Promise<FocusManifest | null> {
+  const [latest] = await listSignalSnapshots(env, signalType, repoFullName);
   if (!latest) return null;
   const manifest = parseFocusManifest(latest.payload);
   const explicitSource =
     latest.payload !== null && typeof latest.payload === "object" && !Array.isArray(latest.payload)
       ? (latest.payload as Record<string, JsonValue>).source
       : undefined;
-  if (options.publicOnly && explicitSource !== "repo_file") return null;
+  if (options.requireRepoFileSource) {
+    if (explicitSource !== "repo_file") return null;
+  }
+  if (options.publicOnly) {
+    if (explicitSource === "api_record") return null;
+  }
   if (explicitSource === "api_record") return manifest;
   if (snapshotAgeMs(latest.generatedAt) > maxAgeMs) return null;
   return manifest;
 }
 
-async function persistRepoFocusManifest(env: Env, repoFullName: string, manifest: FocusManifest): Promise<void> {
+async function persistRepoFocusManifest(env: Env, repoFullName: string, manifest: FocusManifest, signalType = REPO_FOCUS_MANIFEST_SIGNAL): Promise<void> {
   await persistSignalSnapshot(env, {
     id: crypto.randomUUID(),
-    signalType: REPO_FOCUS_MANIFEST_SIGNAL,
+    signalType,
     targetKey: repoFullName,
     repoFullName,
     payload: manifestToJson(manifest),

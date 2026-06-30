@@ -1,5 +1,13 @@
 import { retryableJobDelayMs } from "../queue/retryable";
-import { MAINTENANCE_RESERVED_HEADROOM } from "../github/rate-limit";
+import {
+  LOW_REST_RATE_LIMIT_REMAINING,
+  MAINTENANCE_RESERVED_HEADROOM,
+} from "../github/rate-limit";
+import {
+  githubRateLimitAdmissionKeyForInstallation,
+  latestGitHubRestRateLimitObservation,
+  type GitHubRateLimitAdmissionKey,
+} from "../github/client";
 import { githubWebhookCoalesceKey } from "../github/webhook-coalesce";
 import type { GitHubWebhookPayload, JobMessage } from "../types";
 import { extractPayloadType } from "./audit";
@@ -87,11 +95,12 @@ export function isGitHubBudgetBackgroundJob(message: JobMessage): boolean {
   return GITHUB_BUDGET_BACKGROUND_TYPES.has(message.type);
 }
 
-export function githubBackgroundRateLimitDelayMs(
+function githubObservedRateLimitDelayMs(
   observation:
     | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown }
     | null
     | undefined,
+  floor: number,
   nowMs = Date.now(),
 ): number | null {
   const rawRemaining = observation?.remaining;
@@ -108,10 +117,105 @@ export function githubBackgroundRateLimitDelayMs(
         ? observation.resetAt
         : null;
   if (remaining === null || !resetAt) return null;
-  if (remaining > MAINTENANCE_RESERVED_HEADROOM) return null;
+  if (remaining > floor) return null;
   const ms = Date.parse(resetAt) - nowMs;
   if (!Number.isFinite(ms) || ms <= 0) return null;
   return Math.max(30_000, Math.min(900_000, (Math.ceil(ms / 1000) + 15) * 1000));
+}
+
+function observationMs(
+  observation:
+    | { observed_at?: unknown; observedAt?: unknown; observedAtMs?: unknown }
+    | null
+    | undefined,
+): number | null {
+  if (typeof observation?.observedAtMs === "number" && Number.isFinite(observation.observedAtMs)) {
+    return observation.observedAtMs;
+  }
+  const raw =
+    typeof observation?.observed_at === "string"
+      ? observation.observed_at
+      : typeof observation?.observedAt === "string"
+        ? observation.observedAt
+        : null;
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function newestRateLimitObservation(
+  admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
+  persisted:
+    | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown; observed_at?: unknown; observedAt?: unknown }
+    | null
+    | undefined,
+):
+  | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown; observed_at?: unknown; observedAt?: unknown; observedAtMs?: unknown }
+  | null
+  | undefined {
+  const local = admissionKey ? latestGitHubRestRateLimitObservation(admissionKey) : null;
+  if (!local) return persisted;
+  if (!persisted) return local;
+  const persistedMs = observationMs(persisted);
+  return persistedMs !== null && persistedMs > local.observedAtMs ? persisted : local;
+}
+
+export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
+  const installationId =
+    message.type === "github-webhook"
+      ? message.payload?.installation?.id
+      : "installationId" in message
+        ? message.installationId
+        : null;
+  return typeof installationId === "number" && Number.isFinite(installationId)
+    ? githubRateLimitAdmissionKeyForInstallation(installationId)
+    : null;
+}
+
+export function githubRateLimitAdmissionRepoForJob(message: JobMessage): string | null {
+  if ("repoFullName" in message && typeof message.repoFullName === "string" && message.repoFullName.length > 0) {
+    return message.repoFullName;
+  }
+  if (message.type !== "github-webhook") return null;
+  const repo = message.payload?.repository;
+  return typeof repo === "object" && repo !== null && typeof (repo as { full_name?: unknown }).full_name === "string"
+    ? (repo as { full_name: string }).full_name
+    : null;
+}
+
+export function githubRateLimitAdmissionDelayMs(
+  kind: "background" | "webhook",
+  admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
+  persisted:
+    | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown; observed_at?: unknown; observedAt?: unknown }
+    | null
+    | undefined,
+  nowMs = Date.now(),
+): number | null {
+  const observation = newestRateLimitObservation(admissionKey, persisted);
+  return kind === "webhook"
+    ? githubWebhookRateLimitDelayMs(observation, nowMs)
+    : githubBackgroundRateLimitDelayMs(observation, nowMs);
+}
+
+export function githubBackgroundRateLimitDelayMs(
+  observation:
+    | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown }
+    | null
+    | undefined,
+  nowMs = Date.now(),
+): number | null {
+  return githubObservedRateLimitDelayMs(observation, MAINTENANCE_RESERVED_HEADROOM, nowMs);
+}
+
+export function githubWebhookRateLimitDelayMs(
+  observation:
+    | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown }
+    | null
+    | undefined,
+  nowMs = Date.now(),
+): number | null {
+  return githubObservedRateLimitDelayMs(observation, LOW_REST_RATE_LIMIT_REMAINING, nowMs);
 }
 
 function githubWebhookPriority(payload: string): number {

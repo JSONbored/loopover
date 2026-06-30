@@ -4,8 +4,10 @@ import { listLatestGitHubRateLimitObservations } from "../db/repositories";
 // from draining the budget real webhook traffic needs, maintenance yields while there is still headroom:
 //   - backfill yields at LOW_REST_RATE_LIMIT_REMAINING;
 //   - the re-gate sweep + its per-PR jobs yield EARLIER, at MAINTENANCE_RESERVED_HEADROOM, reserving the budget
-//     between the two floors for webhooks. Webhooks never pre-yield — they run, and the queue retries them after
-//     the reset if the bucket is exhausted (the surviving event-loss path). (#audit-rate-headroom)
+//     between the two floors for webhooks.
+// Self-host queues also use the latest persisted observation for admission control, so a known-exhausted bucket
+// delays webhook jobs before they start and avoids burning the first live delivery just to discover the limit.
+// (#audit-rate-headroom)
 export const LOW_REST_RATE_LIMIT_REMAINING = 75;
 export const MAINTENANCE_RESERVED_HEADROOM = 150;
 

@@ -22,9 +22,12 @@ export async function shouldWaitForGitHubRateLimit(env: Env, floor: number = LOW
   if (!rest?.resetAt || rest.remaining > floor) return undefined;
   const resetMs = Date.parse(rest.resetAt);
   if (Number.isFinite(resetMs) && resetMs > Date.now()) return rest.resetAt;
-  // A present-but-unparseable resetAt must still defer: NaN > now is false, which would otherwise proceed
-  // while the bucket is exhausted. Return the raw string so delayUntil applies its conservative 60s delay.
-  if (!Number.isFinite(resetMs)) return rest.resetAt;
+  if (!Number.isFinite(resetMs)) {
+    const observedMs = Date.parse(rest.observedAt);
+    const deferUntilMs = Number.isFinite(observedMs) ? observedMs + 60_000 : Date.now() + 60_000;
+    if (Date.now() >= deferUntilMs) return undefined;
+    return new Date(deferUntilMs).toISOString();
+  }
   return undefined;
 }
 

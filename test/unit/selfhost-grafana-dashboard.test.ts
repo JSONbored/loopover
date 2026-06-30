@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 type DashboardTarget = {
+  expr?: string;
+  legendFormat?: string;
   queryText?: string;
   rawQueryText?: string;
 };
@@ -20,6 +22,7 @@ type Dashboard = {
 
 const tmpRoots: string[] = [];
 const dashboardPath = join(process.cwd(), "grafana/dashboards/maintainer-reviews.json");
+const selfhostDashboardPath = join(process.cwd(), "grafana/dashboards/gittensory.json");
 const timeFrom = "${__from:date:seconds}";
 const timeTo = "${__to:date:seconds}";
 
@@ -32,8 +35,8 @@ const sqliteCliAvailable = (() => {
   }
 })();
 
-function readDashboard(): Dashboard {
-  return JSON.parse(readFileSync(dashboardPath, "utf8")) as Dashboard;
+function readDashboard(path = dashboardPath): Dashboard {
+  return JSON.parse(readFileSync(path, "utf8")) as Dashboard;
 }
 
 function reviewTargets(dashboard = readDashboard()): DashboardTarget[] {
@@ -67,6 +70,17 @@ function sqlite(db: string, sql: string): string {
 
 afterEach(() => {
   for (const dir of tmpRoots.splice(0)) rmSync(dir, { force: true, recursive: true });
+});
+
+describe("Gittensory Self-Host Grafana dashboard", () => {
+  it("surfaces the GitHub response cache Prometheus counters", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+
+    expect(targets.some((target) => target.expr === "sum by (result) (rate(gittensory_github_response_cache_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (class, result) (gittensory_github_response_cache_total)")).toBe(true);
+    expect(targets.some((target) => target.legendFormat === "{{class}} {{result}}")).toBe(true);
+  });
 });
 
 describe("maintainer Reviews & PRs Grafana dashboard", () => {

@@ -38,13 +38,33 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       status: 200,
       body: '{"x":1}',
       contentType: "application/json",
+      link: '<https://api.github.com/repos/o/r/pulls?page=2>; rel="next"',
+      etag: '"abc123"',
+      lastModified: "Mon, 29 Jun 2026 20:00:00 GMT",
     });
     expect(f.ttl()).toBe(30);
     expect(await cache.get(URL_A)).toEqual({
       status: 200,
       body: '{"x":1}',
       contentType: "application/json",
+      link: '<https://api.github.com/repos/o/r/pulls?page=2>; rel="next"',
+      etag: '"abc123"',
+      lastModified: "Mon, 29 Jun 2026 20:00:00 GMT",
     });
+  });
+
+  it("honors a per-entry TTL override from the shared GitHub client", async () => {
+    const f = fakeRedis();
+    await createRedisResponseCache(f.redis, 30).set(
+      URL_A,
+      {
+        status: 200,
+        body: "{}",
+        contentType: "application/json",
+      },
+      600,
+    );
+    expect(f.ttl()).toBe(600);
   });
 
   it("floors the TTL at 1s", async () => {
@@ -67,5 +87,38 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     const f = fakeRedis();
     f.store.set("gh:resp:" + URL_A, JSON.stringify({ status: "200", body: 1 }));
     expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
+  });
+
+  it("get returns null for non-200 cached responses", async () => {
+    const f = fakeRedis();
+    f.store.set(
+      "gh:resp:" + URL_A,
+      JSON.stringify({
+        status: 500,
+        body: "temporary failure",
+        contentType: "text/plain",
+      }),
+    );
+    expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
+  });
+
+  it("ignores malformed optional replay headers while keeping the valid cached response", async () => {
+    const f = fakeRedis();
+    f.store.set(
+      "gh:resp:" + URL_A,
+      JSON.stringify({
+        status: 200,
+        body: "{}",
+        contentType: "application/json",
+        link: 42,
+        etag: null,
+        lastModified: {},
+      }),
+    );
+    expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toEqual({
+      status: 200,
+      body: "{}",
+      contentType: "application/json",
+    });
   });
 });

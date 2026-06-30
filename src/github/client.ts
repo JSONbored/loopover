@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/core";
 import { isGlobalAgentFrozen, recordAuditEvent } from "../db/repositories";
 import { isGlobalAgentPause, resolveAgentActionMode, type AgentActionMode } from "../settings/agent-execution";
+import { incr } from "../selfhost/metrics";
 import type { RepositorySettings } from "../types";
 
 // The SINGLE place an installation-scoped Octokit is built. Every GitHub write in src/github/** routes through
@@ -16,12 +17,252 @@ import type { RepositorySettings } from "../types";
 // covered here — they carry their own mode guard / are a separate actor class.
 
 const GITHUB_FETCH_TIMEOUT_MS = 12_000;
+const GITHUB_API_PREFIX = "https://api.github.com";
+const GITHUB_RESPONSE_CACHE_METRIC = "gittensory_github_response_cache_total";
+const BRANCH_PROTECTION_TTL_SECONDS = 20 * 60;
+const METADATA_TTL_SECONDS = 10 * 60;
+export const GITHUB_RESPONSE_CACHE_REPLAY_HEADER = "x-gittensory-cache";
 
-// A 12s hard cap on every GitHub request. Centralised here so the comment / label / pr-action helpers — which
-// previously built a bare `new Octokit({ auth })` with no cap — all inherit the bound for free.
-export function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  if (init?.signal) return fetch(input, init);
-  return fetch(input, { ...(init ?? {}), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
+/** A shared cache for safe GitHub GET responses (e.g. Redis on the self-host). Stores only status/body/
+ *  content-type plus pagination/validator headers — never rate-limit or encoding headers. Set on the self-host;
+ *  the Worker leaves it null. */
+export interface CachedGitHubResponse {
+  status: number;
+  body: string;
+  contentType: string;
+  link?: string;
+  etag?: string;
+  lastModified?: string;
+}
+export interface GitHubResponseCache {
+  get(key: string): Promise<CachedGitHubResponse | null>;
+  set(key: string, value: CachedGitHubResponse, ttlSeconds?: number): Promise<void>;
+}
+let responseCache: GitHubResponseCache | null = null;
+export function setGitHubResponseCache(cache: GitHubResponseCache | null): void {
+  responseCache = cache;
+}
+
+type GitHubCacheClass = "branch_protection" | "metadata";
+
+/** Only cache explicitly stable GitHub REST reads. PR/issue/comment/label/event/check/status reads are mutable
+ * review inputs and must always reflect the current GitHub state. Exported for tests. */
+export function isCacheableGithubUrl(url: string): boolean {
+  return githubCacheClassForUrl(url) !== null;
+}
+
+function githubApiPath(url: string): string {
+  return url.slice(GITHUB_API_PREFIX.length);
+}
+
+function githubCacheClassForUrl(url: string): GitHubCacheClass | null {
+  if (!url.startsWith(`${GITHUB_API_PREFIX}/`)) return null;
+  const path = githubApiPath(url);
+  if (/^\/repos\/[^/]+\/[^/]+\/branches\/[^/]+\/protection\/required_status_checks(?:$|[?#])/.test(path)) return "branch_protection";
+  if (
+    (/^\/users\/[^/?#]+(?:$|[?#])/.test(path) ||
+      /^\/repos\/[^/?#]+\/[^/?#]+(?:$|[?#])/.test(path) ||
+      /^\/app\/installations\/\d+(?:$|[?#])/.test(path))
+  ) {
+    return "metadata";
+  }
+  return null;
+}
+
+function githubCacheTtlSeconds(cls: GitHubCacheClass): number {
+  if (cls === "branch_protection") return BRANCH_PROTECTION_TTL_SECONDS;
+  return METADATA_TTL_SECONDS;
+}
+
+function hasConditionalRequestHeader(headers: Headers): boolean {
+  return headers.has("if-none-match") || headers.has("if-modified-since") || headers.has("if-match") || headers.has("if-unmodified-since");
+}
+
+function cacheBypassClass(method: string, url: string, headers: Headers): string {
+  if (responseCache === null) return "disabled";
+  if (method !== "GET") return "non_get";
+  if (!url.startsWith(`${GITHUB_API_PREFIX}/`)) return "non_github";
+  if (hasConditionalRequestHeader(headers)) return "conditional";
+  return "sensitive";
+}
+
+function recordGitHubCacheMetric(result: "hit" | "miss" | "set" | "coalesced" | "bypassed" | "error", cls: string): void {
+  incr(GITHUB_RESPONSE_CACHE_METRIC, { result, class: cls });
+}
+
+async function sha256Short(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
+
+async function responseCacheKey(url: string, headers: Headers): Promise<string> {
+  const authHash = await sha256Short(headers.get("authorization") || "");
+  const accept = encodeURIComponent(headers.get("accept") || "");
+  const apiVersion = encodeURIComponent(headers.get("x-github-api-version") || "");
+  return `v2:${authHash}:${accept}:${apiVersion}:${url}`;
+}
+
+function requestHeaders(input: RequestInfo | URL, init: RequestInit | undefined): Headers {
+  const headers = new Headers(typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined);
+  new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+  return headers;
+}
+
+function requestMethod(input: RequestInfo | URL, init: RequestInit | undefined): string {
+  return (init?.method ?? (typeof Request !== "undefined" && input instanceof Request ? input.method : undefined) ?? "GET").toUpperCase();
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof Request !== "undefined" && input instanceof Request ? input.url : String(input);
+}
+
+export function isGitHubResponseCacheReplay(response: Response): boolean {
+  return response.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER) !== null;
+}
+
+// Transient GitHub rate-limit handling (#ratelimit-resilience). A primary (x-ratelimit-remaining:0) or secondary
+// (Retry-After / "secondary rate limit" body) limit returns 403/429. Instead of surfacing it as a failure — or
+// MISCLASSIFYING a 403 as a permission gap — back off a few times and retry. A sustained limit exhausts the
+// retries and the response is returned so the caller (and the queue) handles it. Bounded so a review never stalls.
+const GITHUB_RATE_LIMIT_MAX_RETRIES = 3;
+const GITHUB_RATE_LIMIT_MAX_DELAY_MS = 8_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Does this GitHub response signal a rate limit (primary or secondary)? 403/429 with a Retry-After header, an
+ *  exhausted x-ratelimit-remaining, or a secondary-limit/abuse body. A 403 with NONE of these is a real
+ *  permission/other error and must surface — not retry, not be mistaken for a rate limit. Exported for tests. */
+export async function isRateLimitedResponse(response: Response): Promise<boolean> {
+  if (response.status !== 403 && response.status !== 429) return false;
+  if (response.headers.get("retry-after") != null) return true;
+  if (response.headers.get("x-ratelimit-remaining") === "0") return true;
+  try {
+    return /secondary rate limit|\babuse\b|api rate limit exceeded/i.test(await response.clone().text());
+    /* v8 ignore next 3 -- defensive: a cloned Response body that fails to read isn't reachable in practice */
+  } catch {
+    return false;
+  }
+}
+
+/** How long to wait before the next rate-limit retry: honor a valid Retry-After (seconds), else exponential
+ *  backoff — each capped so a review can never stall on one call. A sustained PRIMARY limit (reset up to an hour
+ *  out) simply exhausts the few inline retries and the queue retries the job later. Exported for tests. */
+export function rateLimitRetryMs(response: Response, attempt: number): number {
+  const retryAfterHeader = response.headers.get("retry-after");
+  if (retryAfterHeader != null) {
+    const retryAfter = Number(retryAfterHeader);
+    if (Number.isFinite(retryAfter) && retryAfter >= 0) return Math.min(retryAfter * 1000, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+  }
+  return Math.min(500 * 2 ** attempt, GITHUB_RATE_LIMIT_MAX_DELAY_MS);
+}
+
+function responseFromCached(hit: CachedGitHubResponse, replayKind: "hit" | "coalesced"): Response {
+  const headers = new Headers({ "content-type": hit.contentType, [GITHUB_RESPONSE_CACHE_REPLAY_HEADER]: replayKind });
+  if (hit.link) headers.set("link", hit.link);
+  if (hit.etag) headers.set("etag", hit.etag);
+  if (hit.lastModified) headers.set("last-modified", hit.lastModified);
+  return new Response(hit.body, {
+    status: hit.status,
+    headers,
+  });
+}
+
+async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  let response: Response;
+  for (let attempt = 0; ; attempt += 1) {
+    response = init?.signal
+      ? await fetch(input, init)
+      : await fetch(input, {
+          ...(init ?? {}),
+          signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+        });
+    // Retry a transient rate-limit (with backoff) instead of surfacing it; stop once exhausted or it's not a limit.
+    if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES || !(await isRateLimitedResponse(response))) break;
+    await sleep(rateLimitRetryMs(response, attempt));
+  }
+  return response;
+}
+
+async function fetchAndMaybeCacheGitHubGet(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  url: string,
+  cacheKey: string,
+  cls: GitHubCacheClass,
+): Promise<{ response: Response; cached: CachedGitHubResponse | null }> {
+  const response = await fetchWithGitHubRetry(input, init);
+  if (response.status !== 200) return { response, cached: null };
+  try {
+    const cached = {
+      status: 200,
+      body: await response.clone().text(),
+      contentType: response.headers.get("content-type") ?? "application/json",
+      ...(response.headers.get("link") ? { link: response.headers.get("link")! } : {}),
+      ...(response.headers.get("etag") ? { etag: response.headers.get("etag")! } : {}),
+      ...(response.headers.get("last-modified") ? { lastModified: response.headers.get("last-modified")! } : {}),
+    };
+    await responseCache!.set(cacheKey, cached, githubCacheTtlSeconds(cls));
+    recordGitHubCacheMetric("set", cls);
+    return { response, cached };
+  } catch {
+    recordGitHubCacheMetric("error", cls);
+    return { response, cached: null };
+  }
+}
+
+// Single-flight cacheable GETs inside one isolate: a webhook burst often asks for the same metadata
+// before Redis has been populated. Join those cold misses so GitHub sees one request, then replay the cached body.
+const inFlightCacheableGets = new Map<string, Promise<CachedGitHubResponse | null>>();
+
+// A 12s hard cap on every GitHub request. Centralised here so the app token/installation raw fetches plus comment /
+// label / check-run / pr-action Octokit helpers all inherit the cache boundary, retry, and timeout behavior.
+export async function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const method = requestMethod(input, init);
+  const url = requestUrl(input);
+  const headers = requestHeaders(input, init);
+  const conditional = hasConditionalRequestHeader(headers);
+  const cls = method === "GET" && !conditional ? githubCacheClassForUrl(url) : null;
+  const useCache = responseCache !== null && cls !== null;
+  if (!useCache) {
+    recordGitHubCacheMetric("bypassed", cacheBypassClass(method, url, headers));
+    return fetchWithGitHubRetry(input, init);
+  }
+
+  const cacheKey = await responseCacheKey(url, headers);
+  let hit: CachedGitHubResponse | null = null;
+  try {
+    hit = await responseCache!.get(cacheKey);
+  } catch {
+    recordGitHubCacheMetric("error", cls);
+  }
+  if (hit) {
+    recordGitHubCacheMetric("hit", cls);
+    return responseFromCached(hit, "hit");
+  }
+  recordGitHubCacheMetric("miss", cls);
+
+  const existing = inFlightCacheableGets.get(cacheKey);
+  if (existing) {
+    recordGitHubCacheMetric("coalesced", cls);
+    const replay = await existing;
+    if (replay) return responseFromCached(replay, "coalesced");
+  }
+
+  const request = fetchAndMaybeCacheGitHubGet(input, init, url, cacheKey, cls);
+  const shared = request.then(
+    (result) => result.cached,
+    () => null,
+  );
+  const sharedWithCleanup = shared.finally(() => inFlightCacheableGets.delete(cacheKey));
+  inFlightCacheableGets.set(cacheKey, sharedWithCleanup);
+  const result = await request;
+  return result.response;
+}
+
+/** Test-only: reset shared GitHub response cache state between tests. */
+export function clearGitHubResponseCacheForTest(): void {
+  responseCache = null;
+  inFlightCacheableGets.clear();
 }
 
 const WRITE_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);

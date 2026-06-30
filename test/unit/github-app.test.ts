@@ -1904,8 +1904,12 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
 
   it("isCacheableGithubUrl: caches safe GitHub GETs but not sensitive endpoints", () => {
     expect(
-      isCacheableGithubUrl("https://api.github.com/repos/o/r/pulls/1"),
+      isCacheableGithubUrl("https://api.github.com/repos/o/r"),
     ).toBe(true);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/pulls/1")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/pulls/1/files")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/issues/1/labels")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/issues/1/comments")).toBe(false);
     expect(
       isCacheableGithubUrl(
         "https://api.github.com/app/installations/1/access_tokens",
@@ -1985,7 +1989,8 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     expect(a.id).toBe(42);
     expect(b.id).toBe(42);
     expect(getFetches).toBe(1); // second call served from the response cache
-    expect(store.has("https://api.github.com/app/installations/42")).toBe(true);
+    expect([...store.keys()].some((key) => key.includes("https://api.github.com/app/installations/42"))).toBe(true);
+    expect([...store.keys()].some((key) => key.includes("Bearer "))).toBe(false);
   });
 
   it("does not cache a non-200 GitHub GET", async () => {
@@ -2001,9 +2006,7 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
     await expect(getAppInstallation(env, 99)).rejects.toThrow();
-    expect(store.has("https://api.github.com/app/installations/99")).toBe(
-      false,
-    ); // non-200 not cached
+    expect(store.size).toBe(0); // non-200 not cached
   });
 });
 

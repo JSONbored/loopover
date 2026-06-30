@@ -20,7 +20,7 @@
 // flag ON but a cold/empty index, `retrieveContext` returns "" — the capability activates once an index exists.
 
 import { createReviewAdapters } from "./adapters";
-import { type RagChunk, retrieveContext, upsertChunks } from "./rag";
+import { type RagChunk, retrieveContextWithMetrics, upsertChunks } from "./rag";
 
 /** True when RAG retrieval is enabled. Flag-OFF (default) → the caller takes no new branch, so no retrieval is
  *  performed and the reviewer prompt is unchanged. */
@@ -46,6 +46,92 @@ const RAG_RERANKER = "bm25" as const;
 
 /** The subset of a PR file record the query builder reads (filename + the patch text when present). */
 export type RagQueryFile = { path: string; patch?: string | undefined };
+
+export type ReviewRagTelemetry = {
+  enabled: boolean;
+  attempted: boolean;
+  injected: boolean;
+  candidates: number;
+  kept: number;
+  topScore: number;
+  minScore: number;
+  reranked: boolean;
+  injectedChars: number;
+  retrievedPathCount: number;
+  retrievedPaths: string[];
+  findingReferencedRetrievedPath: boolean;
+  notesReferencedRetrievedPath: boolean;
+  referencedRetrievedPathCount: number;
+  referencedRetrievedPaths: string[];
+};
+
+export type ReviewRagContextResult = {
+  text: string;
+  telemetry: ReviewRagTelemetry;
+};
+
+type ReviewRagAttributionInput = {
+  notes?: string | null | undefined;
+  findings?: Array<{ title?: string | undefined; detail?: string | undefined; action?: string | undefined }> | undefined;
+  inlineFindings?: Array<{ path?: string | undefined; body?: string | undefined }> | undefined;
+};
+
+export function emptyReviewRagTelemetry(enabled: boolean): ReviewRagTelemetry {
+  return {
+    enabled,
+    attempted: false,
+    injected: false,
+    candidates: 0,
+    kept: 0,
+    topScore: 0,
+    minScore: 0,
+    reranked: false,
+    injectedChars: 0,
+    retrievedPathCount: 0,
+    retrievedPaths: [],
+    findingReferencedRetrievedPath: false,
+    notesReferencedRetrievedPath: false,
+    referencedRetrievedPathCount: 0,
+    referencedRetrievedPaths: [],
+  };
+}
+
+function uniq(paths: string[]): string[] {
+  return [...new Set(paths.filter(Boolean))];
+}
+
+function textMentionsPath(text: string, path: string): boolean {
+  return text.toLowerCase().includes(path.toLowerCase());
+}
+
+export function attributeReviewRagTelemetry(
+  telemetry: ReviewRagTelemetry,
+  review: ReviewRagAttributionInput,
+): ReviewRagTelemetry {
+  if (!telemetry.retrievedPaths.length) return telemetry;
+  const findingText = [
+    ...(review.findings ?? []).flatMap((finding) => [
+      finding.title ?? "",
+      finding.detail ?? "",
+      finding.action ?? "",
+    ]),
+    ...(review.inlineFindings ?? []).flatMap((finding) => [
+      finding.path ?? "",
+      finding.body ?? "",
+    ]),
+  ].join("\n");
+  const notesText = review.notes ?? "";
+  const findingPaths = telemetry.retrievedPaths.filter((path) => textMentionsPath(findingText, path));
+  const notesPaths = telemetry.retrievedPaths.filter((path) => textMentionsPath(notesText, path));
+  const referencedRetrievedPaths = uniq([...findingPaths, ...notesPaths]);
+  return {
+    ...telemetry,
+    findingReferencedRetrievedPath: findingPaths.length > 0,
+    notesReferencedRetrievedPath: notesPaths.length > 0,
+    referencedRetrievedPathCount: referencedRetrievedPaths.length,
+    referencedRetrievedPaths,
+  };
+}
 
 /**
  * Compose the retrieval QUERY TEXT from the PR's TITLE + changed files. We PREPEND the PR title (intent in natural
@@ -88,17 +174,24 @@ export async function buildReviewRagContext(
   env: Env,
   args: { repoFullName: string; files: RagQueryFile[]; title?: string; reranker?: "off" | "bm25" },
 ): Promise<string> {
+  return (await buildReviewRagContextWithMetrics(env, args)).text;
+}
+
+export async function buildReviewRagContextWithMetrics(
+  env: Env,
+  args: { repoFullName: string; files: RagQueryFile[]; title?: string; reranker?: "off" | "bm25" },
+): Promise<ReviewRagContextResult> {
   try {
     const { queryText, excludePaths } = buildRagQuery(args.files, args.title);
-    if (!queryText) return "";
+    if (!queryText) return { text: "", telemetry: emptyReviewRagTelemetry(true) };
     const infra = createReviewAdapters(env);
     // No vector index or no AI binding → the adapters omit the member and retrieveContext returns "" (no RAG).
-    if (!infra.vector || !infra.inference) return "";
+    if (!infra.vector || !infra.inference) return { text: "", telemetry: emptyReviewRagTelemetry(true) };
     const [project, repo] = splitRepo(args.repoFullName);
     // Quality knobs match reviewbot's core config: drop low-relevance cosine matches (minScore) and BM25-rerank the
     // survivors (reranker) so only genuinely-related code reaches the prompt — low-relevance "neighbours" are noise
     // that themselves cause false positives. A caller-supplied reranker still wins (e.g. to force "off"). (#GAP-2)
-    return await retrieveContext(infra, {
+    const result = await retrieveContextWithMetrics(infra, {
       project,
       repo,
       queryText,
@@ -107,8 +200,24 @@ export async function buildReviewRagContext(
       minScore: RAG_MIN_SCORE,
       reranker: args.reranker ?? RAG_RERANKER,
     });
+    return {
+      text: result.context,
+      telemetry: {
+        ...emptyReviewRagTelemetry(true),
+        attempted: true,
+        injected: result.context.length > 0,
+        candidates: result.metrics.candidates,
+        kept: result.metrics.kept,
+        topScore: result.metrics.topScore,
+        minScore: result.metrics.minScore,
+        reranked: result.metrics.reranked,
+        injectedChars: result.metrics.injectedChars,
+        retrievedPathCount: result.metrics.paths.length,
+        retrievedPaths: result.metrics.paths,
+      },
+    };
   } catch {
-    return ""; // any error → review proceeds on the diff alone (fail-safe)
+    return { text: "", telemetry: emptyReviewRagTelemetry(true) }; // any error → review proceeds on the diff alone (fail-safe)
   }
 }
 

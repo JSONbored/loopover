@@ -17,6 +17,7 @@ import {
   ragNamespace,
   readChunkTexts,
   retrieveContext,
+  retrieveContextWithMetrics,
   type StorageAdapter,
   upsertChunks,
   type VectorAdapter,
@@ -169,6 +170,29 @@ describe("rag: fail-safe (never throws; degrades to no context)", () => {
     expect(await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "x" })).toBe("");
   });
 
+  it("retrieveContextWithMetrics returns empty metrics when retrieval is skipped", async () => {
+    const infra: RagInfra = { storage: storageStub({ count: 5 }) };
+    await expect(
+      retrieveContextWithMetrics(infra, {
+        project: "p",
+        repo: "o/r",
+        queryText: "refactor the auth token verification and add coverage",
+        minScore: 0.7,
+      }),
+    ).resolves.toEqual({
+      context: "",
+      metrics: {
+        candidates: 0,
+        kept: 0,
+        topScore: 0,
+        minScore: 0.7,
+        reranked: false,
+        injectedChars: 0,
+        paths: [],
+      },
+    });
+  });
+
   it("retrieveContext returns '' when the vector query throws", async () => {
     const vector = { query: async () => { throw new Error("boom"); } } as unknown as VectorAdapter;
     const infra: RagInfra = { storage: storageStub({ count: 5 }), vector, inference: ai1024 }; // warm index → reaches the query
@@ -223,6 +247,42 @@ describe("rag: fail-safe (never throws; degrades to no context)", () => {
     expect(out).toContain("src/a.ts");
     expect(out).toContain("export const x = 1;");
     expect(out).not.toContain("src/changed.ts"); // the file under review is excluded → only RELATED code surfaces
+  });
+
+  it("retrieveContextWithMetrics reports candidates, injected chars, and unique retrieved paths", async () => {
+    const matches = [
+      { id: "src/a.ts::0", score: 0.9, metadata: { path: "src/a.ts" } },
+      { id: "src/a.ts::1", score: 0.8, metadata: { path: "src/a.ts" } },
+    ];
+    const vector = { query: async () => ({ matches }) } as unknown as VectorAdapter;
+    const infra: RagInfra = {
+      storage: storageStub({
+        count: 2,
+        rows: [
+          { id: "src/a.ts::0", text: "export const x = 1;" },
+          { id: "src/a.ts::1", text: "export const y = 2;" },
+        ],
+      }),
+      vector,
+      inference: ai1024,
+    };
+    const out = await retrieveContextWithMetrics(infra, {
+      project: "p",
+      repo: "o/r",
+      queryText: "refactor the auth token verification and add coverage",
+      minScore: 0.5,
+      reranker: "off",
+    });
+    expect(out.context).toContain("src/a.ts");
+    expect(out.metrics).toMatchObject({
+      candidates: 2,
+      kept: 2,
+      topScore: 0.9,
+      minScore: 0.5,
+      reranked: false,
+      paths: ["src/a.ts"],
+    });
+    expect(out.metrics.injectedChars).toBeGreaterThan(0);
   });
 
   it("minScore drops low-relevance matches (#rag-observability)", async () => {

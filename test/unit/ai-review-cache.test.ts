@@ -34,4 +34,31 @@ describe("AI review cache (#1)", () => {
       findings: [{ code: "ai_review_split", severity: "critical", title: "Split", detail: "One reviewer blocked." }],
     });
   });
+
+  it("round-trips structured review metadata and replaces it on upsert", async () => {
+    const env = createTestEnv();
+    await putCachedAiReview(env, "o/r", 9, "sha1", "advisory", {
+      notes: "first",
+      reviewerCount: 1,
+      metadata: { rag: { enabled: true, injected: true, retrievedPaths: ["src/a.ts"] } },
+    });
+    expect(await getCachedAiReview(env, "o/r", 9, "sha1", "advisory")).toEqual({
+      notes: "first",
+      reviewerCount: 1,
+      findings: [],
+      metadata: { rag: { enabled: true, injected: true, retrievedPaths: ["src/a.ts"] } },
+    });
+
+    await putCachedAiReview(env, "o/r", 9, "sha1", "advisory", {
+      notes: "second",
+      reviewerCount: 2,
+      metadata: { rag: { enabled: true, injected: false, retrievedPaths: [] } },
+    });
+    expect(await getCachedAiReview(env, "o/r", 9, "sha1", "advisory")).toEqual({
+      notes: "second",
+      reviewerCount: 2,
+      findings: [],
+      metadata: { rag: { enabled: true, injected: false, retrievedPaths: [] } },
+    });
+  });
 });

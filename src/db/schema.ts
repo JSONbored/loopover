@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 // Timestamp columns use a drizzle $defaultFn so an insert that omits the column gets a real ISO-8601
 // timestamp. A static `.default("CURRENT_TIMESTAMP")` would make drizzle inject the literal STRING
 // "CURRENT_TIMESTAMP" (it applies static defaults client-side, never reaching SQLite's CURRENT_TIMESTAMP),
@@ -1136,5 +1136,23 @@ export const aiUsageEvents = sqliteTable(
     // Covers the daily-budget query (sumAiEstimatedNeuronsSince): WHERE status='ok' AND created_at >= ?.
     // Without it that aggregate full-scans ai_usage_events, which runs on every AI review/summary.
     statusCreated: index("ai_usage_events_status_created_idx").on(table.status, table.createdAt),
+  }),
+);
+
+export const aiReviewCache = sqliteTable(
+  "ai_review_cache",
+  {
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    headSha: text("head_sha").notNull(),
+    aiReviewMode: text("ai_review_mode").notNull(),
+    notes: text("notes").notNull(),
+    reviewerCount: integer("reviewer_count").notNull(),
+    findingsJson: text("findings_json").notNull().default("[]"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    primary: primaryKey({ columns: [table.repoFullName, table.pullNumber, table.headSha] }),
   }),
 );

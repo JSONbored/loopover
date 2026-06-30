@@ -3,7 +3,14 @@ import { runGittensoryAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import * as ragModule from "../../src/review/rag";
 import { RAG_DIMENSIONS } from "../../src/review/rag";
-import { buildRagQuery, buildReviewRagContext, isRagEnabled } from "../../src/review/rag-wire";
+import {
+  attributeReviewRagTelemetry,
+  buildRagQuery,
+  buildReviewRagContext,
+  buildReviewRagContextWithMetrics,
+  emptyReviewRagTelemetry,
+  isRagEnabled,
+} from "../../src/review/rag-wire";
 import { createTestEnv } from "../helpers/d1";
 import type { Advisory, RepositorySettings } from "../../src/types";
 
@@ -68,6 +75,15 @@ const baseReviewInput = {
 };
 
 const changedFiles = [{ path: "src/a.ts", patch: "@@\n+export const A = helper();" }];
+const emptyRetrievalMetrics = {
+  candidates: 0,
+  kept: 0,
+  topScore: 0,
+  minScore: 0.4,
+  reranked: false,
+  injectedChars: 0,
+  paths: [],
+};
 
 // ── isRagEnabled ──────────────────────────────────────────────────────────────────────────────────
 
@@ -116,6 +132,16 @@ describe("buildRagQuery composes the retrieval query from the changed files", ()
     const { excludePaths } = buildRagQuery([{ path: "src/a.ts" }, { path: "src/a.ts" }, { path: "src/b.ts" }]);
     expect(excludePaths).toEqual(["src/a.ts", "src/b.ts"]);
   });
+
+  it("stops sampling patches after the bounded diff budget is reached", () => {
+    const largePatch = `@@\n+${"x".repeat(4100)}`;
+    const { queryText } = buildRagQuery([
+      { path: "src/large.ts", patch: largePatch },
+      { path: "src/skipped.ts", patch: "@@\n+SHOULD_NOT_APPEAR" },
+    ]);
+    expect(queryText).toContain("src/skipped.ts");
+    expect(queryText).not.toContain("SHOULD_NOT_APPEAR");
+  });
 });
 
 // ── buildReviewRagContext (retrieval, fail-safe) ───────────────────────────────────────────────────
@@ -132,6 +158,27 @@ describe("buildReviewRagContext: retrieval wiring + fail-safe", () => {
     // The query was embedded and the vector index was queried.
     expect(ai.run).toHaveBeenCalledWith("@cf/baai/bge-m3", expect.anything());
     expect(vec.query).toHaveBeenCalledTimes(1);
+  });
+
+  it("FLAG-ON with a warm index: returns retrieval telemetry for later attribution", async () => {
+    const vec = vectorizeStub();
+    const ai = aiStub();
+    const env = createTestEnv({ DB: ragDbStub(), VECTORIZE: vec as unknown as Vectorize, AI: ai as unknown as Ai });
+    const out = await buildReviewRagContextWithMetrics(env, { repoFullName: "acme/rag-warm-metrics", files: changedFiles });
+    expect(out.text).toContain("RELEVANT EXISTING CODE / DOCS");
+    expect(out.telemetry).toMatchObject({
+      enabled: true,
+      attempted: true,
+      injected: true,
+      candidates: 1,
+      kept: 1,
+      topScore: 0.92,
+      minScore: 0.4,
+      reranked: false,
+      retrievedPathCount: 1,
+      retrievedPaths: ["src/helper.ts"],
+    });
+    expect(out.telemetry.injectedChars).toBeGreaterThan(0);
   });
 
   it("fail-safe: a MISSING Vectorize binding → empty context, NO vector query attempted", async () => {
@@ -181,7 +228,10 @@ describe("buildReviewRagContext passes the quality knobs into retrieveContext (#
   afterEach(() => vi.restoreAllMocks());
 
   it("invokes the retrieve call with minScore 0.4 + reranker 'bm25' and the title-led query (reviewbot parity)", async () => {
-    const spy = vi.spyOn(ragModule, "retrieveContext").mockResolvedValue("=== RELEVANT EXISTING CODE / DOCS ===");
+    const spy = vi.spyOn(ragModule, "retrieveContextWithMetrics").mockResolvedValue({
+      context: "=== RELEVANT EXISTING CODE / DOCS ===",
+      metrics: emptyRetrievalMetrics,
+    });
     const env = createTestEnv({ DB: ragDbStub(), VECTORIZE: vectorizeStub() as unknown as Vectorize, AI: aiStub() as unknown as Ai });
     const out = await buildReviewRagContext(env, { repoFullName: "acme/widgets", title: "Add a feature", files: changedFiles });
     expect(out).toContain("RELEVANT EXISTING CODE / DOCS");
@@ -194,10 +244,87 @@ describe("buildReviewRagContext passes the quality knobs into retrieveContext (#
   });
 
   it("a caller-supplied reranker still wins over the default (e.g. forcing it off), minScore unchanged", async () => {
-    const spy = vi.spyOn(ragModule, "retrieveContext").mockResolvedValue("");
+    const spy = vi.spyOn(ragModule, "retrieveContextWithMetrics").mockResolvedValue({
+      context: "",
+      metrics: emptyRetrievalMetrics,
+    });
     const env = createTestEnv({ DB: ragDbStub(), VECTORIZE: vectorizeStub() as unknown as Vectorize, AI: aiStub() as unknown as Ai });
     await buildReviewRagContext(env, { repoFullName: "acme/widgets", files: changedFiles, reranker: "off" });
     expect(spy.mock.calls[0]?.[1]).toMatchObject({ minScore: 0.4, reranker: "off" });
+  });
+
+  it("handles slashless repo names by using an empty project namespace", async () => {
+    const spy = vi.spyOn(ragModule, "retrieveContextWithMetrics").mockResolvedValue({
+      context: "",
+      metrics: emptyRetrievalMetrics,
+    });
+    const env = createTestEnv({ DB: ragDbStub(), VECTORIZE: vectorizeStub() as unknown as Vectorize, AI: aiStub() as unknown as Ai });
+    await buildReviewRagContext(env, { repoFullName: "widgets", files: changedFiles });
+    expect(spy.mock.calls[0]?.[1]).toMatchObject({ project: "", repo: "widgets" });
+  });
+});
+
+describe("RAG review attribution telemetry", () => {
+  it("marks findings and notes that reference retrieved paths", () => {
+    const telemetry = {
+      ...emptyReviewRagTelemetry(true),
+      attempted: true,
+      injected: true,
+      retrievedPathCount: 2,
+      retrievedPaths: ["src/helper.ts", "src/unused.ts"],
+    };
+    const out = attributeReviewRagTelemetry(telemetry, {
+      notes: "The existing convention in src/unused.ts is preserved.",
+      findings: [{ title: "Bug", detail: "src/helper.ts now returns the wrong value.", action: "Fix it." }],
+      inlineFindings: [{ path: "src/a.ts", body: "Compare against src/helper.ts." }],
+    });
+    expect(out.findingReferencedRetrievedPath).toBe(true);
+    expect(out.notesReferencedRetrievedPath).toBe(true);
+    expect(out.referencedRetrievedPathCount).toBe(2);
+    expect(out.referencedRetrievedPaths).toEqual(["src/helper.ts", "src/unused.ts"]);
+  });
+
+  it("returns unchanged telemetry when no paths were retrieved", () => {
+    const telemetry = emptyReviewRagTelemetry(true);
+    expect(attributeReviewRagTelemetry(telemetry, { notes: "No context." })).toBe(telemetry);
+  });
+
+  it("treats omitted attribution fields as empty text", () => {
+    const telemetry = {
+      ...emptyReviewRagTelemetry(true),
+      retrievedPathCount: 1,
+      retrievedPaths: ["src/helper.ts"],
+    };
+    expect(
+      attributeReviewRagTelemetry(telemetry, {
+        notes: null,
+        findings: [{}],
+        inlineFindings: [{}],
+      }),
+    ).toMatchObject({
+      findingReferencedRetrievedPath: false,
+      notesReferencedRetrievedPath: false,
+      referencedRetrievedPathCount: 0,
+      referencedRetrievedPaths: [],
+    });
+  });
+
+  it("handles omitted finding and inline arrays while still attributing notes", () => {
+    const telemetry = {
+      ...emptyReviewRagTelemetry(true),
+      retrievedPathCount: 1,
+      retrievedPaths: ["src/helper.ts"],
+    };
+    expect(
+      attributeReviewRagTelemetry(telemetry, {
+        notes: "The review followed src/helper.ts.",
+      }),
+    ).toMatchObject({
+      findingReferencedRetrievedPath: false,
+      notesReferencedRetrievedPath: true,
+      referencedRetrievedPathCount: 1,
+      referencedRetrievedPaths: ["src/helper.ts"],
+    });
   });
 });
 
@@ -260,6 +387,9 @@ describe("RAG wired into the AI reviewer (flag GITTENSORY_REVIEW_RAG)", () => {
     await env.DB.prepare(
       "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     ).bind("acme/widgets", 3, "img/logo.png", "added", 0, 0, 0, JSON.stringify({})).run(); // no `patch` → undefined branch
+    await env.DB.prepare(
+      "INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).bind("v1", "acme", "widgets", "src/helper.ts", 0, "code", "export function helper() { return 1; }").run();
     const adv: Advisory = {
       id: "adv-rag", targetType: "pull_request", targetKey: "acme/widgets#3", repoFullName: "acme/widgets",
       pullNumber: 3, headSha: "sha3", conclusion: "neutral", severity: "info",
@@ -275,6 +405,14 @@ describe("RAG wired into the AI reviewer (flag GITTENSORY_REVIEW_RAG)", () => {
     });
     // The review still completes (RAG is additive + fail-safe); the map having run is what we're exercising.
     expect(result?.notes ?? "").toBeDefined();
+    expect(result?.metadata?.rag).toMatchObject({
+      enabled: true,
+      attempted: true,
+      injected: true,
+      retrievedPaths: ["src/helper.ts"],
+      notesReferencedRetrievedPath: false,
+      findingReferencedRetrievedPath: false,
+    });
   });
 
   it("FLAG-OFF (default): the prompt is byte-identical to the no-RAG prompt (ragContext undefined)", async () => {

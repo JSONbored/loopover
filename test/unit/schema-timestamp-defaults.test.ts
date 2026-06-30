@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getDb } from "../../src/db/client";
-import { orbRelayPending, repositorySettings, webhookEvents } from "../../src/db/schema";
+import { aiReviewCache, orbRelayPending, repositorySettings, webhookEvents } from "../../src/db/schema";
 import { createTestEnv } from "../helpers/d1";
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
@@ -52,6 +52,22 @@ describe("timestamp column defaults", () => {
       rawBody: "{}",
       coalesceKey,
     });
+    expect(row?.createdAt).toMatch(ISO);
+    expect(row?.createdAt).not.toBe("CURRENT_TIMESTAMP");
+  });
+
+  it("applies the AI review cache createdAt default on omit", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    await db.insert(aiReviewCache).values({
+      repoFullName: "acme/widgets",
+      pullNumber: 1,
+      headSha: "sha",
+      aiReviewMode: "advisory",
+      notes: "ok",
+      reviewerCount: 1,
+    });
+    const [row] = await db.select().from(aiReviewCache).where(eq(aiReviewCache.repoFullName, "acme/widgets")).limit(1);
     expect(row?.createdAt).toMatch(ISO);
     expect(row?.createdAt).not.toBe("CURRENT_TIMESTAMP");
   });

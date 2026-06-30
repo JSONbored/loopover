@@ -325,7 +325,12 @@ import {
   checkSummaryText as checkFailureSummaryText,
   isGroundingEnabled,
 } from "../review/grounding-wire";
-import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
+import {
+  attributeReviewRagTelemetry,
+  buildReviewRagContextWithMetrics,
+  emptyReviewRagTelemetry,
+  isRagEnabled,
+} from "../review/rag-wire";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
@@ -3675,6 +3680,7 @@ export async function runAiReviewForAdvisory(
       reviewerCount: number;
       inlineFindings: InlineFinding[];
       findings: AdvisoryFinding[];
+      metadata?: Record<string, unknown> | undefined;
       cacheable?: boolean | undefined;
     }
   | undefined
@@ -3791,8 +3797,8 @@ export async function runAiReviewForAdvisory(
     // semantically related to the changed files and append them as additive reference context — exactly like
     // grounding. Flag-OFF (default) → NO new branch: no adapter use, no vector query, and `ragContext` is left
     // undefined so the prompt is byte-identical to today. Fully fail-safe (a missing/cold index degrades to "").
-    const ragContext = ragActive
-      ? await buildReviewRagContext(env, {
+    const ragContextResult = ragActive
+      ? await buildReviewRagContextWithMetrics(env, {
           repoFullName: args.repoFullName,
           title: args.pr.title,
           files: files.map((file) => ({
@@ -3804,6 +3810,8 @@ export async function runAiReviewForAdvisory(
           })),
         })
       : undefined;
+    const ragTelemetry =
+      ragContextResult?.telemetry ?? emptyReviewRagTelemetry(false);
     // Review-enrichment (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT + REES_URL). POST the PR to the external
     // REES for the heavy/external analysis the reviewer can't run (dependency CVEs, secrets, license/EOL/supply-chain);
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
@@ -3838,7 +3846,8 @@ export async function runAiReviewForAdvisory(
       mode: args.settings.aiReviewMode === "block" ? "block" : "advisory",
       providerKey,
       grounding,
-      ragContext,
+      ragContext: ragContextResult?.text,
+      observability: { rag: ragTelemetry },
       enrichment,
       profile: args.reviewProfile ?? null,
       // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
@@ -3917,12 +3926,23 @@ export async function runAiReviewForAdvisory(
       });
     }
     args.advisory.findings.push(...findings);
+    const metadataFor = (
+      notes: string | null | undefined,
+      inlineFindings: InlineFinding[],
+    ): Record<string, unknown> => ({
+      rag: attributeReviewRagTelemetry(ragTelemetry, {
+        notes,
+        findings,
+        inlineFindings,
+      }),
+    });
     if (result.inconclusive && hasPublicReviewAssessment(result.advisoryNotes)) {
       return {
         notes: result.advisoryNotes!,
         reviewerCount: result.reviewerCount,
         inlineFindings: [],
         findings,
+        metadata: metadataFor(result.advisoryNotes, []),
         cacheable: false,
       };
     }
@@ -3932,6 +3952,7 @@ export async function runAiReviewForAdvisory(
         reviewerCount: result.reviewerCount,
         inlineFindings: result.inlineFindings,
         findings,
+        metadata: metadataFor(result.advisoryNotes, result.inlineFindings),
       };
     }
     if (result.inconclusive) {
@@ -3941,6 +3962,7 @@ export async function runAiReviewForAdvisory(
         reviewerCount: result.reviewerCount,
         inlineFindings: [],
         findings,
+        metadata: metadataFor(null, []),
         cacheable: false,
       };
     }
@@ -3980,6 +4002,7 @@ export async function runAiReviewForAdvisory(
       reviewerCount: result.reviewerCount,
       inlineFindings: [],
       findings,
+      metadata: metadataFor(null, []),
       cacheable: false,
     };
   } catch (error) {
@@ -4462,6 +4485,7 @@ async function maybePublishPrPublicSurface(
         reviewerCount: number;
         inlineFindings?: InlineFinding[];
         findings?: AdvisoryFinding[];
+        metadata?: Record<string, unknown> | undefined;
         cacheable?: boolean | undefined;
       }
     | undefined;

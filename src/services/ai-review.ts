@@ -136,6 +136,9 @@ export type GittensoryAiReviewInput = {
    * to today — no section is appended.
    */
   ragContext?: string | null | undefined;
+  /** Internal review observability metadata, stored with usage events. The caller must pass only public-safe,
+   *  non-secret counters/paths; provider keys and raw prompt text never belong here. */
+  observability?: Record<string, unknown> | null | undefined;
   /**
    * Review-enrichment service brief (#1472, flag-gated by GITTENSORY_REVIEW_ENRICHMENT). The caller POSTs the PR
    * to the external REES (see `review/enrichment-wire`), which runs heavy/external/historical analysis the
@@ -1289,6 +1292,7 @@ async function record(
     metadata: {
       repoFullName: input.repoFullName,
       pullNumber: input.prNumber,
+      ...(input.observability ?? {}),
       ...(metadata ?? {}),
     },
   });

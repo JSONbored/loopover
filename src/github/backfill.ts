@@ -68,6 +68,7 @@ import {
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
 import { isGitHubResponseCacheReplay, timeoutFetch } from "./client";
+import { fetchCachedGitHubGraphQl } from "./graphql-cache";
 
 type GitHubLabelPayload = {
   name: string;
@@ -2779,17 +2780,10 @@ function githubRestHeaders(token?: string): HeadersInit {
 }
 
 async function githubGraphQl<T>(env: Env, query: string, token: string): Promise<T> {
-  const response = await fetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      accept: "application/vnd.github+json",
-      "content-type": "application/json",
-      "user-agent": "gittensory/0.1",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query }),
-  });
-  await recordGitHubResponse(env, null, "/graphql", response, "graphql");
+  const response = await fetchCachedGitHubGraphQl(query, token);
+  if (!isGitHubResponseCacheReplay(response)) {
+    await recordGitHubResponse(env, null, "/graphql", response, "graphql");
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new GitHubApiError(

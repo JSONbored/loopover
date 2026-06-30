@@ -40,6 +40,13 @@ export {
   rateLimitRetryMs,
   setGitHubResponseCache,
 } from "./client";
+export {
+  fetchCachedGitHubGraphQl,
+  githubGraphQlCacheTtlSeconds,
+  graphqlCacheClassForQuery,
+  graphqlOperationName,
+  isCacheableGraphQlQuery,
+} from "./graphql-cache";
 
 type CheckRunResponse = {
   id: number;

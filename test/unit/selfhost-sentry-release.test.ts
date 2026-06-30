@@ -23,6 +23,10 @@ describe("self-host Sentry release wiring", () => {
     expect(edgeDeployScript).toContain(
       'SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"',
     );
+    expect(edgeDeployScript).toContain(
+      'SENTRY_RELEASE="${SENTRY_RELEASE:-gittensory-selfhost@$(git rev-parse --short=8 HEAD)}"',
+    );
+    expect(edgeDeployScript).not.toContain('env_get SENTRY_RELEASE');
     expect(edgeDeployScript).not.toContain("@sentry/cli@latest");
     expect(releaseWorkflow).toContain("target: runtime-prebuilt");
     expect(releaseWorkflow).toContain(

@@ -104,37 +104,41 @@ export function SiteHeader() {
               />
             </Link>
             {docsOpen && (
-              <div
-                className="absolute left-1/2 top-full z-50 mt-3 w-[28rem] -translate-x-1/2 overflow-hidden rounded-token border-hairline bg-popover/95 shadow-2xl backdrop-blur animate-in fade-in slide-in-from-top-1 duration-150 motion-reduce:animate-none"
-                onBlur={(e) => {
-                  if (!docsRef.current?.contains(e.relatedTarget as Node)) setDocsOpen(false);
-                }}
-              >
-                <div className="grid grid-cols-2 gap-1 p-2">
-                  {docsMenu.map((item) => (
+              <div className="absolute left-1/2 top-full z-50 w-[28rem] -translate-x-1/2 pt-3">
+                <div
+                  className="overflow-hidden rounded-token border-hairline bg-popover/95 shadow-2xl backdrop-blur animate-in fade-in slide-in-from-top-1 duration-150 motion-reduce:animate-none"
+                  onBlur={(e) => {
+                    if (!docsRef.current?.contains(e.relatedTarget as Node)) setDocsOpen(false);
+                  }}
+                >
+                  <div className="grid grid-cols-2 gap-1 p-2">
+                    {docsMenu.map((item) => (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        onClick={() => setDocsOpen(false)}
+                        activeProps={{ className: "bg-muted/60 text-foreground" }}
+                        className="group relative flex flex-col gap-0.5 rounded-token px-3 py-2 text-token-sm text-foreground/85 transition-all duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-ring"
+                      >
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <span className="size-1.5 rounded-full bg-mint opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100" />
+                          {item.label}
+                        </span>
+                        <span className="pl-3 text-token-2xs text-muted-foreground">
+                          {item.hint}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                  <div className="border-t-hairline bg-muted/30 px-3 py-2">
                     <Link
-                      key={item.to}
-                      to={item.to}
+                      to="/docs"
                       onClick={() => setDocsOpen(false)}
-                      activeProps={{ className: "bg-muted/60 text-foreground" }}
-                      className="group relative flex flex-col gap-0.5 rounded-token px-3 py-2 text-token-sm text-foreground/85 transition-all duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-ring"
+                      className="inline-flex items-center gap-1 text-token-xs text-muted-foreground transition-colors hover:text-mint focus-ring rounded-token"
                     >
-                      <span className="flex items-center gap-1.5 font-medium">
-                        <span className="size-1.5 rounded-full bg-mint opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover:opacity-100 group-focus-visible:opacity-100" />
-                        {item.label}
-                      </span>
-                      <span className="pl-3 text-token-2xs text-muted-foreground">{item.hint}</span>
+                      All documentation →
                     </Link>
-                  ))}
-                </div>
-                <div className="border-t-hairline bg-muted/30 px-3 py-2">
-                  <Link
-                    to="/docs"
-                    onClick={() => setDocsOpen(false)}
-                    className="inline-flex items-center gap-1 text-token-xs text-muted-foreground transition-colors hover:text-mint focus-ring rounded-token"
-                  >
-                    All documentation →
-                  </Link>
+                  </div>
                 </div>
               </div>
             )}

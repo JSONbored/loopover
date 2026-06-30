@@ -181,6 +181,37 @@ describe("forwardOrbEvent", () => {
     expect(calls[0]?.init?.body).toBe(body);
   });
 
+  it("FORWARDS via the newest enrollment when multiple enrolled rows exist for one installation (regression for #1783)", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 804);
+    const staleSecret = ((await issueOrbEnrollment(e, 804)) as { secret: string }).secret; // row A — enrolled, no relay
+    const freshSecret = ((await issueOrbEnrollment(e, 804)) as { secret: string }).secret; // row B — stays enrolled too
+    await registerOrbRelay(e, freshSecret, "https://new-host.example/v1/orb/relay");
+    const { fetchImpl, calls } = capture(new Response("ok"));
+    const body = '{"action":"opened","number":9}';
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 804, deliveryId: "del-1783", rawBody: body }, fetchImpl)).toBe("forwarded");
+    expect(calls[0]?.url).toBe("https://new-host.example/v1/orb/relay");
+    const h = calls[0]?.init?.headers as Record<string, string>;
+    expect(h["x-orb-signature-256"]).toBe(`sha256=${await relaySignature(freshSecret, body)}`);
+    expect(staleSecret).not.toBe(freshSecret);
+  });
+
+  it("prefers the newest registered relay when two enrolled rows tie on relay_registered_at (regression for #1783 tie-break)", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, 805);
+    const staleSecret = ((await issueOrbEnrollment(e, 805)) as { secret: string }).secret;
+    await registerOrbRelay(e, staleSecret, "https://stale-host.example/v1/orb/relay");
+    const freshSecret = ((await issueOrbEnrollment(e, 805)) as { secret: string }).secret;
+    await registerOrbRelay(e, freshSecret, "https://new-host.example/v1/orb/relay");
+    await db(e).prepare("UPDATE orb_enrollments SET relay_registered_at = '2026-06-30T00:00:00Z' WHERE installation_id = 805").run();
+    const { fetchImpl, calls } = capture(new Response("ok"));
+    const body = '{"action":"opened","number":10}';
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 805, deliveryId: "del-tie", rawBody: body }, fetchImpl)).toBe("forwarded");
+    expect(calls[0]?.url).toBe("https://new-host.example/v1/orb/relay");
+    const h = calls[0]?.init?.headers as Record<string, string>;
+    expect(h["x-orb-signature-256"]).toBe(`sha256=${await relaySignature(freshSecret, body)}`);
+  });
+
   it("returns FAILED (never throws) on a non-ok response or a thrown fetch — the Orb 202 always stands", async () => {
     const e = brokeredEnv();
     const secret = await enroll(e, 802);

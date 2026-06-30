@@ -901,6 +901,18 @@ export function isPullRequestInDuplicateCluster(collisions: CollisionReport, pul
   );
 }
 
+/**
+ * True when a collision item targets one of the planned contribution's linked issues. An issue item carries its
+ * own number in `linkedIssues` (`[issue.number]`); a PR / recent-merge item carries the issues that PR closes. The
+ * preflight duplicate-work check previously tested `plannedLinkedIssues.includes(item.number)`, which conflated a
+ * PR's NUMBER with an issue number — an unrelated open PR #42 then matched a plan linking issue #42, a routine
+ * GitHub numbering collision that minted a spurious `possible_duplicate_work` finding. Compare linked-issue SETS
+ * instead, mirroring the pairwise `sharedIssue` test `buildCollisionReport` already uses between items. (#1775)
+ */
+export function itemSharesPlannedLinkedIssue(item: CollisionItem, plannedLinkedIssues: number[]): boolean {
+  return (item.linkedIssues ?? []).some((issueNumber) => plannedLinkedIssues.includes(issueNumber));
+}
+
 export function buildQueueHealth(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
@@ -1362,7 +1374,7 @@ export function buildContributorOpportunities(
   issueQualityByRepo?: Map<string, IssueQualityReport>,
 ): ContributorOpportunity[] {
   const opportunities: ContributorOpportunity[] = [];
-  const touchedRepos = new Set(profile.registeredRepoActivity.reposTouched);
+  const touchedRepos = new Set(profile.registeredRepoActivity.reposTouched.map((repoFullName) => repoFullName.toLowerCase()));
   const labelHistory = new Set(profile.registeredRepoActivity.dominantLabels);
   const bountyByIssue = indexBountiesByIssue(bounties);
   const qualityByKey = issueQualityByRepo
@@ -1371,8 +1383,8 @@ export function buildContributorOpportunities(
 
   for (const repo of repositories.filter((candidate) => candidate.isRegistered)) {
     const lane = buildLaneAdvice(repo, repo.fullName);
-    const repoIssues = issues.filter((issue) => issue.repoFullName === repo.fullName && issue.state === "open");
-    const repoPullRequests = pullRequests.filter((pr) => pr.repoFullName === repo.fullName && pr.state === "open");
+    const repoIssues = issues.filter((issue) => sameRepo(issue.repoFullName, repo.fullName) && issue.state === "open");
+    const repoPullRequests = pullRequests.filter((pr) => sameRepo(pr.repoFullName, repo.fullName) && pr.state === "open");
     const linkedIssueNumbers = new Set(repoPullRequests.flatMap((pr) => pr.linkedIssues));
     const availableIssues = repoIssues.filter((issue) => issue.linkedPrs.length === 0 && !linkedIssueNumbers.has(issue.number));
     const queuePenalty = Math.min(20, repoPullRequests.length * 2);
@@ -1413,7 +1425,7 @@ export function buildContributorOpportunities(
       const maintainerWipPenalty = maintainerWip ? 45 : 0;
       const score = clamp(
         50 +
-          (touchedRepos.has(repo.fullName) ? 20 : 0) +
+          (touchedRepos.has(repo.fullName.toLowerCase()) ? 20 : 0) +
           labelFit * 5 +
           (lane.lane === "split" ? 8 : 0) +
           (lane.lane === "direct_pr" ? 5 : 0) -
@@ -1440,7 +1452,7 @@ export function buildContributorOpportunities(
         reasons: [
           lane.summary,
           ...(maintainerAuthored && !maintainerWip ? ["Maintainer-created issue — typically the highest contribution multiplier on Gittensor."] : []),
-          ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
+          ...(touchedRepos.has(repo.fullName.toLowerCase()) ? ["Contributor has prior activity in this registered repo."] : []),
           ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
           ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),
@@ -2487,7 +2499,7 @@ export function buildPreflightResult(
   const itemTerms = collisionReportTermCache.get(collisionReport) ?? new Map<string, CollisionTerms>();
   const collisions = collisionReport.clusters.filter((cluster) =>
     cluster.items.some((item) => {
-      if (linkedIssues.includes(item.number)) {
+      if (itemSharesPlannedLinkedIssue(item, linkedIssues)) {
         return true;
       }
       const overlap = termOverlap(plannedTerms, itemTerms.get(itemKey(item)) ?? collisionTerms(item));

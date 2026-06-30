@@ -2,8 +2,9 @@
 // dependencies, then queries OSV.dev (free, no key) for known vulnerabilities in the NEW versions. This is the
 // heavy/external work the no-checkout `claude --print` reviewer cannot do (Bash/WebFetch disallowed, no CVE DB).
 import type { EnrichRequest, DependencyFinding, Cve } from "../types.js";
+import type { AnalysisContext } from "../analysis-context.js";
 
-interface DepChange {
+export interface DepChange {
   ecosystem: string;
   package: string;
   from: string | null;
@@ -14,15 +15,18 @@ const MAX_MANIFEST_FILES = 20;
 const MAX_PATCH_LINES_PER_FILE = 500;
 const MAX_DEPENDENCY_QUERIES = 25;
 
-interface ScanLimits {
+export interface ScanLimits {
   maxManifestFiles?: number;
   maxPatchLinesPerFile?: number;
   maxDependencyQueries?: number;
 }
 
+type ExternalCallCache = Pick<AnalysisContext, "cachedExternalCall">;
+
 interface ScanOptions {
   signal?: AbortSignal;
   limits?: ScanLimits;
+  cache?: ExternalCallCache;
 }
 
 // Per-manifest line parsers. Each returns [name, version] for a `+`/`-` diff line, or null. Heuristic (line-based,
@@ -181,26 +185,42 @@ export async function queryOsv(
   }));
 }
 
-/** Analyzer entrypoint: changed deps → OSV → only the deps that carry vulnerabilities. */
-export async function scanDependencies(
-  req: EnrichRequest,
-  fetchImpl: typeof fetch = fetch,
-  options: ScanOptions = {},
-): Promise<DependencyFinding[]> {
-  const changes = extractDependencyChanges(req.files ?? [], options.limits).slice(
-    0,
-    options.limits?.maxDependencyQueries ?? MAX_DEPENDENCY_QUERIES,
-  );
-  const findings: DependencyFinding[] = [];
-  for (const change of changes) {
-    if (options.signal?.aborted) break;
-    const cves = await queryOsv(
+function osvCacheKey(change: DepChange): string {
+  return `${change.ecosystem}:${change.package}:${change.to}`;
+}
+
+async function queryOsvForChange(
+  change: DepChange,
+  fetchImpl: typeof fetch,
+  options: ScanOptions,
+): Promise<Cve[]> {
+  const load = () =>
+    queryOsv(
       change.ecosystem,
       change.package,
       change.to,
       fetchImpl,
       options.signal,
     );
+  return options.cache
+    ? options.cache.cachedExternalCall("osv", osvCacheKey(change), load)
+    : load();
+}
+
+/** Scan already-extracted dependency changes → OSV → only the deps that carry vulnerabilities. */
+export async function scanDependencyChanges(
+  changes: readonly DepChange[],
+  fetchImpl: typeof fetch = fetch,
+  options: ScanOptions = {},
+): Promise<DependencyFinding[]> {
+  const boundedChanges = changes.slice(
+    0,
+    options.limits?.maxDependencyQueries ?? MAX_DEPENDENCY_QUERIES,
+  );
+  const findings: DependencyFinding[] = [];
+  for (const change of boundedChanges) {
+    if (options.signal?.aborted) break;
+    const cves = await queryOsvForChange(change, fetchImpl, options);
     if (cves.length) {
       findings.push({
         ...change,
@@ -210,4 +230,17 @@ export async function scanDependencies(
     }
   }
   return findings;
+}
+
+/** Analyzer entrypoint: changed deps → OSV → only the deps that carry vulnerabilities. */
+export async function scanDependencies(
+  req: EnrichRequest,
+  fetchImpl: typeof fetch = fetch,
+  options: ScanOptions = {},
+): Promise<DependencyFinding[]> {
+  return scanDependencyChanges(
+    extractDependencyChanges(req.files ?? [], options.limits),
+    fetchImpl,
+    options,
+  );
 }

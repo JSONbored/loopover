@@ -1,6 +1,12 @@
 import type { AnalyzerDescriptor } from "../types.js";
-import { scanDependencies } from "../dependency-scan.js";
+import { scanDependencyChanges, type ScanLimits } from "../dependency-scan.js";
 import { SEVERITY_RANK } from "../../render-helpers.js";
+
+const DEPENDENCY_LIMITS = {
+  maxManifestFiles: 20,
+  maxPatchLinesPerFile: 500,
+  maxDependencyQueries: 25,
+} satisfies ScanLimits;
 
 export const dependencyAnalyzer: AnalyzerDescriptor<"dependency"> = {
   name: "dependency",
@@ -9,11 +15,7 @@ export const dependencyAnalyzer: AnalyzerDescriptor<"dependency"> = {
   cost: "registry",
   defaultEnabled: true,
   requires: ["files", "public-network"],
-  limits: {
-    maxManifestFiles: 20,
-    maxPatchLinesPerFile: 500,
-    maxDependencyQueries: 25,
-  },
+  limits: DEPENDENCY_LIMITS,
   docs: {
     summary: "Checks changed direct dependency versions against OSV.dev.",
     looksAt:
@@ -24,7 +26,16 @@ export const dependencyAnalyzer: AnalyzerDescriptor<"dependency"> = {
     notes:
       "Manifest-only by design; use lockfileDrift for transitive lockfile changes.",
   },
-  run: (req, { signal }) => scanDependencies(req, fetch, { signal }),
+  run: (_req, { signal, analysis }) =>
+    scanDependencyChanges(
+      analysis.dependencyChanges(DEPENDENCY_LIMITS),
+      fetch,
+      {
+        signal,
+        limits: DEPENDENCY_LIMITS,
+        cache: analysis,
+      },
+    ),
   render: (deps, { safeCodeSpan, promptText }) => {
     const lines: string[] = [];
     if (!deps.length) return lines;

@@ -2,6 +2,7 @@
 // assignments, citing file:line and the KIND only — the matched secret VALUE is never returned (so the brief is
 // safe to splice into a public review). Higher-recall than the engine's in-process regex pass, and line-cited via
 // the hunk headers so the reviewer can point at the exact line.
+import type { AddedLine } from "../analysis-context.js";
 import type { EnrichRequest, SecretFinding } from "../types.js";
 
 interface Rule {
@@ -73,6 +74,26 @@ export function scanPatch(path: string, patch: string): SecretFinding[] {
       newLine++;
     } else if (!line.startsWith("-")) {
       newLine++; // context line advances the new-file counter; removed lines do not
+    }
+  }
+  return findings;
+}
+
+export function scanAddedLinesForSecrets(
+  addedLines: readonly AddedLine[],
+): SecretFinding[] {
+  const findings: SecretFinding[] = [];
+  for (const line of addedLines) {
+    for (const rule of RULES) {
+      if (rule.re.test(line.text)) {
+        findings.push({
+          file: line.file,
+          line: line.line,
+          kind: rule.kind,
+          confidence: rule.confidence,
+        });
+        break;
+      }
     }
   }
   return findings;

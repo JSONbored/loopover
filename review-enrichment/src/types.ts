@@ -303,7 +303,22 @@ export interface AnalyzerDiagnostics {
   prLookupCount?: number;
   skippedFileCount?: number;
   capped?: boolean;
+  cacheHits?: number;
+  cacheMisses?: number;
+  externalCallsByCategory?: Record<string, number>;
+  skippedWorkByCategory?: Record<string, number>;
+  cappedWorkByCategory?: Record<string, number>;
+  analysisElapsedMs?: number;
   captureDegradation?: boolean;
+}
+
+export interface AnalyzerMetricsDiagnostics {
+  cacheHits: number;
+  cacheMisses: number;
+  externalCallsByCategory: Record<string, number>;
+  skippedWorkByCategory: Record<string, number>;
+  cappedWorkByCategory: Record<string, number>;
+  analysisElapsedMs: number;
 }
 
 /** Service → engine response. `promptSection` is spliced verbatim; `findings` is the structured backing data. */

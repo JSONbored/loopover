@@ -70,6 +70,25 @@ classes, per-analyzer limits, and self-host configuration. When adding or migrat
 - Make external-call analyzers fail open and respect the orchestrator abort signal when the scanner supports it.
 - Prefer a focused analyzer test file instead of expanding the shared `enrichment.test.ts` mega-test.
 
+## Shared analysis context
+
+Each `/v1/enrich` request now gets a request-scoped `AnalysisContext` before analyzers run. New and migrated
+analyzers should prefer it for shared PR facts instead of reparsing the envelope:
+
+| Context surface | Purpose |
+| --------------- | ------- |
+| `changedFiles` / `changedFilePaths` | The request's changed file list and paths. |
+| `addedLines` | Unified-diff added lines with file and new-line number tracking. |
+| `patchHunks` | Parsed hunk locations for analyzers that need bounded line-aware scans. |
+| `fileCategories` | Coarse public-safe file categories used for fast filtering. |
+| `dependencyChanges()` / `packageChanges()` | Cached direct package changes from changed manifests. |
+| `cachedExternalCall(category, key, load)` | Request-scoped in-flight de-duplication for identical external lookups. |
+
+Context caches are request-scoped only. They are for avoiding duplicate work inside one enrichment run, not for
+cross-request TTL storage. Cache metrics are aggregate and public-safe: hit/miss counts, external-call counts by
+category, skipped/capped work counts by category, and elapsed time. Never put request bodies, diffs, prompts,
+comments, tokens, private configs, or raw external payloads into cache categories, metric keys, Sentry tags, or logs.
+
 The engine also sends `budget.timeoutMs` with one second of headroom below `REES_TIMEOUT_MS`, so REES can return a
 partial/degraded brief before the caller aborts the HTTP request. If Railway is still running an older REES build,
 temporarily raise the engine-side `REES_TIMEOUT_MS` above the REES analyzer budget, or set `REES_ANALYZERS` to a

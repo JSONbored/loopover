@@ -121,6 +121,12 @@ export interface AnalyzerDegradationContext {
   skippedFileCount?: number;
   githubEndpointCategory?: string;
   capped?: boolean;
+  cacheHits?: number;
+  cacheMisses?: number;
+  externalCallsByCategory?: Record<string, number>;
+  skippedWorkByCategory?: Record<string, number>;
+  cappedWorkByCategory?: Record<string, number>;
+  analysisElapsedMs?: number;
   requestId?: string;
   traceId?: string;
 }
@@ -148,6 +154,12 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     skippedFileCount: context.skippedFileCount,
     githubEndpointCategory: context.githubEndpointCategory,
     capped: context.capped,
+    cacheHits: context.cacheHits,
+    cacheMisses: context.cacheMisses,
+    externalCallsByCategory: context.externalCallsByCategory,
+    skippedWorkByCategory: context.skippedWorkByCategory,
+    cappedWorkByCategory: context.cappedWorkByCategory,
+    analysisElapsedMs: context.analysisElapsedMs,
     requestId: context.requestId,
     traceId: context.traceId,
     release: activeRelease,
@@ -174,12 +186,16 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     const endpointTag = sentryTagValue(context.githubEndpointCategory);
     const requestIdTag = sentryTagValue(context.requestId);
     const traceIdTag = sentryTagValue(context.traceId);
+    const cacheHitsTag = sentryTagValue(context.cacheHits);
+    const cacheMissesTag = sentryTagValue(context.cacheMisses);
     if (analyzerStatusTag) scope.setTag("analyzerStatus", analyzerStatusTag);
     if (partialStatusTag) scope.setTag("partialStatus", partialStatusTag);
     if (phaseTag) scope.setTag("phase", phaseTag);
     if (endpointTag) scope.setTag("githubEndpointCategory", endpointTag);
     if (requestIdTag) scope.setTag("requestId", requestIdTag);
     if (traceIdTag) scope.setTag("traceId", traceIdTag);
+    if (cacheHitsTag) scope.setTag("cacheHits", cacheHitsTag);
+    if (cacheMissesTag) scope.setTag("cacheMisses", cacheMissesTag);
     scope.setTag("environment", sentryTagValue(activeEnvironment) ?? "production");
     Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
   });

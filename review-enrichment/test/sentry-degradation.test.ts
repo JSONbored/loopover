@@ -140,6 +140,12 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
     skippedFileCount: 2,
     githubEndpointCategory: "commit_pulls",
     capped: true,
+    cacheHits: 4,
+    cacheMisses: 9,
+    externalCallsByCategory: { osv: 3, commit_pulls: 12 },
+    skippedWorkByCategory: { history_budget: 2 },
+    cappedWorkByCategory: { history_files: 2 },
+    analysisElapsedMs: 6812,
     requestId: "req-123",
     traceId: "0123456789abcdef0123456789abcdef",
     diff: `+${fakeToken}`,
@@ -155,6 +161,8 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
   assert.equal(sentry.tags.partialStatus, "partial");
   assert.equal(sentry.tags.phase, "similar_past_prs");
   assert.equal(sentry.tags.githubEndpointCategory, "commit_pulls");
+  assert.equal(sentry.tags.cacheHits, "4");
+  assert.equal(sentry.tags.cacheMisses, "9");
   assert.equal(sentry.tags.requestId, "req-123");
   const analyzerContext = sentry.contexts.rees_analyzer as Record<string, unknown>;
   assert.deepEqual(analyzerContext, {
@@ -177,6 +185,12 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
     skippedFileCount: 2,
     githubEndpointCategory: "commit_pulls",
     capped: true,
+    cacheHits: 4,
+    cacheMisses: 9,
+    externalCallsByCategory: { osv: 3, commit_pulls: 12 },
+    skippedWorkByCategory: { history_budget: 2 },
+    cappedWorkByCategory: { history_files: 2 },
+    analysisElapsedMs: 6812,
     requestId: "req-123",
     traceId: "0123456789abcdef0123456789abcdef",
     release: "gittensory-rees@test",

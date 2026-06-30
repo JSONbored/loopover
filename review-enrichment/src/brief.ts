@@ -12,6 +12,10 @@ import type {
   AnalyzerRegistry,
   AnalyzerRunContext,
 } from "./analyzers/types.js";
+import {
+  createAnalysisContext,
+  type AnalysisContext,
+} from "./analysis-context.js";
 import { ANALYZERS } from "./analyzers/registry.js";
 import { renderBrief } from "./render.js";
 import { captureAnalyzerDegradation } from "./sentry.js";
@@ -34,6 +38,7 @@ function runWithTimeout<T>(
   run: (context: AnalyzerRunContext) => Promise<T>,
   ms: number,
   diagnostics: AnalyzerDiagnostics,
+  analysis: AnalysisContext,
 ): Promise<T> {
   const controller = new AbortController();
   const startedAtMs = Date.now();
@@ -43,6 +48,7 @@ function runWithTimeout<T>(
     startedAtMs,
     deadlineMs: startedAtMs + ms,
     diagnostics,
+    analysis,
   };
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -107,9 +113,28 @@ function captureDegradation(
     skippedFileCount: input.diagnostics.skippedFileCount,
     githubEndpointCategory: input.diagnostics.githubEndpointCategory,
     capped: input.diagnostics.capped,
+    cacheHits: input.diagnostics.cacheHits,
+    cacheMisses: input.diagnostics.cacheMisses,
+    externalCallsByCategory: input.diagnostics.externalCallsByCategory,
+    skippedWorkByCategory: input.diagnostics.skippedWorkByCategory,
+    cappedWorkByCategory: input.diagnostics.cappedWorkByCategory,
+    analysisElapsedMs: input.diagnostics.analysisElapsedMs,
     requestId: input.options.requestId,
     traceId: input.options.traceId,
   });
+}
+
+function attachAnalysisMetrics(
+  diagnostics: AnalyzerDiagnostics,
+  analysis: AnalysisContext,
+): void {
+  const metrics = analysis.snapshotMetrics();
+  diagnostics.cacheHits = metrics.cacheHits;
+  diagnostics.cacheMisses = metrics.cacheMisses;
+  diagnostics.externalCallsByCategory = metrics.externalCallsByCategory;
+  diagnostics.skippedWorkByCategory = metrics.skippedWorkByCategory;
+  diagnostics.cappedWorkByCategory = metrics.cappedWorkByCategory;
+  diagnostics.analysisElapsedMs = metrics.analysisElapsedMs;
 }
 
 export async function buildBrief(
@@ -123,6 +148,10 @@ export async function buildBrief(
     ? all.filter((name) => req.analyzers!.includes(name))
     : all;
   const budgetMs = resolveAnalyzerTimeoutMs(req.budget?.timeoutMs);
+  const analysis = createAnalysisContext(req, {
+    startedAtMs: start,
+    deadlineMs: start + budgetMs,
+  });
 
   const findings: BriefFindings = {};
   const analyzerStatus: Record<string, AnalyzerStatus> = {};
@@ -141,6 +170,7 @@ export async function buildBrief(
           (context) => analyzer(req, context),
           budgetMs,
           diagnostics,
+          analysis,
         );
         findings[name] = result as never;
         if (resultIsPartial(result)) {
@@ -149,6 +179,7 @@ export async function buildBrief(
           diagnostics.partialStatus = "partial";
           diagnostics.partialReason ??= "analyzer_partial";
           if (diagnostics.captureDegradation) {
+            attachAnalysisMetrics(diagnostics, analysis);
             captureDegradation(new Error(diagnostics.partialReason), {
               analyzer: name,
               requested,
@@ -168,6 +199,7 @@ export async function buildBrief(
         partial = true;
         diagnostics.partialStatus = "partial";
         diagnostics.partialReason ??= error instanceof Error ? error.message : "analyzer_error";
+        attachAnalysisMetrics(diagnostics, analysis);
         captureDegradation(error, {
           analyzer: name,
           requested,

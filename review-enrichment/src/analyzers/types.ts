@@ -3,6 +3,7 @@ import type {
   BriefFindings,
   EnrichRequest,
 } from "../types.js";
+import type { AnalysisContext } from "../analysis-context.js";
 import type { AnalyzerRenderHelpers } from "../render-helpers.js";
 
 export type AnalyzerName = keyof BriefFindings;
@@ -39,6 +40,7 @@ export interface AnalyzerRunContext {
   startedAtMs: number;
   deadlineMs: number;
   diagnostics: AnalyzerDiagnostics;
+  analysis: AnalysisContext;
 }
 
 export type AnalyzerResult<Name extends AnalyzerName = AnalyzerName> =

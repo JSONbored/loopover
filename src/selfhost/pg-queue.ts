@@ -12,9 +12,8 @@ import {
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
-  githubRateLimitAdmissionKeyForJob,
+  githubRateLimitAdmissionTargetForJob,
   githubRateLimitRetryDelayMs,
-  isGitHubBudgetBackgroundJob,
   jobCoalesceKey,
   jobPriority,
   queueBackgroundConcurrency,
@@ -23,6 +22,8 @@ import {
   queueStartupJitterMinJobs,
   queueStartupJitterMs,
   rateLimitRetryDelayWithJitter,
+  matchesGitHubRateLimitAdmissionTarget,
+  type GitHubRateLimitAdmissionTarget,
 } from "./queue-common";
 import type { JobMessage } from "../types";
 
@@ -105,7 +106,6 @@ export function createPgQueue(
   let activeBackground = 0;
   const activeJobIds = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let githubRateLimitCooldownUntil = 0;
 
   async function init(): Promise<void> {
     await pool.query(DDL);
@@ -223,7 +223,7 @@ export function createPgQueue(
     const payload = JSON.stringify(message);
     const priority = jobPriority(payload);
     const key = jobCoalesceKey(payload);
-    const runAfter = nextRunAfter(now, delaySeconds * 1000, `${key ?? ""}:${payload}`);
+    const runAfter = now + delaySeconds * 1000;
     if (key) {
       const existing = (
         await pool.query(
@@ -252,7 +252,6 @@ export function createPgQueue(
   }
 
   async function claimNext(): Promise<JobRow | null> {
-    if (Date.now() < githubRateLimitCooldownUntil) return null;
     const now = Date.now();
     const foreground = await claimNextWhere(now, "priority >= $2");
     if (foreground) return foreground;
@@ -285,13 +284,6 @@ export function createPgQueue(
       [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
     );
     return (res.rows[0] as JobRow | undefined) ?? null;
-  }
-
-  function nextRunAfter(now: number, delayMs: number, seed: string): number {
-    const requested = now + delayMs;
-    if (now >= githubRateLimitCooldownUntil) return requested;
-    const cooldownDelay = githubRateLimitCooldownUntil - now;
-    return Math.max(requested, now + rateLimitRetryDelayWithJitter(cooldownDelay, seed));
   }
 
   async function processOne(): Promise<boolean> {
@@ -392,16 +384,16 @@ export function createPgQueue(
         if (rateLimitDelayMs !== null) {
           const now = Date.now();
           const retryAfter = now + rateLimitRetryDelayWithJitter(rateLimitDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`);
-          githubRateLimitCooldownUntil = Math.max(githubRateLimitCooldownUntil, now + rateLimitDelayMs);
-          const deferred = await deferPendingJobsForRateLimit(rateLimitDelayMs, now);
+          const target = githubRateLimitAdmissionTargetForJob(message);
+          const deferred = target ? await deferPendingJobsForRateLimit(rateLimitDelayMs, now, target) : 0;
           if (deferred) {
             await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total", deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
-                event: "selfhost_queue_rate_limit_cooldown",
+                event: "selfhost_queue_rate_limit_budget_deferred",
+                admission_key: target?.admissionKey ?? null,
                 deferred,
-                cooldown_until: githubRateLimitCooldownUntil,
               }),
             );
           }
@@ -588,6 +580,7 @@ export function createPgQueue(
   async function deferPendingJobsForRateLimit(
     delayMs: number,
     now: number,
+    blocked: GitHubRateLimitAdmissionTarget,
   ): Promise<number> {
     const res = await pool.query(
       `SELECT id, payload, job_key FROM ${TABLE} WHERE status='pending' AND run_after<=$1`,
@@ -595,25 +588,26 @@ export function createPgQueue(
     );
     let changed = 0;
     for (const row of res.rows as Array<{ id: string; payload: string; job_key?: string | null }>) {
+      let candidate: GitHubRateLimitAdmissionTarget | null = null;
+      try {
+        candidate = githubRateLimitAdmissionTargetForJob(JSON.parse(row.payload) as JobMessage);
+      } catch {
+        candidate = null;
+      }
+      if (!matchesGitHubRateLimitAdmissionTarget(candidate, blocked)) continue;
       const runAfter = now + rateLimitRetryDelayWithJitter(delayMs, `${row.job_key ?? ""}:${row.id}:${row.payload}`);
       const update = await pool.query(
         `UPDATE ${TABLE} SET run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3 AND status='pending'`,
-        [runAfter, "github rate-limit cooldown", row.id],
+        [runAfter, "github rate-limit budget deferred", row.id],
       );
       changed += update.rowCount ?? 0;
     }
     return changed;
   }
 
-  async function rateLimitAdmissionDelayMs(message: JobMessage): Promise<{ kind: "background" | "webhook"; delayMs: number } | null> {
-    const kind =
-      message.type === "github-webhook"
-        ? "webhook"
-        : isGitHubBudgetBackgroundJob(message)
-          ? "background"
-          : null;
-    if (kind === null) return null;
-    const admissionKey = githubRateLimitAdmissionKeyForJob(message);
+  async function rateLimitAdmissionDelayMs(message: JobMessage): Promise<(GitHubRateLimitAdmissionTarget & { delayMs: number }) | null> {
+    const target = githubRateLimitAdmissionTargetForJob(message);
+    if (target === null) return null;
     const res = await pool.query(
       `WITH exact_observation AS (
         SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
@@ -629,11 +623,11 @@ export function createPgQueue(
       SELECT remaining, reset_at, observed_at FROM exact_observation
       UNION ALL
       SELECT remaining, reset_at, observed_at FROM fallback_observation`,
-      [admissionKey],
+      [target.admissionKey],
     );
     const rows = res.rows as Array<{ remaining?: number | string | null; reset_at?: string | null; observed_at?: string | null }>;
-    const delayMs = githubRateLimitAdmissionDelayMs(kind, admissionKey, rows);
-    return delayMs === null ? null : { kind, delayMs };
+    const delayMs = githubRateLimitAdmissionDelayMs(target.kind, target.admissionKey, rows);
+    return delayMs === null ? null : { ...target, delayMs };
   }
 
   async function mergeRescheduledJobIntoPending(

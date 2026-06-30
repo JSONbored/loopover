@@ -178,8 +178,42 @@ export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRa
     : null;
 }
 
+export type GitHubRateLimitAdmissionKind = "background" | "webhook";
+
+export type GitHubRateLimitAdmissionTarget = {
+  kind: GitHubRateLimitAdmissionKind;
+  admissionKey: GitHubRateLimitAdmissionKey | null;
+};
+
+export function githubRateLimitAdmissionTargetForJob(
+  message: JobMessage,
+): GitHubRateLimitAdmissionTarget | null {
+  if (message.type === "github-webhook") {
+    return {
+      kind: "webhook",
+      admissionKey: githubRateLimitAdmissionKeyForJob(message),
+    };
+  }
+  if (!isGitHubBudgetBackgroundJob(message)) return null;
+  return {
+    kind: "background",
+    admissionKey: githubRateLimitAdmissionKeyForJob(message),
+  };
+}
+
+export function matchesGitHubRateLimitAdmissionTarget(
+  candidate: GitHubRateLimitAdmissionTarget | null,
+  blocked: GitHubRateLimitAdmissionTarget,
+): boolean {
+  if (candidate === null) return false;
+  // Null-key GitHub jobs are legacy/unknown actor work; park them with a depleted known bucket,
+  // and park all GitHub-budget work when the depleted bucket itself is unknown.
+  if (blocked.admissionKey === null) return true;
+  return candidate.admissionKey === blocked.admissionKey || candidate.admissionKey === null;
+}
+
 export function githubRateLimitAdmissionDelayMs(
-  kind: "background" | "webhook",
+  kind: GitHubRateLimitAdmissionKind,
   admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
   persisted: AdmissionObservation | readonly AdmissionObservation[] | null | undefined,
   nowMs = Date.now(),

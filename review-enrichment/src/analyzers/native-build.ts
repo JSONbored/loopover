@@ -7,6 +7,7 @@ import type { EnrichRequest, NativeBuildFinding } from "../types.js";
 import { extractDependencyChanges } from "./dependency-scan.js";
 
 const MAX_QUERIES = 25;
+const MAX_REGISTRY_JSON_BYTES = 2 * 1024 * 1024;
 const INSTALL_HOOKS = ["preinstall", "install", "postinstall"];
 // Tokens in an install-lifecycle script that indicate a native toolchain runs on install.
 const NATIVE_TOOL_RE = /\b(node-gyp|node-pre-gyp|prebuild|prebuild-install|cmake-js|node-addon-api|nan)\b/;
@@ -78,9 +79,45 @@ async function fetchJson(
   try {
     const response = await fetchImpl(url, { signal });
     if (!response.ok) return null;
-    return await response.json();
+    const text = await readJsonText(response);
+    return text === null ? null : JSON.parse(text);
   } catch {
     return null;
+  }
+}
+
+async function readJsonText(response: Response): Promise<string | null> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const parsedLength = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsedLength) && parsedLength > MAX_REGISTRY_JSON_BYTES) return null;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_REGISTRY_JSON_BYTES) return null;
+    return new TextDecoder().decode(buffer);
+  }
+
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_REGISTRY_JSON_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
   }
 }
 

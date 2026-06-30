@@ -225,6 +225,96 @@ describe("createSqliteQueue (durable #980)", () => {
     }
   });
 
+  it("pre-yields webhook jobs from legacy repo observations when an installation id is present", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const driver = makeDriver();
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, NULL, 'rest', ?, 403, 5000, 50, ?, ?)`,
+        ["rl-webhook-legacy", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+      await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+      await q.drain();
+
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit webhook admission",
+      });
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the newest observation across installation and legacy repo scopes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const driver = makeDriver();
+    driver.query(
+      `CREATE TABLE github_rate_limit_observations (
+        id TEXT PRIMARY KEY,
+        repo_full_name TEXT NOT NULL,
+        admission_key TEXT,
+        resource TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        limit_value INTEGER,
+        remaining INTEGER,
+        reset_at TEXT,
+        observed_at TEXT NOT NULL
+      )`,
+      [],
+    );
+    driver.query(
+      `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+       VALUES (?, ?, NULL, 'rest', ?, 403, 5000, 0, ?, ?)`,
+      ["rl-webhook-legacy-old", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T11:59:00.000Z"],
+    );
+    driver.query(
+      `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+       VALUES (?, ?, ?, 'rest', ?, 200, 5000, 4000, ?, ?)`,
+      ["rl-webhook-installation-new", "owner/other-repo", "installation:123", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+    );
+    const seen: string[] = [];
+    const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+
+    await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+    await q.drain();
+
+    expect(seen).toEqual(["github-webhook"]);
+    expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+  });
+
   it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));

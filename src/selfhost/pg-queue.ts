@@ -616,21 +616,17 @@ export function createPgQueue(
     if (kind === null) return null;
     const admissionKey = githubRateLimitAdmissionKeyForJob(message);
     const repoFullName = githubRateLimitAdmissionRepoForJob(message);
-    const res = admissionKey
-      ? await pool.query(
-          `SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
-            WHERE resource='rest' AND admission_key=$1 AND remaining IS NOT NULL
-            ORDER BY observed_at DESC
-            LIMIT 1`,
-          [admissionKey],
-        )
-      : repoFullName
+    const res =
+      admissionKey || repoFullName
         ? await pool.query(
             `SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
-              WHERE resource='rest' AND repo_full_name=$1 AND admission_key IS NULL AND remaining IS NOT NULL
-              ORDER BY observed_at DESC
+              WHERE resource='rest' AND remaining IS NOT NULL AND (
+                ($1::text IS NOT NULL AND admission_key=$1)
+                OR ($2::text IS NOT NULL AND repo_full_name=$2 AND admission_key IS NULL)
+              )
+              ORDER BY observed_at DESC, CASE WHEN admission_key=$1 THEN 1 ELSE 0 END DESC
               LIMIT 1`,
-            [repoFullName],
+            [admissionKey, repoFullName],
           )
         : { rows: [] };
     const row = res.rows[0] as { remaining?: number | string | null; reset_at?: string | null; observed_at?: string | null } | undefined;

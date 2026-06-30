@@ -617,21 +617,17 @@ function rateLimitAdmissionDelayMs(
   try {
     const admissionKey = githubRateLimitAdmissionKeyForJob(message);
     const repoFullName = githubRateLimitAdmissionRepoForJob(message);
-    const row = admissionKey
-      ? (driver.query(
-          `SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
-            WHERE resource='rest' AND admission_key=? AND remaining IS NOT NULL
-            ORDER BY observed_at DESC
-            LIMIT 1`,
-          [admissionKey],
-        ).rows[0] as { remaining?: number | null; reset_at?: string | null; observed_at?: string | null } | undefined)
-      : repoFullName
+    const row =
+      admissionKey || repoFullName
         ? (driver.query(
             `SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
-              WHERE resource='rest' AND repo_full_name=? AND admission_key IS NULL AND remaining IS NOT NULL
-              ORDER BY observed_at DESC
+              WHERE resource='rest' AND remaining IS NOT NULL AND (
+                (? IS NOT NULL AND admission_key=?)
+                OR (? IS NOT NULL AND repo_full_name=? AND admission_key IS NULL)
+              )
+              ORDER BY observed_at DESC, CASE WHEN admission_key=? THEN 1 ELSE 0 END DESC
               LIMIT 1`,
-            [repoFullName],
+            [admissionKey, admissionKey, repoFullName, repoFullName, admissionKey],
           ).rows[0] as { remaining?: number | null; reset_at?: string | null; observed_at?: string | null } | undefined)
         : undefined;
     const delayMs = githubRateLimitAdmissionDelayMs(kind, admissionKey, row);

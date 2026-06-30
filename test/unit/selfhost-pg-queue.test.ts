@@ -292,6 +292,28 @@ describe("createPgQueue (durable #977)", () => {
     expect(seen).toEqual(["review"]);
   });
 
+  it("copies carried webhook trace ids into job audit logs", async () => {
+    const m = makePool();
+    const writes: string[] = [];
+    vi.mocked(process.stdout.write).mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    m.enqueueJob("1", {
+      type: "github-webhook",
+      traceParent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+    });
+    const q = createPgQueue(m.pool, async () => undefined);
+
+    await q.init();
+    await q.drain();
+
+    const audit = writes.find((line) => line.includes('"event":"job_complete"'));
+    expect(JSON.parse(audit!) as Record<string, unknown>).toMatchObject({
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+  });
+
   it("claims foreground work before falling back to the capped background lane", async () => {
     const claimSql: string[] = [];
     const fn = vi.fn().mockImplementation(async (sql: unknown) => {

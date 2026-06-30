@@ -56,6 +56,26 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(q.size()).toBe(0);
   });
 
+  it("copies carried webhook trace ids into job audit logs", async () => {
+    const driver = makeDriver();
+    const writes: string[] = [];
+    vi.mocked(process.stdout.write).mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const q = createSqliteQueue(driver, async () => undefined);
+    const traced = prWebhook("trace-a");
+    if (traced.type === "github-webhook") traced.traceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
+    await q.binding.send(traced);
+
+    await q.drain();
+
+    const audit = writes.find((line) => line.includes('"event":"job_complete"'));
+    expect(JSON.parse(audit!) as Record<string, unknown>).toMatchObject({
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+  });
+
   it("tags webhook and PR review refresh jobs with elevated priorities (#review-latency)", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);

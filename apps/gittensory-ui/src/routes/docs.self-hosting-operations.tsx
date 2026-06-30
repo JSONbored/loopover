@@ -78,6 +78,11 @@ review_context_fetch_failed`}
         The observability profile starts Prometheus, Alertmanager, Loki, Promtail, and Grafana with
         dashboards for infra, review activity, and AI usage.
       </p>
+      <p>
+        When OpenTelemetry and Sentry are enabled, job audit logs and Sentry events include
+        trace_id/span_id fields so an operator can jump from a failed job or issue to the matching
+        trace in Grafana or Tempo.
+      </p>
       <CodeBlock lang="bash" code={`docker compose --profile observability up -d`} />
 
       <h2>Routine checks</h2>

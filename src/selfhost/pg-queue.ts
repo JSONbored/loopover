@@ -339,6 +339,7 @@ export function createPgQueue(
         });
         return true;
       }
+      const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
       try {
         await withOtelSpan(
           "selfhost.queue.job",
@@ -355,7 +356,7 @@ export function createPgQueue(
           payload_type: extractPayloadType(job.payload),
           latency_ms: Date.now() - claimedAt,
           attempts: Number(job.attempts) + 1,
-        });
+        }, jobTraceParent);
       } catch (error) {
         const attempts = Number(job.attempts) + 1;
         const errMsg = error instanceof Error ? error.message : "unknown error";
@@ -394,7 +395,7 @@ export function createPgQueue(
             attempts,
             retry_after_ms: Math.max(0, retryAfter - Date.now()),
             error: errMsg,
-          });
+          }, jobTraceParent);
           return true;
         }
         await recordQueueMetric("gittensory_jobs_failed_total");
@@ -421,7 +422,7 @@ export function createPgQueue(
             latency_ms: Date.now() - claimedAt,
             attempts,
             error: errMsg,
-          });
+          }, jobTraceParent);
           captureError(error, {
             kind: "job_dead",
             reason: "max_retries_exhausted",
@@ -443,7 +444,7 @@ export function createPgQueue(
             latency_ms: Date.now() - claimedAt,
             attempts,
             error: errMsg,
-          });
+          }, jobTraceParent);
         }
       }
       return true;

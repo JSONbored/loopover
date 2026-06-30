@@ -2,7 +2,13 @@
 // env-gated, dynamically-imported selfhost-integration pattern (Redis/Qdrant/embed-provider in server.ts).
 // @sentry/node is NEVER imported at module top level — it loads lazily inside initSentry(), so it never enters
 // the Worker bundle (src/index.ts) and cloudflare:* stubbing stays clean. All helpers are safe to call when off.
+import { currentOtelTraceIds } from "./otel";
+
 type SentryNs = typeof import("@sentry/node");
+type SentryScope = {
+  setContext(name: string, context: Record<string, unknown>): void;
+  setTag(key: string, value: string): void;
+};
 let Sentry: SentryNs | undefined;
 let active = false;
 
@@ -12,6 +18,14 @@ const SECRET_KEY =
 function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function setOtelTraceScope(scope: SentryScope): void {
+  const trace = currentOtelTraceIds();
+  if (!trace) return;
+  scope.setTag("trace_id", trace.trace_id);
+  scope.setTag("span_id", trace.span_id);
+  scope.setContext("otel", { ...trace });
 }
 
 /** Resolve the Sentry release id from explicit override first, then the image-baked self-host version. */
@@ -70,6 +84,7 @@ export function captureError(
 ): void {
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
+    setOtelTraceScope(scope);
     if (context) scope.setContext("gittensory", context);
     Sentry!.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -86,6 +101,7 @@ export function captureReviewFailure(
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
     scope.setLevel("error");
+    setOtelTraceScope(scope);
     if (context) {
       scope.setContext("review", context);
       for (const tag of ["owner", "repo", "pr", "head_sha"]) {
@@ -102,7 +118,7 @@ export function captureReviewFailure(
 
 // The structured-log fields worth indexing as Sentry tags — the dimensions operators filter + group by. Only
 // string|number values are tagged; everything else stays in the full "log" context.
-const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId", "provider", "model", "effort", "timeoutMs"] as const;
+const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId", "provider", "model", "effort", "timeoutMs", "trace_id", "span_id"] as const;
 
 /** A SHORT location suffix — " (repo#pr)" — for a no-message error title, so the issue list shows WHERE without
  *  dumping every scalar field (which made titles unreadably long, e.g. trailing a full deliveryId). The complete
@@ -211,6 +227,7 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   errorEvent.name = event ?? "GittensoryLog";
   Sentry.withScope((scope) => {
     scope.setLevel(severity);
+    setOtelTraceScope(scope);
     scope.setContext("log", obj);
     if (event) scope.setTag("event", event);
     // Index the dimensions operators filter + group by, so issues are findable without digging into the context.

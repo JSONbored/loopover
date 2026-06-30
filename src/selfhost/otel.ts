@@ -9,6 +9,8 @@ type OtelProvider = {
   shutdown(): Promise<void>;
 };
 type SpanOptions = { parentTraceParent?: string | undefined };
+export type OtelTraceIds = { trace_id: string; span_id: string };
+export type OtelTraceLogFields = { trace_id: string; span_id?: string };
 
 let Otel: OtelApi | undefined;
 let provider: OtelProvider | undefined;
@@ -145,24 +147,51 @@ function statusMessage(error: unknown): string {
   return exceptionFor(error).message.slice(0, MAX_ATTRIBUTE_LENGTH);
 }
 
-function activeContextFromTraceParent(traceParent: string | undefined): Context | undefined {
-  if (!traceParent || !Otel) return undefined;
+function parseTraceParent(traceParent: string | undefined): { traceId: string; spanId: string; traceFlags: number } | undefined {
+  if (!traceParent) return undefined;
   const match = TRACEPARENT_RE.exec(traceParent.trim());
   if (!match) return undefined;
-  return Otel.trace.setSpanContext(Otel.context.active(), {
+  return {
     traceId: match[1]!.toLowerCase(),
     spanId: match[2]!.toLowerCase(),
     traceFlags: Number.parseInt(match[3]!, 16) & 1,
+  };
+}
+
+function activeContextFromTraceParent(api: OtelApi, traceParent: string | undefined): Context | undefined {
+  const parsed = parseTraceParent(traceParent);
+  if (!parsed) return undefined;
+  return api.trace.setSpanContext(api.context.active(), {
+    traceId: parsed.traceId,
+    spanId: parsed.spanId,
+    traceFlags: parsed.traceFlags,
     isRemote: true,
   });
 }
 
-export function currentOtelTraceParent(): string | undefined {
+function currentOtelSpanContext() {
   if (!active || !Otel) return undefined;
-  const spanContext = Otel.trace.getSpanContext(contextStore.getStore() ?? Otel.context.active());
+  return Otel.trace.getSpanContext(contextStore.getStore() ?? Otel.context.active());
+}
+
+export function currentOtelTraceParent(): string | undefined {
+  const spanContext = currentOtelSpanContext();
   if (!spanContext) return undefined;
   const flags = (spanContext.traceFlags & 1).toString(16).padStart(2, "0");
   return `00-${spanContext.traceId}-${spanContext.spanId}-${flags}`;
+}
+
+export function currentOtelTraceIds(): OtelTraceIds | undefined {
+  const spanContext = currentOtelSpanContext();
+  if (!spanContext) return undefined;
+  return { trace_id: spanContext.traceId, span_id: spanContext.spanId };
+}
+
+export function otelTraceLogFields(fallbackTraceParent?: string): OtelTraceLogFields | undefined {
+  const activeTrace = currentOtelTraceIds();
+  if (activeTrace) return activeTrace;
+  const fallback = parseTraceParent(fallbackTraceParent);
+  return fallback ? { trace_id: fallback.traceId } : undefined;
 }
 
 export function setCurrentOtelSpanAttributes(attributes: Record<string, unknown>): void {
@@ -178,7 +207,7 @@ export async function withOtelSpan<T>(
   options?: SpanOptions,
 ): Promise<T> {
   if (!active || !Otel || !tracer) return await fn();
-  const parentContext = activeContextFromTraceParent(options?.parentTraceParent) ?? contextStore.getStore() ?? Otel.context.active();
+  const parentContext = activeContextFromTraceParent(Otel, options?.parentTraceParent) ?? contextStore.getStore() ?? Otel.context.active();
   const span = tracer.startSpan(name, { attributes: otelSafeAttributes(attributes) }, parentContext);
   const childContext = Otel.trace.setSpan(parentContext, span);
   return await contextStore.run(childContext, async () => {

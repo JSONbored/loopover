@@ -12,12 +12,18 @@ const mocks = vi.hoisted(() => {
     flush: vi.fn().mockResolvedValue(true),
   };
 });
+const otelMocks = vi.hoisted(() => ({
+  currentOtelTraceIds: vi.fn(),
+}));
 vi.mock("@sentry/node", () => ({
   init: mocks.init,
   withScope: mocks.withScope,
   captureException: mocks.captureException,
   captureMessage: mocks.captureMessage,
   flush: mocks.flush,
+}));
+vi.mock("../../src/selfhost/otel", () => ({
+  currentOtelTraceIds: otelMocks.currentOtelTraceIds,
 }));
 
 import {
@@ -35,6 +41,7 @@ import {
 beforeEach(() => {
   resetSentryForTest();
   vi.clearAllMocks();
+  otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
 });
 
 // The structured-log forwarder captures a synthetic Error via captureException (name = event slug, message = the
@@ -195,6 +202,32 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureException).toHaveBeenCalledTimes(2);
   });
 
+  it("adds active OTEL trace ids to captured Sentry events", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    otelMocks.currentOtelTraceIds.mockReturnValue({
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      span_id: "bbbbbbbbbbbbbbbb",
+    });
+
+    captureError(new Error("boom"), { kind: "job_dead" });
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("trace_id", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("span_id", "bbbbbbbbbbbbbbbb");
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("otel", {
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      span_id: "bbbbbbbbbbbbbbbb",
+    });
+
+    mocks.scope.setTag.mockClear();
+    mocks.scope.setContext.mockClear();
+    captureReviewFailure(new Error("review"), { repo: "o/r", pr: 9 });
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("trace_id", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("span_id", "bbbbbbbbbbbbbbbb");
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("otel", {
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      span_id: "bbbbbbbbbbbbbbbb",
+    });
+  });
+
   it("flushSentry delegates to Sentry.flush with the timeout", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     await flushSentry(123);
@@ -299,6 +332,20 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(mocks.scope.setTag).toHaveBeenCalledWith("model", "gpt-5.5");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("effort", "high");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("timeoutMs", "240000");
+  });
+
+  it("indexes trace ids already present on structured error logs", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_job_dead",
+        trace_id: "cccccccccccccccccccccccccccccccc",
+        span_id: "dddddddddddddddd",
+      }),
+    );
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("trace_id", "cccccccccccccccccccccccccccccccc");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("span_id", "dddddddddddddddd");
   });
 
   it("forwards a level:fatal log titled by message (no event ⇒ no tag)", async () => {

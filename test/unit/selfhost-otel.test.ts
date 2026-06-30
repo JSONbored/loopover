@@ -21,10 +21,12 @@ vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
 }));
 
 import {
+  currentOtelTraceIds,
   currentOtelTraceParent,
   flushOpenTelemetry,
   initOpenTelemetry,
   otelSafeAttributes,
+  otelTraceLogFields,
   resetOpenTelemetryForTest,
   resolveOtelTraceEndpoint,
   selfHostHttpRequestAttributes,
@@ -63,6 +65,12 @@ describe("self-host OpenTelemetry", () => {
     await flushOpenTelemetry();
     await expect(withOtelSpan("off", { "job.type": "x" }, () => 42)).resolves.toBe(42);
     expect(currentOtelTraceParent()).toBeUndefined();
+    expect(currentOtelTraceIds()).toBeUndefined();
+    expect(otelTraceLogFields()).toBeUndefined();
+    expect(otelTraceLogFields("bad-traceparent")).toBeUndefined();
+    expect(otelTraceLogFields("00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")).toEqual({
+      trace_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
     setCurrentOtelSpanAttributes({ ignored: true });
     expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
   });
@@ -152,16 +160,26 @@ describe("self-host OpenTelemetry", () => {
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector/v1/traces",
     }));
     expect(currentOtelTraceParent()).toBeUndefined();
+    expect(currentOtelTraceIds()).toBeUndefined();
     setCurrentOtelSpanAttributes({ ignored: true });
     let traceParent: string | undefined;
+    let traceIds: ReturnType<typeof currentOtelTraceIds>;
+    let logFields: ReturnType<typeof otelTraceLogFields>;
     await withOtelSpan("selfhost.http.request", undefined, () => {
       traceParent = currentOtelTraceParent();
+      traceIds = currentOtelTraceIds();
+      logFields = otelTraceLogFields("00-ffffffffffffffffffffffffffffffff-eeeeeeeeeeeeeeee-01");
       setCurrentOtelSpanAttributes({
         "http.response.status_code": 202,
         secretHeader: "drop",
       });
     });
     expect(traceParent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/);
+    expect(traceIds).toEqual({
+      trace_id: traceParent!.split("-")[1],
+      span_id: traceParent!.split("-")[2],
+    });
+    expect(logFields).toEqual(traceIds);
 
     await withOtelSpan("selfhost.queue.job", { "job.type": "github-webhook" }, () => undefined, { parentTraceParent: traceParent });
     await withOtelSpan("invalid-parent", undefined, () => undefined, { parentTraceParent: "not-a-traceparent" });

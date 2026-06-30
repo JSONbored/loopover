@@ -41,6 +41,16 @@ describe("logAudit", () => {
     logAudit({ event: "job_complete", ts: 0, job_id: 0, latency_ms: 0, attempts: 1 });
     expect(written[0]!).toMatch(/\n$/);
   });
+
+  it("adds a carried OTEL trace id without inventing a current span id", () => {
+    logAudit(
+      { event: "job_complete", ts: 4000, job_id: 3, latency_ms: 20, attempts: 1 },
+      "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+    );
+    const parsed = JSON.parse(written[0]!) as Record<string, unknown>;
+    expect(parsed.trace_id).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(parsed.span_id).toBeUndefined();
+  });
 });
 
 describe("extractPayloadType", () => {

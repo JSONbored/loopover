@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getRepoQueueTrendSnapshot, persistRepoGithubTotalsSnapshot, persistSignalSnapshot, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { generateSignalSnapshots } from "../../src/queue/processors";
-import { buildQueueTrendReport, buildUnavailableQueueTrendReport, computeReviewVelocityPerDay, type QueueTrendReport } from "../../src/services/queue-trends";
+import { buildQueueTrendReport, buildUnavailableQueueTrendReport, type QueueTrendReport } from "../../src/services/queue-trends";
 import type { RepoGithubTotalsSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -81,9 +81,19 @@ describe("queue trend windows", () => {
     });
   });
 
-  it("returns null review velocity when observedDays is zero", () => {
-    expect(computeReviewVelocityPerDay(7, 3, 0)).toBeNull();
-    expect(computeReviewVelocityPerDay(7, 3, 7)).toBe(1.43);
+  it("observedDays is at least the requested window span for ready windows", () => {
+    const report = buildQueueTrendReport({
+      repoFullName: "owner/repo",
+      totalsSnapshots: [
+        totals(30, { openIssues: 20, openPrs: 4, merged: 2, closed: 1 }),
+        totals(0, { openIssues: 21, openPrs: 4, merged: 4, closed: 2 }),
+      ],
+    });
+
+    for (const window of report.windows.filter((entry) => entry.status === "ready")) {
+      expect(window.observedDays).toBeGreaterThanOrEqual(window.windowDays);
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
+    }
   });
 
   it("returns clear unavailable windows when history is missing", () => {

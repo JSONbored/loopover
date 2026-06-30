@@ -16,7 +16,8 @@ import {
   readEnrichRequestText,
 } from "./request-guardrails.js";
 import {
-  captureError,
+  captureRouteError,
+  captureUnhandledError,
   flushSentry,
   initSentry,
   resolveSentryEnvironment,
@@ -46,7 +47,7 @@ app.get("/health", (c) =>
 app.get("/ready", (c) => c.json({ ready: true }));
 
 app.onError((error, c) => {
-  captureError(error, { method: c.req.method, path: c.req.path });
+  captureRouteError(error, { method: c.req.method, route: c.req.path });
   return c.json({ error: "internal_error" }, 500);
 });
 
@@ -76,11 +77,11 @@ serve({ fetch: app.fetch, port }, (info) => {
 });
 
 process.on("unhandledRejection", (reason) => {
-  captureError(reason, { event: "unhandled_rejection" });
+  captureUnhandledError(reason, { event: "rees_unhandled_rejection" });
 });
 
 process.on("uncaughtException", (error) => {
-  captureError(error, { event: "uncaught_exception" });
+  captureUnhandledError(error, { event: "rees_uncaught_exception" });
   void flushSentry().finally(() => process.exit(1));
 });
 

@@ -3405,7 +3405,7 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
 
-      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] });
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -3438,6 +3438,7 @@ describe("GitHub backfill", () => {
 
       expect(aggregate.ciState).toBe("failed");
       expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.hasVisiblePending).toBe(true);
       expect(aggregate.failingDetails.map((detail) => detail.name).sort()).toEqual(["attacker/non-required-check", "attacker/non-required-status"]);
       expect(aggregate.nonRequiredFailingDetails).toEqual([]);
     });
@@ -3474,6 +3475,7 @@ describe("GitHub backfill", () => {
 
       expect(aggregate.ciState).toBe("pending");
       expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.hasVisiblePending).toBe(true);
       expect(aggregate.failingDetails).toEqual([]);
     });
 
@@ -3692,6 +3694,56 @@ describe("GitHub backfill", () => {
       });
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
       expect(aggregate.ciState).toBe("passed");
+    });
+
+    it("fold-all: waits for the required validate aggregate after its prerequisites settle", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?"))
+          return Response.json({
+            check_runs: [
+              { name: "CI / changes", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "CI / validate-code", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "CI / security", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+            ],
+          });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.hasPending).toBe(true);
+      expect(aggregate.hasVisiblePending).toBe(false);
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+
+    it("fold-all: passes once the validate aggregate check exists", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?"))
+          return Response.json({
+            check_runs: [
+              { name: "changes", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "validate-code", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "security", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+            ],
+          });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.hasPending).toBe(false);
+      expect(aggregate.hasVisiblePending).toBe(false);
     });
 
     it("fold-all: an UNREADABLE check-suites read with NO first-party check-run reads PENDING, not passed (#review-audit / #1799)", async () => {

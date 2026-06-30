@@ -2039,10 +2039,33 @@ const BOT_OWNED_CHECK_NAMES = new Set<string>([
   GITTENSORY_CONTEXT_CHECK_NAME,
 ]);
 
+const GITHUB_ACTIONS_VALIDATE_AGGREGATE_CONTEXT = "validate";
+const GITHUB_ACTIONS_VALIDATE_AGGREGATE_PREREQUISITES = new Set([
+  "changes",
+  "security",
+  "validate-code",
+]);
+
 function isOwnGitHubAppCheckRun(env: Env, run: GitHubCheckRunPayload): boolean {
   const appSlug = typeof run.app?.slug === "string" ? run.app.slug.trim().toLowerCase() : "";
   const ownSlug = env.GITHUB_APP_SLUG.trim().toLowerCase();
   return ownSlug.length > 0 && appSlug === ownSlug && BOT_OWNED_CHECK_NAMES.has(run.name);
+}
+
+function normalizeCiContextName(name: string): string {
+  const trimmed = name.trim();
+  const slashIndex = trimmed.lastIndexOf("/");
+  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1).trim() : trimmed;
+}
+
+function missingConventionalValidateAggregate(contextNames: ReadonlySet<string>): boolean {
+  const normalized = new Set<string>();
+  for (const name of contextNames) normalized.add(normalizeCiContextName(name));
+  if (normalized.has(GITHUB_ACTIONS_VALIDATE_AGGREGATE_CONTEXT)) return false;
+  for (const prerequisite of GITHUB_ACTIONS_VALIDATE_AGGREGATE_PREREQUISITES) {
+    if (!normalized.has(prerequisite)) return false;
+  }
+  return true;
 }
 
 export type LiveCiAggregate = {
@@ -2051,6 +2074,9 @@ export type LiveCiAggregate = {
   // than ciState: a non-required pending check must not fail the gate, but review execution should still wait
   // until every visible CI signal has settled.
   hasPending: boolean;
+  // A currently visible check-run/status/suite is still queued, waiting, or in_progress. Unlike inferred missing
+  // contexts or unreadable pages, this is active CI and must not be overridden by the stale-CI surfacing cap.
+  hasVisiblePending: boolean;
   // Checks that FAIL the gate. Any completed red check/status is adverse, required or not; required contexts are
   // still used for absent/pending detection so missing required CI cannot silently pass.
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
@@ -2103,7 +2129,7 @@ export async function fetchLiveCiAggregate(
   // Completed red checks/statuses still fail the aggregate even when they are not branch-protection-required.
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] };
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] };
   const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
   const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
@@ -2121,10 +2147,10 @@ export async function fetchLiveCiAggregate(
   // if the suites read is unreadable AND we never saw a first-party run, we cannot confirm the workflow ran, so
   // we must fail CLOSED rather than certify "passed" off only always-on third-party checks (#review-audit, #1799).
   let sawFirstPartyCheckRun = false;
-  // Track which required context names actually appear in any API result. An absent required context
-  // (never queued, in-progress, or complete) has no entry to push anyPending — without this guard it
-  // would be silently ignored and ciState could become "passed" while it never ran.
-  const seenContextNames = enforceRequiredOnly ? new Set<string>() : null;
+  // Track which context names actually appear in any API result. Required contexts use this to catch an absent
+  // required check, and fold-all mode uses it to catch this repo family's late-materializing aggregate `validate`
+  // check when branch-protection/ruleset contexts are not readable.
+  const seenContextNames = new Set<string>();
 
   // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
@@ -2140,7 +2166,7 @@ export async function fetchLiveCiAggregate(
       break;
     }
     for (const run of result.data.check_runs ?? []) {
-      seenContextNames?.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
+      seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
       if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
       if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs (see above)
       total += 1;
@@ -2182,7 +2208,7 @@ export async function fetchLiveCiAggregate(
   for (const ctx of commitStatuses) {
     const name = ctx.context ?? "status";
     total += 1;
-    seenContextNames?.add(name);
+    seenContextNames.add(name);
     const state = (ctx.state ?? "").toLowerCase();
     if (state === "failure" || state === "error") {
       const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
@@ -2198,13 +2224,19 @@ export async function fetchLiveCiAggregate(
   // A required context that never appeared in any result is not safe to treat as passed — count it as pending
   // so the gate waits rather than approving a PR whose required CI never ran (e.g. a workflow that doesn't
   // trigger on forks, or a check that was skipped).
-  if (seenContextNames) {
+  if (enforceRequiredOnly) {
     for (const ctx of requiredContexts!) {
       if (!seenContextNames.has(ctx)) {
         anyPending = true;
-        anyVisiblePending = true;
       }
     }
+  }
+
+  // Branch-protection reads can be unavailable for installation tokens/rulesets. In fold-all mode, a dependent
+  // aggregate check can briefly be absent after its prerequisites have settled; treat that as pending so the Orb
+  // check does not publish before the actual required `validate` context exists.
+  if (!enforceRequiredOnly && missingConventionalValidateAggregate(seenContextNames)) {
+    anyPending = true;
   }
 
   // Check-suite hardening (#ci-foldall-checksuites / #dependent-ci-materialization): the check-run/status scan can
@@ -2249,7 +2281,7 @@ export async function fetchLiveCiAggregate(
     checkRunsIncomplete ||
     statusIncomplete ||
     ciState === "pending";
-  return { ciState, hasPending, failingDetails, nonRequiredFailingDetails };
+  return { ciState, hasPending, hasVisiblePending: anyVisiblePending, failingDetails, nonRequiredFailingDetails };
 }
 
 /**

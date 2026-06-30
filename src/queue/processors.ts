@@ -1877,14 +1877,13 @@ async function prReadyForReview(
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
   const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token).catch(() => undefined);
   if (ci?.hasPending) {
-    // Staleness cap: genuinely-running CI settles in minutes. A required check that stays pending far longer
-    // (an orphaned / never-completing check — e.g. a fork check that never reports back) would otherwise make us
-    // defer FOREVER → the PR is silently stuck and never surfaces (the dominant metagraphed stall). Past
-    // STUCK_CI_DEFER_MS we stop deferring and let the gate FINALIZE, so the PR is surfaced (held / needs-human),
-    // or disposed if a verdict is reachable — never silently deferred. first-seen is tracked in the self-host
-    // Redis transient cache per PR+headSha (a new push = new SHA = fresh window); a cache miss degrades to the
-    // old defer (safe — never acts early). (#ci-stuck-finalize)
+    // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
+    // transiently unreadable pages, fork check that never reports). Past STUCK_CI_DEFER_MS we stop deferring and
+    // let the gate FINALIZE so the PR surfaces. A visibly queued/in_progress GitHub check/status is active CI,
+    // though, so never cut in front of it. first-seen is tracked in the self-host Redis transient cache per
+    // PR+headSha (a new push = a fresh window); a cache miss degrades to the old defer. (#ci-stuck-finalize)
     if (
+      ci.hasVisiblePending ||
       !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha))
     ) {
       await recordAuditEvent(env, {

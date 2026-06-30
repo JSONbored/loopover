@@ -10,6 +10,7 @@ import type { EnrichRequest, DocCommentDriftFinding } from "../types.js";
 const MAX_FILES = 20;
 const MAX_FINDINGS = 50;
 const MAX_SIGNATURE_LINES = 40;
+const MAX_FETCH_BYTES = 1_000_000;
 const SOURCE_RE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const SKIP_RE = /(?:\.d\.ts$|\.min\.|\.test\.|\.spec\.|__tests__\/|(?:^|\/)tests?\/)/;
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
@@ -20,6 +21,34 @@ const FUNC_DECL_RE = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\
 
 interface ScanOptions {
   signal?: AbortSignal;
+}
+
+async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
+  const length = Number(resp.headers.get("content-length"));
+  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
+  if (!resp.body) return null;
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
+  try {
+    while (true) {
+      if (signal?.aborted) return null;
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_FETCH_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /** Reconstruct the pre-PR content of a file by reverse-applying its unified `patch` to the post-PR `newContent`:
@@ -292,7 +321,7 @@ export async function scanDocCommentDrift(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}?ref=${encodeURIComponent(headSha)}`,
         { headers, signal: options.signal },
       );
-      if (resp.ok) content = await resp.text();
+      if (resp.ok) content = await readBoundedText(resp, options.signal);
     } catch {
       content = null;
     }

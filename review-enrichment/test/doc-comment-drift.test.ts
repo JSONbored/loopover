@@ -19,8 +19,8 @@ const baseReq = (files) => ({
   githubToken: "ght",
   files,
 });
-const fileWith = (content) => async () => ({ ok: true, text: async () => content });
-const status = (code) => async () => ({ ok: code >= 200 && code < 300, status: code, text: async () => "" });
+const fileWith = (content, init) => async () => new Response(content, init);
+const status = (code) => async () => new Response("", { status: code });
 const oldParams = (entries) => new Map(entries.map(([name, ids]) => [name, new Set(ids)]));
 
 const DRIFTED = `/**\n * @param oldName the old one\n */\nexport function doThing(newName) {\n  return newName;\n}\n`;
@@ -174,6 +174,43 @@ test("scanDocCommentDrift: fetches the file at headSha and reports drift", async
   assert.equal(findings.length, 1);
   assert.equal(findings[0].file, "src/a.ts");
   assert.deepEqual(findings[0].staleParams, ["oldName"]);
+});
+
+test("scanDocCommentDrift: skips oversized file responses before reading the body", async () => {
+  let bodyAccessed = false;
+  const out = await scanDocCommentDrift(
+    baseReq([{ path: "src/a.ts", patch: DRIFT_PATCH }]),
+    async () => ({
+      ok: true,
+      headers: new Headers({ "content-length": "1000001" }),
+      get body() {
+        bodyAccessed = true;
+        return new Response(DRIFTED).body;
+      },
+    }),
+  );
+  assert.deepEqual(out, []);
+  assert.equal(bodyAccessed, false);
+});
+
+test("scanDocCommentDrift: cancels streamed file responses that exceed the byte cap", async () => {
+  let canceled = false;
+  const chunk = new Uint8Array(500_001);
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(chunk);
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      canceled = true;
+    },
+  });
+  const out = await scanDocCommentDrift(
+    baseReq([{ path: "src/a.ts", patch: DRIFT_PATCH }]),
+    async () => new Response(stream),
+  );
+  assert.deepEqual(out, []);
+  assert.equal(canceled, true);
 });
 
 test("scanDocCommentDrift: requires a github token and a head sha", async () => {

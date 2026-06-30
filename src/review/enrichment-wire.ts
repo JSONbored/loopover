@@ -6,7 +6,7 @@
 // Single env switch: GITTENSORY_REVIEW_ENRICHMENT (+ REES_URL must be set, so the hosted Worker — which sets neither
 // — is unaffected). Default OFF → gathers nothing, prompt byte-identical. FULLY FAIL-SAFE: any timeout / non-200 /
 // network / parse error, or an empty brief, returns undefined and the review proceeds on diff + grounding + RAG.
-import { getIssue } from "../db/repositories";
+import { extractLinkedIssueNumbers, getIssue } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { neutralizePromptInjection } from "./prompt-injection";
 import type { PullRequestFileRecord } from "../types";
@@ -154,6 +154,16 @@ interface EnrichmentInput {
   githubToken?: string | undefined;
   files: PullRequestFileRecord[];
   diff: string;
+}
+
+/** Prefer explicit linkedIssues; fall back to Fixes #N parsing from the PR body. */
+export function resolveEnrichmentLinkedIssueNumbers(
+  linkedIssues: number[] | undefined,
+  body: string | null | undefined,
+): number[] {
+  const explicit = (linkedIssues ?? []).filter((candidate) => Number.isInteger(candidate) && candidate > 0);
+  if (explicit.length > 0) return explicit;
+  return extractLinkedIssueNumbers(body ?? "");
 }
 
 /** Resolve the PR's primary linked issue into the compact REES envelope (#1478). */

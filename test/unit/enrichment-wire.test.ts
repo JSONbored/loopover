@@ -8,6 +8,7 @@ import {
   resolveReesProfile,
   resolveReesTransportTimeoutMs,
   resolveEnrichmentLinkedIssue,
+  resolveEnrichmentLinkedIssueNumbers,
 } from "../../src/review/enrichment-wire";
 import { createTestEnv } from "../helpers/d1";
 import { upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
@@ -559,6 +560,22 @@ describe("resolveReesAnalyzers", () => {
       ),
     ).toBe(true);
     warnSpy.mockRestore();
+  });
+});
+
+describe("resolveEnrichmentLinkedIssueNumbers", () => {
+  it("prefers explicit linkedIssues over body parsing", () => {
+    expect(resolveEnrichmentLinkedIssueNumbers([7], "Fixes #42")).toEqual([7]);
+  });
+
+  it("parses Fixes #N from the PR body when linkedIssues is empty", () => {
+    expect(resolveEnrichmentLinkedIssueNumbers([], "Fixes #42\nCloses #99")).toEqual([42, 99]);
+    expect(resolveEnrichmentLinkedIssueNumbers(undefined, "Resolves #3")).toEqual([3]);
+  });
+
+  it("returns an empty list when neither source yields issue numbers", () => {
+    expect(resolveEnrichmentLinkedIssueNumbers([], "no issue refs")).toEqual([]);
+    expect(resolveEnrichmentLinkedIssueNumbers(undefined, undefined)).toEqual([]);
   });
 });
 

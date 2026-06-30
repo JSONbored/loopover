@@ -336,6 +336,7 @@ import {
   isEnrichmentEnabled,
   isReesGithubTokenForwardingEnabled,
   resolveEnrichmentLinkedIssue,
+  resolveEnrichmentLinkedIssueNumbers,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
@@ -3822,7 +3823,7 @@ export async function runAiReviewForAdvisory(
     const enrichmentLinkedIssue = await resolveEnrichmentLinkedIssue(
       env,
       args.repoFullName,
-      args.pr.linkedIssues ?? [],
+      resolveEnrichmentLinkedIssueNumbers(args.pr.linkedIssues, args.pr.body),
     );
     const enrichment =
       isEnrichmentEnabled(env) && convergedRepoAllowed

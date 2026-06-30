@@ -251,4 +251,67 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       fetchSpy.mockRestore();
     }
   });
+
+  it("derives linkedIssue from Fixes #N in the PR body when linkedIssues is empty", async () => {
+    const run = vi.fn(async () => ({ response: notesJson }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    Object.assign(env, {
+      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      REES_URL: "https://rees.example",
+      REES_SHARED_SECRET: "sek",
+    });
+    await seedRepoFile(env, "acme/widgets");
+    await upsertIssueFromGitHub(env, "acme/widgets", {
+      number: 55,
+      title: "Body-linked bug",
+      body: "Parsed from PR description.",
+      state: "open",
+      user: { login: "reporter" },
+      labels: [],
+      html_url: "https://github.com/acme/widgets/issues/55",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    let reesBody: { linkedIssue?: { number: number; title?: string; body?: string } } | undefined;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (url, init) => {
+        if (String(url).includes("/v1/enrich")) {
+          reesBody = JSON.parse(String(init?.body ?? "{}")) as {
+            linkedIssue?: { number: number; title?: string; body?: string };
+          };
+          return new Response(JSON.stringify({ promptSection: "brief" }), {
+            status: 200,
+          });
+        }
+        return new Response("nope", { status: 404 });
+      });
+    try {
+      await runAiReviewForAdvisory(env, {
+        settings: { aiReviewMode: "advisory" } as RepositorySettings,
+        repoFullName: "acme/widgets",
+        pr: {
+          number: 7,
+          title: "Fix the bug",
+          body: "Fixes #55",
+          linkedIssues: [],
+        },
+        author: "alice",
+        confirmedContributor: true,
+        advisory: adv("acme/widgets"),
+      });
+      expect(reesBody?.linkedIssue).toEqual({
+        number: 55,
+        title: "Body-linked bug",
+        body: "Parsed from PR description.",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });

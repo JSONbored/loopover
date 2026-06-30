@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   claimRegateFanoutSlot,
   countRecentDeadLetters,
@@ -26,6 +26,9 @@ import { webhookEvents } from "../../src/db/schema";
 import { createTestEnv } from "../helpers/d1";
 
 describe("database row parser hardening", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("caps linked issues extracted from attacker-controlled PR bodies and reports overflow", () => {
     const body = Array.from({ length: MAX_LINKED_ISSUE_NUMBERS + 25 }, (_, index) => `Fixes #${index + 1}`).join("\n");
@@ -87,6 +90,117 @@ describe("database row parser hardening", () => {
         expect.objectContaining({ number: 2, isDraft: false, mergeableState: "mergeable", reviewDecision: "APPROVED" }),
       ]),
     );
+  });
+
+  it("REGRESSION: adding another linked issue preserves the original shared-issue claim time", async () => {
+    const env = createTestEnv();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-29T10:00:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11,
+      title: "First claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #1",
+    });
+    const first = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 11);
+
+    vi.setSystemTime(new Date("2026-06-29T10:02:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11,
+      title: "Same claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #1",
+    });
+    const same = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 11);
+    expect(same).toMatchObject({
+      linkedIssues: [1],
+      linkedIssueClaimedAt: first?.linkedIssueClaimedAt,
+    });
+
+    vi.setSystemTime(new Date("2026-06-29T10:05:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11,
+      title: "Expanded claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #1\nFixes #2",
+    });
+    const expanded = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 11);
+
+    expect(expanded).toMatchObject({
+      title: "Expanded claim",
+      linkedIssues: [1, 2],
+      linkedIssueClaimedAt: first?.linkedIssueClaimedAt,
+    });
+
+    vi.setSystemTime(new Date("2026-06-29T10:10:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11,
+      title: "Disjoint claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #3",
+    });
+    const disjoint = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 11);
+
+    expect(disjoint).toMatchObject({
+      linkedIssues: [3],
+      linkedIssueClaimedAt: "2026-06-29T10:10:00.000Z",
+    });
+
+    vi.setSystemTime(new Date("2026-06-29T10:15:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11,
+      title: "Cleared claim",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "No issue link now.",
+    });
+    const cleared = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 11);
+    expect(cleared).toMatchObject({
+      linkedIssues: [],
+      linkedIssueClaimedAt: null,
+    });
+  });
+
+  it("falls back to the observed linked-issue claim time when the existing same-claim timestamp is missing", async () => {
+    const env = createTestEnv();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-29T11:00:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 12,
+      title: "Missing claim timestamp",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #7",
+    });
+    await env.DB.prepare("UPDATE pull_requests SET linked_issue_claimed_at = NULL WHERE repo_full_name = ? AND number = ?").bind("owner/repo", 12).run();
+
+    vi.setSystemTime(new Date("2026-06-29T11:03:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 12,
+      title: "Same claim with repaired timestamp",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Fixes #7",
+    });
+
+    const repaired = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 12);
+    expect(repaired).toMatchObject({
+      linkedIssues: [7],
+      linkedIssueClaimedAt: "2026-06-29T11:03:00.000Z",
+    });
   });
 
   it("markPullRequestRegated stamps the internal last_regated_at marker (sweep convergence #audit-sweep-converge)", async () => {

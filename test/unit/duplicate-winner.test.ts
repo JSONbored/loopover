@@ -51,9 +51,14 @@ describe("isDuplicateClusterWinnerByClaim (#dup-winner claim election)", () => {
     expect(isDuplicateClusterWinnerByClaim(claim(13, "2026-06-29T10:00:00.000Z"), [claim(12, "2026-06-29T10:00:00.000Z")])).toBe(false);
   });
 
-  it("fails closed when any duplicate claimant has an unknown or invalid claim timestamp", () => {
-    expect(isDuplicateClusterWinnerByClaim(claim(12, null), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(false);
-    expect(isDuplicateClusterWinnerByClaim(claim(12, "2026-06-29T10:00:00.000Z"), [claim(13, "not-a-date")])).toBe(false);
+  it("falls back to PR-number election when sparse legacy rows lack claim timestamps", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(12, null), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(true);
+    expect(isDuplicateClusterWinnerByClaim(claim(13, "2026-06-29T10:00:00.000Z"), [claim(12, null)])).toBe(false);
+  });
+
+  it("treats invalid claim timestamps as sparse rows for the PR-number fallback", () => {
+    expect(isDuplicateClusterWinnerByClaim(claim(12, "not-a-date"), [claim(13, "2026-06-29T10:00:00.000Z")])).toBe(true);
+    expect(isDuplicateClusterWinnerByClaim(claim(13, "2026-06-29T10:00:00.000Z"), [claim(12, "not-a-date")])).toBe(false);
   });
 });
 

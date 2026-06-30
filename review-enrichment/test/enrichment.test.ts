@@ -980,6 +980,26 @@ test("countPackagePatchUsages: line-cites import, require, dynamic import, and s
   ]);
 });
 
+test("countPackagePatchUsages: matches scoped package subpaths and ignores malformed scoped imports", () => {
+  const usage = countPackagePatchUsages(
+    [
+      {
+        path: "src/scoped.ts",
+        patch: [
+          "@@ -20,0 +20,3 @@",
+          '+import thing from "@scope/heavy/subpath";',
+          '+import bad from "@scope";',
+          '+import other from "@scope/other";',
+        ].join("\n"),
+      },
+    ],
+    "@scope/heavy",
+  );
+
+  assert.equal(usage.usageCount, 1);
+  assert.deepEqual(usage.usageLocations, [{ file: "src/scoped.ts", line: 20 }]);
+});
+
 test("queryPackageWeight: maps bundlephobia size fields and degrades on non-ok", async () => {
   const weight = await queryPackageWeight("lodash", "4.17.21", async () => ({
     ok: true,

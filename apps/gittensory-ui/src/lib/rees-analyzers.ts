@@ -110,7 +110,7 @@ export const REES_ANALYZERS: ReesAnalyzerDoc[] = [
     network:
       "Calls the GitHub API. Requires author plus GitHub token forwarding for private repos.",
     notes:
-      "Set REES_FORWARD_GITHUB_TOKEN=false to disable token forwarding; this analyzer will then skip when it cannot read CODEOWNERS.",
+      "Leave REES_FORWARD_GITHUB_TOKEN unset/false to disable token forwarding; this analyzer will then skip when it cannot read CODEOWNERS.",
   },
   {
     name: "secretLog",

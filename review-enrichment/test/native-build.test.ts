@@ -19,9 +19,10 @@ const pypiAdd = (name, version = "1.0.0") => ({
   prNumber: 1,
   files: [{ path: "requirements.txt", patch: `@@ -1,0 +1,1 @@\n+${name}==${version}` }],
 });
-const npmFetch = (meta) => async () => ({ ok: true, json: async () => ({ versions: { "1.0.0": meta } }) });
-const pypiFetch = (urls) => async () => ({ ok: true, json: async () => ({ urls }) });
-const status = (code) => async () => ({ ok: code >= 200 && code < 300, status: code, json: async () => ({}) });
+const jsonResponse = (body, init) => new Response(JSON.stringify(body), init);
+const npmFetch = (meta) => async () => jsonResponse({ versions: { "1.0.0": meta } });
+const pypiFetch = (urls) => async () => jsonResponse({ urls });
+const status = (code) => async () => jsonResponse({}, { status: code });
 const throwingFetch = async () => {
   throw new Error("network down");
 };
@@ -128,6 +129,34 @@ test("scanNativeBuild: a PyPI PEP 440 (non-semver) sdist-only version is flagged
 test("scanNativeBuild fails safe on a non-ok or throwing fetch", async () => {
   assert.deepEqual(await scanNativeBuild(npmAdd("bcrypt"), status(404)), []);
   assert.deepEqual(await scanNativeBuild(npmAdd("bcrypt"), throwingFetch), []);
+});
+
+test("scanNativeBuild fails safe before parsing registry JSON with an oversized Content-Length", async () => {
+  let bodyRead = false;
+  const findings = await scanNativeBuild(npmAdd("bcrypt"), async () => ({
+    ok: true,
+    headers: new Headers({ "content-length": String(2 * 1024 * 1024 + 1) }),
+    body: {
+      getReader() {
+        bodyRead = true;
+        throw new Error("body should not be read");
+      },
+    },
+    arrayBuffer: async () => {
+      bodyRead = true;
+      return new ArrayBuffer(0);
+    },
+  }));
+
+  assert.deepEqual(findings, []);
+  assert.equal(bodyRead, false);
+});
+
+test("scanNativeBuild fails safe when streamed registry JSON exceeds the byte cap", async () => {
+  const bigMetadata = `${" ".repeat(2 * 1024 * 1024)}{"versions":{"1.0.0":{"gypfile":true}}}`;
+  const findings = await scanNativeBuild(npmAdd("bcrypt"), async () => new Response(bigMetadata));
+
+  assert.deepEqual(findings, []);
 });
 
 test("scanNativeBuild stops on an already-aborted signal", async () => {

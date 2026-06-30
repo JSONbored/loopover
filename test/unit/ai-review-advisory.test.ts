@@ -524,7 +524,7 @@ describe("runAiReviewForAdvisory", () => {
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
   });
 
-  it("preserves public-safe unstructured AI text while holding the PR for manual review", async () => {
+  it("withholds unstructured AI text while holding the PR for manual review", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: "Looks coherent, but please verify the new cache branch before merging." })), {
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
@@ -534,9 +534,9 @@ describe("runAiReviewForAdvisory", () => {
       author: "alice",
       confirmedContributor: true,
     });
-    expect(result?.reviewerCount).toBe(1);
-    expect(result?.notes).toContain("returned public review text but not the expected structured verdict");
-    expect(result?.notes).toContain("Looks coherent");
+    expect(result?.reviewerCount).toBe(0);
+    expect(result?.notes).toContain("AI review could not be completed for this PR head");
+    expect(result?.notes).not.toContain("Looks coherent");
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
   });
 

@@ -79,7 +79,7 @@ GITTENSORY_REVIEW_ENRICHMENT=true
 REES_URL=https://enrichment.example.internal
 REES_SHARED_SECRET=<shared-secret>
 REES_TIMEOUT_MS=8000
-REES_FORWARD_GITHUB_TOKEN=true
+REES_FORWARD_GITHUB_TOKEN=false
 REES_ANALYZERS=all`}
       />
       <FeatureRow
@@ -104,7 +104,7 @@ REES_ANALYZERS=all`}
           {
             title: "REES_FORWARD_GITHUB_TOKEN",
             description:
-              "Defaults to true. Sends a GitHub read token so token-aware analyzers can read CODEOWNERS and blob sizes. Set false to keep tokens out of the REES request.",
+              "Defaults to false. Set true only when REES_URL is inside your trust boundary and token-aware analyzers need CODEOWNERS or blob-size reads.",
           },
         ]}
       />
@@ -113,16 +113,16 @@ REES_ANALYZERS=all`}
       <p>
         Set <code>GITTENSORY_REVIEW_ENRICHMENT=false</code> to turn off REES for the whole instance.
         To keep REES configured but prevent a repo from using it, remove that repo from{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code>. To keep REES enabled but prevent token forwarding, set{" "}
-        <code>REES_FORWARD_GITHUB_TOKEN=false</code>.
+        <code>GITTENSORY_REVIEW_REPOS</code>. Token forwarding stays off unless you explicitly set{" "}
+        <code>REES_FORWARD_GITHUB_TOKEN=true</code>.
       </p>
       <CodeBlock
         filename=".env"
         code={`# Full REES off switch:
 GITTENSORY_REVIEW_ENRICHMENT=false
 
-# Keep REES on, but do not send a GitHub token to the service:
-REES_FORWARD_GITHUB_TOKEN=false`}
+# Keep REES on and explicitly allow token-aware analyzers:
+REES_FORWARD_GITHUB_TOKEN=true`}
       />
 
       <h2>Analyzer selection</h2>
@@ -144,11 +144,11 @@ REES_FORWARD_GITHUB_TOKEN=false`}
       <p>
         When enabled, the engine POSTs the repo name, PR number, head SHA, base SHA when GitHub
         supplies it, title, changed file paths, changed file patches, and review diff to{" "}
-        <code>REES_URL</code>. By default it also forwards a GitHub read token when one is
-        available, so GitHub API analyzers can read private CODEOWNERS and blob sizes. The engine
-        prefers a short-lived installation token and falls back to <code>GITHUB_PUBLIC_TOKEN</code>.
-        Set <code>REES_FORWARD_GITHUB_TOKEN=false</code> if the REES service is outside your trust
-        boundary.
+        <code>REES_URL</code>. It forwards no GitHub token by default. If{" "}
+        <code>REES_FORWARD_GITHUB_TOKEN=true</code>, the engine includes a GitHub read token so
+        GitHub API analyzers can read private CODEOWNERS and blob sizes. The engine prefers a
+        short-lived installation token and falls back to <code>GITHUB_PUBLIC_TOKEN</code>. Enable
+        forwarding only when the REES service is inside your trust boundary.
       </p>
       <Callout variant="safety">
         Do not point <code>REES_URL</code> at a service you do not trust with PR diffs. Token

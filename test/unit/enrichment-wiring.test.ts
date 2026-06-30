@@ -81,6 +81,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       GITTENSORY_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
+      REES_FORWARD_GITHUB_TOKEN: "true",
       REES_ANALYZERS: "secret,actionPin,redos",
     });
     await seedRepoFile(env, "acme/widgets");
@@ -182,7 +183,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
     }
   });
 
-  it("does not forward a GitHub token when REES_FORWARD_GITHUB_TOKEN is false", async () => {
+  it("does not forward a GitHub token unless REES_FORWARD_GITHUB_TOKEN is true", async () => {
     const run = vi.fn(async () => ({ response: notesJson }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
@@ -195,7 +196,6 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       GITTENSORY_REVIEW_ENRICHMENT: "true",
       REES_URL: "https://rees.example",
       REES_SHARED_SECRET: "sek",
-      REES_FORWARD_GITHUB_TOKEN: "false",
       REES_ANALYZERS: "codeowners,assetWeight",
     });
     await seedRepoFile(env, "acme/widgets");

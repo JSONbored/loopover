@@ -17,8 +17,9 @@ treats any timeout/error as "no brief" and proceeds.
 | `POST /v1/enrich` | `Authorization: Bearer <REES_SHARED_SECRET>` → `EnrichRequest` → `ReviewBrief`. |
 
 See `src/types.ts` for the `EnrichRequest` / `ReviewBrief` contract. When the engine is configured with
-`REES_FORWARD_GITHUB_TOKEN=true` (the default), requests can include a GitHub read token so token-aware analyzers can
-read CODEOWNERS and blob sizes. The engine prefers a short-lived installation token and falls back to
+`REES_FORWARD_GITHUB_TOKEN=true`, requests can include a GitHub read token so token-aware analyzers can read
+CODEOWNERS and blob sizes. Token forwarding is off by default and should be enabled only when the REES endpoint is
+inside the operator's trust boundary. The engine prefers a short-lived installation token and falls back to
 `GITHUB_PUBLIC_TOKEN`. The service must never log request bodies, diffs, or tokens.
 
 ## Analyzers
@@ -38,11 +39,41 @@ read CODEOWNERS and blob sizes. The engine prefers a short-lived installation to
 | `secretLog`     | Secrets, PII, or request/session objects written to logs/stdout.             | Pure local.                                                  |
 | `assetWeight`   | Heavy binary assets added or grown.                                          | Calls GitHub API; needs headSha, baseSha for growth, and token for private repos. |
 | `typosquat`     | New dependency names that look squatted or publicly claimable.               | Uses bundled popular-package lists plus npm/PyPI lookups.    |
+| `commitSignature` | Head commit signature/author provenance worth checking.                    | Calls GitHub API; needs headSha and token for private repos. |
 | `iacMisconfig`  | Risky IaC/config changes like public buckets, open ingress, or insecure CORS. | Pure local.                                                 |
+| `nativeBuild`   | Newly-added dependencies that compile native code or ship sdist-only builds. | Calls npm/PyPI registries.                                  |
+| `history`       | Author track record, same-file PR history, and linked-issue alignment.       | Calls GitHub API with bounded fanout; needs author/token for private repos. |
 
 The engine can send `analyzers: ["secret", "actionPin"]` to run a subset. If the field is omitted, REES runs the
 full registry. An explicit empty array runs no analyzers; the engine uses that fail-closed shape when an
 operator-configured analyzer list contains no valid names.
+
+## Analyzer manifests
+
+Analyzer runtime metadata lives in `src/analyzers/registry.ts` as `AnalyzerDescriptor` entries. New analyzer work
+should prefer the modular shape introduced for `dependency` and `secret`:
+
+| File                                      | Purpose                                                        |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `src/analyzers/<name>/descriptor.ts`      | Analyzer name, title, category, cost, requirements, docs, run function, and optional renderer. |
+| `src/analyzers/<name>.ts`                 | Pure scanner helpers and the analyzer implementation.          |
+| `test/<name>.test.ts`                     | Focused tests for scanner behavior, rendering, and degradation. |
+
+Descriptors are the extension point future REES runtime work will use for profiles, docs generation, scheduler cost
+classes, per-analyzer limits, and self-host configuration. When adding or migrating an analyzer:
+
+- Keep the public analyzer name stable; it is what `REES_ANALYZERS` and the engine request body use.
+- Put operator-facing metadata in the descriptor: `category`, `cost`, `defaultEnabled`, `requires`, `limits`, and
+  `docs`.
+- Keep renderer output public-safe. Never include tokens, request bodies, diffs, raw prompts, comments, or private
+  config values.
+- Make external-call analyzers fail open and respect the orchestrator abort signal when the scanner supports it.
+- Prefer a focused analyzer test file instead of expanding the shared `enrichment.test.ts` mega-test.
+
+The engine also sends `budget.timeoutMs` with one second of headroom below `REES_TIMEOUT_MS`, so REES can return a
+partial/degraded brief before the caller aborts the HTTP request. If Railway is still running an older REES build,
+temporarily raise the engine-side `REES_TIMEOUT_MS` above the REES analyzer budget, or set `REES_ANALYZERS` to a
+bounded list that excludes `history` until the budget-aware build is deployed.
 
 ## Run locally
 
@@ -103,9 +134,11 @@ the release must exist, be finalized, include the deployed commit, and include t
 `rees_sentry_sourcemap_upload_failed` warning so the problem is visible without blocking startup.
 
 Analyzer failures are still fail-open: the `/v1/enrich` response marks the analyzer as `degraded` and returns a partial
-brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags for
-`analyzer`, `repo`, `pullNumber`, `headSha`, `release`, `environment`, and `timeoutMs`. Use those tags to spot a broken
-analyzer without exposing request bodies, diffs, tokens, or review content.
+brief. When Sentry is enabled, those degradations are captured as `rees_analyzer_degraded` events with tags/context for
+`analyzer`, requested analyzer list, `repo`, `pullNumber`, head SHA prefix, `release`, `environment`, timeout budget,
+elapsed time, partial/analyzer status, history lookup counts, GitHub endpoint category, request id, and trace id. Use
+those fields to spot a broken analyzer without exposing request bodies, diffs, tokens, prompts, comments, or private
+config.
 
 If Sentry still shows frames such as `/app/dist/server.js`, check:
 

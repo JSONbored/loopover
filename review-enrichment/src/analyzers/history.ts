@@ -9,7 +9,7 @@
 // linkedIssue passed in the request envelope and needs no fetch. Every GitHub call is wrapped so a missing token or
 // a rate-limit/error degrades THIS analyzer only (the block is returned with `partial: true`) — the rest of the
 // brief still ships. Fail-safe: returns [] when there is nothing to report.
-import type { EnrichRequest, HistoryFinding } from "../types.js";
+import type { AnalyzerDiagnostics, EnrichRequest, HistoryFinding } from "../types.js";
 
 const GITHUB_API = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -19,6 +19,8 @@ const MAX_PR_LOOKUPS = 12; // global cap on commit→PR resolution calls
 const MAX_SIMILAR_PRS = 8; // cap the rendered similar-PR list
 const MIN_TOKEN_LENGTH = 4; // requirement keywords shorter than this are ignored
 const FULL_COVERAGE_RATIO = 0.6; // >= this share of requirement keywords present in the diff ⇒ "full"
+const GITHUB_SUBCALL_TIMEOUT_MS = 1200;
+const HISTORY_RESPONSE_RESERVE_MS = 250;
 
 // A single repo path segment (owner or name): word chars, dot, dash only. Whole-segment `.`/`..` are rejected
 // separately so a hostile repoFullName can't traverse or redirect the token-bearing request to another repository.
@@ -39,6 +41,110 @@ interface ScanOptions {
   signal?: AbortSignal;
   /** Injectable clock so account-age math is deterministic in tests; defaults to Date.now(). */
   now?: number;
+  /** Analyzer deadline from the orchestrator. History stops fanout before this so REES can return a partial brief. */
+  deadlineMs?: number;
+  timeoutMs?: number;
+  githubSubcallTimeoutMs?: number;
+  diagnostics?: AnalyzerDiagnostics;
+}
+
+type GithubEndpointCategory = "search_issues" | "user" | "commits_by_path" | "commit_pulls";
+
+function markPartial(options: ScanOptions, reason: string, captureDegradation = false): void {
+  const diagnostics = options.diagnostics;
+  if (!diagnostics) return;
+  diagnostics.partialStatus = "partial";
+  if (!diagnostics.partialReason || captureDegradation) diagnostics.partialReason = reason;
+  if (captureDegradation) diagnostics.captureDegradation = true;
+}
+
+function setPhase(options: ScanOptions, phase: string, subcall?: string): void {
+  const diagnostics = options.diagnostics;
+  if (!diagnostics) return;
+  diagnostics.phase = phase;
+  if (subcall) diagnostics.subcall = subcall;
+}
+
+function addCount(
+  diagnostics: AnalyzerDiagnostics | undefined,
+  key: "fileLookupCount" | "commitLookupCount" | "prLookupCount" | "skippedFileCount",
+  count = 1,
+): void {
+  if (!diagnostics) return;
+  diagnostics[key] = (diagnostics[key] ?? 0) + count;
+}
+
+function remainingMs(options: ScanOptions): number {
+  if (options.signal?.aborted) return 0;
+  if (typeof options.deadlineMs !== "number") return Number.POSITIVE_INFINITY;
+  return Math.max(0, options.deadlineMs - Date.now());
+}
+
+function hasResponseBudget(options: ScanOptions): boolean {
+  return remainingMs(options) > HISTORY_RESPONSE_RESERVE_MS;
+}
+
+function startGithubSubcall(
+  options: ScanOptions,
+  category: GithubEndpointCategory,
+): { signal: AbortSignal; cleanup: () => void } | null {
+  const diagnostics = options.diagnostics;
+  if (diagnostics) {
+    diagnostics.githubEndpointCategory = category;
+    diagnostics.subcall = category;
+  }
+  if (category === "commits_by_path") addCount(diagnostics, "fileLookupCount");
+  if (category === "commit_pulls") addCount(diagnostics, "prLookupCount");
+  if (!hasResponseBudget(options)) {
+    markPartial(options, options.signal?.aborted ? "history_aborted" : "history_budget_exhausted", true);
+    return null;
+  }
+
+  const controller = new AbortController();
+  const parent = options.signal;
+  const abortFromParent = () => controller.abort();
+  if (parent) parent.addEventListener("abort", abortFromParent, { once: true });
+
+  const remaining = remainingMs(options);
+  const timeoutMs = Math.max(
+    1,
+    Math.min(
+      options.githubSubcallTimeoutMs ?? GITHUB_SUBCALL_TIMEOUT_MS,
+      Number.isFinite(remaining) ? Math.max(1, remaining - HISTORY_RESPONSE_RESERVE_MS) : GITHUB_SUBCALL_TIMEOUT_MS,
+    ),
+  );
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (parent) parent.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+async function fetchGithubJson<T>(
+  url: string,
+  token: string,
+  fetchImpl: typeof fetch,
+  options: ScanOptions,
+  category: GithubEndpointCategory,
+): Promise<T | null> {
+  const subcall = startGithubSubcall(options, category);
+  if (!subcall) return null;
+  try {
+    const res = await fetchImpl(url, { headers: githubHeaders(token), signal: subcall.signal });
+    if (!res.ok) {
+      markPartial(options, `github_${category}_http_${res.status}`, res.status === 403 || res.status === 429);
+      return null;
+    }
+    return (await res.json()) as T;
+  } catch {
+    markPartial(options, subcall.signal.aborted ? "github_subcall_aborted" : "github_subcall_failed", true);
+    return null;
+  } finally {
+    subcall.cleanup();
+  }
 }
 
 /** Parse `owner/repo`, rejecting anything that isn't exactly two safe segments (no traversal, no extra slashes) so a
@@ -138,13 +244,12 @@ async function fetchSearchCount(
   query: string,
   token: string,
   fetchImpl: typeof fetch,
-  signal?: AbortSignal,
+  options: ScanOptions,
 ): Promise<number | null> {
   try {
     const url = `${GITHUB_API}/search/issues?q=${encodeURIComponent(query)}&per_page=1`;
-    const res = await fetchImpl(url, { headers: githubHeaders(token), signal });
-    if (!res.ok) return null;
-    const json = (await res.json()) as { total_count?: number };
+    const json = await fetchGithubJson<{ total_count?: number }>(url, token, fetchImpl, options, "search_issues");
+    if (!json) return null;
     return typeof json.total_count === "number" ? json.total_count : null;
   } catch {
     return null;
@@ -157,13 +262,12 @@ async function fetchAccountAgeDays(
   token: string,
   fetchImpl: typeof fetch,
   now: number,
-  signal?: AbortSignal,
+  options: ScanOptions,
 ): Promise<number | null> {
   try {
     const url = `${GITHUB_API}/users/${encodeURIComponent(login)}`;
-    const res = await fetchImpl(url, { headers: githubHeaders(token), signal });
-    if (!res.ok) return null;
-    const json = (await res.json()) as { created_at?: string };
+    const json = await fetchGithubJson<{ created_at?: string }>(url, token, fetchImpl, options, "user");
+    if (!json) return null;
     if (!json.created_at) return null;
     const created = Date.parse(json.created_at);
     if (Number.isNaN(created)) return null;
@@ -181,12 +285,13 @@ async function buildAuthorContext(
   token: string,
   fetchImpl: typeof fetch,
   now: number,
-  signal?: AbortSignal,
+  options: ScanOptions,
 ): Promise<{ author: NonNullable<HistoryFinding["author"]>; partial: boolean }> {
+  setPhase(options, "author");
   const repoQ = `repo:${owner}/${repo} type:pr author:${author}`;
-  const merged = await fetchSearchCount(`${repoQ} is:merged`, token, fetchImpl, signal);
-  const closed = await fetchSearchCount(`${repoQ} is:unmerged is:closed`, token, fetchImpl, signal);
-  const accountAgeDays = await fetchAccountAgeDays(author, token, fetchImpl, now, signal);
+  const merged = await fetchSearchCount(`${repoQ} is:merged`, token, fetchImpl, options);
+  const closed = await fetchSearchCount(`${repoQ} is:unmerged is:closed`, token, fetchImpl, options);
+  const accountAgeDays = await fetchAccountAgeDays(author, token, fetchImpl, now, options);
   // A failed Search lookup is UNKNOWN, not zero — keep it null so a 403 / rate-limit can never be rendered as a
   // first-time contributor. firstTimeContributor is decided ONLY when both counts are known. (#1478)
   const firstTimeContributor =
@@ -211,16 +316,15 @@ async function fetchCommitsForPath(
   path: string,
   token: string,
   fetchImpl: typeof fetch,
-  signal?: AbortSignal,
+  options: ScanOptions,
 ): Promise<Array<{ sha: string; message: string }> | null> {
   try {
     const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?path=${encodeURIComponent(path)}&per_page=${COMMITS_PER_FILE}`;
-    const res = await fetchImpl(url, { headers: githubHeaders(token), signal });
-    if (!res.ok) return null;
-    const json = (await res.json()) as Array<{
+    const json = await fetchGithubJson<Array<{
       sha?: string;
       commit?: { message?: string };
-    }>;
+    }>>(url, token, fetchImpl, options, "commits_by_path");
+    if (!json) return null;
     if (!Array.isArray(json)) return null;
     const out: Array<{ sha: string; message: string }> = [];
     for (const c of json) {
@@ -228,6 +332,7 @@ async function fetchCommitsForPath(
         out.push({ sha: c.sha, message: c.commit?.message ?? "" });
       }
     }
+    addCount(options.diagnostics, "commitLookupCount", out.length);
     return out;
   } catch {
     return null;
@@ -241,14 +346,13 @@ async function fetchPullsForCommit(
   sha: string,
   token: string,
   fetchImpl: typeof fetch,
-  signal?: AbortSignal,
+  options: ScanOptions,
 ): Promise<Array<{ number: number; title: string }> | null> {
   if (!SHA_RE.test(sha)) return [];
   try {
     const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}/pulls`;
-    const res = await fetchImpl(url, { headers: githubHeaders(token), signal });
-    if (!res.ok) return null;
-    const json = (await res.json()) as Array<{ number?: number; title?: string }>;
+    const json = await fetchGithubJson<Array<{ number?: number; title?: string }>>(url, token, fetchImpl, options, "commit_pulls");
+    if (!json) return null;
     if (!Array.isArray(json)) return null;
     const out: Array<{ number: number; title: string }> = [];
     for (const p of json) {
@@ -286,27 +390,51 @@ async function buildSimilarPastPrs(
   files: NonNullable<EnrichRequest["files"]>,
   currentPrNumber: number,
   fetchImpl: typeof fetch,
-  signal?: AbortSignal,
+  options: ScanOptions,
 ): Promise<{ similarPastPrs: HistoryFinding["similarPastPrs"]; partial: boolean }> {
   let partial = false;
   let lookups = 0;
   const revertedRefs = new Set<number>();
   const prs = new Map<number, { title: string; overlap: Set<string> }>();
+  setPhase(options, "similar_past_prs");
 
-  for (const file of files.slice(0, MAX_FILES_PROBED)) {
-    const commits = await fetchCommitsForPath(owner, repo, file.path, token, fetchImpl, signal);
+  const filesToProbe = files.slice(0, MAX_FILES_PROBED);
+  if (files.length > filesToProbe.length) {
+    partial = true;
+    options.diagnostics && (options.diagnostics.capped = true);
+    addCount(options.diagnostics, "skippedFileCount", files.length - filesToProbe.length);
+    markPartial(options, "github_file_lookup_capped");
+  }
+
+  for (const [index, file] of filesToProbe.entries()) {
+    if (!hasResponseBudget(options)) {
+      partial = true;
+      options.diagnostics && (options.diagnostics.capped = true);
+      addCount(options.diagnostics, "skippedFileCount", filesToProbe.length - index);
+      markPartial(options, options.signal?.aborted ? "history_aborted" : "history_budget_exhausted", true);
+      break;
+    }
+
+    const commits = await fetchCommitsForPath(owner, repo, file.path, token, fetchImpl, options);
     if (commits === null) {
       partial = true;
       continue;
     }
     for (const commit of commits) {
+      if (!hasResponseBudget(options)) {
+        partial = true;
+        markPartial(options, options.signal?.aborted ? "history_aborted" : "history_budget_exhausted", true);
+        break;
+      }
       collectRevertRefs(commit.message, revertedRefs);
       if (lookups >= MAX_PR_LOOKUPS) {
         partial = true;
+        options.diagnostics && (options.diagnostics.capped = true);
+        markPartial(options, "github_pr_lookup_capped");
         continue;
       }
       lookups++;
-      const pulls = await fetchPullsForCommit(owner, repo, commit.sha, token, fetchImpl, signal);
+      const pulls = await fetchPullsForCommit(owner, repo, commit.sha, token, fetchImpl, options);
       if (pulls === null) {
         partial = true;
         continue;
@@ -345,22 +473,31 @@ export async function scanHistory(
   const now = options.now ?? Date.now();
   const repo = parseRepo(req.repoFullName);
   const token = req.githubToken;
+  if (options.diagnostics) {
+    options.diagnostics.phase = "history";
+    options.diagnostics.partialStatus ??= "complete";
+    options.diagnostics.fileLookupCount ??= 0;
+    options.diagnostics.commitLookupCount ??= 0;
+    options.diagnostics.prLookupCount ??= 0;
+    options.diagnostics.skippedFileCount ??= 0;
+  }
 
   let author: HistoryFinding["author"] = null;
   let similarPastPrs: HistoryFinding["similarPastPrs"] = [];
   let partial = false;
 
   if (repo && token && req.author) {
-    const ctx = await buildAuthorContext(repo.owner, repo.repo, req.author, token, fetchImpl, now, options.signal);
+    const ctx = await buildAuthorContext(repo.owner, repo.repo, req.author, token, fetchImpl, now, options);
     author = ctx.author;
     if (ctx.partial) partial = true;
   } else {
     // No repo/token/author ⇒ the author track record can't be computed; flag the block as incomplete.
     partial = true;
+    markPartial(options, !repo ? "github_repo_invalid" : token ? "github_author_missing" : "github_token_missing");
   }
 
   if (repo && token && (req.files?.length ?? 0) > 0) {
-    const similar = await buildSimilarPastPrs(repo.owner, repo.repo, token, req.files!, req.prNumber, fetchImpl, options.signal);
+    const similar = await buildSimilarPastPrs(repo.owner, repo.repo, token, req.files!, req.prNumber, fetchImpl, options);
     similarPastPrs = similar.similarPastPrs;
     if (similar.partial) partial = true;
   }

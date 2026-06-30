@@ -61,6 +61,10 @@ function sentryTagValue(value: string | number | undefined): string | undefined 
   return text ? text.slice(0, 200) : undefined;
 }
 
+function compactContext(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
 function scrubEvent(event: ErrorEvent): ErrorEvent {
   return scrubValue(event) as ErrorEvent;
 }
@@ -100,39 +104,82 @@ export function captureError(error: unknown, context?: Record<string, unknown>):
 
 export interface AnalyzerDegradationContext {
   analyzer: string;
+  requestedAnalyzers?: string[];
   repoFullName: string;
   prNumber: number;
   headSha?: string;
   timeoutMs?: number;
+  elapsedMs?: number;
+  analyzerStatus?: string;
+  partialStatus?: string;
+  partialReason?: string;
+  phase?: string;
+  subcall?: string;
+  fileLookupCount?: number;
+  commitLookupCount?: number;
+  prLookupCount?: number;
+  skippedFileCount?: number;
+  githubEndpointCategory?: string;
+  capped?: boolean;
+  requestId?: string;
+  traceId?: string;
 }
 
 export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegradationContext): void {
   if (!active || !Sentry) return;
+  const headShaPrefix = nonBlank(context.headSha)?.slice(0, 12);
   const safeContext = {
     event: "rees_analyzer_degraded",
     analyzer: context.analyzer,
+    requestedAnalyzers: context.requestedAnalyzers,
     repoFullName: context.repoFullName,
     prNumber: context.prNumber,
-    headSha: nonBlank(context.headSha),
+    headShaPrefix,
     timeoutMs: context.timeoutMs,
+    elapsedMs: context.elapsedMs,
+    analyzerStatus: context.analyzerStatus,
+    partialStatus: context.partialStatus,
+    partialReason: context.partialReason,
+    phase: context.phase,
+    subcall: context.subcall,
+    fileLookupCount: context.fileLookupCount,
+    commitLookupCount: context.commitLookupCount,
+    prLookupCount: context.prLookupCount,
+    skippedFileCount: context.skippedFileCount,
+    githubEndpointCategory: context.githubEndpointCategory,
+    capped: context.capped,
+    requestId: context.requestId,
+    traceId: context.traceId,
     release: activeRelease,
     environment: activeEnvironment,
   };
   Sentry.withScope((scope) => {
     const analyzerTag = sentryTagValue(context.analyzer) ?? "unknown";
-    const headShaTag = sentryTagValue(safeContext.headSha);
+    const headShaTag = sentryTagValue(headShaPrefix);
     const timeoutTag = sentryTagValue(context.timeoutMs);
     const releaseTag = sentryTagValue(activeRelease);
     scope.setLevel("error");
-    scope.setContext("rees_analyzer", scrubValue(safeContext) as Record<string, unknown>);
+    scope.setContext("rees_analyzer", scrubValue(compactContext(safeContext)) as Record<string, unknown>);
     scope.setFingerprint(["rees-analyzer-degraded", analyzerTag]);
     scope.setTag("event", "rees_analyzer_degraded");
     scope.setTag("analyzer", analyzerTag);
     scope.setTag("repo", sentryTagValue(context.repoFullName) ?? "unknown");
     scope.setTag("pullNumber", sentryTagValue(context.prNumber) ?? "unknown");
-    if (headShaTag) scope.setTag("headSha", headShaTag);
+    if (headShaTag) scope.setTag("headShaPrefix", headShaTag);
     if (timeoutTag) scope.setTag("timeoutMs", timeoutTag);
     if (releaseTag) scope.setTag("release", releaseTag);
+    const analyzerStatusTag = sentryTagValue(context.analyzerStatus);
+    const partialStatusTag = sentryTagValue(context.partialStatus);
+    const phaseTag = sentryTagValue(context.phase);
+    const endpointTag = sentryTagValue(context.githubEndpointCategory);
+    const requestIdTag = sentryTagValue(context.requestId);
+    const traceIdTag = sentryTagValue(context.traceId);
+    if (analyzerStatusTag) scope.setTag("analyzerStatus", analyzerStatusTag);
+    if (partialStatusTag) scope.setTag("partialStatus", partialStatusTag);
+    if (phaseTag) scope.setTag("phase", phaseTag);
+    if (endpointTag) scope.setTag("githubEndpointCategory", endpointTag);
+    if (requestIdTag) scope.setTag("requestId", requestIdTag);
+    if (traceIdTag) scope.setTag("traceId", traceIdTag);
     scope.setTag("environment", sentryTagValue(activeEnvironment) ?? "production");
     Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
   });

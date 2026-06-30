@@ -1,50 +1,23 @@
 // Render structured findings into the public-safe prompt block the engine splices into the review. Kept separate
 // so each analyzer's rendering is one function and the brief stays deterministic + cap-bounded.
 import type { BriefFindings } from "./types.js";
+import { getAnalyzerDescriptor } from "./analyzers/registry.js";
+import type { AnalyzerName } from "./analyzers/types.js";
+import {
+  bytesLabel,
+  formatBytes,
+  promptText,
+  RENDER_HELPERS,
+  safeCodeSpan,
+  SEVERITY_RANK,
+} from "./render-helpers.js";
 
-const CODE_SPAN_UNSAFE = /[`\u0000-\u001f\u007f]/g;
-
-const CODE_SPAN_REPLACEMENTS: Record<string, string> = {
-  "`": "\u02cb",
-  "\n": "\u2424",
-  "\r": "\u240d",
-  "\t": "\u2409",
-};
-
-function safeCodeSpan(value: string): string {
-  return `\`${value.replace(
-    CODE_SPAN_UNSAFE,
-    (char) => CODE_SPAN_REPLACEMENTS[char] ?? "\ufffd",
-  )}\``;
-}
-
-const SEVERITY_RANK: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-  unknown: 4,
-};
-
-function promptText(value: string): string {
-  return value
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/([*_{}[\]()#+.!|-])/g, "\\$1");
-}
-
-function formatBytes(n: number): string {
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MiB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(0)} KiB`;
-  return `${n} B`;
-}
-
-function bytesLabel(value: number | null): string {
-  if (value === null) return "unknown";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)} KB`;
-  return `${value} B`;
+function renderDescriptorSection(name: AnalyzerName, result: unknown): string[] {
+  if (!result) return [];
+  const renderer = getAnalyzerDescriptor(name)?.render as
+    | ((value: never, helpers: typeof RENDER_HELPERS) => string[])
+    | undefined;
+  return renderer ? renderer(result as never, RENDER_HELPERS) : [];
 }
 
 /** Build the `promptSection` (verbatim splice) + a one-line `systemSuffix` from the findings. Empty when nothing found. */
@@ -54,25 +27,7 @@ export function renderBrief(
 ): { promptSection: string; systemSuffix: string } {
   const lines: string[] = [];
 
-  const deps = findings.dependency ?? [];
-  if (deps.length) {
-    lines.push("### Dependency vulnerabilities (OSV.dev)");
-    const flat = deps
-      .flatMap((dep) => dep.cves.map((cve) => ({ dep, cve })))
-      .sort(
-        (a, b) =>
-          (SEVERITY_RANK[a.cve.severity] ?? 4) -
-          (SEVERITY_RANK[b.cve.severity] ?? 4),
-      );
-    for (const { dep, cve } of flat) {
-      const fix = cve.fixedIn
-        ? ` — fixed in ${safeCodeSpan(cve.fixedIn)}`
-        : "";
-      lines.push(
-        `- ${safeCodeSpan(`${dep.package}@${dep.to}`)} (${dep.ecosystem}): **${cve.severity}** ${safeCodeSpan(cve.id)} — ${promptText(cve.summary)}${fix}`,
-      );
-    }
-  }
+  lines.push(...renderDescriptorSection("dependency", findings.dependency));
 
   const lockfileDrift = findings.lockfileDrift ?? [];
   if (lockfileDrift.length) {
@@ -95,17 +50,7 @@ export function renderBrief(
     }
   }
 
-  const secrets = findings.secret ?? [];
-  if (secrets.length) {
-    lines.push(
-      "### Potential leaked secrets (value-redacted — verify + rotate)",
-    );
-    for (const secret of secrets) {
-      lines.push(
-        `- ${safeCodeSpan(`${secret.file}:${secret.line}`)} — ${secret.kind} (${secret.confidence} confidence)`,
-      );
-    }
-  }
+  lines.push(...renderDescriptorSection("secret", findings.secret));
 
   const licenses = findings.license ?? [];
   if (licenses.length) {

@@ -79,27 +79,48 @@ function moduleSpecifiers(text: string): string[] {
   return specs;
 }
 
-function specifierMatchesPackage(specifier: string, pkg: string): boolean {
-  return specifier === pkg || specifier.startsWith(`${pkg}/`);
+function packageNameFromSpecifier(specifier: string): string | null {
+  if (specifier.startsWith("@")) {
+    const [scope, name] = specifier.split("/", 3);
+    return scope && name ? `${scope}/${name}` : null;
+  }
+  const [name] = specifier.split("/", 1);
+  return name || null;
+}
+
+function countPatchUsagesByPackage(
+  files: NonNullable<EnrichRequest["files"]>,
+  packages: ReadonlySet<string>,
+): Map<string, Pick<HeavyDependencyFinding, "usageCount" | "usageLocations">> {
+  const usages = new Map<
+    string,
+    Pick<HeavyDependencyFinding, "usageCount" | "usageLocations">
+  >();
+  for (const line of addedPatchLines(files)) {
+    for (const specifier of moduleSpecifiers(line.text)) {
+      const pkg = packageNameFromSpecifier(specifier);
+      if (!pkg || !packages.has(pkg)) continue;
+      const usage = usages.get(pkg) ?? { usageCount: 0, usageLocations: [] };
+      usage.usageCount += 1;
+      if (usage.usageLocations.length < TRIVIAL_USAGE_MAX) {
+        usage.usageLocations.push({ file: line.file, line: line.line });
+      }
+      usages.set(pkg, usage);
+    }
+  }
+  return usages;
 }
 
 export function countPackagePatchUsages(
   files: NonNullable<EnrichRequest["files"]>,
   pkg: string,
 ): Pick<HeavyDependencyFinding, "usageCount" | "usageLocations"> {
-  const locations: HeavyDependencyFinding["usageLocations"] = [];
-  for (const line of addedPatchLines(files)) {
-    const matches = moduleSpecifiers(line.text).filter((specifier) =>
-      specifierMatchesPackage(specifier, pkg),
-    );
-    for (let i = 0; i < matches.length; i += 1) {
-      locations.push({ file: line.file, line: line.line });
+  return (
+    countPatchUsagesByPackage(files, new Set([pkg])).get(pkg) ?? {
+      usageCount: 0,
+      usageLocations: [],
     }
-  }
-  return {
-    usageCount: locations.length,
-    usageLocations: locations.slice(0, TRIVIAL_USAGE_MAX),
-  };
+  );
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -154,13 +175,25 @@ export async function scanHeavyDependencies(
   const changes = extractDependencyChanges(req.files ?? []).filter(
     (change) => change.ecosystem === "npm",
   );
+  const safePackageNames = new Set(
+    changes
+      .filter((change) => isSafeNpmPackageVersion(change.package, change.to))
+      .map((change) => change.package),
+  );
+  const usagesByPackage = countPatchUsagesByPackage(
+    req.files ?? [],
+    safePackageNames,
+  );
   let weightLookups = 0;
 
   for (const change of changes) {
     if (options.signal?.aborted || findings.length >= MAX_FINDINGS) break;
     if (!isSafeNpmPackageVersion(change.package, change.to)) continue;
 
-    const usage = countPackagePatchUsages(req.files ?? [], change.package);
+    const usage = usagesByPackage.get(change.package) ?? {
+      usageCount: 0,
+      usageLocations: [],
+    };
     if (usage.usageCount < 1 || usage.usageCount > TRIVIAL_USAGE_MAX) continue;
     if (weightLookups >= MAX_WEIGHT_LOOKUPS) break;
     weightLookups += 1;

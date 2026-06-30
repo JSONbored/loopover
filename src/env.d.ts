@@ -197,8 +197,8 @@ declare global {
     /** Review-enrichment service (REES): when truthy, the self-host review engine POSTs the PR diff/files to
      *  REES and splices any public-safe brief into the AI reviewer prompt. Requires REES_URL and the repo in
      *  GITTENSORY_REVIEW_REPOS. REES_ANALYZERS is an optional exact comma-list; unset/"all"/"*" lets REES run its
-     *  full registry. REES_FORWARD_GITHUB_TOKEN defaults on for token-aware analyzers and can be set false to keep
-     *  GitHub read tokens out of the REES request. REES_SHARED_SECRET is a bearer secret and must never be committed. */
+     *  full registry. REES_FORWARD_GITHUB_TOKEN defaults off and must be explicitly enabled before
+     *  GitHub read tokens are included in the REES request. REES_SHARED_SECRET is a bearer secret and must never be committed. */
     GITTENSORY_REVIEW_ENRICHMENT?: string;
     REES_URL?: string;
     REES_SHARED_SECRET?: string;

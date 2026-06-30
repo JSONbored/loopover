@@ -246,6 +246,7 @@ import {
   buildContributorProfile,
   buildContributorScoringProfile,
   buildContributorStrategy,
+  buildDuplicateWinnerRelatedWorkView,
   buildContributorIntakeHealth,
   buildIssueQualityReport,
   buildLabelAudit,
@@ -260,7 +261,6 @@ import {
   buildRoleContext,
   detectGittensorContributor,
   PR_PANEL_RETRIGGER_MARKER,
-  unionScopedOverlapClusters,
   type ContributorProfile,
 } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
@@ -1399,7 +1399,7 @@ async function maybeRunAgentMaintenance(
       // reason ("duplicate of another open PR" via agent-actions when count > 0). When the flag is ON and this
       // PR is the cluster winner, force the count to 0 so the winner's close reason OMITS the duplicate cause
       // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
-      // count is used (byte-identical). Unknown claim time keeps the duplicate cause.
+      // count is used (byte-identical). Sparse legacy rows fall back to PR-number election.
       linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
         linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests),
         pr.number,
@@ -4533,16 +4533,18 @@ async function maybePublishPrPublicSurface(
     const isDupWinner =
       duplicateWinnerEnabled &&
       isDuplicateClusterWinnerByClaim(pr, linkedDuplicatePrsForGate);
+    const relatedWork = buildDuplicateWinnerRelatedWorkView({
+      pr,
+      collisions,
+      preflightCollisions: preflight.collisions,
+      duplicateWinnerEnabled,
+    });
     const readiness = buildPublicReadinessScore({
       pr,
       preflight,
       queueHealth,
       linkedDuplicatePrs: isDupWinner ? [] : linkedDuplicatePrsForGate.map((otherPr) => otherPr.number),
-      scopedOverlapCount: unionScopedOverlapClusters(
-        collisions,
-        pr,
-        preflight.collisions,
-      ).length,
+      scopedOverlapCount: relatedWork.scopedOverlapClusters.length,
     });
 
     if (gateEnabled && author && !publicSurfaceSkipped && !official) {
@@ -5383,6 +5385,7 @@ async function maybePublishPrPublicSurface(
           preflight,
           queueHealth,
           ...(reviewConfig !== undefined ? { review: reviewConfig } : {}),
+          duplicateWinnerEnabled,
         }),
         footerMarkdown: gittensoryFooter({
           earnUrl: repo?.isRegistered

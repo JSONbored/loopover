@@ -11,6 +11,7 @@ import {
   buildContributorScoringProfile,
   buildContributorStrategy,
   buildBurdenForecast,
+  buildDuplicateWinnerRelatedWorkView,
   buildIssueQualityReport,
   buildLabelAudit,
   buildLaneAdvice,
@@ -821,10 +822,101 @@ describe("signal coverage edge cases", () => {
     const winnerComment = buildPublicPrIntelligenceComment({ ...baseFor(winnerPr), duplicateWinnerEnabled: true });
     const loserComment = buildPublicPrIntelligenceComment({ ...baseFor(loserPr), duplicateWinnerEnabled: true });
     expect(winnerComment).not.toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(winnerComment).not.toContain("#88");
+    expect(buildPublicPrPanelSignalRows({ ...baseFor(winnerPr), duplicateWinnerEnabled: true }).rows.find((r) => r.key === "relatedWork")!.cells[1]).toContain("No active overlap");
     expect(loserComment).toContain("Gittensory Orb Review Agent is blocking merge");
     // Flag OFF on the winner is byte-identical to a blocking panel (today's behavior).
     const offWinnerComment = buildPublicPrIntelligenceComment(baseFor(winnerPr));
     expect(offWinnerComment).toContain("Gittensory Orb Review Agent is blocking merge");
+  });
+
+  it("#dup-winner: hides duplicate-only same-issue evidence while preserving mixed scoped overlap context", () => {
+    const directRepo = repo("owner/dupmixed");
+    const duplicateIssue = issue(directRepo.fullName, 42, "Cache invalidation race");
+    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", {
+      authorLogin: "miner",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:00:00.000Z",
+      body: "Fixes #42",
+    });
+    const siblingPr = pr(directRepo.fullName, 88, "Also fixes the cache race", {
+      authorLogin: "other",
+      linkedIssues: [42],
+      linkedIssueClaimedAt: "2026-06-29T10:01:00.000Z",
+      body: "Fixes #42",
+    });
+    const collisions: CollisionReport = {
+      repoFullName: directRepo.fullName,
+      generatedAt: "2026-06-29T10:02:00.000Z",
+      summary: { clusterCount: 2, highRiskCount: 1, itemsReviewed: 3 },
+      clusters: [
+        {
+          id: "issue-42",
+          risk: "high",
+          reason: "Open PR work references issue #42.",
+          items: [
+            { type: "issue", number: duplicateIssue.number, title: duplicateIssue.title, linkedIssues: [42] },
+            { type: "pull_request", number: winnerPr.number, title: winnerPr.title, linkedIssues: [42], linkedIssueClaimedAt: winnerPr.linkedIssueClaimedAt },
+            { type: "pull_request", number: siblingPr.number, title: siblingPr.title, linkedIssues: [42], linkedIssueClaimedAt: siblingPr.linkedIssueClaimedAt },
+          ],
+        },
+        {
+          id: "mixed-scope",
+          risk: "medium",
+          reason: "Titles/paths share 3 meaningful terms.",
+          items: [
+            { type: "pull_request", number: winnerPr.number, title: winnerPr.title, linkedIssues: [42], linkedIssueClaimedAt: winnerPr.linkedIssueClaimedAt },
+            { type: "pull_request", number: siblingPr.number, title: siblingPr.title, linkedIssues: [42], linkedIssueClaimedAt: siblingPr.linkedIssueClaimedAt },
+          ],
+        },
+      ],
+    };
+    const baseArgs = {
+      repo: directRepo,
+      pr: winnerPr,
+      profile: buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []),
+      detection: { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 },
+      queueHealth: buildQueueHealth(directRepo, [duplicateIssue], [winnerPr, siblingPr], collisions),
+      collisions,
+      preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: winnerPr.title, body: winnerPr.body ?? undefined, linkedIssues: winnerPr.linkedIssues }, directRepo, [duplicateIssue], [winnerPr, siblingPr]),
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const },
+      duplicateWinnerEnabled: true,
+    };
+    const retainedSameIssueView = buildDuplicateWinnerRelatedWorkView({
+      pr: winnerPr,
+      collisions: {
+        ...collisions,
+        summary: { ...collisions.summary, clusterCount: collisions.summary.clusterCount + 1, itemsReviewed: collisions.summary.itemsReviewed + 1 },
+        clusters: [
+          ...collisions.clusters,
+          {
+            id: "issue-42-with-sparse-peer",
+            risk: "medium",
+            reason: "Items reference the same linked issue #42.",
+            items: [
+              { type: "pull_request", number: winnerPr.number, title: winnerPr.title, linkedIssues: [42], linkedIssueClaimedAt: winnerPr.linkedIssueClaimedAt },
+              { type: "pull_request", number: siblingPr.number, title: siblingPr.title, linkedIssues: [42], linkedIssueClaimedAt: siblingPr.linkedIssueClaimedAt },
+              { type: "pull_request", number: 99, title: "Nearby cache cleanup" },
+            ],
+          },
+        ],
+      },
+      preflightCollisions: [],
+      duplicateWinnerEnabled: true,
+    });
+    const retainedSparseCluster = retainedSameIssueView.scopedOverlapClusters.find((cluster) => cluster.id === "issue-42-with-sparse-peer");
+
+    const relatedRow = buildPublicPrPanelSignalRows(baseArgs).rows.find((r) => r.key === "relatedWork")!;
+    const comment = buildPublicPrIntelligenceComment(baseArgs);
+
+    expect(retainedSameIssueView.visibleLinkedDuplicatePrs).toEqual([]);
+    expect(retainedSparseCluster?.items.map((item) => (item.type === "pull_request" ? item.number : item.type))).toEqual([winnerPr.number, 99]);
+    expect(relatedRow.cells[1]).toContain("1 scoped overlap");
+    expect(relatedRow.cells[1]).not.toContain("#88");
+    expect(comment).toContain("Titles/paths share 3 meaningful terms");
+    expect(comment).toContain("PR #88");
+    expect(comment).not.toContain("Same-issue duplicate risk found against #88");
+    expect(comment).not.toContain("Open PR work references issue #42.");
   });
 
   it("renders opt-in gate panel states for collision and repo evaluation blockers", () => {

@@ -58,8 +58,8 @@ async function createOrUpdateIssueCommentWithMarker(
     const octokit = makeInstallationOctokit(env, token, options.mode ?? "live");
     const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
     const markers = markerAliases(marker);
-    let existing: IssueComment | undefined;
-    for (let page = 1; !existing && page <= COMMENT_SEARCH_PAGE_LIMIT; page += 1) {
+    const existing: IssueComment[] = [];
+    for (let page = 1; page <= COMMENT_SEARCH_PAGE_LIMIT; page += 1) {
       const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
         owner,
         repo,
@@ -68,21 +68,26 @@ async function createOrUpdateIssueCommentWithMarker(
         page,
       });
       const batch = response.data as IssueComment[];
-      existing = batch.find((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate)));
+      existing.push(...batch.filter((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate))));
       if (batch.length < 100) break;
     }
-    if (existing) {
+    const canonical = canonicalMarkerComment(existing);
+    if (canonical) {
       // Idempotency (#4): skip the PATCH when the rendered body is byte-identical to what's already posted. The
       // re-gate sweep re-renders the same surface every cycle for an unchanged PR; without this, every cycle PATCHes
       // GitHub (a write + rate-limit cost) for no visible change. Defense-in-depth alongside the head_sha publish
       // marker — also collapses a duplicate webhook delivery for the same commit.
-      if (existing.body === body) return { id: existing.id, ...(existing.html_url !== undefined ? { html_url: existing.html_url } : {}) };
+      if (canonical.body === body) {
+        await deleteDuplicateMarkerComments(octokit, owner, repo, existing, canonical.id);
+        return { id: canonical.id, ...(canonical.html_url !== undefined ? { html_url: canonical.html_url } : {}) };
+      }
       const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
         owner,
         repo,
-        comment_id: existing.id,
+        comment_id: canonical.id,
         body,
       });
+      await deleteDuplicateMarkerComments(octokit, owner, repo, existing, canonical.id);
       return response.data as { id: number; html_url?: string };
     }
     if (options.createIfMissing === false) return null;
@@ -98,6 +103,30 @@ async function createOrUpdateIssueCommentWithMarker(
 
 function isGittensoryBotComment(comment: IssueComment, botLogin: string): boolean {
   return comment.user?.type === "Bot" && comment.user.login?.toLowerCase() === botLogin.toLowerCase();
+}
+
+function canonicalMarkerComment(comments: IssueComment[]): IssueComment | undefined {
+  return comments.reduce<IssueComment | undefined>((best, comment) => (best === undefined || comment.id < best.id ? comment : best), undefined);
+}
+
+async function deleteDuplicateMarkerComments(
+  octokit: ReturnType<typeof makeInstallationOctokit>,
+  owner: string,
+  repo: string,
+  comments: IssueComment[],
+  canonicalId: number,
+): Promise<void> {
+  await Promise.allSettled(
+    comments
+      .filter((comment) => comment.id !== canonicalId)
+      .map((comment) =>
+        octokit.request("DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+          owner,
+          repo,
+          comment_id: comment.id,
+        }),
+      ),
+  );
 }
 
 function markerAliases(_marker: string): string[] {

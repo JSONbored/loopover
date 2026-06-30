@@ -121,6 +121,40 @@ rees_analyzer_config_invalid`}
 docker compose logs gittensory | grep selfhost_job_dead`}
       />
 
+      <h2>Grafana traces error or show no data</h2>
+      <p>
+        The trace path is app or smoke process → OTEL collector → Tempo → Grafana. Tempo is only
+        started by the observability profile, and app traces are only emitted when{" "}
+        <code>OTEL_TRACES_EXPORTER</code> includes <code>otlp</code>.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`docker compose --profile observability ps tempo otel-collector grafana
+docker compose logs --tail=80 tempo otel-collector grafana
+
+# Send one synthetic span through the collector and read it back from Tempo.
+npm run test:smoke:observability`}
+      />
+      <ul>
+        <li>
+          If the smoke command fails at <code>otel-collector:4318/v1/traces</code>, the collector is
+          not reachable from the app container.
+        </li>
+        <li>
+          If it pushes successfully but cannot read{" "}
+          <code>tempo:3200/api/traces/&lt;trace_id&gt;</code>, Tempo is unhealthy, not ingesting, or
+          not sharing the Compose network.
+        </li>
+        <li>
+          If the smoke command passes but Grafana Explore fails, check the Tempo data source URL. It
+          should point at <code>http://tempo:3200</code>, not the OTLP ingest ports.
+        </li>
+        <li>
+          For a temporary live debugging run, set <code>OTEL_TRACES_SAMPLER_ARG=1</code> so every
+          root trace is sampled, then lower it again after diagnosis.
+        </li>
+      </ul>
+
       <h2>Readiness fails</h2>
       <FeatureRow
         items={[

@@ -56,6 +56,7 @@
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:coverage": "vitest run --coverage",
     "test:smoke:production": "node scripts/smoke-production.mjs",
+    "test:smoke:observability": "node scripts/smoke-observability-traces.mjs",
     "test:smoke:browser:install": "playwright install chromium",
     "test:smoke:browser": "node scripts/smoke-ui-browser.mjs",
     "test:ci": "git diff --check && npm run actionlint && npm run db:migrations:check && npm run typecheck && npm run test:coverage && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run rees:test && npm run ui:openapi:check && npm run ui:version-audit && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build",

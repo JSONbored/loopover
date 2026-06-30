@@ -289,6 +289,8 @@ services:
         condition: service_started
       loki:
         condition: service_started
+      tempo:
+        condition: service_healthy
       reporting-exporter:
         condition: service_healthy
     ports:
@@ -417,6 +419,9 @@ services:
     image: otel/opentelemetry-collector-contrib:0.155.0
     restart: unless-stopped
     profiles: ["observability"]
+    depends_on:
+      tempo:
+        condition: service_healthy
     # Mount our config at the image's default path so the stock entrypoint picks it up (no command override).
     volumes:
       - ./otel/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
@@ -432,6 +437,12 @@ services:
     volumes:
       - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
 
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
   # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no

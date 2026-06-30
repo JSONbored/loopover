@@ -258,9 +258,13 @@ export async function queryOsvBatch(
   const results = new Map<string, Cve[]>();
   if (!changes.length || signal?.aborted) return results;
 
+  const boundedChanges = changes.slice(
+    0,
+    options.limits?.maxDependencyQueries ?? MAX_DEPENDENCY_QUERIES,
+  );
   const uniqueChanges: DepChange[] = [];
   const seen = new Set<string>();
-  for (const change of changes) {
+  for (const change of boundedChanges) {
     const key = osvCacheKey(change);
     if (seen.has(key)) continue;
     seen.add(key);

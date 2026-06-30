@@ -3,7 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAnalysisContext } from "../dist/analysis-context.js";
-import { scanDependencyChanges } from "../dist/analyzers/dependency-scan.js";
+import {
+  queryOsvBatch,
+  scanDependencyChanges,
+} from "../dist/analyzers/dependency-scan.js";
 
 const jsonResponse = (body, init = {}) =>
   new Response(JSON.stringify(body), {
@@ -238,6 +241,42 @@ test("scanDependencyChanges chunks OSV batch lookups before fallback is needed",
   assert.equal(findings[0].cves[0].id, "GHSA-chunked");
   assert.deepEqual(context.snapshotMetrics().externalCallsByCategory, {
     "osv-direct-querybatch": 2,
+  });
+});
+
+test("queryOsvBatch honors maxDependencyQueries for direct callers", async () => {
+  const context = createAnalysisContext({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 1810,
+  });
+  const batchSizes = [];
+  const fetchImpl = async (url, init = {}) => {
+    assert.equal(String(url), "https://api.osv.dev/v1/querybatch");
+    const body = JSON.parse(String(init.body));
+    batchSizes.push(body.queries.length);
+    return jsonResponse({
+      results: body.queries.map(() => ({ vulns: [] })),
+    });
+  };
+  const changes = Array.from({ length: 25 }, (_, index) => ({
+    ecosystem: "npm",
+    package: `pkg-${index}`,
+    from: null,
+    to: "1.0.0",
+  }));
+
+  const cvesByKey = await queryOsvBatch(changes, fetchImpl, undefined, {
+    analysis: context,
+    limits: { maxDependencyQueries: 2 },
+  });
+
+  assert.deepEqual(batchSizes, [2]);
+  assert.equal(cvesByKey.size, 2);
+  assert.equal(cvesByKey.has("npm:pkg-0:1.0.0"), true);
+  assert.equal(cvesByKey.has("npm:pkg-1:1.0.0"), true);
+  assert.equal(cvesByKey.has("npm:pkg-2:1.0.0"), false);
+  assert.deepEqual(context.snapshotMetrics().externalCallsByCategory, {
+    "osv-direct-querybatch": 1,
   });
 });
 

@@ -44,6 +44,7 @@ gittensory-mcp profile switch work
 gittensory-mcp cache status
 gittensory-mcp cache list
 gittensory-mcp cache clear
+gittensory-mcp cache clear --login jsonbored
 gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
@@ -244,7 +245,8 @@ Successful `decision-pack` and MCP `gittensory_get_decision_pack` calls store a 
 The cache excludes source contents and local paths, is bounded, and can be removed with:
 
 ```sh
-gittensory-mcp cache clear
+gittensory-mcp cache clear                       # clear all entries
+gittensory-mcp cache clear --login jsonbored     # clear only that contributor's entries
 ```
 
-`gittensory-mcp cache list` shows the cached entries (newest first) with the login, when each was cached, and its API/package version and size — never the cached payload or the auth-cache key. `gittensory-mcp cache status` reports the aggregate entry count.
+`gittensory-mcp cache list` shows the cached entries (newest first) with the login, when each was cached, and its API/package version and size — never the cached payload or the auth-cache key. `gittensory-mcp cache status` reports the aggregate entry count. `gittensory-mcp cache clear` removes all entries, or pass `--login <github-login>` to evict only that contributor's cached pack.

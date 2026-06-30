@@ -1472,9 +1472,9 @@ function runCacheCli(args) {
   if (subcommand === "--help" || subcommand === "help") return printCacheHelp();
   const options = parseOptions(args.slice(1));
   if (subcommand === "clear") {
-    const payload = clearDecisionPackCache();
+    const payload = clearDecisionPackCache(typeof options.login === "string" ? options.login : undefined);
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-    else process.stdout.write(`Cleared ${payload.removed} decision-pack cache entr${payload.removed === 1 ? "y" : "ies"}.\n`);
+    else process.stdout.write(`Cleared ${payload.removed} decision-pack cache entr${payload.removed === 1 ? "y" : "ies"}${payload.login ? ` for ${payload.login}` : ""}.\n`);
     return;
   }
   if (subcommand === "status") {
@@ -1785,7 +1785,7 @@ function printHelp() {
   gittensory-mcp profile list|create|switch|remove [name] [--json]
   gittensory-mcp changelog [--json]
   gittensory-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
-  gittensory-mcp cache status|list|clear [--json]
+  gittensory-mcp cache status|list|clear [--login <github-login>] [--json]
   gittensory-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
   gittensory-mcp decision-pack --login <github-login> [--json]
   gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
@@ -1813,9 +1813,10 @@ function printCacheHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp cache status [--json]
   gittensory-mcp cache list [--json]
-  gittensory-mcp cache clear [--json]
+  gittensory-mcp cache clear [--login <github-login>] [--json]
 
 Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.
+Pass --login to clear only that contributor's cached entries; omit it to clear all.
 Source upload remains disabled.
 `);
 }
@@ -2959,18 +2960,34 @@ function pruneDecisionPackCache() {
   for (const file of files.slice(decisionPackCacheMaxEntries)) rmSync(file.path, { force: true });
 }
 
-function clearDecisionPackCache() {
-  const removed = decisionPackCacheFiles().length;
-  rmSync(decisionPackCacheDir, { recursive: true, force: true });
-  return {
-    status: "cleared",
-    removed,
-    cache: {
-      source: "local_cache",
-      maxEntries: decisionPackCacheMaxEntries,
-      clearCommand: "gittensory-mcp cache clear",
-    },
+function clearDecisionPackCache(loginFilter) {
+  const cache = {
+    source: "local_cache",
+    maxEntries: decisionPackCacheMaxEntries,
+    clearCommand: "gittensory-mcp cache clear",
   };
+  if (!loginFilter) {
+    const removed = decisionPackCacheFiles().length;
+    rmSync(decisionPackCacheDir, { recursive: true, force: true });
+    return { status: "cleared", removed, cache };
+  }
+  // Targeted eviction: remove only the entries whose stored login matches, leaving other logins'
+  // cached packs intact. Match the cache's own lowercased login key.
+  const target = loginFilter.toLowerCase();
+  let removed = 0;
+  for (const file of decisionPackCacheFiles()) {
+    let entryLogin = null;
+    try {
+      entryLogin = JSON.parse(readFileSync(file.path, "utf8")).login;
+    } catch {
+      entryLogin = null;
+    }
+    if (typeof entryLogin === "string" && entryLogin.toLowerCase() === target) {
+      rmSync(file.path, { force: true });
+      removed += 1;
+    }
+  }
+  return { status: "cleared", removed, login: target, cache };
 }
 
 function inspectDecisionPackCache() {

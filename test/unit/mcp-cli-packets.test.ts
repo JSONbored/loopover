@@ -131,6 +131,31 @@ describe("gittensory-mcp CLI — packets", () => {
     expect(human).toContain("jsonbored");
   });
 
+  it("clears only the targeted login's cached decision pack", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_API_TIMEOUT_MS: "1000",
+    };
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+
+    // Clearing a different login leaves the cached entry intact.
+    const other = JSON.parse(run(["cache", "clear", "--login", "someone-else", "--json"], env)) as { status: string; removed: number; login: string };
+    expect(other).toMatchObject({ status: "cleared", removed: 0, login: "someone-else" });
+    expect((JSON.parse(run(["cache", "status", "--json"], env)) as { entries: number }).entries).toBe(1);
+
+    // Clearing the matching login (case-insensitive) evicts only that entry.
+    const matched = JSON.parse(run(["cache", "clear", "--login", "JSONbored", "--json"], env)) as { status: string; removed: number; login: string };
+    expect(matched).toMatchObject({ status: "cleared", removed: 1, login: "jsonbored" });
+    expect((JSON.parse(run(["cache", "status", "--json"], env)) as { entries: number }).entries).toBe(0);
+
+    const human = run(["cache", "clear", "--login", "JSONbored"], env);
+    expect(human).toContain("for jsonbored");
+  });
+
   it("does not use stale decision-pack cache created by a different local token", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const fixtureOptions: { decisionPackStatus?: number } = {};

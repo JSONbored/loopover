@@ -2309,9 +2309,10 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
     cursor = nextCursor;
   }
   const blockers: ReviewThreadBlocker[] = [];
+  const memberPermissionCache = new Map<string, Promise<boolean>>();
   for (const thread of threads) {
     if (!thread || thread.isResolved !== false || thread.isOutdated === true) continue;
-    const comments = (thread.comments?.nodes ?? [])
+    const rawComments = (thread.comments?.nodes ?? [])
       .flatMap((comment) =>
         comment
           ? [
@@ -2323,8 +2324,22 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
               },
             ]
           : [],
-      )
-      .filter((comment) => isAuthorizedReviewThreadAuthor(comment.authorLogin, comment.authorAssociation));
+      );
+    const comments: typeof rawComments = [];
+    for (const comment of rawComments) {
+      if (
+        await isAuthorizedReviewThreadAuthor(
+          env,
+          repoFullName,
+          token,
+          memberPermissionCache,
+          comment.authorLogin,
+          comment.authorAssociation,
+        )
+      ) {
+        comments.push(comment);
+      }
+    }
     const blocker = buildReviewThreadBlocker({
       path: thread.path,
       line: thread.line,
@@ -2335,17 +2350,60 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
   return blockers;
 }
 
-function isAuthorizedReviewThreadAuthor(login: string | null | undefined, association: string | null | undefined): boolean {
+async function isAuthorizedReviewThreadAuthor(
+  env: Env,
+  repoFullName: string,
+  token: string,
+  memberPermissionCache: Map<string, Promise<boolean>>,
+  login: string | null | undefined,
+  association: string | null | undefined,
+): Promise<boolean> {
   if (isOwnReviewThreadAuthor(login)) return false;
-  return isMaintainerReviewThreadAuthor(association) || isTrustedScannerReviewThreadAuthor(login);
+  if (isTrustedScannerReviewThreadAuthor(login)) return true;
+  if (isMaintainerReviewThreadAuthor(association)) return true;
+  return isVerifiedMemberReviewThreadAuthor(env, repoFullName, token, memberPermissionCache, login, association);
 }
 
+const MAINTAINER_REVIEW_THREAD_ASSOCIATIONS = new Set(["OWNER", "COLLABORATOR"]);
 function isMaintainerReviewThreadAuthor(association: string | null | undefined): boolean {
-  return association === "OWNER" || association === "MEMBER" || association === "COLLABORATOR";
+  return typeof association === "string" && MAINTAINER_REVIEW_THREAD_ASSOCIATIONS.has(association);
 }
 
+const REPOSITORY_WRITE_REVIEW_THREAD_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+// Raw GitHub review-comment MEMBER can mean org membership, so verify repo permission before trusting it.
+function isVerifiedMemberReviewThreadAuthor(
+  env: Env,
+  repoFullName: string,
+  token: string,
+  memberPermissionCache: Map<string, Promise<boolean>>,
+  login: string | null | undefined,
+  association: string | null | undefined,
+): Promise<boolean> {
+  if (association !== "MEMBER" || typeof login !== "string") return Promise.resolve(false);
+  const normalizedLogin = login.trim();
+  if (normalizedLogin === "") return Promise.resolve(false);
+  const cacheKey = normalizedLogin.toLowerCase();
+  const cached = memberPermissionCache.get(cacheKey);
+  if (cached) return cached;
+  const verified = githubJsonWithHeaders<{ permission?: string | null }>(
+    env,
+    repoFullName,
+    `/collaborators/${encodeURIComponent(normalizedLogin)}/permission`,
+    token,
+  )
+    .then((result) => {
+      const permission = result.data.permission;
+      return typeof permission === "string" && REPOSITORY_WRITE_REVIEW_THREAD_PERMISSIONS.has(permission.toLowerCase());
+    })
+    .catch(() => false);
+  memberPermissionCache.set(cacheKey, verified);
+  return verified;
+}
+
+// External scanner GitHub App bot logins allowed to create review-thread blockers.
+const TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS = new Set(["superagent[bot]", "superagent-security[bot]", "superagent-security-dev[bot]", "brin[bot]"]);
 function isTrustedScannerReviewThreadAuthor(login: string | null | undefined): boolean {
-  return /^(?:superagent|brin)(?:[-\w]*)?\[bot\]$/i.test(login ?? "");
+  return typeof login === "string" && TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS.has(login.toLowerCase());
 }
 
 function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {

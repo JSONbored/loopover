@@ -4,7 +4,7 @@
  * When several OPEN PRs link the same issue (a duplicate cluster), the legacy behavior gate-blocks +
  * auto-closes EVERY sibling as a duplicate — no winner survives. With the flag ON, exactly ONE winner is
  * spared: the earliest observed linked-issue claimant. Sparse legacy rows that do not yet have claim timing
- * fall back to PR-number election so migrated clusters do not keep every sibling blocked. Only the LOSERS are
+ * fail closed so unknown ordering cannot arbitrarily suppress duplicate evidence. Only the LOSERS are
  * blocked/closed; the winner still must pass CI / conflict / gate / linked-issue / slop on its OWN merits.
  *
  * This module is PURE — no IO, no Date, no random — so the same inputs always yield the same verdict and the
@@ -38,15 +38,15 @@ export function isDuplicateClusterWinner(prNumber: number, openSiblingNumbers: n
 
 /**
  * True iff `pr` is the earliest known linked-issue claimant in the open duplicate cluster. Sparse legacy rows
- * fall back to the original PR-number election; ties between known claim times also use PR number.
+ * fail closed; ties between known claim times use PR number.
  */
 export function isDuplicateClusterWinnerByClaim(pr: DuplicateClaimMember, openSiblings: DuplicateClaimMember[]): boolean {
   if (openSiblings.length === 0) return true;
   const prClaim = claimTimeMs(pr.linkedIssueClaimedAt);
-  if (prClaim === null) return isDuplicateClusterWinner(pr.number, openSiblings.map((sibling) => sibling.number));
+  if (prClaim === null) return false;
   for (const sibling of openSiblings) {
     const siblingClaim = claimTimeMs(sibling.linkedIssueClaimedAt);
-    if (siblingClaim === null) return isDuplicateClusterWinner(pr.number, openSiblings.map((other) => other.number));
+    if (siblingClaim === null) return false;
     if (siblingClaim < prClaim) return false;
     if (siblingClaim === prClaim && sibling.number < pr.number) return false;
   }

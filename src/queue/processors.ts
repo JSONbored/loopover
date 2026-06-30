@@ -1399,7 +1399,7 @@ async function maybeRunAgentMaintenance(
       // reason ("duplicate of another open PR" via agent-actions when count > 0). When the flag is ON and this
       // PR is the cluster winner, force the count to 0 so the winner's close reason OMITS the duplicate cause
       // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
-      // count is used (byte-identical). Sparse legacy rows fall back to PR-number election.
+      // count is used (byte-identical). Sparse legacy rows fail closed so duplicate evidence remains visible.
       linkedDuplicateCount: dupWinnerLinkedDuplicateCount(
         linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests),
         pr.number,

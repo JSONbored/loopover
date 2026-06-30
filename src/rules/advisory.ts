@@ -676,7 +676,8 @@ function addPullRequestFindings(
     );
     // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
     // linked-issue claimant, SKIP the duplicate finding — suppressing it suppresses the gate failure, so the
-    // winner survives while later claimants keep the finding. Sparse legacy rows fall back to PR-number election.
+    // winner survives while later claimants keep the finding. Sparse legacy rows fail closed instead of
+    // suppressing duplicate evidence with arbitrary PR-number ordering.
     // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
     if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinnerByClaim(pr, overlappingPrs))) {
       findings.push({

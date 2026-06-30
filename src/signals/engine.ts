@@ -4233,8 +4233,8 @@ export function buildPublicPrIntelligenceComment(args: {
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
-  // linked-issue claimant, do NOT hard-block it as a duplicate — only the losers block. Sparse legacy rows fall
-  // back to PR-number election so migrated clusters do not all stay blocked.
+  // linked-issue claimant, do NOT hard-block it as a duplicate — only the losers block. Sparse legacy rows fail
+  // closed so unknown ordering cannot suppress duplicate evidence.
   const hardDuplicateBlock =
     args.settings.duplicatePrGateMode === "block" &&
     linkedDuplicatePrs.length > 0 &&
@@ -4473,7 +4473,7 @@ export function buildPublicPrPanelSignalRows(args: {
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): suppress the earliest known claimant's hard-duplicate block
-  // (see the comment builder). Sparse legacy rows fall back to PR-number election; flag-OFF keeps legacy behavior.
+  // (see the comment builder). Sparse legacy rows fail closed; flag-OFF keeps legacy behavior.
   const hardDuplicateBlock =
     args.settings.duplicatePrGateMode === "block" &&
     linkedDuplicatePrs.length > 0 &&

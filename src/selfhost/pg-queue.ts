@@ -386,13 +386,13 @@ export function createPgQueue(
           const retryAfter = now + rateLimitRetryDelayWithJitter(rateLimitDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`);
           const target = githubRateLimitAdmissionTargetForJob(message);
           const deferred = target ? await deferPendingJobsForRateLimit(rateLimitDelayMs, now, target) : 0;
-          if (deferred) {
+          if (target !== null && deferred > 0) {
             await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total", deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
                 event: "selfhost_queue_rate_limit_budget_deferred",
-                admission_key: target?.admissionKey ?? null,
+                admission_key: target.admissionKey,
                 deferred,
               }),
             );

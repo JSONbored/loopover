@@ -128,6 +128,7 @@ describe("self-host queue common helpers", () => {
   it("uses the newest comparable exact or legacy admission observation", () => {
     const now = Date.parse("2026-06-24T12:00:00.000Z");
     const key = githubRateLimitAdmissionKeyForInstallation(123);
+    const unrelatedKey = githubRateLimitAdmissionKeyForInstallation(456);
     expect(
       githubRateLimitAdmissionDelayMs(
         "webhook",
@@ -161,6 +162,49 @@ describe("self-host queue common helpers", () => {
         now,
       ),
     ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: unrelatedKey, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        null,
+        [
+          { remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z" },
+          { remaining: 0, reset_at: "2026-06-24T12:10:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        null,
+        [
+          { remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z" },
+          { remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
   });
 
   it("uses the newest local REST rate-limit observation for admission control", async () => {

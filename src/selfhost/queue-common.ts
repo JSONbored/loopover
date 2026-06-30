@@ -171,9 +171,8 @@ function observationAdmissionKey(
 
 function newerRateLimitObservation(
   current: AdmissionObservation | null | undefined,
-  candidate: AdmissionObservation | null | undefined,
+  candidate: AdmissionObservation,
 ): AdmissionObservation | null {
-  if (!candidate) return current ?? null;
   if (!current) return candidate;
   const currentMs = observationMs(current);
   const candidateMs = observationMs(candidate);

@@ -300,11 +300,22 @@ services:
       # Maintainer dashboards query only the redacted reporting export, never the live app DB.
       - grafana-reporting-data:/reporting:ro
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      # Compose interpolates every service even when --profile observability is inactive, so the required-password
+      # check lives in entrypoint below. Runtime still fails closed unless the operator sets GRAFANA_ADMIN_PASSWORD.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-${GRAFANA_LOCAL_SMOKE_PASSWORD:-}}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -z "$${GF_SECURITY_ADMIN_PASSWORD:-}" ]; then
+          echo >&2 "Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability, or set GRAFANA_LOCAL_SMOKE_PASSWORD for local-only smoke tests."
+          exit 1
+        fi
+        exec /run.sh
 
   reporting-exporter:
     image: alpine:3.20

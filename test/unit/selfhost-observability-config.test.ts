@@ -34,7 +34,14 @@ describe("self-host observability trace config", () => {
       condition: "service_healthy",
     });
     expect(grafana.environment?.GF_SECURITY_ADMIN_PASSWORD).toBe(
-      "${GRAFANA_ADMIN_PASSWORD:-changeme}",
+      "${GRAFANA_ADMIN_PASSWORD:-${GRAFANA_LOCAL_SMOKE_PASSWORD:-}}",
+    );
+    expect(JSON.stringify(grafana)).not.toContain("changeme");
+    expect(grafana.entrypoint).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Set GRAFANA_ADMIN_PASSWORD"),
+        expect.stringContaining("exec /run.sh"),
+      ]),
     );
 
     for (const [name, service] of Object.entries(services)) {

@@ -109,8 +109,15 @@ describe("unmodeled scoring constant drift", () => {
     const opened = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA"] });
     expect(opened?.fingerprint).toBe(fingerprint);
 
-    // Push the unmodeled report out of `listUpstreamDriftReports(env, 50)`'s recency window.
-    await upsertUpstreamDriftReport(env, { ...opened!, updatedAt: "2020-01-01T00:00:00.000Z" });
+    // Push the unmodeled report out of `listUpstreamDriftReports(env, 50)`'s recency window and seed linked-issue
+    // metadata directly on the row — do NOT call `updateUpstreamDriftReportIssue` here; that helper rewrites
+    // `updatedAt` to now and would put the row back inside the capped list, defeating the regression.
+    await upsertUpstreamDriftReport(env, {
+      ...opened!,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      issueNumber: 811,
+      issueUrl: "https://github.com/JSONbored/gittensory/issues/811",
+    });
     for (let index = 0; index < 51; index++) {
       await upsertUpstreamDriftReport(env, {
         id: `newer-${index}`,
@@ -130,10 +137,6 @@ describe("unmodeled scoring constant drift", () => {
     }
     expect((await listUpstreamDriftReports(env, 50)).some((report) => report.fingerprint === fingerprint)).toBe(false);
 
-    await updateUpstreamDriftReportIssue(env, fingerprint, {
-      number: 811,
-      url: "https://github.com/JSONbored/gittensory/issues/811",
-    });
     const updated = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA", "BETA"] });
     expect(updated).toMatchObject({
       id: opened!.id,
@@ -144,6 +147,7 @@ describe("unmodeled scoring constant drift", () => {
       payload: expect.objectContaining({ unmodeledUpstreamConstants: ["ALPHA", "BETA"] }),
     });
 
+    await upsertUpstreamDriftReport(env, { ...updated!, updatedAt: "2020-01-01T00:00:00.000Z" });
     const resolved = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: [] });
     expect(resolved).toMatchObject({ id: opened!.id, fingerprint, status: "resolved" });
   });

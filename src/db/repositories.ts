@@ -3335,14 +3335,15 @@ export async function putCachedAiReview(
   review: { notes: string; reviewerCount: number; findings?: AdvisoryFinding[]; metadata?: Record<string, unknown> | undefined },
 ): Promise<void> {
   if (!headSha) return;
+  const createdAt = nowIso();
   await env.DB
     .prepare(
-      `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json, metadata_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO ai_review_cache (repo_full_name, pull_number, head_sha, ai_review_mode, notes, reviewer_count, findings_json, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo_full_name, pull_number, head_sha) DO UPDATE SET
-         ai_review_mode = excluded.ai_review_mode, notes = excluded.notes, reviewer_count = excluded.reviewer_count, findings_json = excluded.findings_json, metadata_json = excluded.metadata_json, created_at = CURRENT_TIMESTAMP`,
+         ai_review_mode = excluded.ai_review_mode, notes = excluded.notes, reviewer_count = excluded.reviewer_count, findings_json = excluded.findings_json, metadata_json = excluded.metadata_json, created_at = excluded.created_at`,
     )
-    .bind(repoFullName, pullNumber, headSha, mode, review.notes, review.reviewerCount, jsonString(review.findings ?? []), jsonString(review.metadata ?? {}))
+    .bind(repoFullName, pullNumber, headSha, mode, review.notes, review.reviewerCount, jsonString(review.findings ?? []), jsonString(review.metadata ?? {}), createdAt)
     .run();
 }
 

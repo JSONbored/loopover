@@ -289,8 +289,6 @@ services:
         condition: service_started
       loki:
         condition: service_started
-      tempo:
-        condition: service_healthy
       reporting-exporter:
         condition: service_healthy
     ports:
@@ -302,7 +300,7 @@ services:
       # Maintainer dashboards query only the redacted reporting export, never the live app DB.
       - grafana-reporting-data:/reporting:ro
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.

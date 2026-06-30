@@ -14,10 +14,12 @@ function record(value: unknown): Record<string, any> {
 }
 
 describe("self-host observability trace config", () => {
-  it("gates Grafana and the OTEL collector on Tempo readiness", () => {
+  it("gates Tempo consumers without breaking the default Compose profile", () => {
     const compose = record(readYaml("docker-compose.yml"));
     const services = record(compose.services);
     const tempo = record(services.tempo);
+    const grafana = record(services.grafana);
+    const collector = record(services["otel-collector"]);
 
     expect(tempo.healthcheck?.test).toEqual([
       "CMD",
@@ -27,12 +29,20 @@ describe("self-host observability trace config", () => {
     ]);
     expect(tempo.healthcheck?.start_period).toBe("20s");
     expect(tempo.healthcheck?.retries).toBe(12);
-    expect(record(services.grafana).depends_on?.tempo).toEqual({
+    expect(grafana.depends_on?.tempo).toBeUndefined();
+    expect(collector.depends_on?.tempo).toEqual({
       condition: "service_healthy",
     });
-    expect(record(services["otel-collector"]).depends_on?.tempo).toEqual({
-      condition: "service_healthy",
-    });
+    expect(grafana.environment?.GF_SECURITY_ADMIN_PASSWORD).toBe(
+      "${GRAFANA_ADMIN_PASSWORD:-changeme}",
+    );
+
+    for (const [name, service] of Object.entries(services)) {
+      const serviceRecord = record(service);
+      if (!serviceRecord.depends_on?.tempo) continue;
+      expect(serviceRecord.profiles, name).toContain("observability");
+      expect(tempo.profiles, "tempo").toContain("observability");
+    }
   });
 
   it("keeps the collector, Tempo, and Grafana data source on the same trace path", () => {

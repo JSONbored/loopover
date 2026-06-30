@@ -83,6 +83,7 @@ describe("buildReviewEnrichment", () => {
       {
         ...input,
         baseSha: "baseabc",
+        body: "Fixes #12",
         author: "alice",
         githubToken: "gh-read-token",
       },
@@ -106,6 +107,7 @@ describe("buildReviewEnrichment", () => {
     const body = JSON.parse(calls[0]!.init.body as string);
     expect(body.repoFullName).toBe("o/r");
     expect(body.baseSha).toBe("baseabc");
+    expect(body.body).toBe("Fixes #12");
     expect(body.author).toBe("alice");
     expect(body.githubToken).toBe("gh-read-token");
     expect(body.analyzers).toBeUndefined();
@@ -126,6 +128,22 @@ describe("buildReviewEnrichment", () => {
       },
       { path: "b.ts", status: undefined, patch: undefined },
     ]);
+  });
+
+  it("omits body from the REES POST when the PR body is empty", async () => {
+    let posted: { body?: string } | undefined;
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      posted = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+      return {
+        ok: true,
+        json: async () => ({ promptSection: "brief" }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://rees" }), {
+      ...input,
+      author: "alice",
+    });
+    expect(posted?.body).toBeUndefined();
   });
 
   it("sends an analyzer budget below the transport timeout and accepts partial degraded briefs", async () => {

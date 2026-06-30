@@ -141,6 +141,7 @@ interface EnrichmentInput {
   headSha: string | null;
   baseSha?: string | null;
   title?: string | undefined;
+  body?: string | undefined;
   author?: string | null | undefined;
   githubToken?: string | undefined;
   files: PullRequestFileRecord[];
@@ -232,6 +233,7 @@ export async function buildReviewEnrichment(
         headSha: input.headSha,
         baseSha: input.baseSha ?? null,
         title: input.title,
+        ...(input.body ? { body: input.body } : {}),
         author: input.author ?? undefined,
         ...(input.githubToken ? { githubToken: input.githubToken } : {}),
         files: input.files.map((file) => ({

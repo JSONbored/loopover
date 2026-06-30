@@ -92,6 +92,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
         analyzers?: string[];
         baseSha?: string | null;
         author?: string;
+        body?: string;
         githubToken?: string;
       };
     } = {};
@@ -105,6 +106,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
             analyzers?: string[];
             baseSha?: string | null;
             author?: string;
+            body?: string;
             githubToken?: string;
           };
           return new Response(
@@ -141,6 +143,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       ]);
       expect(reesRequest.body?.baseSha).toBe("base7");
       expect(reesRequest.body?.author).toBe("alice");
+      expect(reesRequest.body?.body).toBe("Implements the thing.");
       expect(reesRequest.body?.githubToken).toBe("public-read-token");
       // The brief's content flows into the user prompt, but the system prompt carries our FIXED
       // enrichment suffix — the REES-supplied systemSuffix is untrusted and is never spliced in.

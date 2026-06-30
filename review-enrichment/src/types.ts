@@ -308,6 +308,7 @@ export interface BriefFindings {
   docCommentDrift?: DocCommentDriftFinding[];
   duplication?: DuplicationFinding[];
   churnHotspot?: ChurnHotspotFinding[];
+  unsafeDom?: UnsafeDomFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a
@@ -336,6 +337,23 @@ export interface DuplicationFinding {
   sourceLine: number;
   /** Number of contiguous significant lines that matched verbatim (after whitespace normalization). */
   lines: number;
+}
+
+/** An added source line that passes data into a DOM-HTML write sink (`innerHTML`, `dangerouslySetInnerHTML`,
+ *  `document.write`) or a dynamic-code-execution sink (`eval`, `new Function`, a string-bodied `setTimeout`/
+ *  `setInterval`) — a client-side XSS / arbitrary-code-execution surface. Reports the location + sink + kind
+ *  only; string-literal and comment text is stripped before matching so a sink named in prose is not flagged. */
+export interface UnsafeDomFinding {
+  file: string;
+  line: number;
+  kind:
+    | "inner-html"
+    | "dangerous-jsx"
+    | "document-write"
+    | "eval-call"
+    | "function-ctor"
+    | "set-timeout-string";
+  sink: string;
 }
 
 export type AnalyzerStatus = "ok" | "degraded" | "skipped" | "capped" | "timeout";

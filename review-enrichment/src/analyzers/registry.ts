@@ -19,6 +19,7 @@ import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
 import { scanSecretLog } from "./secret-log.js";
 import { scanTyposquat } from "./typosquat.js";
+import { scanUnsafeDom } from "./unsafe-dom.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -439,6 +440,26 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanChurnHotspot(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "unsafeDom",
+    title: "Unsafe DOM / code-execution sinks",
+    category: "security",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags added code that passes data into a DOM-HTML write sink or a dynamic code-execution sink.",
+      looksAt:
+        "Added JS/TS/JSX lines using innerHTML, dangerouslySetInnerHTML, document.write, eval, new Function, or a string-bodied setTimeout/setInterval.",
+      reports: "File, line, the sink, and the unsafe-sink kind.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "String-literal, regex-literal, and comment text is stripped before matching, so a sink named in a string, regex, or comment is not flagged.",
+    },
+    run: (req, { signal }) => scanUnsafeDom(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

@@ -350,6 +350,7 @@ function inputSkipReason(
     case "redos":
     case "secret":
     case "secretLog":
+    case "unsafeDom":
       return analysis.hasAddedLines ? null : "no_added_lines";
     case "provenance":
       return analysis.dependencyManifestPaths.length ||

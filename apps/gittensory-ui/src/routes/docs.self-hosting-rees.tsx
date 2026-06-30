@@ -79,6 +79,7 @@ GITTENSORY_REVIEW_ENRICHMENT=true
 REES_URL=https://enrichment.example.internal
 REES_SHARED_SECRET=<shared-secret>
 REES_TIMEOUT_MS=8000
+REES_PROFILE=balanced
 REES_FORWARD_GITHUB_TOKEN=false
 REES_ANALYZERS=all`}
       />
@@ -100,6 +101,11 @@ REES_ANALYZERS=all`}
           {
             title: "REES_TIMEOUT_MS",
             description: "Request timeout. Defaults to 8000 ms and is clamped to at least 1000 ms.",
+          },
+          {
+            title: "REES_PROFILE",
+            description:
+              "Optional analyzer profile. balanced is the default; fast favors local/registry checks during incidents; deep allows larger per-class budgets.",
           },
           {
             title: "REES_FORWARD_GITHUB_TOKEN",
@@ -127,13 +133,18 @@ REES_FORWARD_GITHUB_TOKEN=true`}
 
       <h2>Analyzer selection</h2>
       <p>
-        Leave <code>REES_ANALYZERS</code> unset, <code>all</code>, or <code>*</code> to run the full
-        REES registry. To run a subset, use exact comma-separated analyzer names. Unknown names are
-        ignored with a <code>rees_analyzer_config_invalid</code> warning and the remaining valid
-        analyzers still run. If every configured name is invalid, the engine sends an empty analyzer
-        list so the typo fails closed instead of running the full registry.
+        Leave <code>REES_ANALYZERS</code> unset, <code>all</code>, or <code>*</code> to use the
+        selected <code>REES_PROFILE</code> defaults. To run a subset, use exact comma-separated
+        analyzer names. Unknown names are ignored with a <code>rees_analyzer_config_invalid</code>{" "}
+        warning and the remaining valid analyzers still run. If every configured name is invalid,
+        the engine sends an empty analyzer list so the typo fails closed instead of running the full
+        registry.
       </p>
-      <CodeBlock filename=".env" code={`REES_ANALYZERS=secret,actionPin,redos`} />
+      <CodeBlock
+        filename=".env"
+        code={`REES_PROFILE=fast
+REES_ANALYZERS=secret,actionPin,redos`}
+      />
       <CodeBlock filename="current analyzer names" code={REES_ANALYZER_NAMES.join("\n")} />
       <p>
         See the <Link to="/docs/self-hosting-rees-analyzers">REES analyzer reference</Link> for each

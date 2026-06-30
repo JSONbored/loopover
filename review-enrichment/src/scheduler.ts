@@ -114,6 +114,15 @@ export interface AnalyzerPlan {
   executionDeadlineMs: number;
 }
 
+export interface ReesProfileMetadata {
+  name: ReesProfileName;
+  default: boolean;
+  costClasses: AnalyzerCostClass[];
+  concurrency: Record<AnalyzerCostClass, number>;
+  timeoutMs: Record<AnalyzerCostClass, number>;
+  responseReserveMs: number;
+}
+
 export function resolveReesProfile(value: unknown): ReesProfileName {
   if (typeof value !== "string") return DEFAULT_REES_PROFILE;
   const normalized = value.trim().toLowerCase();
@@ -122,6 +131,20 @@ export function resolveReesProfile(value: unknown): ReesProfileName {
 
 export function isReesProfileName(value: string): value is ReesProfileName {
   return (REES_PROFILES as readonly string[]).includes(value);
+}
+
+export function reesProfileMetadata(): ReesProfileMetadata[] {
+  return REES_PROFILES.map((name) => {
+    const config = PROFILE_CONFIG[name];
+    return {
+      name,
+      default: name === DEFAULT_REES_PROFILE,
+      costClasses: COST_ORDER.filter((cost) => config.costs.has(cost)),
+      concurrency: { ...config.concurrency },
+      timeoutMs: { ...config.timeoutMs },
+      responseReserveMs: config.responseReserveMs,
+    };
+  });
 }
 
 export function responseReserveMs(profile: ReesProfileName, budgetMs: number): number {

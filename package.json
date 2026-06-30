@@ -22,6 +22,8 @@
     "test:mcp-pack": "node scripts/check-mcp-package.mjs",
     "rees:install": "npm ci --prefix review-enrichment --prefer-offline --no-audit --no-fund",
     "rees:test": "npm run rees:install && npm --prefix review-enrichment test",
+    "rees:metadata": "npm --prefix review-enrichment run metadata",
+    "rees:metadata:check": "npm --prefix review-enrichment run metadata:check",
     "rees:validate-sourcemaps": "npm --prefix review-enrichment run validate:sourcemaps",
     "db:migrations:check": "node scripts/check-migrations.mjs",
     "actionlint": "node scripts/actionlint.mjs",

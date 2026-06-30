@@ -646,6 +646,27 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("does not keep webhook admission closed from stale legacy rows after a newer healthy exact observation", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const m = makePool();
+    m.setRateLimitRows([
+      { admission_key: null, repo_full_name: "owner/repo", remaining: "0", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+      { admission_key: "installation:123", repo_full_name: "owner/repo", remaining: "4000", reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+    ]);
+    m.enqueueJob("webhook", { type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+    const seen: string[] = [];
+    const q = createPgQueue(m.pool, async (j) => void seen.push(typeOf(j)));
+
+    await q.drain();
+
+    expect(seen).toEqual(["github-webhook"]);
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status='pending', run_after=GREATEST"),
+      expect.anything(),
+    );
+  });
+
   it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));

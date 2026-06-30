@@ -144,6 +144,8 @@ function observationMs(
 }
 
 type AdmissionObservation = {
+  admission_key?: unknown;
+  admissionKey?: unknown;
   remaining?: unknown;
   reset_at?: unknown;
   resetAt?: unknown;
@@ -152,18 +154,53 @@ type AdmissionObservation = {
   observedAtMs?: unknown;
 };
 
-function newestRateLimitObservation(
-  admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
-  persisted: AdmissionObservation | null | undefined,
-):
-  | AdmissionObservation
-  | null
-  | undefined {
-  const local = admissionKey ? latestGitHubRestRateLimitObservation(admissionKey) : null;
-  if (!local) return persisted;
-  if (!persisted) return local;
-  const persistedMs = observationMs(persisted);
-  return persistedMs !== null && persistedMs > local.observedAtMs ? persisted : local;
+function observationAdmissionKey(
+  observation: AdmissionObservation | null | undefined,
+): GitHubRateLimitAdmissionKey | null | undefined {
+  if (typeof observation?.admission_key === "string") {
+    return observation.admission_key as GitHubRateLimitAdmissionKey;
+  }
+  if (typeof observation?.admissionKey === "string") {
+    return observation.admissionKey as GitHubRateLimitAdmissionKey;
+  }
+  if (observation?.admission_key === null || observation?.admissionKey === null) {
+    return null;
+  }
+  return undefined;
+}
+
+function newerRateLimitObservation(
+  current: AdmissionObservation | null | undefined,
+  candidate: AdmissionObservation | null | undefined,
+): AdmissionObservation | null {
+  if (!candidate) return current ?? null;
+  if (!current) return candidate;
+  const currentMs = observationMs(current);
+  const candidateMs = observationMs(candidate);
+  if (candidateMs === null) return currentMs === null ? candidate : current;
+  if (currentMs === null) return candidate;
+  return candidateMs > currentMs ? candidate : current;
+}
+
+function rateLimitAdmissionDelayForObservation(
+  kind: GitHubRateLimitAdmissionKind,
+  observation: AdmissionObservation | null | undefined,
+  nowMs: number,
+): number | null {
+  return kind === "webhook"
+    ? githubWebhookRateLimitDelayMs(observation, nowMs)
+    : githubBackgroundRateLimitDelayMs(observation, nowMs);
+}
+
+function fallbackObservationCanOverrideExact(
+  fallback: AdmissionObservation | null,
+  exact: AdmissionObservation | null,
+): boolean {
+  if (!fallback) return false;
+  if (!exact) return true;
+  const fallbackMs = observationMs(fallback);
+  const exactMs = observationMs(exact);
+  return fallbackMs === null || exactMs === null || fallbackMs > exactMs;
 }
 
 export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
@@ -218,17 +255,26 @@ export function githubRateLimitAdmissionDelayMs(
   persisted: AdmissionObservation | readonly AdmissionObservation[] | null | undefined,
   nowMs = Date.now(),
 ): number | null {
+  const local = admissionKey ? latestGitHubRestRateLimitObservation(admissionKey) : null;
   const candidates = Array.isArray(persisted) ? persisted : [persisted];
-  let maxDelay: number | null = null;
-  for (const candidate of candidates.length > 0 ? candidates : [undefined]) {
-    const observation = newestRateLimitObservation(admissionKey, candidate);
-    const delay =
-      kind === "webhook"
-        ? githubWebhookRateLimitDelayMs(observation, nowMs)
-        : githubBackgroundRateLimitDelayMs(observation, nowMs);
-    if (delay !== null) maxDelay = Math.max(maxDelay ?? 0, delay);
+  const keyedCandidateMayOmitKey = Boolean(admissionKey) && !Array.isArray(persisted);
+  let exact: AdmissionObservation | null = local;
+  let fallback: AdmissionObservation | null = null;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const candidateKey = observationAdmissionKey(candidate);
+    if (admissionKey && (candidateKey === admissionKey || (candidateKey === undefined && keyedCandidateMayOmitKey))) {
+      exact = newerRateLimitObservation(exact, candidate);
+    } else if (candidateKey === null || candidateKey === undefined) {
+      fallback = newerRateLimitObservation(fallback, candidate);
+    }
   }
-  return maxDelay;
+  const exactDelay = rateLimitAdmissionDelayForObservation(kind, exact, nowMs);
+  if (exactDelay !== null) return exactDelay;
+  const fallbackDelay = rateLimitAdmissionDelayForObservation(kind, fallback, nowMs);
+  return fallbackDelay !== null && fallbackObservationCanOverrideExact(fallback, exact)
+    ? fallbackDelay
+    : null;
 }
 
 export function githubBackgroundRateLimitDelayMs(

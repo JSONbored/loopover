@@ -611,21 +611,21 @@ function rateLimitAdmissionDelayMs(
   try {
     const rows = driver.query(
       `WITH exact_observation AS (
-        SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
+        SELECT admission_key, remaining, reset_at, observed_at FROM github_rate_limit_observations
           WHERE resource='rest' AND remaining IS NOT NULL AND ? IS NOT NULL AND admission_key=?
           ORDER BY observed_at DESC
           LIMIT 1
       ), fallback_observation AS (
-        SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
+        SELECT admission_key, remaining, reset_at, observed_at FROM github_rate_limit_observations
           WHERE resource='rest' AND remaining IS NOT NULL AND admission_key IS NULL
           ORDER BY observed_at DESC
           LIMIT 1
       )
-      SELECT remaining, reset_at, observed_at FROM exact_observation
+      SELECT admission_key, remaining, reset_at, observed_at FROM exact_observation
       UNION ALL
-      SELECT remaining, reset_at, observed_at FROM fallback_observation`,
+      SELECT admission_key, remaining, reset_at, observed_at FROM fallback_observation`,
       [target.admissionKey, target.admissionKey],
-    ).rows as Array<{ remaining?: number | null; reset_at?: string | null; observed_at?: string | null }>;
+    ).rows as Array<{ admission_key?: string | null; remaining?: number | null; reset_at?: string | null; observed_at?: string | null }>;
     const delayMs = githubRateLimitAdmissionDelayMs(target.kind, target.admissionKey, rows);
     return delayMs === null ? null : { ...target, delayMs };
   } catch {

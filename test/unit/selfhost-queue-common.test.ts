@@ -98,7 +98,7 @@ describe("self-host queue common helpers", () => {
     expect(githubWebhookRateLimitDelayMs({ remaining: 50, reset_at: "2026-06-24T11:59:00.000Z" }, now)).toBeNull();
   });
 
-  it("computes admission delays from any unsafe persisted candidate", () => {
+  it("computes admission delays from the newest unkeyed persisted candidate", () => {
     const now = Date.parse("2026-06-24T12:00:00.000Z");
     expect(
       githubRateLimitAdmissionDelayMs(
@@ -110,8 +110,57 @@ describe("self-host queue common helpers", () => {
         ],
         now,
       ),
-    ).toBe(615_000);
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        null,
+        [
+          { remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { remaining: 75, reset_at: "2026-06-24T12:15:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(900_000);
     expect(githubRateLimitAdmissionDelayMs("background", null, [], now)).toBeNull();
+  });
+
+  it("prefers exact admission observations over stale legacy fallback rows", () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    const key = githubRateLimitAdmissionKeyForInstallation(123);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admissionKey: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: key, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { admission_key: null, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
   });
 
   it("uses the newest local REST rate-limit observation for admission control", async () => {
@@ -150,7 +199,7 @@ describe("self-host queue common helpers", () => {
       githubRateLimitAdmissionDelayMs(
         "webhook",
         key,
-        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:01:00.000Z" },
+        { admission_key: key, remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:01:00.000Z" },
         now,
       ),
     ).toBeNull();

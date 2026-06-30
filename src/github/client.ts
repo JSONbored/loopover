@@ -179,20 +179,27 @@ function responseFromCached(hit: CachedGitHubResponse, replayKind: "hit" | "coal
   });
 }
 
-async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function fetchWithGitHubRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<GitHubFetchResult> {
   let response: Response;
   for (let attempt = 0; ; attempt += 1) {
-    response = init?.signal
-      ? await fetch(input, init)
-      : await fetch(input, {
-          ...(init ?? {}),
-          signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
-        });
+    try {
+      response = init?.signal
+        ? await fetch(input, init)
+        : await fetch(input, {
+            ...(init ?? {}),
+            signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
+          });
+    } catch (error) {
+      return { ok: false, error };
+    }
     // Retry a transient rate-limit (with backoff) instead of surfacing it; stop once exhausted or it's not a limit.
     if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES || !(await isRateLimitedResponse(response))) break;
     await sleep(rateLimitRetryMs(response, attempt));
   }
-  return response;
+  return { ok: true, response };
 }
 
 async function fetchAndMaybeCacheGitHubGet(
@@ -201,9 +208,11 @@ async function fetchAndMaybeCacheGitHubGet(
   url: string,
   cacheKey: string,
   cls: GitHubCacheClass,
-): Promise<{ response: Response; cached: CachedGitHubResponse | null }> {
-  const response = await fetchWithGitHubRetry(input, init);
-  if (response.status !== 200) return { response, cached: null };
+): Promise<InFlightCacheableGet> {
+  const fetched = await fetchWithGitHubRetry(input, init);
+  if (!fetched.ok) return { ok: false, error: fetched.error };
+  const { response } = fetched;
+  if (response.status !== 200) return { ok: true, response, cached: null };
   try {
     const cached = {
       status: 200,
@@ -215,16 +224,37 @@ async function fetchAndMaybeCacheGitHubGet(
     };
     await responseCache!.set(cacheKey, cached, githubResponseCacheTtlSeconds(cls));
     recordGitHubCacheMetric("set", cls);
-    return { response, cached };
+    return { ok: true, response, cached };
   } catch {
     recordGitHubCacheMetric("error", cls);
-    return { response, cached: null };
+    return { ok: true, response, cached: null };
   }
 }
 
+type InFlightCacheableGet =
+  | {
+      ok: true;
+      response: Response;
+      cached: CachedGitHubResponse | null;
+    }
+  | {
+      ok: false;
+      error: unknown;
+    };
+
+type GitHubFetchResult =
+  | {
+      ok: true;
+      response: Response;
+    }
+  | {
+      ok: false;
+      error: unknown;
+    };
+
 // Single-flight cacheable GETs inside one isolate: a webhook burst often asks for the same metadata
 // before Redis has been populated. Join those cold misses so GitHub sees one request, then replay the cached body.
-const inFlightCacheableGets = new Map<string, Promise<CachedGitHubResponse | null>>();
+const inFlightCacheableGets = new Map<string, Promise<InFlightCacheableGet>>();
 
 // A 12s hard cap on every GitHub request. Centralised here so the app token/installation raw fetches plus comment /
 // label / check-run / pr-action Octokit helpers all inherit the cache boundary, retry, and timeout behavior.
@@ -237,7 +267,9 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: RequestInit)
   const useCache = responseCache !== null && cls !== null;
   if (!useCache) {
     recordGitHubCacheMetric("bypassed", cacheBypassClass(method, url, headers));
-    return fetchWithGitHubRetry(input, init);
+    const fetched = await fetchWithGitHubRetry(input, init);
+    if (!fetched.ok) throw fetched.error;
+    return fetched.response;
   }
 
   const cacheKey = await responseCacheKey(url, headers);
@@ -257,19 +289,29 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: RequestInit)
   if (existing) {
     recordGitHubCacheMetric("coalesced", cls);
     const replay = await existing;
-    if (replay) return responseFromCached(replay, "coalesced");
+    if (replay.ok && replay.cached)
+      return responseFromCached(replay.cached, "coalesced");
   }
 
-  const request = fetchAndMaybeCacheGitHubGet(input, init, url, cacheKey, cls).then(
-    (result) => ({ ok: true as const, result }),
-    (error: unknown) => ({ ok: false as const, error }),
-  );
-  const shared = request.then((settled) => (settled.ok ? settled.result.cached : null));
-  const sharedWithCleanup = shared.finally(() => inFlightCacheableGets.delete(cacheKey));
-  inFlightCacheableGets.set(cacheKey, sharedWithCleanup);
+  const request = (async (): Promise<InFlightCacheableGet> => {
+    try {
+      return await fetchAndMaybeCacheGitHubGet(
+        input,
+        init,
+        url,
+        cacheKey,
+        cls,
+      );
+    } catch (error) {
+      return { ok: false, error };
+    } finally {
+      inFlightCacheableGets.delete(cacheKey);
+    }
+  })();
+  inFlightCacheableGets.set(cacheKey, request);
   const result = await request;
   if (!result.ok) throw result.error;
-  return result.result.response;
+  return result.response;
 }
 
 /** Test-only: reset shared GitHub response cache state between tests. */

@@ -107,6 +107,47 @@ describe("GitHub PR intelligence comments", () => {
     expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/101"))).toBe(true);
   });
 
+  it("prunes duplicate bot marker comments while updating the canonical sticky comment", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        return Response.json([
+          { id: 202, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\n\nreviewing placeholder`, user: { login: "gittensory-orb[bot]", type: "Bot" } },
+          { id: 101, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nold final`, user: { login: "gittensory-orb[bot]", type: "Bot" } },
+          { id: 303, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nsecond duplicate`, user: { login: "gittensory-orb[bot]", type: "Bot" } },
+        ]);
+      }
+      if (url.includes("/issues/comments/202") && init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (url.includes("/issues/comments/303") && init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (url.includes("/issues/comments/101") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as { body: string };
+        expect(body.body).toContain("new final");
+        return Response.json({ id: 101, html_url: "https://github.com/comment/101" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey, GITHUB_APP_SLUG: "gittensory-orb" }),
+      123,
+      "JSONbored/gittensory",
+      12,
+      `${PR_INTELLIGENCE_COMMENT_MARKER}\nnew final`,
+    );
+
+    expect(result?.id).toBe(101);
+    expect(calls.filter((call) => call.startsWith("DELETE ") && call.includes("/issues/comments/")).sort()).toEqual([
+      "DELETE https://api.github.com/repos/JSONbored/gittensory/issues/comments/202",
+      "DELETE https://api.github.com/repos/JSONbored/gittensory/issues/comments/303",
+    ]);
+    expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/101"))).toBe(true);
+    expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(false);
+  });
+
   it("finds the existing bot comment on page 2 and updates it rather than creating a duplicate", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];

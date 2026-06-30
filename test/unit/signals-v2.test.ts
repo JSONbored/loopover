@@ -166,6 +166,40 @@ describe("v2 signal builders", () => {
     expect(health.signals.openPullRequests).toBe(1);
   });
 
+  it("detects pairwise PR title overlap when the queue exceeds 120 and overlapping PRs are newest (regression for bounded PR sampling)", () => {
+    const filler = Array.from({ length: 119 }, (_, index) => ({
+      ...pullRequests[0]!,
+      number: index + 1,
+      title: `Unrelated maintenance task ${index + 1} for widgets module`,
+      linkedIssues: [] as number[],
+      updatedAt: isoDaysAgo(200),
+    }));
+    const overlapA: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 5000,
+      title: "Fix authentication retry backoff handler",
+      linkedIssues: [],
+      updatedAt: isoDaysAgo(1),
+    };
+    const overlapB: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 5001,
+      title: "Fix authentication retry backoff logic",
+      linkedIssues: [],
+      updatedAt: isoDaysAgo(1),
+    };
+    const manyPullRequests = [...filler, overlapA, overlapB];
+    const report = buildCollisionReport(repo.fullName, issues, manyPullRequests, []);
+    expect(
+      report.clusters.some(
+        (cluster) =>
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 5000) &&
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 5001) &&
+          /meaningful terms/i.test(cluster.reason),
+      ),
+    ).toBe(true);
+  });
+
   it("uses authoritative queue counts when signal inputs are sampled", () => {
     const sampledIssues = issues.slice(0, 1);
     const sampledPullRequests = pullRequests.slice(0, 1);

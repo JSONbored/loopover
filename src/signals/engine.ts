@@ -833,7 +833,7 @@ export function buildCollisionReport(
   }
 
   const pairwiseIssues = boundedCollisionIssues(openIssues, openPullRequests);
-  const pairwisePullRequests = openPullRequests.slice(0, MAX_COLLISION_PAIRWISE_PULL_REQUESTS);
+  const pairwisePullRequests = boundedCollisionPullRequests(openPullRequests);
   const pairwiseRecentMergedPullRequests = recentMergedPullRequests.slice(0, MAX_COLLISION_PAIRWISE_RECENT_MERGES);
   const items = [...pairwiseIssues.map(issueItem), ...pairwisePullRequests.map(prItem), ...pairwiseRecentMergedPullRequests.map(recentMergedItem)];
   const itemTerms = new Map<string, CollisionTerms>();
@@ -5161,6 +5161,25 @@ function boundedCollisionIssues(openIssues: IssueRecord[], openPullRequests: Pul
   for (const issue of openIssues) {
     selected.set(issue.number, issue);
     if (selected.size >= MAX_COLLISION_PAIRWISE_ISSUES) break;
+  }
+  return [...selected.values()];
+  /* v8 ignore stop */
+}
+
+function boundedCollisionPullRequests(openPullRequests: PullRequestRecord[]): PullRequestRecord[] {
+  /* v8 ignore start -- Large-queue PR sampling mirrors boundedCollisionIssues; linked and pairwise collision paths are covered above. */
+  if (openPullRequests.length <= MAX_COLLISION_PAIRWISE_PULL_REQUESTS) return openPullRequests;
+  const selected = new Map<number, PullRequestRecord>();
+  for (const pullRequest of openPullRequests) {
+    if (pullRequest.linkedIssues.length > 0) selected.set(pullRequest.number, pullRequest);
+    if (selected.size >= MAX_COLLISION_PAIRWISE_PULL_REQUESTS) return [...selected.values()];
+  }
+  const ranked = [...openPullRequests].sort(
+    (left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") || left.number - right.number,
+  );
+  for (const pullRequest of ranked) {
+    selected.set(pullRequest.number, pullRequest);
+    if (selected.size >= MAX_COLLISION_PAIRWISE_PULL_REQUESTS) break;
   }
   return [...selected.values()];
   /* v8 ignore stop */

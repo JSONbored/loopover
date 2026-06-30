@@ -24,7 +24,7 @@ describe("githubWebhookCoalesceKey", () => {
     ).toBe("github-webhook:ci-completed:jsonbored/gittensory@def5678");
   });
 
-  it("coalesces refresh-like pull request events and ignores terminal actions", () => {
+  it("coalesces gate-triggering pull request events and ignores non-actionable or terminal actions", () => {
     expect(
       githubWebhookCoalesceKey("pull_request", {
         action: "synchronize",
@@ -40,13 +40,15 @@ describe("githubWebhookCoalesceKey", () => {
         pull_request: { number: 100, head: { sha: "BEEF123" } },
       } as GitHubWebhookPayload),
     ).toBe("github-webhook:pr-refresh:jsonbored/gittensory#100@beef123");
-    expect(
-      githubWebhookCoalesceKey("pull_request", {
-        action: "closed",
-        repository: { full_name: "JSONbored/Gittensory" },
-        pull_request: { number: 100, head: { sha: "BEEF123" } },
-      } as GitHubWebhookPayload),
-    ).toBeNull();
+    for (const action of ["labeled", "unlabeled", "closed"]) {
+      expect(
+        githubWebhookCoalesceKey("pull_request", {
+          action,
+          repository: { full_name: "JSONbored/Gittensory" },
+          pull_request: { number: 100, head: { sha: "BEEF123" } },
+        } as GitHubWebhookPayload),
+      ).toBeNull();
+    }
   });
 
   it("returns null for malformed or non-coalescible webhook shapes", () => {

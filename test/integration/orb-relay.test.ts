@@ -551,6 +551,44 @@ describe("enqueueRelayPending", () => {
     expect(JSON.parse(rows.results[0]?.raw_body ?? "{}")).toMatchObject({ marker: "new" });
   });
 
+  it("does not let label-only PR events coalesce away pending gate-triggering PR events", async () => {
+    const e = brokeredEnv();
+    const prBody = (action: string, marker: string) =>
+      JSON.stringify({
+        action,
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 1629, head: { sha: "a".repeat(40) } },
+        marker,
+      });
+
+    await enqueueRelayPending(e, {
+      deliveryId: "pr-opened-actionable",
+      installationId: 9608,
+      eventName: "pull_request",
+      rawBody: prBody("opened", "actionable"),
+    });
+    await enqueueRelayPending(e, {
+      deliveryId: "pr-labeled-not-actionable",
+      installationId: 9608,
+      eventName: "pull_request",
+      rawBody: prBody("labeled", "label-only"),
+    });
+
+    const events = await pullRelayPending(e, 9608);
+    expect(events.map((event) => event.deliveryId).sort()).toEqual([
+      "pr-labeled-not-actionable",
+      "pr-opened-actionable",
+    ]);
+    expect(
+      Object.fromEntries(
+        events.map((event) => [event.deliveryId, JSON.parse(event.rawBody).action]),
+      ),
+    ).toEqual({
+      "pr-labeled-not-actionable": "labeled",
+      "pr-opened-actionable": "opened",
+    });
+  });
+
   it("keeps exact duplicate coalescible delivery IDs idempotent", async () => {
     const e = brokeredEnv();
     const body = (marker: string) =>

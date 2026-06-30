@@ -5,8 +5,6 @@ const COALESCABLE_PULL_REQUEST_ACTIONS = new Set([
   "synchronize",
   "edited",
   "ready_for_review",
-  "labeled",
-  "unlabeled",
 ]);
 
 export function githubWebhookCoalesceKey(

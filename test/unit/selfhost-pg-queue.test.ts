@@ -47,23 +47,16 @@ function makePool(): MockPool {
     const q = String(sql);
     if (q.includes("FROM github_rate_limit_observations")) {
       const admissionKey = typeof params?.[0] === "string" ? params[0] : null;
-      const remainingFloor = typeof params?.[1] === "number" ? params[1] : Number.POSITIVE_INFINITY;
-      const rows = rateLimitRows
-        .filter(
-          (row) =>
-            (admissionKey !== null && row.admission_key === admissionKey) ||
-            row.admission_key === undefined ||
-            row.admission_key === null,
-        )
-        .sort((a, b) => {
-          const unsafe =
-            (Number(b.remaining) <= remainingFloor ? 1 : 0) - (Number(a.remaining) <= remainingFloor ? 1 : 0);
-          if (unsafe !== 0) return unsafe;
+      const newest = (rows: typeof rateLimitRows) =>
+        [...rows].sort((a, b) => {
           const observed = Date.parse(b.observed_at ?? "") - Date.parse(a.observed_at ?? "");
           if (Number.isFinite(observed) && observed !== 0) return observed;
           return 0;
-        })
-        .slice(0, 16);
+        })[0];
+      const rows = [
+        ...(admissionKey !== null ? [newest(rateLimitRows.filter((row) => row.admission_key === admissionKey))].filter(Boolean) : []),
+        newest(rateLimitRows.filter((row) => row.admission_key === undefined || row.admission_key === null)),
+      ].filter(Boolean);
       return { rows, rowCount: rows.length };
     }
     if (q.includes("SET status='pending', run_after=GREATEST")) {
@@ -610,6 +603,27 @@ describe("createPgQueue (durable #977)", () => {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
     }
+  });
+
+  it("does not keep webhook admission closed from stale legacy low rows after a newer healthy legacy observation", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const m = makePool();
+    m.setRateLimitRows([
+      { admission_key: null, repo_full_name: "owner/repo", remaining: "0", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+      { admission_key: null, repo_full_name: "owner/repo", remaining: "4000", reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+    ]);
+    m.enqueueJob("webhook", { type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
+    const seen: string[] = [];
+    const q = createPgQueue(m.pool, async (j) => void seen.push(typeOf(j)));
+
+    await q.drain();
+
+    expect(seen).toEqual(["github-webhook"]);
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status='pending', run_after=GREATEST"),
+      expect.anything(),
+    );
   });
 
   it("does not pre-yield webhook jobs for another installation's persisted REST exhaustion", async () => {

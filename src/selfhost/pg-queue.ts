@@ -13,7 +13,6 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionKeyForJob,
-  githubRateLimitAdmissionRemainingFloor,
   githubRateLimitRetryDelayMs,
   isGitHubBudgetBackgroundJob,
   jobCoalesceKey,
@@ -615,16 +614,22 @@ export function createPgQueue(
           : null;
     if (kind === null) return null;
     const admissionKey = githubRateLimitAdmissionKeyForJob(message);
-    const remainingFloor = githubRateLimitAdmissionRemainingFloor(kind);
     const res = await pool.query(
-      `SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
-        WHERE resource='rest' AND remaining IS NOT NULL AND (
-          ($1::text IS NOT NULL AND admission_key=$1)
-          OR admission_key IS NULL
-        )
-        ORDER BY CASE WHEN remaining <= $2 THEN 1 ELSE 0 END DESC, observed_at DESC
-        LIMIT 16`,
-      [admissionKey, remainingFloor],
+      `WITH exact_observation AS (
+        SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
+          WHERE resource='rest' AND remaining IS NOT NULL AND $1::text IS NOT NULL AND admission_key=$1
+          ORDER BY observed_at DESC
+          LIMIT 1
+      ), fallback_observation AS (
+        SELECT remaining, reset_at, observed_at FROM github_rate_limit_observations
+          WHERE resource='rest' AND remaining IS NOT NULL AND admission_key IS NULL
+          ORDER BY observed_at DESC
+          LIMIT 1
+      )
+      SELECT remaining, reset_at, observed_at FROM exact_observation
+      UNION ALL
+      SELECT remaining, reset_at, observed_at FROM fallback_observation`,
+      [admissionKey],
     );
     const rows = res.rows as Array<{ remaining?: number | string | null; reset_at?: string | null; observed_at?: string | null }>;
     const delayMs = githubRateLimitAdmissionDelayMs(kind, admissionKey, rows);

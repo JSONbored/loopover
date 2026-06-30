@@ -3820,11 +3820,6 @@ export async function runAiReviewForAdvisory(
     // its public-safe brief splices into the prompt next to grounding + RAG. Flag-OFF (default) → no call, no branch,
     // byte-identical prompt. Fully fail-safe (any timeout/error/empty → undefined → review proceeds).
     const enrichmentDiff = buildAiReviewDiff(files);
-    const enrichmentLinkedIssue = await resolveEnrichmentLinkedIssue(
-      env,
-      args.repoFullName,
-      resolveEnrichmentLinkedIssueNumbers(args.pr.linkedIssues, args.pr.body),
-    );
     const enrichment =
       isEnrichmentEnabled(env) && convergedRepoAllowed
         ? await buildReviewEnrichment(env, {
@@ -3835,7 +3830,14 @@ export async function runAiReviewForAdvisory(
             title: args.pr.title,
             body: args.pr.body ?? undefined,
             author: args.author,
-            linkedIssue: enrichmentLinkedIssue,
+            linkedIssue: await resolveEnrichmentLinkedIssue(
+              env,
+              args.repoFullName,
+              resolveEnrichmentLinkedIssueNumbers(
+                args.pr.linkedIssues,
+                args.pr.body,
+              ),
+            ),
             githubToken: isReesGithubTokenForwardingEnabled(env)
               ? await resolveReviewEnrichmentGithubToken(
                   env,

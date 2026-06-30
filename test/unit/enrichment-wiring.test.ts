@@ -3,6 +3,7 @@ import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub, upsertIssueFromGitHub } from "../../src/db/repositories";
 import type { Advisory, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import * as enrichmentWire from "../../src/review/enrichment-wire";
 
 const notesJson = JSON.stringify({
   assessment: "Looks fine.",
@@ -174,7 +175,7 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
     }
   });
 
-  it("FLAG-OFF (default): the REES is never called", async () => {
+  it("FLAG-OFF (default): the REES is never called and linked issues are not resolved", async () => {
     const run = vi.fn(async () => ({ response: notesJson }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
@@ -183,6 +184,10 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     await seedRepoFile(env, "acme/off");
+    const linkedIssueSpy = vi.spyOn(
+      enrichmentWire,
+      "resolveEnrichmentLinkedIssue",
+    );
     let reesCalled = false;
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -194,13 +199,15 @@ describe("review-enrichment wired into the processors review (flag GITTENSORY_RE
       await runAiReviewForAdvisory(env, {
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/off",
-        pr: { number: 7, title: "t", body: "b" },
+        pr: { number: 7, title: "t", body: "Fixes #42", linkedIssues: [42] },
         author: "alice",
         confirmedContributor: true,
         advisory: adv("acme/off"),
       });
       expect(reesCalled).toBe(false);
+      expect(linkedIssueSpy).not.toHaveBeenCalled();
     } finally {
+      linkedIssueSpy.mockRestore();
       fetchSpy.mockRestore();
     }
   });

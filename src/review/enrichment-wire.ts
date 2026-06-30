@@ -92,6 +92,7 @@ export const REES_ANALYZER_NAMES = [
   "iacMisconfig",
   "nativeBuild",
   "history",
+  "docCommentDrift",
 ] as const;
 
 const REES_ANALYZER_NAME_SET = new Set<string>(REES_ANALYZER_NAMES);

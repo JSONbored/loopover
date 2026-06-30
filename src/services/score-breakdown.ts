@@ -131,6 +131,31 @@ function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
   };
 }
 
+// Upstream time-decay (#703), env-gated by SCORING_TIME_DECAY_ENABLED (default OFF) and opted into per-preview
+// via input.applyTimeDecay. When the flag is off (the common case) or the PR is fresh, the multiplier is 1 and
+// the breakdown reads as "not enabled" / "fresh" — surfacing the value is a no-op for those previews but
+// surfaces the aged-PR decay lever cleanly when time-decay IS applied.
+function timeDecayBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { timeDecayMultiplier } = preview.scoreEstimate;
+  if (timeDecayMultiplier >= 0.99) {
+    return {
+      component: "timeDecayMultiplier",
+      band: "neutral",
+      summary: "Score is not time-decayed for this preview (the PR is within the fresh-PR grace period, or upstream time-decay is disabled — env SCORING_TIME_DECAY_ENABLED).",
+      lever: "No action needed; aged-PR projections automatically apply the upstream sigmoid decay when time-decay is enabled.",
+      leverageScore: 0,
+    };
+  }
+  const band = bandForMultiplier(timeDecayMultiplier, false);
+  return {
+    component: "timeDecayMultiplier",
+    band,
+    summary: `Score is time-decayed for this aged PR preview (multiplier ${timeDecayMultiplier.toFixed(2)} — upstream sigmoid curve; grace 12h, 50% loss at 10 days, 5% floor through the lookback window).`,
+    lever: "Land the work while it is fresh, or extend the upstream time-decay curve in the repo's master_repositories.json override for this repo to slow the decay.",
+    leverageScore: 20,
+  };
+}
+
 function credibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { credibilityMultiplier } = preview.scoreEstimate;
   const { credibilityObserved, credibilityFloor } = preview.gates;
@@ -272,6 +297,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     openPrBreakdown(preview),
     openIssueBreakdown(preview),
     mergedHistoryBreakdown(preview),
+    timeDecayBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

@@ -84,6 +84,7 @@ describe("explainScoreBreakdown", () => {
         "openPrMultiplier",
         "openIssueMultiplier",
         "mergedHistoryMultiplier",
+        "timeDecayMultiplier",
       ]),
     );
     for (const component of breakdown.components) {
@@ -162,6 +163,29 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.components.find((entry) => entry.component === "openPrMultiplier")).toMatchObject({ band: "blocked" });
     expect(breakdown.highestLeverageLever.component).toBe("openPrMultiplier");
     expect(breakdown.highestLeverageLever.lever).toMatch(/Land, merge, or close/i);
+  });
+
+  it("explains the time-decay multiplier as neutral (fresh / disabled) and reduced (aged with decay on)", () => {
+    // Default preview: applyTimeDecay is off / PR is fresh => multiplier is 1 => breakdown neutral, surface
+    // the decay-disable context so a contributor understands why there is no age penalty here.
+    const fresh = explainScoreBreakdown(
+      buildScorePreview({ repo, snapshot, input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none" } }),
+    );
+    expect(fresh.components.find((entry) => entry.component === "timeDecayMultiplier")).toMatchObject({ band: "neutral" });
+
+    // Opt-in + aged PR => upstream sigmoid reduces the multiplier => breakdown reduced with the aged-PR lever.
+    const aged = buildScorePreview({
+      repo,
+      snapshot,
+      input: { repoFullName: repo.fullName, contributorLogin: "miner", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80, openPrCount: 1, credibility: 0.9, linkedIssueMode: "none", applyTimeDecay: true, prAgeHours: 480 },
+    });
+    const agedBreakdown = explainScoreBreakdown(aged);
+    const decayed = agedBreakdown.components.find((entry) => entry.component === "timeDecayMultiplier")!;
+    expect(decayed.band).not.toBe("neutral");
+    expect(decayed.band).not.toBe("full");
+    expect(decayed.summary).toMatch(/time-decayed|decay/i);
+    expect(decayed.lever).toMatch(/fresh|time-decay curve|sigmoid/i);
+    expect(JSON.stringify(agedBreakdown)).not.toMatch(FORBIDDEN);
   });
 
   it("includes gate highlights without leaking forbidden language", () => {

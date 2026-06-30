@@ -138,7 +138,10 @@ export function parseDocParams(jsdoc: string): string[] {
  *  types (`Map<K, (v: V) => void>`). Generic vs comparison is decided by the char after the matching `>`: a
  *  comparison's `>` is followed by an operand (digit/identifier/string — `removed>0`); a generic close is followed
  *  by a type terminator (`,` `)` `(` `[` `>` `|` `&` whitespace or end). */
-function matchAngle(src: string, open: number): number {
+function matchAngle(src: string, open: number, cache: Map<number, number>): number {
+  const cached = cache.get(open);
+  if (cached !== undefined) return cached;
+  const opens: number[] = [];
   let angle = 0;
   let quote: string | null = null;
   for (let i = open; i < src.length; i++) {
@@ -150,19 +153,31 @@ function matchAngle(src: string, open: number): number {
     if (ch === '"' || ch === "'" || ch === "`") quote = ch;
     else if (ch === "<") {
       if (src[i + 1] === "=") i += 1; // `<=` is a comparison operator, not a generic open
-      else angle += 1;
+      else {
+        angle += 1;
+        opens.push(i);
+      }
     } else if (ch === ">" && src[i - 1] !== "=") {
       // (a `=>` arrow inside a function type — e.g. `Map<K, (v: V) => void>` — is not an angle close.)
-      if (src[i + 1] === "=") return -1; // `>=` is a comparison operator, never a generic close
+      if (src[i + 1] === "=") {
+        cache.set(open, -1);
+        return -1; // `>=` is a comparison operator, never a generic close
+      }
       angle -= 1;
+      opens.pop();
       if (angle === 0) {
         let j = i + 1;
         while (j < src.length && /\s/.test(src[j]!)) j += 1; // the next NON-whitespace token decides
         const next = src[j];
-        return next !== undefined && /[\w$"'`]/.test(next) ? -1 : i;
+        const close = next !== undefined && /[\w$"'`]/.test(next) ? -1 : i;
+        cache.set(open, close);
+        return close;
       }
     }
   }
+  // An unmatched generic-like opener cannot close when probed again from the same point. Remember every still-open
+  // candidate from this scan so repeated attacker-controlled `x<` tokens do not rescan the same suffixes.
+  for (const pending of opens) cache.set(pending, -1);
   return -1;
 }
 
@@ -176,6 +191,7 @@ function splitParams(src: string): string[] | null {
   let depth = 0;
   let start = 0;
   let quote: string | null = null;
+  const angleCache = new Map<number, number>();
   for (let i = 0; i < src.length; i++) {
     const ch = src[i]!;
     if (quote) {
@@ -188,7 +204,7 @@ function splitParams(src: string): string[] | null {
       depth -= 1;
       if (depth < 0) return null;
     } else if (ch === "<" && i > 0 && /[A-Za-z0-9_$]/.test(src[i - 1]!)) {
-      const close = matchAngle(src, i);
+      const close = matchAngle(src, i, angleCache);
       if (close !== -1) i = close; // skip the whole generic argument list, including its commas
     } else if (ch === "," && depth === 0) {
       parts.push(src.slice(start, i));

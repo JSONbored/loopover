@@ -15,6 +15,8 @@
 // (resolved via createInstallationToken). Every helper degrades to null/absent on failure — preview
 // discovery must NEVER sink a review.
 
+import { timeoutFetch, type GitHubRateLimitAdmissionKey } from "../../github/client";
+
 const DEFAULT_GITHUB_TIMEOUT_MS = 20_000;
 
 export type GitHubRepo = { owner: string; repo: string };
@@ -38,13 +40,21 @@ class PreviewGitHubError extends Error {
 
 /** Minimal fetch→JSON helper (mirrors reviewbot's core/github.ts githubJson). Throws PreviewGitHubError on a
  *  non-2xx so callers can distinguish a 404 ("no deployments") from a transient outage. */
-async function githubJson<T>(url: string, init: { token?: string | undefined; apiVersion?: string | undefined } = {}): Promise<T> {
+async function githubJson<T>(
+  url: string,
+  init: { token?: string | undefined; apiVersion?: string | undefined; rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined } = {},
+): Promise<T> {
   const headers = new Headers();
   headers.set("accept", "application/vnd.github+json");
   headers.set("user-agent", "gittensory/0.1");
   headers.set("x-github-api-version", init.apiVersion || "2022-11-28");
   if (init.token) headers.set("authorization", `Bearer ${init.token}`);
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(DEFAULT_GITHUB_TIMEOUT_MS) });
+  const response = await timeoutFetch(url, {
+    headers,
+    signal: AbortSignal.timeout(DEFAULT_GITHUB_TIMEOUT_MS),
+    githubRateLimitAdmission: init.rateLimitAdmissionKey !== undefined,
+    ...(init.rateLimitAdmissionKey ? { githubRateLimitAdmissionKey: init.rateLimitAdmissionKey } : {}),
+  });
   const text = await response.text();
   let payload: unknown = null;
   if (text) {
@@ -76,6 +86,7 @@ export async function getLatestDeploymentStatus(params: {
   sha?: string | undefined;
   ref?: string | undefined;
   apiVersion?: string | undefined;
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
 }): Promise<DeploymentLookup> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
   const selector = params.sha
@@ -89,6 +100,7 @@ export async function getLatestDeploymentStatus(params: {
     deployments = await githubJson<Array<{ id?: number }>>(`${base}/deployments?${selector}&per_page=10`, {
       token: params.token,
       apiVersion: params.apiVersion,
+      rateLimitAdmissionKey: params.rateLimitAdmissionKey,
     });
   } catch (error) {
     // 404 → the ref genuinely has no deployments. Any other failure (403 missing scope, rate limit, 5xx) is
@@ -103,6 +115,7 @@ export async function getLatestDeploymentStatus(params: {
       githubJson<Array<{ state?: string; environment_url?: string }>>(`${base}/deployments/${id}/statuses?per_page=10`, {
         token: params.token,
         apiVersion: params.apiVersion,
+        rateLimitAdmissionKey: params.rateLimitAdmissionKey,
       }).catch((error) => {
         console.log(JSON.stringify({ ev: "deployment_status_error", deployment: id, message: String(error).slice(0, 200) }));
         return [] as Array<{ state?: string; environment_url?: string }>;
@@ -158,9 +171,10 @@ export async function findPreviewUrlFromChecks(params: {
   repo: GitHubRepo;
   sha: string;
   apiVersion?: string | undefined;
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
 }): Promise<string | null> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
-  const opts = { token: params.token, apiVersion: params.apiVersion };
+  const opts = { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey };
   try {
     const combined = await githubJson<{ statuses?: Array<{ state?: string; target_url?: string }> }>(
       `${base}/commits/${encodeURIComponent(params.sha)}/status`,
@@ -198,12 +212,13 @@ export async function findPreviewUrlFromPrComments(params: {
   repo: GitHubRepo;
   prNumber: number;
   apiVersion?: string | undefined;
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
 }): Promise<string | null> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
   try {
     const comments = await githubJson<Array<{ user?: { login?: string }; body?: string }>>(
       `${base}/issues/${params.prNumber}/comments?per_page=100`,
-      { token: params.token, apiVersion: params.apiVersion },
+      { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey },
     ).catch(() => null);
     if (!Array.isArray(comments)) return null;
     // Newest first (the bot edits one comment in place).
@@ -229,12 +244,13 @@ export async function getPreviewBuildState(params: {
   repo: GitHubRepo;
   sha: string;
   apiVersion?: string | undefined;
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
 }): Promise<"building" | "succeeded" | "failed" | "absent"> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
   try {
     const checks = await githubJson<{ check_runs?: Array<{ name?: string; status?: string; conclusion?: string }> }>(
       `${base}/commits/${encodeURIComponent(params.sha)}/check-runs?per_page=100`,
-      { token: params.token, apiVersion: params.apiVersion },
+      { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey },
     ).catch(() => null);
     const build = (checks?.check_runs ?? []).find((r) => /workers builds|cloudflare/i.test(r.name ?? ""));
     if (!build) return "absent";

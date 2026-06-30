@@ -4,6 +4,7 @@
 // code for the App's credentials and writes them to a file the operator loads (then restarts). The routes are
 // disabled once an App is configured (server.ts gates on GITHUB_APP_ID), so this can't rebind a live install.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { timeoutFetch } from "../github/client";
 
 export const SETUP_TOKEN_FORM_MAX_BYTES = 4096;
 
@@ -124,7 +125,7 @@ ${error}<form action="/setup" method="post">
 }
 
 /** Exchange the temporary manifest code for the App's credentials (id, slug, webhook secret, private key). */
-export async function exchangeManifestCode(code: string, fetchImpl: typeof fetch = fetch): Promise<AppCredentials> {
+export async function exchangeManifestCode(code: string, fetchImpl: typeof fetch = timeoutFetch): Promise<AppCredentials> {
   const res = await fetchImpl(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, {
     method: "POST",
     headers: { accept: "application/vnd.github+json", "user-agent": "gittensory-selfhost" },

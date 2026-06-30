@@ -2779,7 +2779,7 @@ function githubRestHeaders(token?: string): HeadersInit {
 }
 
 async function githubGraphQl<T>(env: Env, query: string, token: string): Promise<T> {
-  const response = await fetch("https://api.github.com/graphql", {
+  const response = await timeoutFetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
       accept: "application/vnd.github+json",

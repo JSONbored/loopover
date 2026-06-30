@@ -10,6 +10,7 @@
 // reviewbot is collapsed into module constants + env vars. The flow is gated by GITTENSORY_REVIEW_DRAFT; when
 // the flag is off the router never mounts these handlers (callers see 404).
 import { decryptDraftToken, encryptDraftToken, newDraftId, randomDraftToken, sha256Hex, timingSafeEqualHex } from "../utils/crypto";
+import { timeoutFetch } from "../github/client";
 
 const REDACT_KEYS = /(email|phone|address|contact|zip|postcode|name)/i;
 const TOKEN_TTL_SECONDS = 900;
@@ -352,7 +353,7 @@ async function githubUserJson<T>(url: string, init: RequestInit & { token: strin
   headers.set("x-github-api-version", GITHUB_API_VERSION);
   /* v8 ignore next -- token-absent arm is unreachable: every caller passes a decrypted user token; the { token: "" } default only guards the type. */
   if (init.token) headers.set("authorization", `Bearer ${init.token}`);
-  const response = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
+  const response = await timeoutFetch(url, { ...init, headers, signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
   const body = await response.text();
   let payload: unknown = null;
   if (body) {

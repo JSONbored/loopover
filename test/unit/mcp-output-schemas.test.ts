@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, updatePullRequestSlopAssessment } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { GittensoryMcp } from "../../src/mcp/server";
@@ -562,10 +562,33 @@ function repoOutcomePatternsPayload(repoFullName: string, generatedAt: string) {
   };
 }
 
+function stubMcpSchemaValidationNetwork(): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (/^https:\/\/api\.github\.com\/users\/[^/]+\/repos(?:\?|$)/.test(url)) {
+      return Response.json([{ language: "TypeScript" }]);
+    }
+    if (/^https:\/\/api\.github\.com\/users\/[^/?#]+(?:[?#]|$)/.test(url)) {
+      return Response.json({
+        login: "oktofeesh1",
+        name: "Okto",
+        public_repos: 1,
+        followers: 1,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2026-06-14T00:00:00Z",
+      });
+    }
+    if (url === "https://api.gittensor.io/miners") return Response.json([]);
+    if (url.startsWith("https://raw.githubusercontent.com/")) return new Response("not found", { status: 404 });
+    return Response.json({}, { status: 404 });
+  });
+}
+
 // ── #550: the previously-unschematized tools are now call-tested so a future schema/type mismatch
 //    (which surfaces as an "Output validation error" → isError) can't slip through CI. ─────────────
 describe("MCP output schemas validate on real tool calls (#550)", () => {
   it("every newly-schematized tool returns schema-valid structured content", async () => {
+    stubMcpSchemaValidationNetwork();
     const env = createTestEnv();
     await persistRegistrySnapshot(
       env,
@@ -612,6 +635,7 @@ describe("MCP output schemas validate on real tool calls (#550)", () => {
     const fetched = await client.callTool({ name: "gittensory_agent_get_run", arguments: { runId } });
     expect(fetched.isError, `agent_get_run errored: ${JSON.stringify(fetched.content)}`).toBeFalsy();
     expect(fetched.structuredContent).toBeDefined();
+    vi.unstubAllGlobals();
   }, 30_000);
 });
 

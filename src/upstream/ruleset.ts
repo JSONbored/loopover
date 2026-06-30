@@ -10,6 +10,7 @@ import {
   updateUpstreamDriftReportIssue,
   upsertUpstreamDriftReport,
 } from "../db/repositories";
+import { timeoutFetch } from "../github/client";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { normalizeRegistryPayload } from "../registry/normalize";
 import { DEFAULT_GITTENSOR_UPSTREAM_REF, DEFAULT_GITTENSOR_UPSTREAM_REPO, detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
@@ -414,7 +415,7 @@ async function latestSourcesByKey(env: Env): Promise<Map<string, UpstreamSourceS
 async function fetchUpstreamCommitSha(env: Env, config: { repo: string; ref: string }): Promise<string | null> {
   const url = `https://api.github.com/repos/${config.repo}/commits/${encodeURIComponent(config.ref)}`;
   try {
-    const response = await fetch(url, { headers: githubHeaders(env.GITHUB_PUBLIC_TOKEN, "application/vnd.github+json") });
+    const response = await timeoutFetch(url, { headers: githubHeaders(env.GITHUB_PUBLIC_TOKEN, "application/vnd.github+json") });
     if (!response.ok) return null;
     const payload = (await response.json()) as { sha?: string };
     return payload.sha ?? null;
@@ -434,7 +435,7 @@ async function fetchTrackedSource(
   const apiUrl = `https://api.github.com/repos/${config.repo}/contents/${source.path}?ref=${encodeURIComponent(config.ref)}`;
   const warnings: string[] = [];
   try {
-    const response = await fetch(apiUrl, {
+    const response = await timeoutFetch(apiUrl, {
       headers: {
         ...githubHeaders(env.GITHUB_PUBLIC_TOKEN, "application/vnd.github+json"),
         ...(previous?.etag ? { "if-none-match": previous.etag } : {}),
@@ -1029,7 +1030,7 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
   try {
     for (let page = 1; ; page += 1) {
       const url = `https://api.github.com/repos/${owner}/${name}/issues?state=open&labels=signals&per_page=100&page=${page}`;
-      const response = await fetch(url, { headers: githubHeaders(token, "application/vnd.github+json") });
+      const response = await timeoutFetch(url, { headers: githubHeaders(token, "application/vnd.github+json") });
       if (!response.ok) return null;
       const issues = (await response.json()) as Array<{ number?: number; html_url?: string; body?: string | null }>;
       const match = issues.find((issue) => issue.body?.includes(`gittensory-upstream-drift:${fingerprint}`));
@@ -1044,7 +1045,7 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
 async function createGitHubDriftIssue(repo: string, token: string, report: UpstreamDriftReportRecord, assignees: string[]): Promise<{ number: number; url: string } | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name) return null;
-  const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
+  const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
     method: "POST",
     headers: githubHeaders(token, "application/vnd.github+json"),
     body: jsonString(githubDriftIssuePayload(report, assignees)),
@@ -1057,7 +1058,7 @@ async function createGitHubDriftIssue(repo: string, token: string, report: Upstr
 async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: number, report: UpstreamDriftReportRecord, assignees: string[]): Promise<{ number: number; url: string } | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
-  const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`, {
+  const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`, {
     method: "PATCH",
     headers: githubHeaders(token, "application/vnd.github+json"),
     body: jsonString(githubDriftIssuePayload(report, assignees)),
@@ -1074,7 +1075,7 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
   if (!owner || !name || !parsedUrl || parsedUrl.number !== report.issueNumber) return null;
   if (parsedUrl.owner.toLowerCase() !== owner.toLowerCase() || parsedUrl.name.toLowerCase() !== name.toLowerCase()) return null;
   try {
-    const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders(token, "application/vnd.github+json") });
+    const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders(token, "application/vnd.github+json") });
     if (!response.ok) return null;
     const issue = (await response.json()) as { number?: number; html_url?: string; state?: string; body?: string | null; labels?: Array<string | { name?: string }> };
     if (issue.number !== report.issueNumber || !issue.html_url || issue.state !== "open") return null;

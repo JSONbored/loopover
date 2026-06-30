@@ -13,6 +13,7 @@
 // (read back at token-exchange, never from a request). No request input is echoed into the markup (no injection
 // surface).
 import type { Context } from "hono";
+import { timeoutFetch } from "../github/client";
 import { isOrbBrokerEnabled, issueOrbEnrollment } from "./broker";
 
 type GitHubUser = { login: string; id?: number };
@@ -32,7 +33,7 @@ export async function exchangeOrbOAuthCode(env: Env, code: string, fetchImpl: ty
 }
 
 /** Identify the authenticated maintainer (GET /user with their token). Null on any non-OK / loginless response. */
-export async function fetchOrbOAuthUser(token: string, fetchImpl: typeof fetch = fetch): Promise<GitHubUser | null> {
+export async function fetchOrbOAuthUser(token: string, fetchImpl: typeof fetch = timeoutFetch): Promise<GitHubUser | null> {
   const res = await fetchImpl("https://api.github.com/user", {
     headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "gittensory/0.1" },
   });
@@ -51,7 +52,7 @@ export async function verifyInstallationAdmin(
   accountLogin: string | null,
   accountType: string | null,
   accountId: number | null,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = timeoutFetch,
 ): Promise<boolean> {
   if (!accountLogin || accountId === null) return false;
   if (accountType !== "Organization") {

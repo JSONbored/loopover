@@ -350,7 +350,38 @@ export interface ReviewBrief {
   elapsedMs: number;
   partial: boolean;
   analyzerStatus: Record<string, AnalyzerStatus>;
+  telemetry: ReviewBriefTelemetry;
   findings: BriefFindings;
   promptSection: string;
   systemSuffix: string;
+}
+
+export interface ReviewBriefTelemetry {
+  profile: ReesProfileName;
+  responseReserveMs: number;
+  requestedAnalyzers: string[];
+  analyzerCount: {
+    requested: number;
+    runnable: number;
+    skipped: number;
+  };
+  analyzers: Record<string, AnalyzerTelemetry>;
+  cacheHits: number;
+  cacheMisses: number;
+  cacheHitRate: number;
+  externalCallsByCategory: Record<string, number>;
+  skippedWorkByCategory: Record<string, number>;
+  cappedWorkByCategory: Record<string, number>;
+  elapsedMs: number;
+}
+
+export interface AnalyzerTelemetry {
+  status: AnalyzerStatus;
+  elapsedMs: number;
+  timeoutMs?: number;
+  costClass?: string;
+  partialStatus?: "complete" | "partial";
+  partialReason?: string;
+  skipReason?: string;
+  capped?: boolean;
 }

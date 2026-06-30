@@ -81,6 +81,12 @@ test("slow analyzers time out inside the reserved response budget", async () => 
 
   assert.equal(brief.partial, true);
   assert.equal(brief.analyzerStatus.history, "timeout");
+  assert.equal(brief.telemetry.profile, "balanced");
+  assert.equal(brief.telemetry.requestedAnalyzers[0], "history");
+  assert.equal(brief.telemetry.analyzers.history.status, "timeout");
+  assert.equal(brief.telemetry.analyzers.history.partialReason, "analyzer_timeout");
+  assert.ok((brief.telemetry.analyzers.history.timeoutMs ?? 0) < 300);
+  assert.ok(brief.telemetry.responseReserveMs > 0);
   assert.ok(Date.now() - started < 1000);
   assert.ok(brief.elapsedMs < 1000);
 });
@@ -168,4 +174,7 @@ test("registry analyzers skip when their relevant inputs are absent", async () =
   assert.equal(dependencyRan, false);
   assert.equal(brief.analyzerStatus.dependency, "skipped");
   assert.equal(brief.analyzerStatus.secret, "ok");
+  assert.equal(brief.telemetry.analyzers.dependency.skipReason, "no_dependency_manifest");
+  assert.equal(brief.telemetry.analyzers.secret.status, "ok");
+  assert.ok(brief.telemetry.skippedWorkByCategory.analyzer_no_dependency_manifest >= 1);
 });

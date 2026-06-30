@@ -130,6 +130,9 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
     timeoutMs: 7000,
     elapsedMs: 6812,
     analyzerStatus: "degraded",
+    profile: "balanced",
+    costClass: "github-heavy",
+    responseReserveMs: 750,
     partialStatus: "partial",
     partialReason: "history_budget_exhausted",
     phase: "similar_past_prs",
@@ -161,6 +164,9 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
   assert.equal(sentry.tags.headShaPrefix, "abcdef123456");
   assert.equal(sentry.tags.timeoutMs, "7000");
   assert.equal(sentry.tags.analyzerStatus, "degraded");
+  assert.equal(sentry.tags.profile, "balanced");
+  assert.equal(sentry.tags.costClass, "github-heavy");
+  assert.equal(sentry.tags.responseReserveMs, "750");
   assert.equal(sentry.tags.partialStatus, "partial");
   assert.equal(sentry.tags.phase, "similar_past_prs");
   assert.equal(sentry.tags.endpointCategory, "github-commit-pulls");
@@ -180,6 +186,9 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
     timeoutMs: 7000,
     elapsedMs: 6812,
     analyzerStatus: "degraded",
+    profile: "balanced",
+    costClass: "github-heavy",
+    responseReserveMs: 750,
     partialStatus: "partial",
     partialReason: "history_budget_exhausted",
     phase: "similar_past_prs",
@@ -212,6 +221,7 @@ test("captureAnalyzerDegradation attaches safe attribution context for history f
 
 test("buildBrief stays fail-open and captures a degraded analyzer", async () => {
   const sentry = sentryHarness();
+  const fakeToken = ["ghp", "abcdefghijklmnopqrstuvwxyz1234567890"].join("_");
 
   const brief = await buildBrief(
     {
@@ -224,7 +234,7 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
     },
     {
       dependency: async () => {
-        throw new Error("osv unavailable");
+        throw new Error(`osv unavailable for ${fakeToken}`);
       },
     },
   );
@@ -234,8 +244,11 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
   assert.deepEqual(brief.findings, {});
   assert.equal(brief.repoFullName, "JSONbored/gittensory");
   assert.equal(brief.prNumber, 42);
+  assert.equal(brief.telemetry.analyzers.dependency.partialReason, "analyzer_error");
+  assert.equal(JSON.stringify(brief.telemetry).includes(fakeToken), false);
+  assert.equal(JSON.stringify(brief.telemetry).includes("osv unavailable"), false);
   assert.equal(sentry.captured.length, 1);
-  assert.equal(sentry.captured[0].message, "osv unavailable");
+  assert.equal(sentry.captured[0].message, "analyzer_error");
   assert.equal(sentry.tags.analyzer, "dependency");
   assert.equal(sentry.tags.repo, "JSONbored/gittensory");
   assert.equal(sentry.tags.pullNumber, "42");
@@ -243,6 +256,32 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
   const capturedTimeoutMs = Number(sentry.tags.timeoutMs);
   assert.ok(capturedTimeoutMs > 0);
   assert.ok(capturedTimeoutMs <= 200);
+});
+
+test("buildBrief normalizes unsafe analyzer partial reasons before response telemetry", async () => {
+  const fakeToken = ["ghp", "abcdefghijklmnopqrstuvwxyz1234567890"].join("_");
+
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 42,
+      analyzers: ["history"],
+      linkedIssue: { number: 9, title: "add history context" },
+      diff: `+${fakeToken}`,
+      budget: { timeoutMs: 200 },
+    },
+    {
+      history: async (_req, context) => {
+        context.diagnostics.partialReason = `unsafe ${fakeToken}`;
+        return [{ author: null, similarPastPrs: [], linkedIssueAlignment: null, partial: true }];
+      },
+    },
+  );
+
+  assert.equal(brief.partial, true);
+  assert.equal(brief.analyzerStatus.history, "degraded");
+  assert.equal(brief.telemetry.analyzers.history.partialReason, "analyzer_partial");
+  assert.equal(JSON.stringify(brief.telemetry).includes(fakeToken), false);
 });
 
 test("buildBrief returns a timed-out partial response before the caller timeout budget is spent", async () => {

@@ -10,8 +10,11 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { normalizeSharedSecret, verifyBearer } from "./auth.js";
-import type { EnrichRequest } from "./types.js";
 import { buildBrief } from "./brief.js";
+import {
+  parseEnrichRequestBody,
+  readEnrichRequestText,
+} from "./request-guardrails.js";
 import {
   captureError,
   flushSentry,
@@ -54,18 +57,13 @@ app.post("/v1/enrich", async (c) => {
   if (!verifyBearer(c.req.header("authorization"), secret))
     return c.json({ error: "unauthorized" }, 401);
 
-  const payload = (await c.req
-    .json()
-    .catch(() => null)) as EnrichRequest | null;
-  if (
-    !payload ||
-    typeof payload.repoFullName !== "string" ||
-    typeof payload.prNumber !== "number"
-  ) {
-    return c.json({ error: "bad_request" }, 400);
-  }
+  const body = await readEnrichRequestText(c.req.raw);
+  if (!body.ok) return c.json({ error: body.error }, body.status);
 
-  const brief = await buildBrief(payload, undefined, {
+  const parsed = parseEnrichRequestBody(body.raw);
+  if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
+
+  const brief = await buildBrief(parsed.payload, undefined, {
     requestId: c.req.header("x-gittensory-request-id") ?? c.req.header("x-request-id"),
     traceId: traceIdFromTraceparent(c.req.header("traceparent")),
   });

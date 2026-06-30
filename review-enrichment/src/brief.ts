@@ -7,6 +7,7 @@ import type {
   BriefFindings,
   AnalyzerStatus,
   AnalyzerDiagnostics,
+  AnalyzerTelemetry,
 } from "./types.js";
 import type {
   AnalyzerRegistry,
@@ -31,6 +32,7 @@ import { captureAnalyzerDegradation } from "./sentry.js";
 
 const DEFAULT_ANALYZER_TIMEOUT_MS = 8000;
 const MIN_ANALYZER_TIMEOUT_MS = 1;
+const PUBLIC_PARTIAL_REASON_RE = /^[A-Za-z0-9_.:-]{1,120}$/;
 
 interface BuildBriefOptions {
   requestId?: string;
@@ -135,6 +137,11 @@ function timeoutStatus(error: unknown, diagnostics: AnalyzerDiagnostics): Analyz
   return statusFromDiagnostics(diagnostics, "degraded");
 }
 
+function publicPartialReason(value: string | undefined, fallback: string): string {
+  if (value && PUBLIC_PARTIAL_REASON_RE.test(value)) return value;
+  return fallback;
+}
+
 function captureDegradation(
   error: unknown,
   input: {
@@ -144,6 +151,9 @@ function captureDegradation(
     timeoutMs: number;
     elapsedMs: number;
     analyzerStatus: AnalyzerStatus;
+    profile: string;
+    costClass?: string;
+    responseReserveMs?: number;
     diagnostics: AnalyzerDiagnostics;
     options: BuildBriefOptions;
   },
@@ -157,6 +167,9 @@ function captureDegradation(
     timeoutMs: input.timeoutMs,
     elapsedMs: input.elapsedMs,
     analyzerStatus: input.analyzerStatus,
+    profile: input.profile,
+    costClass: input.costClass,
+    responseReserveMs: input.responseReserveMs,
     partialStatus: input.diagnostics.partialStatus,
     partialReason: input.diagnostics.partialReason,
     phase: input.diagnostics.phase,
@@ -213,9 +226,18 @@ export async function buildBrief(
 
   const findings: BriefFindings = {};
   const analyzerStatus: Record<string, AnalyzerStatus> = {};
+  const analyzerTelemetry: Record<string, AnalyzerTelemetry> = {};
   let partial = false;
 
-  for (const item of plan.skipped) analyzerStatus[item.name] = "skipped";
+  for (const item of plan.skipped) {
+    analyzerStatus[item.name] = "skipped";
+    analyzerTelemetry[item.name] = {
+      status: "skipped",
+      elapsedMs: 0,
+      costClass: item.descriptor.cost,
+      skipReason: item.skipReason,
+    };
+  }
 
   async function runAnalyzer(item: AnalyzerPlanItem): Promise<void> {
     const name = item.name;
@@ -226,6 +248,14 @@ export async function buildBrief(
     const remainingMs = plan.executionDeadlineMs - Date.now();
     if (!shouldStartAnalyzer(plan.profile, remainingMs)) {
       analyzerStatus[name] = "capped";
+      analyzerTelemetry[name] = {
+        status: "capped",
+        elapsedMs: Date.now() - analyzerStartedAt,
+        costClass: item.descriptor.cost,
+        partialStatus: "partial",
+        partialReason: "analyzer_budget_exhausted",
+        capped: true,
+      };
       partial = true;
       analysis.metrics.recordCappedWork("analyzer_budget", 1);
       return;
@@ -238,6 +268,15 @@ export async function buildBrief(
     );
     if (timeoutMs <= 0) {
       analyzerStatus[name] = "capped";
+      analyzerTelemetry[name] = {
+        status: "capped",
+        elapsedMs: Date.now() - analyzerStartedAt,
+        timeoutMs,
+        costClass: item.descriptor.cost,
+        partialStatus: "partial",
+        partialReason: "analyzer_budget_exhausted",
+        capped: true,
+      };
       partial = true;
       analysis.metrics.recordCappedWork(`analyzer_${item.descriptor.cost}`, 1);
       return;
@@ -259,10 +298,23 @@ export async function buildBrief(
       findings[name] = result as never;
       if (resultIsPartial(result) || diagnostics.partialStatus === "partial") {
         const status = statusFromDiagnostics(diagnostics, "degraded");
+        const partialReason = publicPartialReason(
+          diagnostics.partialReason,
+          status === "capped" ? "analyzer_capped" : "analyzer_partial",
+        );
         analyzerStatus[name] = status;
+        analyzerTelemetry[name] = {
+          status,
+          elapsedMs: Date.now() - analyzerStartedAt,
+          timeoutMs,
+          costClass: item.descriptor.cost,
+          partialStatus: "partial",
+          partialReason,
+          capped: status === "capped" || diagnostics.capped,
+        };
         partial = true;
         diagnostics.partialStatus = "partial";
-        diagnostics.partialReason ??= status === "capped" ? "analyzer_capped" : "analyzer_partial";
+        diagnostics.partialReason = partialReason;
         if (diagnostics.captureDegradation) {
           attachAnalysisMetrics(diagnostics, analysis);
           captureDegradation(new Error(diagnostics.partialReason), {
@@ -272,27 +324,50 @@ export async function buildBrief(
             timeoutMs,
             elapsedMs: Date.now() - analyzerStartedAt,
             analyzerStatus: status,
+            profile: plan.profile,
+            costClass: item.descriptor.cost,
+            responseReserveMs: plan.responseReserveMs,
             diagnostics,
             options,
           });
         }
       } else {
         analyzerStatus[name] = "ok";
+        analyzerTelemetry[name] = {
+          status: "ok",
+          elapsedMs: Date.now() - analyzerStartedAt,
+          timeoutMs,
+          costClass: item.descriptor.cost,
+          partialStatus: diagnostics.partialStatus,
+        };
       }
     } catch (error) {
       const status = timeoutStatus(error, diagnostics);
+      const partialReason = publicPartialReason(diagnostics.partialReason, "analyzer_error");
       analyzerStatus[name] = status;
+      analyzerTelemetry[name] = {
+        status,
+        elapsedMs: Date.now() - analyzerStartedAt,
+        timeoutMs,
+        costClass: item.descriptor.cost,
+        partialStatus: "partial",
+        partialReason,
+        capped: status === "capped" || diagnostics.capped,
+      };
       partial = true;
       diagnostics.partialStatus = "partial";
-      diagnostics.partialReason ??= error instanceof Error ? error.message : "analyzer_error";
+      diagnostics.partialReason = partialReason;
       attachAnalysisMetrics(diagnostics, analysis);
-      captureDegradation(error, {
+      captureDegradation(new Error(partialReason), {
         analyzer: name,
         requested: plan.requested,
         req,
         timeoutMs,
         elapsedMs: Date.now() - analyzerStartedAt,
         analyzerStatus: status,
+        profile: plan.profile,
+        costClass: item.descriptor.cost,
+        responseReserveMs: plan.responseReserveMs,
         diagnostics,
         options,
       });
@@ -310,21 +385,49 @@ export async function buildBrief(
   }
 
   for (const name of all)
-    if (!plan.requested.includes(name)) analyzerStatus[name] = "skipped";
+    if (!plan.requested.includes(name)) {
+      analyzerStatus[name] = "skipped";
+      analyzerTelemetry[name] ??= {
+        status: "skipped",
+        elapsedMs: 0,
+        skipReason: "not_requested",
+      };
+    }
 
   const { promptSection, systemSuffix } = renderBrief(
     findings,
     req.budget?.maxBriefChars ?? 6000,
   );
+  const elapsedMs = Date.now() - start;
+  const metrics = analysis.snapshotMetrics();
+  const cacheTotal = metrics.cacheHits + metrics.cacheMisses;
   return {
     schemaVersion: 1,
     repoFullName: req.repoFullName,
     prNumber: req.prNumber,
     headSha: req.headSha ?? null,
     generatedAtIso: new Date().toISOString(),
-    elapsedMs: Date.now() - start,
+    elapsedMs,
     partial,
     analyzerStatus,
+    telemetry: {
+      profile: plan.profile,
+      responseReserveMs: plan.responseReserveMs,
+      requestedAnalyzers: plan.requested,
+      analyzerCount: {
+        requested: plan.requested.length,
+        runnable: plan.runnable.length,
+        skipped: plan.skipped.length,
+      },
+      analyzers: analyzerTelemetry,
+      cacheHits: metrics.cacheHits,
+      cacheMisses: metrics.cacheMisses,
+      cacheHitRate: cacheTotal > 0 ? metrics.cacheHits / cacheTotal : 0,
+      externalCallsByCategory: metrics.externalCallsByCategory,
+      skippedWorkByCategory: metrics.skippedWorkByCategory,
+      cappedWorkByCategory: metrics.cappedWorkByCategory,
+      elapsedMs,
+    },
     findings,
     promptSection,
     systemSuffix,

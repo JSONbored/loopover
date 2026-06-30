@@ -150,6 +150,26 @@ describe("explainScoreBreakdown", () => {
     );
     expect(eligible.components.find((entry) => entry.component === "branchEligibility")).toMatchObject({ band: "full" });
 
+    const userSuppliedEligible = explainScoreBreakdown(
+      buildScorePreview({
+        repo,
+        snapshot,
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 40,
+          totalTokenScore: 60,
+          sourceLines: 80,
+          linkedIssueMode: "standard",
+          linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [3], solvedByPullRequests: [44] },
+          branchEligibility: { status: "eligible", source: "user_supplied" },
+        },
+      }),
+    );
+    expect(userSuppliedEligible.components.find((entry) => entry.component === "branchEligibility")).toMatchObject({
+      band: "reduced",
+      summary: expect.stringMatching(/user-supplied/i),
+    });
+
     const ineligible = explainScoreBreakdown(
       buildScorePreview({
         repo,

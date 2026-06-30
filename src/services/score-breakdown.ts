@@ -211,7 +211,12 @@ function branchEligibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplie
       leverageScore: 0,
     };
   }
-  if (branch.status === "eligible" && branch.evidence === "provided" && !branch.stale) {
+  if (
+    branch.status === "eligible" &&
+    branch.evidence === "provided" &&
+    !branch.stale &&
+    branch.source !== "user_supplied"
+  ) {
     return {
       component: "branchEligibility",
       band: "full",

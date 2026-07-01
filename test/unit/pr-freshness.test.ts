@@ -82,6 +82,19 @@ describe("PR freshness guards", () => {
     expect(reviewedPullRequestHeadSha(" ", undefined)).toBeNull();
   });
 
+  it("normalizes head SHAs case-insensitively before comparing or returning them", () => {
+    expect(reviewedPullRequestHeadSha(" AbC123 ", "fallback")).toBe("abc123");
+    expect(
+      classifyPullRequestFreshness({ state: "open", head: { sha: "AbC123" } }, "abc123"),
+    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open" });
+    expect(
+      classifyPullRequestFreshness({ state: "open", head: { sha: "abc123" } }, " ABC123 "),
+    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open" });
+    expect(
+      classifyPullRequestFreshness({ state: "open", head: { sha: "NewSha" } }, "oldsha"),
+    ).toMatchObject({ status: "stale", reason: "head_changed", expectedHeadSha: "oldsha", liveHeadSha: "newsha" });
+  });
+
   it("fetches live PR state using the existing GitHub GET path", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

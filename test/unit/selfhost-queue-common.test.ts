@@ -257,6 +257,9 @@ describe("self-host queue common helpers", () => {
         now,
       ),
     ).toBeNull();
+    // A newer unkeyed/legacy fallback must not CLEAR a genuine exact exhaustion either -- it is the
+    // same untrustworthy, unrelated-bucket signal as the suppression case above, just pointing the
+    // other way. The exact reading's own reset_at already bounds how long this can block admission.
     expect(
       githubRateLimitAdmissionDelayMs(
         "webhook",
@@ -267,7 +270,7 @@ describe("self-host queue common helpers", () => {
         ],
         now,
       ),
-    ).toBeNull();
+    ).toBe(615_000);
     expect(
       githubRateLimitAdmissionDelayMs(
         "webhook",
@@ -353,7 +356,12 @@ describe("self-host queue common helpers", () => {
       ).toBe(615_000);
     });
 
-    it("INVARIANT: a newer unkeyed fallback can still CLEAR a stale exhausted exact observation (recovery is allowed; only new restriction is not)", () => {
+    it("INVARIANT: a newer unkeyed fallback cannot CLEAR a genuine exact exhaustion either -- an untrusted bucket is untrusted in both directions", () => {
+      // A null/unkeyed fallback is not proven to report on the SAME budget as this admission key, so
+      // it must not move admission in EITHER direction once an exact observation exists: it can't
+      // suppress a healthy exact reading (the original bug), and it equally can't manufacture an early
+      // "recovery" for a genuinely exhausted one. The exact reading's own reset_at already bounds the
+      // wait.
       expect(
         githubRateLimitAdmissionDelayMs(
           "webhook",
@@ -364,7 +372,7 @@ describe("self-host queue common helpers", () => {
           ],
           now,
         ),
-      ).toBeNull();
+      ).toBe(615_000);
     });
 
     it("background admission observes the same precedence: a newer exhausted fallback cannot suppress a healthy exact background observation", () => {

@@ -269,26 +269,20 @@ function rateLimitAdmissionDelayForObservation(
 }
 
 function fallbackObservationCanOverrideExact(
-  kind: GitHubRateLimitAdmissionKind,
   fallback: AdmissionObservation | null,
   exact: AdmissionObservation | null,
-  nowMs: number,
 ): boolean {
   if (!fallback) return false;
-  if (!exact) return true;
-  const fallbackMs = observationMs(fallback);
-  const exactMs = observationMs(exact);
-  if (fallbackMs === null || exactMs === null || fallbackMs <= exactMs) return false;
-  // The fallback is a newer observation, but recency alone must not let it move admission from
-  // permissive to restrictive: a null/unkeyed fallback row is frequently a DIFFERENT bucket (a public
-  // token, another consumer's traffic, or a pre-migration write that never carried an admission_key),
-  // so a newer-but-exhausted fallback pinning an otherwise-healthy, concretely-keyed installation
-  // bucket is a false positive, not a real signal about that installation's budget. Only let a newer
-  // fallback override when it is MORE permissive than the exact reading (clearing a stale exhaustion) —
-  // never when it would introduce a delay the exact observation alone would not have.
-  const exactDelay = rateLimitAdmissionDelayForObservation(kind, exact, nowMs);
-  const fallbackDelay = rateLimitAdmissionDelayForObservation(kind, fallback, nowMs);
-  return exactDelay !== null && fallbackDelay === null;
+  // A null/unkeyed fallback row is frequently a DIFFERENT bucket entirely (a public token, another
+  // consumer's traffic, or a pre-migration write that never carried an admission_key) -- we have no
+  // evidence it reports on the SAME budget as this admission key. That untrustworthiness applies
+  // regardless of which direction the fallback's reading points: it must not suppress a healthy exact
+  // observation (the original bug), but it must equally not CLEAR a genuine exact exhaustion either --
+  // both are the same category of false signal, just pointing opposite ways. Once an exact observation
+  // exists for this key, it alone governs; the exact reading's own reset_at already bounds how long an
+  // exhaustion can block admission, so there is no correctness reason to let an unrelated bucket
+  // override it in either direction. Fallback governs ONLY when no exact observation exists at all.
+  return !exact;
 }
 
 export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
@@ -420,7 +414,7 @@ export function githubRateLimitAdmissionDelayMs(
       fallback = newerRateLimitObservation(fallback, candidate);
     }
   }
-  const observation = fallbackObservationCanOverrideExact(kind, fallback, exact, nowMs)
+  const observation = fallbackObservationCanOverrideExact(fallback, exact)
     ? fallback
     : exact;
   return rateLimitAdmissionDelayForObservation(kind, observation, nowMs);

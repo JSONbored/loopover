@@ -45,6 +45,7 @@ import {
   putCachedAiReview,
 } from "../../src/db/repositories";
 import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, contributorEvidenceBatchSize, processJob } from "../../src/queue/processors";
+import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -53,7 +54,6 @@ import {
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { createTestEnv } from "../helpers/d1";
-import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
@@ -812,7 +812,7 @@ describe("queue processors", () => {
     expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ repoFullName: "owner/agent-repo", examined: 1 });
   });
 
-  it("agent re-gate sweep runs blocking AI review before auto-maintenance (regression)", async () => {
+  it("agent re-gate sweep ignores stale same-head AI cache inputs before auto-maintenance (regression)", async () => {
     let aiCalls = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -840,6 +840,11 @@ describe("queue processors", () => {
     });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
     await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    await putCachedAiReview(env, "owner/agent-repo", 7, "a7", "block", {
+      notes: "stale cached review from older review inputs",
+      reviewerCount: 2,
+      findings: [{ code: "ai_review_split", severity: "critical", title: "Old cache", detail: "Old prompt inputs." }],
+    });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -1543,25 +1548,30 @@ describe("queue processors", () => {
     await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
     // Pre-seed the AI review for this exact head SHA + mode → the sweep's block-mode review must reuse it, not re-run.
     const inputFingerprint = await aiReviewCacheInputFingerprint({
-      changedPaths: ["src/a.ts"],
-      env,
+      title: "Stale PR",
       mode: "block",
-      pr: { title: "Stale PR", baseSha: null },
-      review: {
-        effectiveInlineComments: false,
-        excludePaths: [],
-        inlineComments: false,
-        instructions: null,
-        pathInstructions: [],
-        profile: null,
-      },
-      settings: {
-        aiReviewAllAuthors: false,
-        aiReviewByok: false,
-        aiReviewCloseConfidence: undefined,
-        aiReviewModel: undefined,
-        aiReviewProvider: undefined,
-        gatePack: "oss-anti-slop",
+      byok: false,
+      provider: null,
+      model: null,
+      aiReviewAllAuthors: false,
+      aiReviewCloseConfidence: undefined,
+      gatePack: "oss-anti-slop",
+      reviewerPlan: env.AI_REVIEW_PLAN,
+      selfHostProviderConfig: null,
+      baseSha: null,
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = value.length;", additions: 1, deletions: 0 }],
+      profile: null,
+      inlineComments: false,
+      pathInstructions: [],
+      pathGuidance: "",
+      repoInstructions: null,
+      excludePaths: [],
+      changedPaths: ["src/a.ts"],
+      features: {
+        grounding: false,
+        rag: false,
+        enrichment: false,
+        reputation: false,
       },
     });
     await putCachedAiReview(env, "owner/agent-repo", 7, "a7", "block", {
@@ -1676,6 +1686,161 @@ describe("queue processors", () => {
     expect(stickyComment.current?.body).toContain(PR_PANEL_COMMENT_MARKER);
     expect(stickyComment.current?.body).toContain("Thanks for the contribution");
     expect(stickyComment.current?.body).not.toContain("is reviewing");
+  });
+
+  it("computes the AI review cache fingerprint with a self-host reviewer plan and converged grounding/enrichment on (#2119)", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      // A self-host reviewer plan (not just BYOK/cloud provider/model) plus its underlying provider config.
+      AI_REVIEW_PLAN: { reviewers: [{ model: "claude-code" }], combine: "single" } as never,
+      CLAUDE_AI_MODEL: "sonnet",
+      CLAUDE_AI_EFFORT: "high",
+      // Grounding + enrichment ON, with the repo allowlisted for convergence, so both feature flags
+      // resolve past their `isXEnabled(env) && convergedRepoAllowed` check into the fingerprint.
+      GITTENSORY_REVIEW_GROUNDING: "true",
+      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      REES_URL: "https://rees.example",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files"))
+        return Response.json([
+          { filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" },
+          // GitHub omits `patch` for binary/oversized files -- the fingerprint must still normalize this case.
+          { filename: "assets/logo.png", status: "modified", additions: 0, deletions: 0, changes: 0 },
+        ]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      // REES enrichment + any other unmatched call degrade fail-open on a generic empty response.
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "self-host-plan-converged-features",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    // The review ran fresh (no pre-seeded cache to reuse), reaching the fingerprint computation with the
+    // self-host reviewer plan, its provider config, and both converged feature checks evaluated.
+    expect(aiCalls).toBeGreaterThan(0);
+  });
+
+  it("bypasses the AI review cache entirely while a dynamic-context feature (grounding) is active (#2119)", async () => {
+    // Grounding/RAG/enrichment/reputation each pull TIME-VARYING external context (live CI checks, the vector
+    // index, REES/CVE data, reputation) that can change for the SAME head SHA without the feature flags
+    // themselves flipping — so a cache hit here could replay a review built against now-stale context. A repo
+    // with any of these active must re-run AI on EVERY review of the same head, never reuse a prior cache entry.
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      GITTENSORY_REVIEW_GROUNDING: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    const webhook = {
+      type: "github-webhook" as const,
+      eventName: "pull_request" as const,
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" as const } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    };
+    await processJob(env, { ...webhook, deliveryId: "dynamic-context-bypass-1" });
+    const firstRunAiCalls = aiCalls;
+    expect(firstRunAiCalls).toBeGreaterThan(0);
+    // Re-review of the SAME head with the SAME (unchanged) inputs. A plain fingerprint match would reuse the
+    // first run's cached review here (leaving aiCalls unchanged) — this asserts the AI ran the SAME full set of
+    // calls again instead, proving the cache was never written (or never read) while grounding stayed active.
+    await processJob(env, { ...webhook, deliveryId: "dynamic-context-bypass-2" });
+    expect(aiCalls).toBe(firstRunAiCalls * 2);
   });
 
   it("continues to final verdict when the reviewing placeholder audit write fails", async () => {
@@ -2885,7 +3050,7 @@ describe("queue processors", () => {
     ]);
   });
 
-  it("INVARIANT: a scheduled repo sweep fails open when queue introspection throws", async () => {
+  it("INVARIANT: a scheduled repo sweep does not require queue introspection", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
       JOBS: {

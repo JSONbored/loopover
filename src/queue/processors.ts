@@ -221,6 +221,7 @@ import {
   queueSnapshotBacklog,
   queueSnapshotFromBinding,
 } from "../selfhost/queue-common";
+import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import {
   downgradeCloseToHold,
   downgradeMergeToHold,
@@ -350,7 +351,6 @@ import {
   emptyReviewRagTelemetry,
   isRagEnabled,
 } from "../review/rag-wire";
-import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
@@ -5508,6 +5508,7 @@ async function maybePublishPrPublicSurface(
           agent: "dual-ai",
         },
         async () => {
+          const reviewManifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
           // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
           // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
           // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
@@ -5519,63 +5520,118 @@ async function maybePublishPrPublicSurface(
             pathInstructions: reviewPathInstructions,
             instructions: manifestReviewInstructions,
             excludePaths: reviewExcludePaths,
-          } = resolveReviewPromptOverrides(
-            /* v8 ignore next -- fail-open manifest-read rejection is exercised in runAiReviewForAdvisory; this wrapper preserves the same fallback. */
-            await loadRepoFocusManifest(env, repoFullName).catch(() => null),
-          );
+          } = resolveReviewPromptOverrides(reviewManifest);
           inlineCommentsEnabledForReview = shouldRequestInlineFindings(
             env,
             repoFullName,
             reviewInlineComments,
           );
+          const reviewFilesForAi = await getReviewFiles();
+          const changedPaths = reviewFilesForAi.map((file) => file.path);
           // Per-repo review CONTEXT (#review-skills): fold the container-private review/AGENTS.md (or legacy
           // review/CLAUDE.md) guide + the matching review/skills/*.md modules into the SAME review-instructions slot,
           // so reviews follow each repo's conventions.
           // Glob-gated for cost (only skills matching the changed files are injected); absent config dir ⇒ empty ⇒
-          // byte-identical prompt. getReviewFiles() is memoized, so this reuses the loaded diff.
-          const reviewFilesForAi = await getReviewFiles();
-          const changedReviewPaths = reviewFilesForAi.map((file) => file.path);
+          // byte-identical prompt. getReviewFiles() is memoized, so the second call reuses the loaded diff.
           const reviewInstructions =
             [
               manifestReviewInstructions,
               composeRepoReviewContext(
                 await loadRepoReviewContext(repoFullName),
-                changedReviewPaths,
+                changedPaths,
               ),
             ]
               .map((part) => part?.trim())
               .filter(Boolean)
               .join("\n\n") || null;
-          const reviewInputFingerprint = await aiReviewCacheInputFingerprint({
-            changedPaths: changedReviewPaths,
-            env,
+          const convergedRepoAllowed = isConvergenceRepoAllowed(env, repoFullName);
+          // Resolved ONCE and reused both for the fingerprint AND the cache-bypass decision below: grounding/RAG/
+          // enrichment/reputation each pull TIME-VARYING external context (live CI checks, the vector index,
+          // REES/CVE data, the submitter's evolving reputation) that can change for the SAME head SHA without
+          // any of these booleans flipping. Fingerprinting only "is the feature on" can't detect that drift
+          // without fetching the content itself (which would defeat caching), so a repo with ANY of these active
+          // bypasses the cache entirely rather than fingerprinting a value that can't prove freshness.
+          const dynamicReviewFeatures = {
+            grounding: isGroundingEnabled(env) && convergedRepoAllowed,
+            rag: resolveConvergedFeature(env, reviewManifest, "rag", repoFullName),
+            enrichment: isEnrichmentEnabled(env) && convergedRepoAllowed,
+            reputation: resolveConvergedFeature(
+              env,
+              reviewManifest,
+              "reputation",
+              repoFullName,
+            ),
+          };
+          const dynamicReviewContextActive =
+            dynamicReviewFeatures.grounding ||
+            dynamicReviewFeatures.rag ||
+            dynamicReviewFeatures.enrichment ||
+            dynamicReviewFeatures.reputation;
+          const inputFingerprint = await aiReviewCacheInputFingerprint({
+            title: pr.title,
             mode: settings.aiReviewMode,
-            pr: {
-              baseSha: webhook.baseSha,
-              title: pr.title,
-            },
-            review: {
-              effectiveInlineComments: inlineCommentsEnabledForReview,
-              excludePaths: reviewExcludePaths,
-              inlineComments: reviewInlineComments,
-              instructions: reviewInstructions,
-              pathInstructions: reviewPathInstructions,
-              profile: reviewProfile,
-            },
-            settings,
+            byok: settings.aiReviewByok,
+            provider: settings.aiReviewProvider,
+            model: settings.aiReviewModel,
+            aiReviewAllAuthors: settings.aiReviewAllAuthors,
+            aiReviewCloseConfidence: settings.aiReviewCloseConfidence,
+            gatePack: settings.gatePack,
+            reviewerPlan: env.AI_REVIEW_PLAN,
+            selfHostProviderConfig: env.AI_REVIEW_PLAN
+              ? {
+                  claudeModel: env.CLAUDE_AI_MODEL,
+                  claudeEffort: env.CLAUDE_AI_EFFORT,
+                  claudeTimeoutMs: env.CLAUDE_AI_TIMEOUT_MS,
+                  codexModel: env.CODEX_AI_MODEL,
+                  codexEffort: env.CODEX_AI_EFFORT,
+                  codexTimeoutMs: env.CODEX_AI_TIMEOUT_MS,
+                  ollamaBaseUrl: env.OLLAMA_AI_BASE_URL,
+                  ollamaModel: env.OLLAMA_AI_MODEL,
+                  openaiCompatibleBaseUrl: env.OPENAI_COMPATIBLE_AI_BASE_URL,
+                  openaiCompatibleModel: env.OPENAI_COMPATIBLE_AI_MODEL,
+                  openaiBaseUrl: env.OPENAI_AI_BASE_URL,
+                  openaiModel: env.OPENAI_AI_MODEL,
+                  anthropicBaseUrl: env.ANTHROPIC_AI_BASE_URL,
+                  anthropicModel: env.ANTHROPIC_AI_MODEL,
+                }
+              : null,
+            profile: reviewProfile,
+            inlineComments: inlineCommentsEnabledForReview,
+            pathInstructions: reviewPathInstructions,
+            pathGuidance: resolveReviewPathInstructions(
+              reviewPathInstructions,
+              changedPaths,
+            ),
+            repoInstructions: reviewInstructions,
+            excludePaths: reviewExcludePaths,
+            changedPaths,
+            baseSha: webhook.baseSha,
+            reviewFiles: reviewFilesForAi.map((file) => ({
+              path: file.path,
+              status: file.status,
+              patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+              additions: file.additions,
+              deletions: file.deletions,
+            })),
+            features: dynamicReviewFeatures,
           });
-          // #1 self-host AI-review cache: reuse a prior review for this exact (repo, pr, head SHA, mode) ONLY when
-          // the prompt/config inputs that affect the model output still match. Private repo instructions, RAG
-          // suppressions, feature flags, inline-comment mode, and BYOK model choices all change review output even
-          // when the head SHA is unchanged, so they are folded into the stored input fingerprint.
-          const cachedReview = await getCachedAiReview(
-            env,
-            repoFullName,
-            pr.number,
-            advisory.headSha,
-            settings.aiReviewMode,
-            reviewInputFingerprint,
-          ).catch(() => null);
+          // #1 self-host AI-review cache: the LLM output for a PR changes only when the code (head SHA), review
+          // mode, reviewer plan, feature activation, or prompt-shaping inputs change. A re-delivered webhook or the
+          // block-mode re-gate sweep can reuse that exact review; stale same-head reviews from older private review
+          // instructions or feature config are intentionally treated as misses. The deterministic gate still runs.
+          // A repo with an active dynamic-context feature (grounding/RAG/enrichment/reputation) bypasses the
+          // cache entirely — see dynamicReviewContextActive above — since a cache hit there could replay a
+          // review built against now-stale external context for an otherwise-unchanged head.
+          const cachedReview = dynamicReviewContextActive
+            ? null
+            : await getCachedAiReview(
+                env,
+                repoFullName,
+                pr.number,
+                advisory.headSha,
+                settings.aiReviewMode,
+                inputFingerprint,
+              ).catch(() => null);
           if (cachedReview && hasPublicReviewAssessment(cachedReview.notes)) {
             advisory.findings.push(...cachedReview.findings);
             aiReview = cachedReview;
@@ -5595,7 +5651,7 @@ async function maybePublishPrPublicSurface(
               reviewExcludePaths,
               reviewInlineComments,
             });
-            if (aiReview && aiReview.cacheable !== false)
+            if (aiReview && aiReview.cacheable !== false && !dynamicReviewContextActive)
               await putCachedAiReview(
                 env,
                 repoFullName,
@@ -5607,7 +5663,7 @@ async function maybePublishPrPublicSurface(
                   metadata: {
                     /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
                     ...(aiReview.metadata ?? {}),
-                    inputFingerprint: reviewInputFingerprint,
+                    inputFingerprint,
                   },
                 },
               ).catch(() => undefined);

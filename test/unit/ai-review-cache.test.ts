@@ -1,10 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import { getCachedAiReview, putCachedAiReview } from "../../src/db/repositories";
-import {
-  aiReviewCacheInputFingerprint,
-  aiReviewInputFingerprint,
-} from "../../src/review/ai-review-cache-input";
+import { aiReviewCacheInputFingerprint, type AiReviewCacheInput } from "../../src/review/ai-review-cache-input";
 import { createTestEnv } from "../helpers/d1";
+
+const baseFingerprintInput = (): AiReviewCacheInput => ({
+  title: "Fix the retry loop",
+  mode: "block",
+  byok: false,
+  provider: null,
+  model: null,
+  aiReviewAllAuthors: false,
+  aiReviewCloseConfidence: null,
+  gatePack: null,
+  reviewerPlan: null,
+  selfHostProviderConfig: null,
+  baseSha: null,
+  reviewFiles: [],
+  profile: null,
+  inlineComments: false,
+  pathInstructions: [],
+  pathGuidance: "",
+  repoInstructions: null,
+  excludePaths: [],
+  changedPaths: ["src/changed.ts"],
+  features: {
+    grounding: false,
+    rag: false,
+    enrichment: false,
+    reputation: false,
+  },
+});
 
 describe("AI review cache (#1)", () => {
   it("misses on a nullish head SHA (read returns null; write is a no-op)", async () => {
@@ -108,21 +133,19 @@ describe("AI review cache (#1)", () => {
 
   it("reuses fingerprinted cache rows only when the review input fingerprint matches", async () => {
     const env = createTestEnv();
-    const matching = await aiReviewInputFingerprint({
-      instructions: "Use the current repository review guide.",
-      nested: { b: true, a: ["src/changed.ts"] },
-      ignored: undefined,
+    const matching = await aiReviewCacheInputFingerprint({
+      ...baseFingerprintInput(),
+      repoInstructions: "Use the current repository review guide.",
     });
-    const sameDifferentKeyOrder = await aiReviewInputFingerprint({
-      ignored: undefined,
-      nested: { a: ["src/changed.ts"], b: true },
-      instructions: "Use the current repository review guide.",
+    const repeated = await aiReviewCacheInputFingerprint({
+      ...baseFingerprintInput(),
+      repoInstructions: "Use the current repository review guide.",
     });
-    const changed = await aiReviewInputFingerprint({
-      instructions: "Use an older repository review guide.",
-      nested: { a: ["src/changed.ts"], b: true },
+    const changed = await aiReviewCacheInputFingerprint({
+      ...baseFingerprintInput(),
+      repoInstructions: "Use an older repository review guide.",
     });
-    expect(sameDifferentKeyOrder).toBe(matching);
+    expect(repeated).toBe(matching);
     expect(changed).not.toBe(matching);
 
     await putCachedAiReview(env, "o/r", 11, "sha1", "block", {
@@ -138,122 +161,5 @@ describe("AI review cache (#1)", () => {
       findings: [],
       metadata: { inputFingerprint: matching },
     });
-  });
-
-  it("fingerprints scalar review-input values deterministically", async () => {
-    const values = await Promise.all([
-      aiReviewInputFingerprint(null),
-      aiReviewInputFingerprint(true),
-      aiReviewInputFingerprint(7),
-      aiReviewInputFingerprint("rules"),
-      aiReviewInputFingerprint(undefined),
-    ]);
-    expect(values[4]).toBe(values[0]);
-    expect(new Set(values).size).toBe(4);
-    await expect(aiReviewInputFingerprint("rules")).resolves.toBe(values[3]);
-  });
-
-  it("normalizes review cache fingerprint inputs from prompt, settings, and runtime config", async () => {
-    const base = {
-      changedPaths: ["src/changed.ts"],
-      env: {},
-      mode: "block",
-      pr: { title: "Tighten review cache invalidation" },
-      review: {
-        effectiveInlineComments: false,
-        excludePaths: [],
-        inlineComments: false,
-        instructions: "Use the current repository review guide.",
-        pathInstructions: [],
-        profile: null,
-      },
-      settings: {
-        aiReviewAllAuthors: true,
-        aiReviewByok: false,
-        aiReviewCloseConfidence: undefined,
-        aiReviewModel: undefined,
-        aiReviewProvider: undefined,
-        gatePack: "oss-anti-slop" as const,
-      },
-    };
-
-    const baseline = await aiReviewCacheInputFingerprint(base);
-    await expect(
-      aiReviewCacheInputFingerprint({
-        ...base,
-        pr: { ...base.pr, baseSha: null },
-        settings: {
-          ...base.settings,
-          aiReviewCloseConfidence: null,
-          aiReviewModel: null,
-          aiReviewProvider: null,
-        },
-      }),
-    ).resolves.toBe(baseline);
-    await expect(
-      aiReviewCacheInputFingerprint({
-        ...base,
-        review: {
-          ...base.review,
-          instructions: "Use an older repository review guide.",
-        },
-      }),
-    ).resolves.not.toBe(baseline);
-    await expect(
-      aiReviewCacheInputFingerprint({
-        ...base,
-        env: {
-          GITTENSORY_REVIEW_RAG: "true",
-          REES_URL: "https://rees.example",
-          REES_ANALYZERS: "secret,redos",
-          REES_PROFILE: "deep",
-          REES_TIMEOUT_MS: "12000",
-          REES_FORWARD_GITHUB_TOKEN: "false",
-        },
-      }),
-    ).resolves.not.toBe(baseline);
-  });
-
-  it("changes the fingerprint when the configured REES endpoint URL itself changes", async () => {
-    const base = {
-      changedPaths: ["src/changed.ts"],
-      env: {},
-      mode: "block",
-      pr: { title: "Tighten review cache invalidation" },
-      review: {
-        effectiveInlineComments: false,
-        excludePaths: [],
-        inlineComments: false,
-        instructions: "Use the current repository review guide.",
-        pathInstructions: [],
-        profile: null,
-      },
-      settings: {
-        aiReviewAllAuthors: true,
-        aiReviewByok: false,
-        aiReviewCloseConfidence: undefined,
-        aiReviewModel: undefined,
-        aiReviewProvider: undefined,
-        gatePack: "oss-anti-slop" as const,
-      },
-    };
-
-    // Two DIFFERENT, both-truthy REES_URL values must not collide: reusing an AI review that ran
-    // against a different analyzer endpoint could reuse stale output produced by a different service.
-    const withEndpointA = await aiReviewCacheInputFingerprint({
-      ...base,
-      env: { REES_URL: "https://rees-a.example" },
-    });
-    const withEndpointB = await aiReviewCacheInputFingerprint({
-      ...base,
-      env: { REES_URL: "https://rees-b.example" },
-    });
-    const withEndpointARepeated = await aiReviewCacheInputFingerprint({
-      ...base,
-      env: { REES_URL: "https://rees-a.example" },
-    });
-
-    expect(withEndpointA).not.toBe(withEndpointB);
-    expect(withEndpointA).toBe(withEndpointARepeated);
   });
 });

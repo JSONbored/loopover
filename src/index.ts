@@ -17,7 +17,13 @@ import { isReviewExecutionJob, isSelfHostedReviewRuntime } from "./selfhost/revi
 import type { JobMessage } from "./types";
 
 const app = createApp();
-const REGATE_BACKPRESSURE_TYPES = ["agent-regate-pr", "agent-regate-sweep"] as const;
+// Scoped to the top-level fan-out TRIGGER only (#audit-sweep-fanout) — NOT "agent-regate-pr", whose per-repo
+// backlog is normal, expected, and can legitimately stay nonzero for long periods (staggered/rate-deferred
+// per-PR re-reviews), which is exactly what caused the prior broad backlog check to starve the scheduled sweep
+// entirely. A pending/processing "agent-regate-sweep" message means a fan-out is already in flight; the
+// per-repo drain guard (getLatestRegatedAt / isRegateSweepDraining) already protects individual repos once that
+// single fan-out runs, so this only needs to stop a SECOND trigger from queuing up behind the first.
+const REGATE_SWEEP_TRIGGER_TYPES = ["agent-regate-sweep"] as const;
 
 export { RateLimiter };
 
@@ -117,14 +123,17 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
         return null;
       })
     : null;
-  const regateBacklog = queueSnapshotBacklog(queueSnapshot, REGATE_BACKPRESSURE_TYPES);
+  const sweepTriggerBacklog = queueSnapshotBacklog(queueSnapshot, REGATE_SWEEP_TRIGGER_TYPES);
   let sweepThrottledUntil: string | undefined;
   if (selfHostedReviews) {
     sweepThrottledUntil = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
     if (sweepThrottledUntil) {
       console.log(JSON.stringify({ event: "regate_sweep_throttled", resetAt: sweepThrottledUntil }));
-    } else if (regateBacklog > 0) {
-      console.log(JSON.stringify({ event: "regate_sweep_backlog_deferred", backlog: regateBacklog }));
+    } else if (sweepTriggerBacklog > 0) {
+      // A fan-out trigger is already pending/processing — skip re-arming so the queue never accumulates a
+      // second identical trigger behind the first (#audit-sweep-fanout). This is scoped to the trigger job
+      // itself; it does not look at (and is not blocked by) per-repo "agent-regate-pr" backlog.
+      console.log(JSON.stringify({ event: "regate_sweep_trigger_backlog_deferred", backlog: sweepTriggerBacklog }));
     } else {
       jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
     }
@@ -138,13 +147,12 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // per-repo segment + per-PR detail sync — a large GitHub-budget consumer second only to the sweep. Gate it
     // behind the SAME maintenance headroom the sweep yields at, so when the shared REST budget is low the backfill
     // SKIPS this 30-min tick and hands the remaining budget to webhooks (which drive timely reviews); the next
-    // 30-min tick retries, and after the bucket resets the backfill resumes. The cheap single-call health jobs
-    // (repair-data-fidelity, refresh-installation-health) stay unconditional — they cost ~one call and keep
-    // installation/health state fresh even while the budget is reserved.
-    if (selfHostedReviews && !sweepThrottledUntil && regateBacklog === 0) {
+    // 30-min tick retries, and after the bucket resets the backfill resumes. Queue depth is deliberately not a
+    // suppressor here: unrelated pending work can stay nonzero for long periods, while rate admission on the
+    // queued jobs is the precise throttle. The cheap single-call health jobs (repair-data-fidelity,
+    // refresh-installation-health) stay unconditional.
+    if (selfHostedReviews && !sweepThrottledUntil) {
       jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
-    } else if (selfHostedReviews && regateBacklog > 0) {
-      console.log(JSON.stringify({ event: "backfill_backlog_deferred", backlog: regateBacklog }));
     } else if (selfHostedReviews) {
       console.log(JSON.stringify({ event: "backfill_throttled", resetAt: sweepThrottledUntil }));
     }

@@ -740,6 +740,7 @@ const MAX_COLLISION_PAIRWISE_ISSUES = 80;
 const MAX_COLLISION_PAIRWISE_PULL_REQUESTS = 120;
 const MAX_COLLISION_PAIRWISE_RECENT_MERGES = 40;
 const ISSUE_DISCOVERY_LIFECYCLE_REPORT_CAP = 300;
+const ISSUE_QUALITY_REPORT_CAP = 100;
 const REPO_OUTCOME_STALE_OPEN_DAYS = 30;
 const REPO_OUTCOME_MIN_DECIDED_SAMPLE = 3;
 const REPO_OUTCOME_MERGE_WELL_RATE = 0.7;
@@ -2925,7 +2926,7 @@ export function buildIssueQualityReport(
   const lane = buildLaneAdvice(repo, fullName);
   const collisions = prebuiltCollisions ?? buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
   const bountyByIssue = indexBountiesByIssue(bounties);
-  // Build per-issue indexes ONCE: the loop below runs over up to 100 open issues, and each previously re-scanned
+  // Build per-issue indexes ONCE: the loop below runs over every open issue, and each previously re-scanned
   // the full PR list (up to 10k) twice plus every collision cluster. O(issues·PRs) → O(issues + PRs).
   const prsByLinkedIssue = indexPullRequestsByLinkedIssue(pullRequests);
   const prByNumber = new Map(pullRequests.map((pr) => [pr.number, pr] as const));
@@ -2935,7 +2936,6 @@ export function buildIssueQualityReport(
   const lifecycleByIssue = new Map(buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests).states.map((entry) => [entry.number, entry]));
   const reports = issues
     .filter((issue) => issue.state === "open")
-    .slice(0, 100)
     .map((issue) => {
       const linkedPrs = resolveLinkedPullRequests(issue, pullRequests, prsByLinkedIssue, prByNumber);
       const linkedMergedPrs = resolveLinkedPullRequests(issue, recentMergedPullRequests, mergedPrsByLinkedIssue, mergedPrByNumber);
@@ -2991,7 +2991,8 @@ export function buildIssueQualityReport(
               : "ready";
       return { number: issue.number, title: issue.title, lifecycle, linkage, bounty: bountyContext, status, score, reasons, warnings };
     })
-    .sort((left, right) => right.score - left.score || left.number - right.number);
+    .sort((left, right) => right.score - left.score || left.number - right.number)
+    .slice(0, ISSUE_QUALITY_REPORT_CAP);
   return {
     repoFullName: fullName,
     generatedAt: nowIso(),

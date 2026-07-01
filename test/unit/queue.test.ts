@@ -11863,6 +11863,65 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(audit?.outcome).toBe("denied");
   });
 
+  it("REGRESSION: a transient getInstallation read failure during the draft-dodge readiness check propagates (retries) instead of misrecording a permission denial", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "enabled", autonomy: { close: "auto" }, agentPaused: false });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    // First getInstallation call in processGitHubWebhook (installationActor derivation, unrelated to this fix)
+    // resolves normally; the SECOND call is the draft-dodge readiness check itself -- that one is a genuine D1
+    // read failure, not a "row not found."
+    const getInstallationSpy = vi.spyOn(repositoriesModule, "getInstallation");
+    getInstallationSpy.mockResolvedValueOnce({
+      id: 123,
+      accountLogin: "JSONbored",
+      accountId: 1,
+      appId: null,
+      targetType: "User",
+      repositorySelection: "selected",
+      permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      events: ["pull_request"],
+      suspendedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+    getInstallationSpy.mockRejectedValueOnce(new Error("D1 read failed"));
+
+    await expect(processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-install-read-fails", eventName: "pull_request", payload: draftPayload("contributor") })).rejects.toThrow("D1 read failed");
+
+    // Neither the close nor its accompanying comment was attempted -- the failure short-circuits before either.
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    // No misleading "pull_requests: write not granted" audit -- the webhook's own top-level catch records the
+    // actual error instead, which the queue's standard retry-on-throw semantics will re-attempt.
+    const draftDodgeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ n: number }>();
+    expect(draftDodgeAudit?.n).toBe(0);
+    const webhookAudit = await env.DB.prepare("select status, error_summary from webhook_events where delivery_id = ?").bind("draft-dodge-install-read-fails").first<{ status: string; error_summary: string | null }>();
+    expect(webhookAudit?.status).toBe("error");
+    expect(webhookAudit?.error_summary).toContain("D1 read failed");
+  });
+
   it("does NOT draft-dodge close while the global freeze is on (#killswitch-gap)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

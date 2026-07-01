@@ -79,11 +79,21 @@ review_context_fetch_failed`}
         dashboards for infra, review activity, and AI usage.
       </p>
       <p>
+        Postgres installs also expose database internals through the bundled Postgres exporter:
+        connection pressure, lock waits, long transactions, deadlocks, database/table growth, dead
+        tuples, autovacuum activity, and backup freshness. Backup freshness appears when the{" "}
+        <code>backup</code> profile is active.
+      </p>
+      <p>
         When OpenTelemetry and Sentry are enabled, job audit logs and Sentry events include
         trace_id/span_id fields so an operator can jump from a failed job or issue to the matching
         trace in Grafana or Tempo.
       </p>
-      <CodeBlock lang="bash" code={`docker compose --profile observability up -d`} />
+      <CodeBlock
+        lang="bash"
+        code={`docker compose --profile postgres --profile observability up -d
+docker compose --profile postgres --profile observability --profile backup up -d`}
+      />
 
       <h2>Sentry tracing</h2>
       <p>
@@ -129,6 +139,10 @@ review_context_fetch_failed`}
         <li>Webhook deliveries are recent and have 2xx responses.</li>
         <li>AI usage matches expected review volume and model/effort choices.</li>
         <li>REES and RAG failures are visible and bounded.</li>
+        <li>
+          Postgres connections, lock waits, slow transactions, dead tuples, and table growth are
+          stable.
+        </li>
         <li>Backups are recent and restore-tested.</li>
       </ul>
 

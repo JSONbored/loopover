@@ -88,4 +88,47 @@ describe("self-host observability trace config", () => {
     expect(script).toContain("gittensory-selfhost-smoke");
     expect(script).toContain("selfhost.observability.smoke");
   });
+
+  it("wires Postgres and backup exporters without starting them on SQLite-only observability", () => {
+    const compose = record(readYaml("docker-compose.yml"));
+    const services = record(compose.services);
+    const postgresExporter = record(services["postgres-exporter"]);
+    const backupExporter = record(services["backup-exporter"]);
+    const prometheus = record(readYaml("prometheus/prometheus.yml"));
+    const scrapeConfigs = prometheus.scrape_configs as Array<Record<string, any>>;
+
+    expect(postgresExporter.image).toBe("quay.io/prometheuscommunity/postgres-exporter:v0.20.0");
+    expect(postgresExporter.profiles).toEqual(["postgres", "pgbouncer"]);
+    expect(postgresExporter.depends_on?.postgres).toEqual({ condition: "service_healthy" });
+    expect(postgresExporter.environment).toMatchObject({
+      DATA_SOURCE_URI: "postgres:5432/gittensory?sslmode=disable",
+      DATA_SOURCE_USER: "gittensory",
+      DATA_SOURCE_PASS: "${POSTGRES_PASSWORD:-CHANGEME}",
+    });
+
+    expect(backupExporter.profiles).toEqual(["backup"]);
+    expect(backupExporter.volumes).toEqual(
+      expect.arrayContaining([
+        "gittensory-backups:/backups:ro",
+        "./scripts/backup-metrics.sh:/backup-metrics.sh:ro",
+      ]),
+    );
+    expect(backupExporter.healthcheck?.test).toEqual([
+      "CMD-SHELL",
+      "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'",
+    ]);
+
+    expect(scrapeConfigs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          job_name: "postgres",
+          static_configs: [{ targets: ["postgres-exporter:9187"] }],
+        }),
+        expect.objectContaining({
+          job_name: "gittensory-backup",
+          static_configs: [{ targets: ["backup-exporter:9101"] }],
+        }),
+      ]),
+    );
+  });
 });

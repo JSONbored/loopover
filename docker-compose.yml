@@ -162,6 +162,22 @@ services:
       DEFAULT_POOL_SIZE: "20"
       AUTH_TYPE: md5
 
+  # Postgres internals exporter. Starts with the Postgres profiles so Prometheus can scrape it when
+  # observability is enabled, without starting against a missing DB on SQLite-only installs.
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.0
+    restart: unless-stopped
+    profiles: ["postgres", "pgbouncer"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/gittensory?sslmode=disable"
+      DATA_SOURCE_USER: gittensory
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-CHANGEME}
+    expose:
+      - "9187"
+
   # ── Qdrant (--profile qdrant) ─────────────────────────────────────────────
   # Dedicated vector database for RAG — replaces the built-in sqlite-vec / pgvector when
   # QDRANT_URL=http://qdrant:6333 is set. Scales to millions of vectors with ANN search.
@@ -527,6 +543,26 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - "apk add --no-cache sqlite postgresql16-client curl >/dev/null 2>&1 && while true; do sh /backup.sh || echo '[backup] run failed'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"
+
+  # Read-only backup freshness exporter. It serves file-age metrics from the retained backup volume so
+  # Prometheus can alert on missing or stale database backups without Grafana reading the live app DB.
+  backup-exporter:
+    image: alpine:3.20
+    restart: unless-stopped
+    profiles: ["backup"]
+    volumes:
+      - gittensory-backups:/backups:ro
+      - ./scripts/backup-metrics.sh:/backup-metrics.sh:ro
+    expose:
+      - "9101"
+    command:
+      - /bin/sh
+      - -c
+      - "sh /backup-metrics.sh"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'"]
+      interval: 30s
+      retries: 5
 
 volumes:
   gittensory-data:

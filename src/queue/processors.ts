@@ -2302,8 +2302,7 @@ async function ciReReviewCoalesced(
 // label/assignment change is not: a completely unrelated CI re-review claiming the shared window would silently
 // suppress a genuinely different issue-side signal, leaving the PR on stale linked-issue state until the window
 // expires or the sweep eventually reaches it. Reusing ciReReviewCoalesced's key made that cross-domain collision
-// possible; a separate namespace confines coalescing to a burst of same-PR issue-side events (its legitimate,
-// intended purpose — bound FREQUENCY, not correctness, same as the CI window's own philosophy).
+// possible; a separate namespace confines coalescing to a burst of same-PR issue-side events.
 async function issueLinkedPrReReviewCoalesced(
   env: Env,
   repoFullName: string,
@@ -2312,6 +2311,46 @@ async function issueLinkedPrReReviewCoalesced(
   return ciCompletionCoalesced(
     env,
     `issue-link-coalesce:${repoFullName.toLowerCase()}#${prNumber}`,
+  );
+}
+
+// Unlike CI-completion events, same-PR issue-side events are NOT interchangeable within the coalesce window: an
+// add-then-remove label or assign-then-unassign sequence carries genuinely DIFFERENT states, so silently dropping
+// every event after the first (as ciCompletionCoalesced's plain throttle does) can leave the PR on a stale
+// verdict for up to the window's length. Schedule exactly ONE trailing agent-regate-pr re-review to run just
+// after the window closes, guaranteeing the LATEST state is always eventually captured — deduped (its own
+// window, same TTL) so a burst of N coalesced events schedules ONE trailing job, not N. Reuses the existing
+// agent-regate-pr sweep-unit job (already rate-limit-aware and retried), not a new job type (#2371).
+async function scheduleTrailingIssueLinkedReReview(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<void> {
+  const alreadyScheduled = await ciCompletionCoalesced(
+    env,
+    `issue-link-trailing:${repoFullName.toLowerCase()}#${prNumber}`,
+  );
+  if (alreadyScheduled) return;
+  await env.JOBS.send(
+    {
+      type: "agent-regate-pr",
+      deliveryId,
+      repoFullName,
+      prNumber,
+      installationId,
+    },
+    { delaySeconds: CI_COALESCE_WINDOW_SECONDS },
+  ).catch((error) =>
+    console.log(
+      JSON.stringify({
+        ev: "issue_link_trailing_enqueue_failed",
+        repoFullName,
+        pull: prNumber,
+        message: errorMessage(error).slice(0, 120),
+      }),
+    ),
   );
 }
 
@@ -2504,7 +2543,10 @@ async function maybeReReviewOnCiCompletion(
  * which can lag for many cycles on a repo with more than a few open PRs. Re-review every OPEN PR that links
  * this issue promptly instead of waiting. Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
  * DISTINCT from CI-completion's — #2371): the two triggers are not interchangeable, so a shared window let an
- * unrelated CI re-review silently suppress a genuinely different issue-side signal.
+ * unrelated CI re-review silently suppress a genuinely different issue-side signal. Within the issue-side
+ * window itself, same-PR events are ALSO not interchangeable (an add-then-remove or assign-then-unassign
+ * sequence carries genuinely different states), so a coalesced event schedules a trailing re-review
+ * (scheduleTrailingIssueLinkedReReview) instead of silently dropping the state it represents.
  */
 async function maybeReReviewOnLinkedIssueChange(
   env: Env,
@@ -2530,7 +2572,16 @@ async function maybeReReviewOnLinkedIssueChange(
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
       .map((pr) => pr.number);
     for (const prNumber of linkingPrNumbers) {
-      if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) continue;
+      if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
+        await scheduleTrailingIssueLinkedReReview(
+          env,
+          deliveryId,
+          installationId,
+          repoFullName,
+          prNumber,
+        );
+        continue;
+      }
       await reReviewStoredPullRequest(
         env,
         deliveryId,

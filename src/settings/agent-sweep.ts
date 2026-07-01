@@ -46,6 +46,8 @@ export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
 export function selectRegateCandidates(input: {
   pulls: PullRequestRecord[];
   now: string;
+  priorityPullNumbers?: readonly number[] | ReadonlySet<number> | undefined;
+  priorityBypassesFreshness?: boolean;
   freshnessWindowMs?: number;
   max?: number;
 }): PullRequestRecord[] {
@@ -68,13 +70,24 @@ export function selectRegateCandidates(input: {
     const created = pr.createdAt ? Date.parse(pr.createdAt) : Number.NaN;
     return Number.isFinite(created) ? created : 0;
   };
+  const priorityPullNumbers =
+    input.priorityPullNumbers instanceof Set
+      ? input.priorityPullNumbers
+      : new Set(input.priorityPullNumbers ?? []);
+  const repairPriority = (pr: PullRequestRecord): number =>
+    priorityPullNumbers.has(pr.number) ? 0 : 1;
   return input.pulls
     .filter((pr) => pr.state === "open" && !pr.isDraft)
     .filter((pr) => {
+      if (
+        input.priorityBypassesFreshness &&
+        priorityPullNumbers.has(pr.number)
+      )
+        return true;
       if (!Number.isFinite(freshCutoff)) return true;
       return webhookFreshness(pr) <= freshCutoff;
     })
-    .sort((a, b) => regateProgress(a) - regateProgress(b) || a.number - b.number)
+    .sort((a, b) => repairPriority(a) - repairPriority(b) || regateProgress(a) - regateProgress(b) || a.number - b.number)
     .slice(0, Math.max(0, max));
 }
 

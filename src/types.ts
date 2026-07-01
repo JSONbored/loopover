@@ -687,6 +687,10 @@ export type AgentPendingActionParams = {
   // once the row is replayed through pendingActionToPlanned, not silently skipped for a lost discriminator.
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
+  // For an `approve` action: retract the bot's own stale approval instead of posting a new one (see
+  // PlannedAgentAction.dismissStaleApproval). Must round-trip through staging like every other action-specific
+  // field. (#2254)
+  dismissStaleApproval?: boolean;
   // WHICH kind of close this is (see PlannedAgentAction.closeKind) — must round-trip through staging so the
   // close-precision circuit-breaker can still scope itself correctly when a staged close is later accepted (#2127).
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";

@@ -63,6 +63,11 @@ export type PlannedAgentAction = {
   // actions; treated as a heuristic close only when explicitly tagged "heuristic".
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
+  // For an `approve` action: retract the bot's own prior approval instead of posting a new one — a later commit
+  // no longer qualifies for approval, but the PR isn't merging or closing this pass, so the stale APPROVE
+  // (which still counts toward a "require approving reviews" branch-protection rule) must not be left in place.
+  // (#2254)
+  dismissStaleApproval?: boolean;
 };
 
 export type AgentActionPlanInput = {
@@ -436,6 +441,33 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       requiresApproval: approval("approve"),
       reason: "gate passed, CI green",
       reviewBody: "Gittensory approves — the gate is satisfied and CI is green.",
+    });
+  } else if (
+    // A prior bot approval is now STALE: a later commit landed (approvedHeadSha !== the current head) and this
+    // pass isn't posting a fresh approve (the branch above didn't fire). GitHub's reviewDecision is derived from
+    // the LATEST review per reviewer, so leaving the old APPROVE in place can still satisfy a "require approving
+    // reviews" rule and let a human merge the new, un-reviewed commit directly on GitHub. Only matters when the
+    // PR stays open under review this pass — canMerge/willClose/willCloseForLinkedIssue each make it moot (a
+    // merge doesn't care about the stale review, and a close removes the PR from mergeable consideration
+    // entirely). (#2254)
+    input.pr.approvedHeadSha != null &&
+    input.pr.headSha != null &&
+    input.pr.approvedHeadSha !== input.pr.headSha &&
+    acting("approve") &&
+    !canMerge &&
+    !willClose &&
+    !willCloseForLinkedIssue
+  ) {
+    actions.push({
+      actionClass: "approve",
+      requiresApproval: approval("approve"),
+      reason: "stale approval retracted — a newer commit no longer qualifies for approval",
+      dismissStaleApproval: true,
+      // Pin to the head that was actually evaluated as stale (mirrors the merge action's head pinning above) so
+      // a queued (auto_with_approval) dismissal replayed later can't retract a DIFFERENT, newer bot approval if
+      // the head moved again while this row waited for a maintainer (#2361). input.pr.headSha is already
+      // narrowed non-null by the `else if` condition above (line ~454), so no fallback branch is needed here.
+      expectedHeadSha: input.pr.headSha,
     });
   }
 

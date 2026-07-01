@@ -5,7 +5,7 @@ import { createInstallationToken } from "../github/app";
 import { fetchLiveCiAggregate } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
-import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
@@ -160,7 +160,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
       // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
       // Best-effort: a failed persist only risks one redundant re-approval, never a wrong disposition.
-      if (action.actionClass === "approve" && ctx.headSha) {
+      if (action.actionClass === "approve" && !action.dismissStaleApproval && ctx.headSha) {
         await markPullRequestApproved(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha).catch(() => undefined);
       }
       // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,
@@ -236,7 +236,11 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "REQUEST_CHANGES", action.reviewBody ?? "");
       return;
     case "approve":
-      await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "APPROVE", action.reviewBody ?? "");
+      if (action.dismissStaleApproval) {
+        await dismissLatestBotApproval(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "Gittensory retracted this approval — a newer commit no longer qualifies.");
+      } else {
+        await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "APPROVE", action.reviewBody ?? "");
+      }
       return;
     case "merge": {
       // Pin the merge to the REVIEWED head (action.expectedHeadSha) when present — for an approval-queue replay
@@ -268,6 +272,7 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
     ...(action.closeKind !== undefined ? { closeKind: action.closeKind } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
+    ...(action.dismissStaleApproval !== undefined ? { dismissStaleApproval: action.dismissStaleApproval } : {}),
     // Round-trip closeKind so a staged close's kind survives to accept-time — without it, the close-precision
     // breaker's isHeuristicClose check (which matches on closeKind === "heuristic") could never fire for any
     // staged close, silently defeating the breaker for the entire approval-queue accept path (#2127).

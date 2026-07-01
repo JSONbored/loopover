@@ -16,7 +16,7 @@ const snapshot: ScoringModelSnapshotRecord = {
     MERGED_PR_BASE_SCORE: 25,
     MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5,
     MAX_CODE_DENSITY_MULTIPLIER: 1.15,
-    MAX_CONTRIBUTION_BONUS: 25,
+    MAX_CONTRIBUTION_BONUS: 5,
     CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500,
     STANDARD_ISSUE_MULTIPLIER: 1.33,
     MAINTAINER_ISSUE_MULTIPLIER: 1.66,
@@ -75,6 +75,7 @@ describe("explainScoreBreakdown", () => {
     const componentNames = breakdown.components.map((entry) => entry.component);
     expect(componentNames).toEqual(
       expect.arrayContaining([
+        "baseScore",
         "densityMultiplier",
         "contributionBonus",
         "labelMultiplier",
@@ -408,7 +409,9 @@ describe("explainScoreBreakdown", () => {
     const breakdown = explainScoreBreakdown(preview);
     expect(breakdown.components.find((entry) => entry.component === "densityMultiplier")).toMatchObject({ band: "blocked" });
     expect(breakdown.components.find((entry) => entry.component === "issueMultiplier")?.lever).toMatch(/Fix linked issue state/i);
-    expect(breakdown.highestLeverageLever.component).toBe("densityMultiplier");
+    // baseScore and densityMultiplier tie at leverageScore 75 when the gate is not passed;
+    // baseScore wins alphabetically as the root-cause lever.
+    expect(breakdown.highestLeverageLever.component).toBe("baseScore");
   });
 
   it("selects a reduced multiplier as highest leverage when nothing is fully blocked", () => {
@@ -473,5 +476,205 @@ describe("explainScoreBreakdown", () => {
     const breakdown = explainScoreBreakdown(preview);
     expect(breakdown.components.find((entry) => entry.component === "credibilityMultiplier")).toMatchObject({ band: "blocked" });
     expect(breakdown.components.find((entry) => entry.component === "openPrMultiplier")).toMatchObject({ band: "blocked" });
+  });
+
+  it("blocks base-score projection when the source-token gate has not passed", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 0,
+        totalTokenScore: 0,
+        sourceLines: 4,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const entry = explainScoreBreakdown(preview).components.find((c) => c.component === "baseScore")!;
+    expect(entry).toMatchObject({ band: "blocked", leverageScore: 75 });
+    expect(entry.summary).toMatch(/not yet in the score pipeline|minimum meaningful source-change/);
+  });
+
+  it("surfaces a neutral (sub-cap) base score with the contribution bonus present", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 25,
+        totalTokenScore: 800,
+        sourceLines: 120,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const entry = explainScoreBreakdown(preview).components.find((c) => c.component === "baseScore")!;
+    expect(entry).toMatchObject({ band: "neutral" });
+    expect(entry.summary).toMatch(/contributing toward|base \d|contribution bonus/);
+  });
+
+  it("surfaces a neutral base-score branch when gate passed but no contribution bonus earned", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 10,
+        totalTokenScore: 0,
+        sourceLines: 40,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const entry = explainScoreBreakdown(preview).components.find((c) => c.component === "baseScore")!;
+    expect(entry).toMatchObject({ band: "neutral" });
+    expect(entry.leverageScore).toBe(12);
+    expect(entry.summary).toMatch(/contributing toward|base \d|contribution bonus not contributing/);
+  });
+
+  it("surfaces the base score as saturated (full) near the score cap", () => {
+    // Density model: baseScoreCap = MERGED_PR_BASE_SCORE × MAX_CODE_DENSITY_MULTIPLIER +
+    // MAX_CONTRIBUTION_BONUS = 25 × 1.15 + 5 = 33.75. Need baseScore / baseScoreCap ≥ 0.95 (≈ 32.06).
+    // With densityMultiplier = 1.15 and totalTokenScore = 1500 (full bonus 5), baseScore = 28.75 + 5 = 33.75.
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 200,
+        totalTokenScore: 1500,
+        sourceLines: 170,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const entry = explainScoreBreakdown(preview).components.find((c) => c.component === "baseScore")!;
+    expect(entry).toMatchObject({ band: "full" });
+    expect(entry.summary).toMatch(/saturated near the score cap/);
+    expect(JSON.stringify(explainScoreBreakdown(preview))).not.toMatch(FORBIDDEN);
+  });
+
+  it("adapts the saturation threshold to non-default snapshot constants (regression)", () => {
+    // Use a snapshot with different constants to prove the threshold is not hardcoded to 29.5.
+    // If MERGED_PR_BASE_SCORE=50 and MAX_CONTRIBUTION_BONUS=10, cap = 50 × 1.15 + 10 = 67.5.
+    // 95% saturation ≈ 64.13. Inputs that would give baseScore=32 (well below 64) must NOT read as full.
+    // Cap: 50 × 1.15 + 10 = 67.5. 95% saturation ≈ 64.13.
+    const altSnapshot: ScoringModelSnapshotRecord = {
+      ...snapshot,
+      id: "score-model-alt-cap",
+      constants: {
+        ...snapshot.constants,
+        MERGED_PR_BASE_SCORE: 50,
+        MAX_CONTRIBUTION_BONUS: 10,
+      },
+    };
+    // With source 200 / lines 170 → density 1.15 → baseDensity = 50 × 1.15 = 57.5.
+    // totalTokenScore 0 → contributionBonus 0 → baseScore = 57.5 < 64.13 → NOT saturated.
+    const subCap = buildScorePreview({
+      repo,
+      snapshot: altSnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 200,
+        totalTokenScore: 0,
+        sourceLines: 170,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const notSaturated = explainScoreBreakdown(subCap).components.find((c) => c.component === "baseScore")!;
+    expect(notSaturated).toMatchObject({ band: "neutral" });
+    // Full bonus (totalTokenScore >= 1500) → baseScore = 57.5 + 10 = 67.5, which IS ≥ 95% of 67.5.
+    const saturated = buildScorePreview({
+      repo,
+      snapshot: altSnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 200,
+        totalTokenScore: 1500,
+        sourceLines: 170,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const isSaturated = explainScoreBreakdown(saturated).components.find((c) => c.component === "baseScore")!;
+    expect(isSaturated).toMatchObject({ band: "full" });
+    expect(isSaturated.summary).toMatch(/saturated near the score cap/);
+    expect(JSON.stringify(explainScoreBreakdown(saturated))).not.toMatch(FORBIDDEN);
+  });
+
+  it("handles fixedBaseScore override (baseScoreCap undefined, copy without cap mention)", () => {
+    // When fixedBaseScore is set, the cap is undefined — the copy should not mention "score cap".
+    // Use sourceTokenScore >= MIN_TOKEN_SCORE_FOR_BASE_SCORE (5) so the gate passes.
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 10,
+        totalTokenScore: 0,
+        sourceLines: 40,
+        openPrCount: 0,
+        credibility: 1,
+        fixedBaseScore: 50,
+      },
+    });
+    const entry = explainScoreBreakdown(preview).components.find((c) => c.component === "baseScore")!;
+    expect(entry).toMatchObject({ band: "neutral" });
+    expect(entry.summary).toMatch(/fixed base score override/);
+    expect(entry.summary).not.toMatch(/score cap/);
+    expect(JSON.stringify(explainScoreBreakdown(preview))).not.toMatch(FORBIDDEN);
+  });
+
+  it("derives the base-score cap from the saturation model constants", () => {
+    // Saturation model: baseScoreCap = MERGED_PR_BASE_SCORE + MAX_CONTRIBUTION_BONUS = 25 + 5 = 30.
+    // Need baseScore / 30 >= 0.95 (≈ 28.5). With source 200 / scale 58: 25 × (1 - exp(-200/58)) ≈ 24.2,
+    // plus full bonus 5 → baseScore = 29.2. Slightly below 28.5 → NOT saturated.
+    // Use a higher src to push past 95%: with source 400: 25 × (1 - exp(-400/58)) ≈ 24.99 + 5 = 29.99 ≥ 28.5.
+    const satSnapshot: ScoringModelSnapshotRecord = {
+      ...snapshot,
+      id: "score-model-saturation",
+      activeModel: "pending_saturation_model",
+    };
+    const subCap = buildScorePreview({
+      repo,
+      snapshot: satSnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 100,
+        totalTokenScore: 0,
+        sourceLines: 100,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const notSaturated = explainScoreBreakdown(subCap).components.find((c) => c.component === "baseScore")!;
+    expect(notSaturated).toMatchObject({ band: "neutral" });
+    const saturated = buildScorePreview({
+      repo,
+      snapshot: satSnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        contributorLogin: "miner",
+        sourceTokenScore: 400,
+        totalTokenScore: 1500,
+        sourceLines: 400,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const isSaturated = explainScoreBreakdown(saturated).components.find((c) => c.component === "baseScore")!;
+    expect(isSaturated).toMatchObject({ band: "full" });
+    expect(isSaturated.summary).toMatch(/saturated near the score cap/);
+    expect(JSON.stringify(explainScoreBreakdown(saturated))).not.toMatch(FORBIDDEN);
   });
 });

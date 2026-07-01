@@ -13,6 +13,8 @@ describe("test evidence helpers", () => {
     expect(isTestPath("playwright/smoke.spec.ts")).toBe(true);
     expect(isTestPath("cypress/e2e/checkout.cy.js")).toBe(true);
     expect(isTestPath("components/__snapshots__/Card.tsx.snap")).toBe(true);
+    expect(isTestPath("src/__fixtures__/user.json")).toBe(true);
+    expect(isTestPath("lib/__mocks__/fetch.ts")).toBe(true);
     expect(isTestPath("src/state.snap")).toBe(false);
     expect(isTestPath("src/widget.rs")).toBe(false);
   });

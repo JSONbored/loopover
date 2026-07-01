@@ -679,22 +679,53 @@ describe("explainScoreBreakdown", () => {
   });
 
   it("surfaces tied-leverage components when multiple levers share the top leverageScore", () => {
+    // Both openPrMultiplier and openIssueMultiplier blocked at leverageScore 100.
+    // With existingContributorTokenScore = 0, openPrThreshold = 2 and openIssueThreshold = 2.
+    // openPrCount = 3 > 2 → blocked (leverageScore 100).
+    // openIssueCount = 3 > 2 → blocked (leverageScore 100).
+    // Alphabetical winner: "openIssueMultiplier" (I < P), tied component: "openPrMultiplier".
     const preview = buildScorePreview({
       repo,
       snapshot,
       input: {
         repoFullName: repo.fullName,
-        sourceTokenScore: 80,
-        totalTokenScore: 90,
-        sourceLines: 50,
-        openPrCount: 20,
-        existingContributorTokenScore: 50,
-        credibility: 0.005,
+        sourceTokenScore: 100,
+        totalTokenScore: 200,
+        sourceLines: 100,
+        openPrCount: 3,
+        openIssueCount: 3,
+        existingContributorTokenScore: 0,
+        credibility: 1,
       },
     });
     const breakdown = explainScoreBreakdown(preview);
     const top = breakdown.highestLeverageLever;
-    expect(top.tiedLeverageComponents).toBeDefined();
-    expect(Array.isArray(top.tiedLeverageComponents)).toBe(true);
+    expect(top.component).toBe("openIssueMultiplier");
+    expect(top.tiedLeverageComponents).toEqual(["openPrMultiplier"]);
+    expect(top.reason).toMatch(/openIssueMultiplier ties with openPrMultiplier at the same leverage score/);
+    expect(breakdown.components.find((c) => c.component === "openIssueMultiplier")?.leverageScore).toBe(100);
+    expect(breakdown.components.find((c) => c.component === "openPrMultiplier")?.leverageScore).toBe(100);
+  });
+
+  it("returns empty tiedLeverageComponents when no tie exists at the top leverageScore", () => {
+    // Single top lever (credibilityMultiplier at 85) — no tie.
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 100,
+        totalTokenScore: 200,
+        sourceLines: 100,
+        openPrCount: 0,
+        openIssueCount: 0,
+        existingContributorTokenScore: 0,
+        credibility: 0.01,
+      },
+    });
+    const breakdown = explainScoreBreakdown(preview);
+    const top = breakdown.highestLeverageLever;
+    expect(top.tiedLeverageComponents).toEqual([]);
+    expect(top.reason).not.toMatch(/ties with/);
   });
 });

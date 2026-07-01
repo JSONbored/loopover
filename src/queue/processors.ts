@@ -2356,6 +2356,61 @@ async function maybeReReviewOnCiCompletion(
 }
 
 /**
+ * Wake linked PRs on an issue-side signal (#2259). Labeling/unlabeling (e.g. maintainer-only) or
+ * assigning/unassigning on a linked ISSUE can flip a linked-issue hard-rule verdict, but that only gets
+ * re-evaluated when the PR ITSELF receives a webhook or the staleness-ordered sweep eventually reaches it —
+ * which can lag for many cycles on a repo with more than a few open PRs. Re-review every OPEN PR that links
+ * this issue promptly instead of waiting. Reuses the CI-completion coalesce window (ciReReviewCoalesced): its
+ * purpose is identical here — bound re-review FREQUENCY per PR, never correctness, since the re-review always
+ * re-fetches live state regardless of what triggered it.
+ */
+async function maybeReReviewOnLinkedIssueChange(
+  env: Env,
+  deliveryId: string,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  if (eventName !== "issues") return false;
+  if (
+    payload.action !== "labeled" &&
+    payload.action !== "unlabeled" &&
+    payload.action !== "assigned" &&
+    payload.action !== "unassigned"
+  )
+    return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  const issueNumber = payload.issue?.number;
+  if (!repoFullName || !installationId || !issueNumber) return false;
+  if (isConvergenceRepoAllowed(env, repoFullName)) {
+    const openPullRequests = await listOpenPullRequests(env, repoFullName);
+    const linkingPrNumbers = openPullRequests
+      .filter((pr) => pr.linkedIssues.includes(issueNumber))
+      .map((pr) => pr.number);
+    for (const prNumber of linkingPrNumbers) {
+      if (await ciReReviewCoalesced(env, repoFullName, prNumber)) continue;
+      await reReviewStoredPullRequest(
+        env,
+        deliveryId,
+        installationId,
+        repoFullName,
+        prNumber,
+      );
+    }
+  }
+  await recordWebhookEvent(env, {
+    deliveryId,
+    eventName,
+    action: payload.action,
+    installationId,
+    repositoryFullName: repoFullName,
+    payloadHash: "processed",
+    status: "processed",
+  });
+  return true;
+}
+
+/**
  * deployment_status (success/failure) → re-review the associated PR so the before/after visual capture fills the
  * "after" cell once the preview deploy finishes (or flips to a deploy-failed note). Mirrors reviewbot's
  * deployment_status routing; the capture itself runs inside the re-published review (visual-capture path).
@@ -3239,6 +3294,13 @@ async function processGitHubWebhook(
     // deployment_status (preview deploy finished) → re-review so the visual before/after capture fills in.
     if (
       await maybeCaptureOnDeploymentStatus(env, deliveryId, eventName, payload)
+    )
+      return;
+    // Linked-issue label/assignment change (#2259) — an `issues` event carries no `payload.pull_request` either,
+    // so it must be handled here alongside the other non-PR wake triggers: it re-reviews every open PR that
+    // links this issue promptly, instead of waiting for a PR-side webhook or the staleness-ordered sweep.
+    if (
+      await maybeReReviewOnLinkedIssueChange(env, deliveryId, eventName, payload)
     )
       return;
 

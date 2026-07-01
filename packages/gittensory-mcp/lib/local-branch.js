@@ -5,8 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+function stripTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 export function parseGitRemote(remoteUrl) {
-  const trimmed = String(remoteUrl ?? "").trim().replace(/\/+$/, "");
+  const trimmed = stripTrailingSlashes(String(remoteUrl ?? "").trim());
   const patterns = [
     /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/,
     /^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/,
@@ -551,9 +557,13 @@ function assertSourceUploadDisabled() {
   }
 }
 
-function extractLinkedIssues(text) {
+// Word-boundary the closing keywords (as the server-side extractors in src/db/repositories.ts and
+// src/signals/engine.ts already do) so a keyword embedded in a longer word does not spuriously link an
+// issue: without \b, `hotfix 5` / `prefixes 12` matched the `fix`/`fixes` substring and captured the
+// trailing number. The bare `#` branch stays boundary-free so `#123` still matches anywhere.
+export function extractLinkedIssues(text) {
   const issues = [];
-  for (const match of String(text).matchAll(/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|#)\s*#?(\d+)/gi)) issues.push(Number(match[1]));
+  for (const match of String(text).matchAll(/(?:\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)|#)\s*#?(\d+)/gi)) issues.push(Number(match[1]));
   return issues.filter((issue) => Number.isInteger(issue) && issue > 0);
 }
 

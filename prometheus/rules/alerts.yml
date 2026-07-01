@@ -99,6 +99,151 @@ groups:
           description: "{{ $value | printf \"%.0f\" }} jobs pending for over 10m — the worker is falling behind the enqueue rate."
           runbook: "Compare rate(gittensory_jobs_enqueued_total) vs rate(gittensory_jobs_processed_total). If enqueue > processed persistently, the worker is the bottleneck (slow AI/DB, or it's stuck). Check worker logs."
 
+  # ── GitHub API budget / queue admission pressure ──────────────────────────
+  - name: gittensory-github-rate-limits
+    rules:
+      - alert: GittensoryGitHubRateLimitResponses
+        # Live 403/429 GitHub rate-limit responses mean admission/caching did not avoid
+        # a depleted bucket. This should be rare; sustained values explain hard queue stalls.
+        expr: sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory is receiving GitHub REST rate-limit responses"
+          description: "GitHub REST rate-limit responses are occurring for over 2m. Check labels status/retry/key_scope on gittensory_github_rest_rate_limit_responses_total."
+          runbook: "Open the GitHub REST Rate Limits panel and compare with Queue Rate-Limit Deferrals. If responses are installation-scoped, lower concurrent GitHub work for that installation; if key_scope=none/other, identify the unaffiliated caller and route it through an admission key."
+
+      - alert: GittensoryQueueRateLimitDeferralsHigh
+        # Jobs are being intentionally parked to preserve GitHub budget. That is better
+        # than burning through the bucket, but a sustained storm means throughput is bound
+        # by GitHub admission rather than worker capacity.
+        expr: |
+          sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) > 0.05
+          or
+          sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory queue is rate-limit deferring jobs"
+          description: "GitHub rate-limit deferrals exceeded 0.05/s for 10m. The queue is protecting the bucket but throughput is GitHub-budget bound."
+          runbook: "Use gittensory_jobs_rate_limit_* labels (kind/key_scope/job_type) to identify the stuck class. Prefer reducing duplicate webhook/regate work or adding cache coverage before raising worker concurrency."
+
+  # ── Postgres database + backup freshness ───────────────────────────────────
+  - name: gittensory-postgres
+    rules:
+      - alert: GittensoryPostgresConnectionPressure
+        # Postgres exporter is present only for Postgres-backed installs. Fire when the app DB
+        # consumes more than 80% of max_connections for 10m; use PgBouncer or lower app concurrency.
+        expr: |
+          (
+            sum(pg_stat_activity_count{datname="gittensory"})
+            /
+            max(pg_settings_max_connections)
+          ) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres connection usage is above 80%"
+          description: "The gittensory database is using {{ $value | humanizePercentage }} of max_connections for over 10m."
+          runbook: "Enable the pgbouncer profile or reduce self-host worker/app concurrency. Check the Postgres Connections panel by state before increasing max_connections."
+
+      - alert: GittensoryPostgresLockWaits
+        # Wait-event labels are emitted by the postgres_exporter stat_activity collector. Any sustained
+        # lock wait means a write path is blocked and queue processing can appear stuck.
+        expr: sum(pg_stat_activity_count{datname="gittensory", wait_event_type="Lock"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres sessions are waiting on locks"
+          description: "{{ $value | printf \"%.0f\" }} gittensory database session(s) have waited on Postgres locks for over 5m."
+          runbook: "Inspect the Postgres Locks and Slow Transactions panels. Look for long transactions, migration jobs, or stuck writers before restarting workers."
+
+      - alert: GittensoryPostgresSlowTransaction
+        # Long active transactions are the self-host proxy for slow/problem queries without requiring
+        # pg_stat_statements or superuser-only setup.
+        expr: max(pg_stat_activity_max_tx_duration{datname="gittensory"}) > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres transaction has been active for over 2m"
+          description: "The longest active gittensory database transaction is {{ $value | printf \"%.0f\" }}s old."
+          runbook: "Check app logs around DB-heavy jobs and review whether queue workers are saturating Postgres. A single long transaction can block cleanup or migrations."
+
+      - alert: GittensoryPostgresDeadlocks
+        # Deadlocks should be effectively zero; even a low rate points at competing write paths.
+        expr: rate(pg_stat_database_deadlocks{datname="gittensory"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres deadlocks detected"
+          description: "Postgres deadlocks are occurring for the gittensory database."
+          runbook: "Correlate with deploys and queue write paths. Repeated deadlocks usually mean a transaction ordering bug or too much parallel write pressure."
+
+      - alert: GittensoryPostgresDatabaseGrowingFast
+        # Growth over a 6h window smooths normal small-table churn while catching runaway queue/audit growth.
+        # 262144 bytes/s is roughly 5.4 GiB over 6h.
+        expr: deriv(pg_database_size_bytes{datname="gittensory"}[6h]) > 262144
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres database is growing quickly"
+          description: "The gittensory database is growing at about {{ $value | humanize }} bytes/s over a 6h trend window."
+          runbook: "Open the Postgres Table Growth panel and inspect queue/audit/event tables first. Confirm retention and backup volume capacity before raising traffic."
+
+      - alert: GittensoryPostgresDeadTuplesHigh
+        # Autovacuum pressure: high dead tuple ratio and enough absolute dead rows to avoid tiny-table noise.
+        expr: |
+          (
+            sum(pg_stat_user_tables_n_dead_tup{datname="gittensory"})
+            /
+            clamp_min(
+              sum(pg_stat_user_tables_n_live_tup{datname="gittensory"} + pg_stat_user_tables_n_dead_tup{datname="gittensory"}),
+              1
+            )
+          ) > 0.20
+          and
+          sum(pg_stat_user_tables_n_dead_tup{datname="gittensory"}) > 10000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres dead tuples are high"
+          description: "More than 20% of table tuples are dead and at least 10k dead tuples remain for over 30m."
+          runbook: "Check the Dead Tuples / Autovacuum panel. If autovacuum counts are flat while dead tuples rise, reduce write pressure or tune autovacuum for the largest tables."
+
+      - alert: GittensoryBackupMissing
+        # Fires only when the backup-exporter service is running (backup profile enabled) and no retained
+        # DB backup exists yet. Qdrant backups are best-effort and not included in this DB backup alert.
+        expr: gittensory_backup_files{target=~"postgres|sqlite"} == 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "No retained gittensory database backup found"
+          description: "The backup profile is exposing metrics, but {{ $labels.target }} has no retained backup file after 2h."
+          runbook: "Run `docker compose --profile backup run --rm backup sh /backup.sh` and inspect the gittensory-backups volume. For Postgres, confirm DATABASE_URL is available to the backup service."
+
+      - alert: GittensoryBackupStale
+        # Default backup loop is daily. 26h allows one missed scrape/restart window before warning.
+        expr: |
+          (time() - gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600)
+          and
+          gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory database backup is stale"
+          description: "The newest retained {{ $labels.target }} backup is older than 26h."
+          runbook: "Check `docker compose --profile backup logs backup` and run the backup command manually. Pair this with the restore verification drill before deleting old backups."
+
   # ── Qdrant vector backend ──────────────────────────────────────────────────
   - name: gittensory-qdrant
     rules:
@@ -150,6 +295,19 @@ groups:
           summary: "gittensory Orb export error rate above 5%"
           description: "{{ $value | humanizePercentage }} of Orb usage-event exports failed over the last 15m (sustained 15m). Billable events may not be reaching Orb."
           runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. Recorded-but-unexported events (gittensory_orb_events_recorded_total vs _exported_total diverging) confirm a stuck exporter."
+
+      - alert: GittensoryWebhookEnqueueFailures
+        # A webhook accepted by the receiver but not durably queued becomes GitHub
+        # redelivery pressure and can look like queue jitter. Any sustained enqueue
+        # failures deserve attention.
+        expr: sum(rate(gittensory_webhook_enqueue_total{result="enqueue_failed"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory webhook enqueue failures detected"
+          description: "Webhook enqueue failures are occurring for over 2m. Labels event/action show which GitHub event class is failing."
+          runbook: "Check WEBHOOKS queue availability and the durable queue backend. If this coincides with Orb relay drains, inspect gittensory_orb_webhook_total{result=\"enqueue_failed\"}."
 
   # ── HTTP serving health (uses the PLANNED status label + duration histogram) ─
   # NOTE: gittensory_http_requests_total is gaining a status="2xx|3xx|4xx|5xx" label,

@@ -339,6 +339,19 @@ describe("buildUnifiedCommentBody", () => {
     expect(held).not.toContain("> [!TIP]");
   });
 
+  it("preflightHeld renders a passing PR as HELD (incomplete review), never 'safe to merge' (#2002)", () => {
+    const args = { gate: gate({ conclusion: "success" }), panelRows, readinessTotal: 90, changedFiles: 2, mergeReadiness: { ciState: "passed" as const }, footerMarkdown: footer };
+    // Without the preflight hold, a success+green PR is the green approve/merge recommendation.
+    const ready = buildUnifiedCommentBody(args);
+    expect(ready).toContain("Suggested Action - Approve/Merge");
+    // With a preflight hold (e.g. the review lane is unavailable → the review is incomplete), the SAME PR renders
+    // held (WARNING), never safe-to-merge — the incomplete review can't recommend a merge.
+    const held = buildUnifiedCommentBody({ ...args, preflightHeld: true });
+    expect(held).toContain("> [!WARNING]");
+    expect(held).toContain("Suggested Action - Manual Review");
+    expect(held).not.toContain("> [!TIP]");
+  });
+
   it("neverClosed renders a gate-failure (close) PR as HELD when CI is green, not reject/close (#8/#9)", () => {
     const args = { gate: gate({ conclusion: "failure" }), panelRows, readinessTotal: 40, changedFiles: 2, mergeReadiness: { ciState: "passed" as const }, footerMarkdown: footer };
     // A contributor close → the red reject/close recommendation.

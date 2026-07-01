@@ -1,3 +1,4 @@
+import { isPassingValidation } from "./local-branch";
 import type { LocalBranchAnalysis, LocalBranchAnalysisInput, LocalBranchChangedFile, LocalBranchValidation } from "./local-branch";
 import { isTestPath } from "./test-evidence";
 import { sanitizeLocalScorerWarnings } from "./local-scorer-diagnostics";
@@ -55,7 +56,7 @@ export function buildLocalWorkspaceIntelligence(args: {
 }): LocalWorkspaceIntelligence {
   const validation = args.input.validation ?? [];
   const testFileCount = args.changedFiles.filter((file) => isTestPath(file.path)).length;
-  const passedValidationCount = validation.filter((entry) => entry.status === "passed").length;
+  const passedValidationCount = validation.filter(isPassingValidation).length;
   const hasTestFiles = testFileCount > 0;
   const hasValidation = passedValidationCount > 0;
   const testEvidenceLevel = hasTestFiles && hasValidation ? "both" : hasTestFiles ? "test_files" : hasValidation ? "validation_commands" : "none";

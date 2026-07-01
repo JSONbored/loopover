@@ -1,5 +1,5 @@
 import type { AnalyzerDescriptor } from "../types.js";
-import { scanAddedLinesForSecrets } from "../secret-scan.js";
+import { scanSecrets } from "../secret-scan.js";
 
 export const secretAnalyzer: AnalyzerDescriptor<"secret"> = {
   name: "secret",
@@ -17,8 +17,7 @@ export const secretAnalyzer: AnalyzerDescriptor<"secret"> = {
     notes:
       "High-confidence patterns are treated as rotate-and-remove candidates; generic assignments stay verify-first.",
   },
-  run: (_req, { analysis }) =>
-    Promise.resolve(scanAddedLinesForSecrets(analysis.addedLines)),
+  run: (req) => scanSecrets(req),
   render: (secrets, { safeCodeSpan }) => {
     const lines: string[] = [];
     if (!secrets.length) return lines;

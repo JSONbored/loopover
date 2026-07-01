@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
+import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
 
@@ -65,6 +67,7 @@ describe("createSqliteQueue (durable #980)", () => {
   beforeEach(() => { vi.spyOn(process.stdout, "write").mockImplementation(() => true); });
   afterEach(() => {
     vi.useRealTimers();
+    resetMetrics();
     vi.restoreAllMocks();
   });
 
@@ -186,6 +189,9 @@ describe("createSqliteQueue (durable #980)", () => {
       ).rows[0] as { c: number };
       expect(pendingBackground.c).toBe(2);
       expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 2 });
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
+      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="unknown",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -340,6 +346,59 @@ describe("createSqliteQueue (durable #980)", () => {
         last_error: "github rate-limit webhook admission",
       });
       expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 1 });
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+      vi.useRealTimers();
+    }
+  });
+
+  it("skips admission-deferral metrics when a claimed SQLite job is no longer updated", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const base = makeDriver();
+      const driver = {
+        exec: base.exec.bind(base),
+        query: vi.fn((sql: string, params: unknown[]) => {
+          if (sql.includes("SET status='pending', run_after=max(run_after, ?)")) {
+            return { rows: [], changes: 0 };
+          }
+          return base.query(sql, params);
+        }),
+      } as ReturnType<typeof nodeSqliteDriver>;
+      driver.query(
+        `CREATE TABLE github_rate_limit_observations (
+          id TEXT PRIMARY KEY,
+          repo_full_name TEXT NOT NULL,
+          admission_key TEXT,
+          resource TEXT NOT NULL,
+          path TEXT NOT NULL,
+          status_code INTEGER NOT NULL,
+          limit_value INTEGER,
+          remaining INTEGER,
+          reset_at TEXT,
+          observed_at TEXT NOT NULL
+        )`,
+        [],
+      );
+      driver.query(
+        `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
+         VALUES (?, ?, ?, 'rest', ?, 403, 5000, 50, ?, ?)`,
+        ["rl-webhook", "owner/repo", "installation:123", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+      );
+      const q = createSqliteQueue(driver, async () => {
+        throw new Error("should not consume admitted work");
+      });
+
+      await q.binding.send(installedWebhook("fresh", 123));
+      await q.drain();
+
+      expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_rate_limit_admission_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -761,6 +820,108 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  it("lets a pending full RAG index absorb later repo incrementals", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 1 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.job_key).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 1,
+      gittensory_jobs_coalesced_total: 1,
+    });
+  });
+
+  it("lets a full RAG index supersede pending repo incrementals without dropping to one path set", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    }, { delaySeconds: 1 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.job_key).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 2,
+      gittensory_jobs_coalesced_total: 1,
+    });
+  });
+
+  it("snapshot() reports pending/processing/dead queue depth by job type", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send(msg("agent-regate-pr"), { delaySeconds: 60 });
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, ?, 0, 10)",
+      [JSON.stringify(msg("github-webhook")), Date.now() - 1],
+    );
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'processing', 0, ?, 0, 9)",
+      [JSON.stringify(msg("agent-regate-pr")), Date.now()],
+    );
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'dead', 0, ?, 0, 0)",
+      [JSON.stringify(msg("rag-index-repo")), Date.now()],
+    );
+
+    const snapshot = q.snapshot();
+    const bindingSnapshot = await queueSnapshotFromBinding(q.binding);
+
+    expect(snapshot.totals).toMatchObject({ pending: 2, processing: 1, dead: 1 });
+    expect(snapshot.byType).toEqual(
+      expect.arrayContaining([
+        { type: "agent-regate-pr", status: "pending", count: 1, due: 0 },
+        { type: "agent-regate-pr", status: "processing", count: 1, due: 0 },
+        { type: "github-webhook", status: "pending", count: 1, due: 1 },
+        { type: "rag-index-repo", status: "dead", count: 1, due: 0 },
+      ]),
+    );
+    expect(bindingSnapshot).toEqual(snapshot);
+  });
+
   it("coalesces recurring maintenance jobs by semantic scope and keeps distinct scopes separate", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);
@@ -834,8 +995,8 @@ describe("createSqliteQueue (durable #980)", () => {
       "backfill-registered-repos:jsonbored/gittensory:light:1",
       "generate-weekly-value-report:operator:7",
       "generate-weekly-value-report:public:7",
-      'rag-index-repo:jsonbored/gittensory:["src/a.ts","src/b.ts"]',
-      'rag-index-repo:jsonbored/gittensory:["src/c.ts"]',
+      "rag-index-repo:jsonbored/gittensory:sha256:170cb2cfb288ab59ba4d35b2633120223c9acc6893fd5baec3465c434ad5bedf",
+      "rag-index-repo:jsonbored/gittensory:sha256:f4f9970f7a842b1b7b619cbd49f05da577a7d725ff1616ba2de8beed1ae5616f",
     ]);
     expect(rows.map((row) => JSON.parse(row.payload).requestedBy)).toEqual([
       "api",
@@ -1122,6 +1283,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(pending[0]!.last_error).toBe("API rate limit exceeded for installation ID 123");
     expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
     expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
   });
 
   it("defers only the depleted keyed GitHub budget while unrelated work keeps draining", async () => {
@@ -1202,6 +1364,9 @@ describe("createSqliteQueue (durable #980)", () => {
       gittensory_jobs_rate_limited_total: 1,
       gittensory_jobs_rate_limit_deferred_total: 2,
     });
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 2');
+    expect(metrics).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
   });
 
   it("coalesces a rate-limited active job into an existing pending duplicate without consuming attempts", async () => {

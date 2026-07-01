@@ -4,6 +4,7 @@ import {
 } from "../db/repositories";
 import { timeoutFetch } from "../github/client";
 import { getLatestRegistrySnapshot } from "../registry/sync";
+import { resolveUpstreamCommitSha } from "../upstream/commit";
 import { syncUnmodeledScoringConstantDrift } from "../upstream/unmodeled-scoring-drift";
 import type { JsonValue, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
@@ -77,19 +78,6 @@ function upstreamRawUrl(config: { repo: string; ref: string }, path: string): st
   return `https://raw.githubusercontent.com/${config.repo}/${encodeURIComponent(config.ref)}/${path}`;
 }
 
-// Fetch the HEAD commit SHA of the upstream ref for audit trail. Fail-open: a network hiccup or a
-// missing administration token must never block the constants refresh itself.
-async function fetchUpstreamRefSha(upstream: { repo: string; ref: string }, token: string | undefined): Promise<string | null> {
-  try {
-    const response = await timeoutFetch(`https://api.github.com/repos/${upstream.repo}/commits/${encodeURIComponent(upstream.ref)}`, { headers: githubHeaders(token, "application/vnd.github+json") });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { sha?: string };
-    return typeof data.sha === "string" && data.sha.length > 0 ? data.sha : null;
-  } catch {
-    return null;
-  }
-}
-
 // Single source of truth (#812): every recognized upstream constant name is a key of
 // DEFAULT_SCORING_CONSTANTS, so the known-only parser, the unmodeled-drift detector, and the preview-side
 // fallbacks all derive from one place. The density-era constants are included because the density model is
@@ -109,7 +97,7 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
   // change what every repo scores against: resolve ref → SHA first, then fetch the constants AT that SHA (an
   // atomic SHA↔constants binding, recorded in the payload). Best-effort — if the SHA can't be resolved (a
   // transient API error) fall back to the mutable ref so a refresh is never blocked purely on the SHA lookup.
-  const upstreamSourceSha = await fetchUpstreamRefSha(upstream, env.GITHUB_PUBLIC_TOKEN);
+  const upstreamSourceSha = await resolveUpstreamCommitSha(env, upstream);
   const fetchRef = upstreamSourceSha ?? upstream.ref;
   // Surface the unpinned fall-back: when the SHA can't be resolved we fetch from the MUTABLE ref, so a later
   // upstream force-push could change what every repo scores against with no other signal. (#audit-3.6/drift)

@@ -1,4 +1,5 @@
 import { fetchLinkedIssueFacts } from "../github/backfill";
+import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { extractLinkedIssueNumbersWithOverflow } from "../db/repositories";
 
 // Linked-issue HARD-RULE auto-close (#linked-issue-hard-rules). A DETERMINISTIC rule about the issue(s) a
@@ -153,6 +154,10 @@ export async function resolveLinkedIssueHardRule(args: {
   body: string | null | undefined;
   linkedIssues: number[];
   ciToken: string | undefined;
+  // The installation id for `ciToken` (undefined for public-token reads). The admission key is DERIVED from the
+  // token + this id via the one shared resolver, so an installation-token read attributes to its installation bucket
+  // (not "unknown") and the key can never be passed out of sync with the token it belongs to.
+  installationId?: number | null | undefined;
 }): Promise<LinkedIssueHardRuleResult | undefined> {
   const anyRuleOn =
     args.config.ownerAssignedClose === "block" ||
@@ -167,7 +172,8 @@ export async function resolveLinkedIssueHardRule(args: {
   }
   if (args.linkedIssues.length === 0) return undefined;
   const token = args.ciToken ?? args.env.GITHUB_PUBLIC_TOKEN;
-  const issueFacts = (await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token)))).flatMap((facts) => (facts ? [facts] : []));
+  const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
+  const issueFacts = (await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)))).flatMap((facts) => (facts ? [facts] : []));
   if (issueFacts.length === 0) return undefined;
   return evaluateLinkedIssueHardRules({ issues: issueFacts, config: args.config, repoOwner: args.repoOwner });
 }

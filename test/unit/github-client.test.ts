@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearGitHubResponseCacheForTest,
   forcedSelfhostMode,
+  githubAdmissionKeyScope,
   githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
+  githubRateLimitAdmissionKeyForToken,
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
   githubResponseCacheTtlSeconds,
   isCacheableGithubUrl,
@@ -150,6 +153,28 @@ describe("resolveRepoActionMode", () => {
   });
 });
 
+describe("githubRateLimitAdmissionKeyForToken — the single token→admission-key resolver (no duplication, no drift)", () => {
+  it("resolves the public and installation buckets, and stays undefined without a usable token+id", () => {
+    const env = { GITHUB_PUBLIC_TOKEN: "public-tok" };
+    expect(githubRateLimitAdmissionKeyForToken(env, undefined, 5)).toBeUndefined(); // no token → unattributed
+    expect(githubRateLimitAdmissionKeyForToken(env, "public-tok", 5)).toBe(githubRateLimitAdmissionKeyForPublicToken());
+    expect(githubRateLimitAdmissionKeyForToken(env, "install-tok", 5)).toBe(githubRateLimitAdmissionKeyForInstallation(5));
+    expect(githubRateLimitAdmissionKeyForToken(env, "install-tok", undefined)).toBeUndefined(); // non-public token, no id
+    expect(githubRateLimitAdmissionKeyForToken(env, "install-tok", Number.NaN)).toBeUndefined(); // non-finite id
+  });
+});
+
+describe("githubAdmissionKeyScope — classify an admission key the SAME way as queue-common's helper", () => {
+  it("labels installation / public / global / unknown / other keys consistently", () => {
+    expect(githubAdmissionKeyScope(githubRateLimitAdmissionKeyForInstallation(123))).toBe("installation");
+    expect(githubAdmissionKeyScope(githubRateLimitAdmissionKeyForPublicToken())).toBe("public");
+    expect(githubAdmissionKeyScope("global:shared")).toBe("global");
+    expect(githubAdmissionKeyScope(null)).toBe("unknown");
+    expect(githubAdmissionKeyScope(undefined)).toBe("unknown");
+    expect(githubAdmissionKeyScope("pat:shared")).toBe("other");
+  });
+});
+
 describe("timeoutFetch", () => {
   it("passes an explicit caller signal straight through", async () => {
     const seen: Array<RequestInit | undefined> = [];
@@ -194,6 +219,7 @@ describe("timeoutFetch", () => {
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: now,
     });
+    expect(await renderMetrics()).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
     expect(latestGitHubRestRateLimitObservation(otherKey)).toBeNull();
 
     headers = new Headers({
@@ -228,6 +254,71 @@ describe("timeoutFetch", () => {
       remaining: 42,
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: now,
+    });
+  });
+
+  it("buckets GitHub REST rate-limit observations by remaining budget and admission-key scope", async () => {
+    const reset = String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000));
+    const remainingByCall = ["0", "75", "150", "151"];
+    vi.stubGlobal("fetch", async () => {
+      const remaining = remainingByCall.shift() ?? "151";
+      return new Response("ok", {
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-remaining": remaining,
+          "x-ratelimit-reset": reset,
+        },
+      });
+    });
+
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=zero", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(1),
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=low", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(2),
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=reserved", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: "pat:shared",
+    });
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=healthy", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: "pat:shared",
+    });
+
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="0"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="76-150"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="151+"} 1');
+  });
+
+  it("labels public-token REST observations separately from installation and unknown buckets", async () => {
+    const reset = String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000));
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response("ok", {
+          headers: {
+            "x-ratelimit-resource": "core",
+            "x-ratelimit-remaining": "22",
+            "x-ratelimit-reset": reset,
+          },
+        }),
+    );
+
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=public", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+    });
+
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="public",remaining_bucket="1-75"} 1');
+    expect(latestGitHubRestRateLimitObservation(githubRateLimitAdmissionKeyForPublicToken())).toMatchObject({
+      remaining: 22,
+      resetAt: "2026-06-24T12:10:00.000Z",
     });
   });
 
@@ -459,6 +550,9 @@ describe("timeoutFetch", () => {
     expect(await response.json()).toEqual({ message: "API rate limit exceeded" });
     expect(getFetches).toBe(4);
     expect(set).not.toHaveBeenCalled();
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown",retry="scheduled",status="403"} 3');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown",retry="exhausted",status="403"} 1');
   });
 
   it("does not negative-cache stable metadata denials outside branch protection", async () => {
@@ -491,13 +585,25 @@ describe("timeoutFetch", () => {
   it("resolves per-class cache TTL env overrides with safe fallbacks", () => {
     expect(githubResponseCacheTtlSeconds("branch_protection", {})).toBe(20 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", {})).toBe(10 * 60);
+    expect(githubResponseCacheTtlSeconds("commit", {})).toBe(15 * 60);
     expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS: "3600" })).toBe(3600);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "90.8" })).toBe(90);
+    expect(githubResponseCacheTtlSeconds("commit", { GITHUB_COMMIT_CACHE_TTL_SECONDS: "300" })).toBe(300);
+    expect(githubResponseCacheTtlSeconds("commit", { GITHUB_COMMIT_CACHE_TTL_SECONDS: "0" })).toBe(15 * 60);
     expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS: "" })).toBe(20 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "0" })).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "0.5" })).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "not-a-number" })).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "Infinity" })).toBe(10 * 60);
+  });
+
+  it("caches a BARE /commits/{ref} resolve (the upstream ref→SHA read) but NOT its suffixed CI subresources", () => {
+    expect(isCacheableGithubUrl("https://api.github.com/repos/entrius/gittensor/commits/main")).toBe(true);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc123?foo=1")).toBe(true);
+    // The mutable CI/pulls subresources under /commits/{sha} must still always hit the live API.
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc/status")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc/check-runs?per_page=100")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc/pulls")).toBe(false);
   });
 
   it("uses configured TTL overrides for stable GitHub metadata and branch-protection reads", async () => {
@@ -939,15 +1045,23 @@ describe("timeoutFetch", () => {
     });
 
     const url = "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks";
-    const firstRequest = timeoutFetch(url);
-    void firstRequest.catch(() => undefined);
-    const first = firstRequest.catch((error: Error) => error.message);
-    const second = timeoutFetch(url);
+    const first = timeoutFetch(url).then(
+      (response) => ({ type: "response" as const, response }),
+      (error: Error) => ({ type: "error" as const, message: error.message }),
+    );
+    const second = timeoutFetch(url).then(
+      (response) => ({ type: "response" as const, response }),
+      (error: Error) => ({ type: "error" as const, message: error.message }),
+    );
     await bothCacheReads;
     releaseFetch();
 
-    await expect(first).resolves.toContain("network down");
-    await expect(second.then((response) => response.json())).resolves.toEqual({ contexts: ["after-throw"] });
+    const results = await Promise.all([first, second]);
+    const failed = results.find((result) => result.type === "error");
+    const succeeded = results.find((result) => result.type === "response");
+    expect(failed).toMatchObject({ type: "error", message: "network down" });
+    if (!succeeded || succeeded.type !== "response") throw new Error("missing successful fallback response");
+    await expect(succeeded.response.json()).resolves.toEqual({ contexts: ["after-throw"] });
     expect(getFetches).toBe(2);
   });
 

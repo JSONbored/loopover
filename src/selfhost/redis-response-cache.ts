@@ -9,6 +9,10 @@ import type { CachedGitHubResponse, GitHubResponseCache } from "../github/client
 
 const keyFor = (key: string): string => `gh:resp:${key}`;
 
+function isReplayableCachedStatus(status: unknown): status is number {
+  return status === 200 || status === 403 || status === 404;
+}
+
 export function createRedisResponseCache(
   redis: Redis,
   ttlSeconds: number,
@@ -19,12 +23,12 @@ export function createRedisResponseCache(
       if (!raw) return null;
       try {
         const value = JSON.parse(raw) as Partial<CachedGitHubResponse>;
-        return typeof value.status === "number" &&
-          value.status === 200 &&
+        const status = value.status;
+        return isReplayableCachedStatus(status) &&
           typeof value.body === "string" &&
           typeof value.contentType === "string"
           ? {
-              status: value.status,
+              status,
               body: value.body,
               contentType: value.contentType,
               ...(typeof value.link === "string" ? { link: value.link } : {}),

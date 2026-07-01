@@ -9,6 +9,17 @@ vi.mock("../../src/github/pr-actions", () => ({
 vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
 }));
+vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
+  return {
+    ...actual,
+    fetchPullRequestFreshness: vi.fn(async (_env: Env, args: { expectedHeadSha?: string | null }) => ({
+      status: "current" as const,
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+    })),
+  };
+});
 
 import { mergePullRequest } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";

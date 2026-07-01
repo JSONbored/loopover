@@ -1517,6 +1517,39 @@ describe("GitHub mention commands", () => {
     expect(emptyNoise).not.toContain("Suggested triage:");
   });
 
+  it("counts failing cached checks with the canonical readiness classifier (status-carried, startup_failure, case-fold)", () => {
+    const prWithChecks = (number: number, checks: Array<{ status: string; conclusion?: string | null }>) =>
+      buildMaintainerQueueDigest({
+        repo: { fullName: "owner/repo", isRegistered: true, registryConfig: { emissionShare: 0.1, issueDiscoveryShare: 0, labelMultipliers: {}, maintainerCut: 0, raw: {}, repo: "owner/repo" } } as any,
+        issues: [issue(1, "Linked fix")],
+        pullRequests: [pr(number, "Check signal coverage", "alice", { linkedIssues: [1], updatedAt: "2099-01-01T00:00:00.000Z" })],
+        checkSummariesByPullNumber: {
+          [number]: checks.map((check, index) => ({
+            id: `check-${number}-${index}`,
+            repoFullName: "owner/repo",
+            pullNumber: number,
+            name: `check-${index}`,
+            status: check.status,
+            conclusion: check.conclusion ?? null,
+            payload: {},
+          })),
+        },
+      });
+
+    const statusCarried = prWithChecks(20, [{ status: "failure", conclusion: null }]).needsAuthorPullRequests[0];
+    expect(statusCarried?.signals).toContain("checks_need_attention");
+    expect(statusCarried?.reasons).toContain("1 cached check(s) need attention.");
+
+    const startupFailure = prWithChecks(21, [{ status: "completed", conclusion: "startup_failure" }]).needsAuthorPullRequests[0];
+    expect(startupFailure?.signals).toContain("checks_need_attention");
+
+    const mixedCase = prWithChecks(22, [{ status: "completed", conclusion: "FAILURE" }]).needsAuthorPullRequests[0];
+    expect(mixedCase?.signals).toContain("checks_need_attention");
+
+    const clean = prWithChecks(23, [{ status: "completed", conclusion: "success" }]).needsAuthorPullRequests[0];
+    expect(clean?.signals ?? []).not.toContain("checks_need_attention");
+  });
+
   it("builds maintainer-only queue digests with safe routing, sorting, and private-detail pointers", () => {
     const digest = sampleMaintainerDigest();
     expect(digest.totals.confirmedMinerPullRequests).toBe(2);
@@ -1735,6 +1768,62 @@ describe("GitHub mention commands", () => {
       expect(body).toContain("\\[x\\]");
       expect(body).toContain("@\u200Borg/team");
       expect(body).toContain("&lt;b&gt;x&lt;/b&gt;");
+    }
+  });
+
+  it("does not split a surrogate pair when truncating an over-long emoji digest title", () => {
+    // A string has a lone surrogate (and turns into a U+FFFD mojibake glyph once UTF-8 encoded for the
+    // GitHub comment) iff a high surrogate is not followed by a low one, or vice versa.
+    const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    // 60 × 🎉 (U+1F389) = 120 UTF-16 code units, well over the 90/100-unit digest title caps. Each emoji
+    // is a surrogate pair on an even index, so an odd `maxLength - 3` cut would split the final kept pair.
+    const emojiTitle = "🎉".repeat(60);
+    const digest = {
+      ...sampleMaintainerDigest(),
+      reviewNowPullRequests: [
+        {
+          number: 88,
+          title: emojiTitle,
+          authorLogin: "miner",
+          linkedIssues: [8],
+          labels: [],
+          confirmedMiner: false,
+          ageDays: 0,
+          reasons: ["Linked issue is present."],
+          signals: [],
+        },
+      ],
+      duplicateClusters: [
+        {
+          id: "emoji-title",
+          risk: "high",
+          reason: "Likely_duplicate title cluster",
+          items: [{ type: "pull_request", number: 88, title: emojiTitle }],
+        },
+      ],
+    } satisfies ReturnType<typeof sampleMaintainerDigest>;
+
+    const reviewNow = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory review-now")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      maintainerDigest: digest,
+    });
+    const duplicateClusters = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory duplicate-clusters")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      maintainerDigest: digest,
+    });
+
+    for (const body of [reviewNow, duplicateClusters]) {
+      expect(body).toContain("..."); // the title was truncated
+      expect(loneSurrogate.test(body)).toBe(false); // no split surrogate pair
+      expect(body).not.toContain("�"); // no replacement-character mojibake
     }
   });
 

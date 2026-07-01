@@ -1138,6 +1138,17 @@ describe("world-class backend signals", () => {
     expect(detection).toMatchObject({ detected: true, priorPullRequests: 1, priorMergedPullRequests: 0 });
   });
 
+  it("excludes the current PR from prior activity even when the cached copy has different repo-name casing", () => {
+    // GitHub repo full-names are case-insensitive, and this module compares them with `sameRepo`
+    // everywhere else. A cached copy of the current PR stored under different casing must still be
+    // recognized as the current PR (not counted as the contributor's own "prior activity").
+    const currentPr = pullRequests[0]!;
+    const cachedCurrentDifferentCasing: PullRequestRecord = { ...currentPr, repoFullName: currentPr.repoFullName.toUpperCase() };
+    const detection = detectGittensorContributor("oktofeesh1", currentPr, [cachedCurrentDifferentCasing], []);
+
+    expect(detection).toMatchObject({ detected: false, priorPullRequests: 0, priorMergedPullRequests: 0 });
+  });
+
   it("builds private contributor outcome and strategy reports across maintainer and cleanup lanes", () => {
     const ownerRepo: RepositoryRecord = {
       ...repo,

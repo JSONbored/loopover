@@ -141,6 +141,11 @@ export async function registerOrbRelay(env: Env, secret: string, relayUrl: strin
 const RELAY_RETRY_MAX_ATTEMPTS = 5;
 const RELAY_RETRY_BATCH_SIZE = 25;
 const RELAY_RETRY_CONCURRENCY = 5;
+// Per-failure backoff (#1950): a row that just failed is not retried again until this window elapses, so a
+// sustained outage does not re-attempt the whole failed-relay backlog on every ~2-min cron tick — which, fleet-wide,
+// is a synchronized POST storm against the central Orb exactly when it is already degraded. Never-attempted rows
+// (last_attempt_at IS NULL) stay immediately eligible, so a transient blip still recovers on the very next tick.
+const RELAY_RETRY_BACKOFF_MINUTES = 5;
 
 // Pull-mode relay (#16): a brokered self-host behind NAT/tailnet can't receive PUSHED forwards, so the Orb instead
 // ENQUEUES its events here and the engine drains them outbound. The batch caps how many rows a single pull returns
@@ -276,11 +281,14 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
   if (pruned.meta.changes > 0) {
     console.error(JSON.stringify({ level: "error", event: "orb_relay_events_dropped", message: `${pruned.meta.changes} relay event(s) dropped after ${RELAY_RETRY_MAX_ATTEMPTS} retries or 1h TTL`, count: pruned.meta.changes }));
   }
+  // Skip rows still inside their per-failure backoff window (#1950): a row whose last attempt was under
+  // RELAY_RETRY_BACKOFF_MINUTES ago waits for a later tick, so a down container is not re-POSTed every ~2 min.
+  // The bound modifier keeps this portable (the pg-dialect rewrites datetime('now', ?) → now() + (?)::interval).
   const { results } = await env.DB
     .prepare(
-      "SELECT delivery_id, event_name, installation_id, raw_body FROM orb_relay_failures WHERE expires_at >= datetime('now') AND attempts < ? ORDER BY created_at, delivery_id LIMIT ?",
+      "SELECT delivery_id, event_name, installation_id, raw_body FROM orb_relay_failures WHERE expires_at >= datetime('now') AND attempts < ? AND (last_attempt_at IS NULL OR last_attempt_at <= datetime('now', ?)) ORDER BY created_at, delivery_id LIMIT ?",
     )
-    .bind(RELAY_RETRY_MAX_ATTEMPTS, RELAY_RETRY_BATCH_SIZE)
+    .bind(RELAY_RETRY_MAX_ATTEMPTS, `-${RELAY_RETRY_BACKOFF_MINUTES} minutes`, RELAY_RETRY_BATCH_SIZE)
     .all<{ delivery_id: string; event_name: string; installation_id: number; raw_body: string }>();
   if (!results.length) return;
 

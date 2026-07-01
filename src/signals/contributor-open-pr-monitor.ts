@@ -11,6 +11,7 @@ import {
 import type { CheckSummaryRecord, PullRequestFileRecord, PullRequestRecord, PullRequestReviewRecord } from "../types";
 import { nowIso } from "../utils/json";
 import { buildRoleContext } from "./engine";
+import { isFailingCheckSummary } from "./local-branch";
 import { isTestPath } from "./test-evidence";
 
 export type OpenPrWorkClassification =
@@ -149,7 +150,7 @@ function buildNextStepPacket(
   missingTests: boolean,
 ): ContributorOpenPrNextStepPacket {
   const changeRequestCount = reviews.filter((review) => review.state.toUpperCase() === "CHANGES_REQUESTED").length;
-  const checkFailureCount = checks.filter((check) => check.conclusion === "failure" || check.conclusion === "timed_out" || check.conclusion === "cancelled").length;
+  const checkFailureCount = checks.filter(isFailingCheckSummary).length;
   const classification = mapPendingClassToWorkClassification(classified, { changeRequestCount, checkFailureCount, duplicateProne, missingTests });
   const nextSteps = nextStepsForClassification(classification, classified.repoFullName, classified.number);
   const summary = `${classified.repoFullName}#${classified.number}: ${classification.replace(/_/g, " ")} — ${classified.title}`;

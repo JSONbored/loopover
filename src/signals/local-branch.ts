@@ -45,6 +45,17 @@ export type LocalBranchValidation = {
   exitCode?: number | undefined;
 };
 
+/**
+ * A local validation command counts as passing test evidence when it ran green — either a full run
+ * (`"passed"`) or a focused subset (`"focused"`, e.g. `vitest run path/to/file.test.ts`). Single-sourced
+ * so every evidence surface (the PR-packet validation summary, the freshness evidence list, the
+ * `validation_as_test_evidence` finding, and the v2 workspace-intelligence count) agrees on what passing
+ * means instead of drifting apart.
+ */
+export function isPassingValidation(entry: LocalBranchValidation): boolean {
+  return entry.status === "passed" || entry.status === "focused";
+}
+
 export type LocalBranchScorer = {
   mode: "metadata_only" | "external_command" | "gittensor_root";
   activeModel?: string | undefined;
@@ -737,8 +748,22 @@ function matchingCheckSummaries(pr: PullRequestRecord, checkSummaries: CheckSumm
   );
 }
 
+/** Conclusion/status values that mark a single cached check as failing or attention-needing. */
+const FAILING_CHECK_STATES = ["failure", "failed", "timed_out", "cancelled", "action_required", "startup_failure"];
+
+/**
+ * Canonical "is this ONE cached check failing?" predicate, shared so every surface (readiness, the maintainer
+ * queue digest) classifies a check identically. A cached check may carry its outcome on `conclusion` (check
+ * runs) OR only on `status` (commit-status rows and runs that errored before concluding), so fall back to
+ * `status` when `conclusion` is absent, and case-fold both — GitHub conclusions are lowercase, but cached/commit
+ * statuses are not guaranteed to be.
+ */
+export function isFailingCheckSummary(check: CheckSummaryRecord): boolean {
+  return FAILING_CHECK_STATES.includes((check.conclusion ?? check.status).toLowerCase());
+}
+
 function hasFailingCheck(checks: CheckSummaryRecord[]): boolean {
-  return checks.some((check) => ["failure", "failed", "timed_out", "cancelled", "action_required", "startup_failure"].includes((check.conclusion ?? check.status).toLowerCase()));
+  return checks.some(isFailingCheckSummary);
 }
 
 function hasPendingCheck(checks: CheckSummaryRecord[]): boolean {
@@ -841,7 +866,7 @@ function buildLocalFindings(
           },
         ]
       : []),
-    ...((input.validation ?? []).some((entry) => entry.status === "passed") && !changedFiles.some((file) => isTestFile(file.path))
+    ...((input.validation ?? []).some(isPassingValidation) && !changedFiles.some((file) => isTestFile(file.path))
       ? [
           {
             code: "validation_as_test_evidence",
@@ -1209,7 +1234,7 @@ function renderPrPacketMarkdown(title: string, sections: Array<{ heading: string
 
 function summarizeValidation(validation: LocalBranchValidation[]): LocalBranchAnalysis["prPacket"]["validationSummary"] {
   return {
-    passed: validation.filter((entry) => entry.status === "passed" || entry.status === "focused").length,
+    passed: validation.filter(isPassingValidation).length,
     failed: validation.filter((entry) => entry.status === "failed").length,
     notRun: validation.filter((entry) => entry.status === "not_run" || entry.status === "skipped" || entry.status === "unknown").length,
     commands: validation,
@@ -1218,7 +1243,7 @@ function summarizeValidation(validation: LocalBranchValidation[]): LocalBranchAn
 
 function validationEvidence(validation: LocalBranchValidation[] | undefined): string[] {
   return (validation ?? [])
-    .filter((entry) => entry.status === "passed" || entry.status === "focused")
+    .filter(isPassingValidation)
     .map((entry) => entry.command);
 }
 

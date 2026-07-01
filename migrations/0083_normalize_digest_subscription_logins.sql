@@ -1,26 +1,24 @@
-CREATE TEMP TABLE digest_subscriptions_canonical AS
-SELECT id, lower(login) AS login, lower(email) AS email, status, source, created_at, updated_at
-FROM (
-  SELECT
-    id,
-    login,
-    email,
-    status,
-    source,
-    created_at,
-    updated_at,
-    row_number() OVER (
-      PARTITION BY lower(login), lower(email)
-      ORDER BY updated_at DESC, created_at DESC, id DESC
-    ) AS rn
-  FROM digest_subscriptions
-)
-WHERE rn = 1;
+-- Normalize digest_subscriptions login/email to lowercase, deduplicating rows that collide under the unique
+-- (login, email) index. No CREATE TEMP TABLE: Cloudflare D1's remote authorizer rejects temp objects with
+-- "not authorized: SQLITE_AUTH". Delete losers BEFORE lowercasing survivors, or canonicalization trips the index.
 
-DELETE FROM digest_subscriptions;
+-- Drop every row but the newest per case-insensitive (login, email) group (tie-break: updated_at, created_at, id).
+DELETE FROM digest_subscriptions
+WHERE id IN (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      row_number() OVER (
+        PARTITION BY lower(login), lower(email)
+        ORDER BY updated_at DESC, created_at DESC, id DESC
+      ) AS rn
+    FROM digest_subscriptions
+  )
+  WHERE rn > 1
+);
 
-INSERT INTO digest_subscriptions (id, login, email, status, source, created_at, updated_at)
-SELECT id, login, email, status, source, created_at, updated_at
-FROM digest_subscriptions_canonical;
-
-DROP TABLE digest_subscriptions_canonical;
+-- Lowercase the survivors; post-dedup each has a distinct lowercased (login, email), so the unique index holds.
+UPDATE digest_subscriptions
+SET login = lower(login),
+    email = lower(email);

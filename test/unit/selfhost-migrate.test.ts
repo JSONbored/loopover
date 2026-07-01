@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { runSelfHostMigrations } from "../../src/selfhost/migrate";
+import { normalizePostgresValue } from "../../scripts/migrate-selfhost-sqlite-to-postgres";
 
 describe("runSelfHostMigrations (#980)", () => {
   it("applies un-applied migrations in order, idempotently", async () => {
@@ -99,4 +100,13 @@ INSERT INTO notes (body) VALUES ('triggered');`,
     });
   });
 
+});
+
+describe("SQLite-to-Postgres migrator helpers", () => {
+  it("normalizes embedded NUL bytes in SQLite text before Postgres copy", () => {
+    expect(normalizePostgresValue("repo\0chunk")).toBe("repo\uFFFDchunk");
+    expect(normalizePostgresValue("plain text")).toBe("plain text");
+    expect(normalizePostgresValue(null)).toBeNull();
+    expect(normalizePostgresValue(42)).toBe(42);
+  });
 });

@@ -19,8 +19,14 @@ import type { RepositorySettings } from "../types";
 const GITHUB_FETCH_TIMEOUT_MS = 12_000;
 const GITHUB_API_PREFIX = "https://api.github.com";
 const GITHUB_RESPONSE_CACHE_METRIC = "gittensory_github_response_cache_total";
+const GITHUB_REST_RATE_LIMIT_OBSERVATION_METRIC = "gittensory_github_rest_rate_limit_observations_total";
+const GITHUB_REST_RATE_LIMIT_RESPONSE_METRIC = "gittensory_github_rest_rate_limit_responses_total";
 const DEFAULT_BRANCH_PROTECTION_TTL_SECONDS = 20 * 60;
 const DEFAULT_METADATA_TTL_SECONDS = 10 * 60;
+// A bare `/commits/{ref}` read resolves a ref to its HEAD commit — mutable (a branch moves), so cache it only
+// briefly. Long enough to dedup the two upstream ref→SHA resolves that fire in the SAME hourly window (scoring +
+// drift), short enough that the pinned SHA is never meaningfully stale.
+const DEFAULT_COMMIT_TTL_SECONDS = 15 * 60;
 export const GITHUB_RESPONSE_CACHE_REPLAY_HEADER = "x-gittensory-cache";
 
 /** A shared cache for safe GitHub GET responses (e.g. Redis on the self-host). Stores only status/body/
@@ -43,13 +49,18 @@ export function setGitHubResponseCache(cache: GitHubResponseCache | null): void 
   responseCache = cache;
 }
 
-export type GitHubCacheClass = "branch_protection" | "metadata";
+export type GitHubCacheClass = "branch_protection" | "metadata" | "commit";
 type EnvLookup = Record<string, string | undefined>;
 export type GitHubTimeoutFetchInit = RequestInit & {
   /** Opt in to using this response's REST bucket headers for self-host queue admission control. */
   githubRateLimitAdmission?: boolean;
   /** Stable actor key for admission control. Installation-token reads should use the installation id. */
   githubRateLimitAdmissionKey?: string;
+  /** Consulted ONLY when this GET is about to make a NETWORK read (a cache hit is always served first, for free).
+   *  Return true to skip the network read — timeoutFetch then resolves to a synthetic 503 so a best-effort caller
+   *  can fall back without spending a REST request. Lets a budget-gate suppress fresh reads while still serving
+   *  free cache hits under pressure. */
+  githubSkipNetworkWhen?: () => boolean | Promise<boolean>;
 };
 export type GitHubRateLimitAdmissionKey = string;
 export type LocalGitHubRestRateLimitObservation = {
@@ -61,6 +72,26 @@ const latestRestRateLimitObservations = new Map<GitHubRateLimitAdmissionKey, Loc
 
 export function githubRateLimitAdmissionKeyForInstallation(installationId: number): GitHubRateLimitAdmissionKey {
   return `installation:${Math.trunc(installationId)}`;
+}
+
+export function githubRateLimitAdmissionKeyForPublicToken(): GitHubRateLimitAdmissionKey {
+  return "public-token";
+}
+
+/** The SINGLE token→admission-key resolver, so every GitHub read attributes consistently and a token can never
+ *  travel without its matching key: the public bucket for the shared public token, the installation bucket for an
+ *  installation token with a known installation id, else undefined (unattributed). Callers pass whichever token
+ *  they will actually read with, so the key is always derived from the SAME token and cannot drift apart from it. */
+export function githubRateLimitAdmissionKeyForToken(
+  env: { GITHUB_PUBLIC_TOKEN?: string },
+  token: string | undefined,
+  installationId: number | null | undefined,
+): GitHubRateLimitAdmissionKey | undefined {
+  if (!token) return undefined;
+  if (token === env.GITHUB_PUBLIC_TOKEN) return githubRateLimitAdmissionKeyForPublicToken();
+  return typeof installationId === "number" && Number.isFinite(installationId)
+    ? githubRateLimitAdmissionKeyForInstallation(installationId)
+    : undefined;
 }
 
 /** Only cache explicitly stable GitHub REST reads. PR/issue/comment/label/event/check/status reads are mutable
@@ -77,6 +108,9 @@ function githubCacheClassForUrl(url: string): GitHubCacheClass | null {
   if (!url.startsWith(`${GITHUB_API_PREFIX}/`)) return null;
   const path = githubApiPath(url);
   if (/^\/repos\/[^/]+\/[^/]+\/branches\/[^/]+\/protection\/required_status_checks(?:$|[?#])/.test(path)) return "branch_protection";
+  // A BARE `/repos/{o}/{r}/commits/{ref}` read (no `/check-runs`, `/status`, `/pulls`, … suffix) resolves a ref to
+  // its HEAD commit. Only the two upstream ref→SHA resolves use this shape; caching it briefly dedups them.
+  if (/^\/repos\/[^/]+\/[^/]+\/commits\/[^/?#]+(?:$|[?#])/.test(path)) return "commit";
   if (
     (/^\/users\/[^/?#]+(?:$|[?#])/.test(path) ||
       /^\/repos\/[^/?#]+\/[^/?#]+(?:$|[?#])/.test(path) ||
@@ -99,6 +133,9 @@ function positiveEnvSeconds(env: EnvLookup, name: string, fallback: number): num
 export function githubResponseCacheTtlSeconds(cls: GitHubCacheClass, env: EnvLookup = process.env): number {
   if (cls === "branch_protection") {
     return positiveEnvSeconds(env, "GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS", DEFAULT_BRANCH_PROTECTION_TTL_SECONDS);
+  }
+  if (cls === "commit") {
+    return positiveEnvSeconds(env, "GITHUB_COMMIT_CACHE_TTL_SECONDS", DEFAULT_COMMIT_TTL_SECONDS);
   }
   return positiveEnvSeconds(env, "GITHUB_METADATA_CACHE_TTL_SECONDS", DEFAULT_METADATA_TTL_SECONDS);
 }
@@ -126,6 +163,43 @@ function recordGitHubCacheMetric(result: "hit" | "miss" | "set" | "coalesced" | 
   incr(GITHUB_RESPONSE_CACHE_METRIC, { result, class: cls });
 }
 
+// Keep this classification identical to selfhost/queue-common's githubRateLimitAdmissionKeyScope so both metric
+// surfaces label a given admission key the same way (installation / public / global / unknown / other). Exported so
+// the classification is unit-tested directly (mirroring the queue-common helper's test), not only via rendered metrics.
+export function githubAdmissionKeyScope(admissionKey: GitHubRateLimitAdmissionKey | null | undefined): "installation" | "public" | "global" | "unknown" | "other" {
+  if (!admissionKey) return "unknown";
+  if (admissionKey.startsWith("installation:")) return "installation";
+  if (admissionKey === githubRateLimitAdmissionKeyForPublicToken()) return "public";
+  if (admissionKey.startsWith("global:")) return "global";
+  return "other";
+}
+
+function restRemainingBucket(remaining: number): "0" | "1-75" | "76-150" | "151+" {
+  if (remaining <= 0) return "0";
+  if (remaining <= 75) return "1-75";
+  if (remaining <= 150) return "76-150";
+  return "151+";
+}
+
+function recordGitHubRestRateLimitObservationMetric(admissionKey: GitHubRateLimitAdmissionKey, remaining: number): void {
+  incr(GITHUB_REST_RATE_LIMIT_OBSERVATION_METRIC, {
+    key_scope: githubAdmissionKeyScope(admissionKey),
+    remaining_bucket: restRemainingBucket(remaining),
+  });
+}
+
+function recordGitHubRateLimitResponseMetric(
+  status: number,
+  admissionKey: GitHubRateLimitAdmissionKey | null,
+  retry: "scheduled" | "exhausted",
+): void {
+  incr(GITHUB_REST_RATE_LIMIT_RESPONSE_METRIC, {
+    key_scope: githubAdmissionKeyScope(admissionKey),
+    retry,
+    status: String(status),
+  });
+}
+
 function parseRateLimitInt(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
@@ -144,6 +218,7 @@ function observeGitHubRestRateLimit(url: string, response: Response, admissionKe
     resetAt: new Date(reset * 1000).toISOString(),
     observedAtMs: Date.now(),
   });
+  recordGitHubRestRateLimitObservationMetric(admissionKey, remaining);
 }
 
 export function latestGitHubRestRateLimitObservation(admissionKey: GitHubRateLimitAdmissionKey): LocalGitHubRestRateLimitObservation | null {
@@ -286,7 +361,14 @@ async function fetchWithGitHubRetry(input: RequestInfo | URL, init?: GitHubTimeo
         });
     if (admissionKey) observeGitHubRestRateLimit(requestUrl(input), response, admissionKey);
     // Retry a transient rate-limit (with backoff) instead of surfacing it; stop once exhausted or it's not a limit.
-    if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES || !(await isRateLimitedResponse(response))) break;
+    const rateLimited = await isRateLimitedResponse(response);
+    if (!rateLimited) break;
+    recordGitHubRateLimitResponseMetric(
+      response.status,
+      admissionKey,
+      attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES ? "exhausted" : "scheduled",
+    );
+    if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES) break;
     await sleep(rateLimitRetryMs(response, attempt));
   }
   return response;
@@ -377,6 +459,17 @@ function waitForVolatileReplay(shared: Promise<CachedGitHubResponse | null>, sig
 
 // A 12s hard cap on every GitHub request. Centralised here so the app token/installation raw fetches plus comment /
 // label / check-run / pr-action Octokit helpers all inherit the cache boundary, retry, and timeout behavior.
+/** A caller's githubSkipNetworkWhen opts a best-effort read out of the NETWORK (never out of the cache). */
+async function shouldSkipGitHubNetworkRead(init?: GitHubTimeoutFetchInit): Promise<boolean> {
+  return init?.githubSkipNetworkWhen ? Boolean(await init.githubSkipNetworkWhen()) : false;
+}
+
+// A synthetic non-OK returned when githubSkipNetworkWhen suppresses a network read (e.g. a budget-gated best-effort
+// resolve). The caller detects !response.ok and falls back without spending a REST request.
+function githubNetworkSkippedResponse(): Response {
+  return new Response(null, { status: 503, headers: { [GITHUB_RESPONSE_CACHE_REPLAY_HEADER]: "network-skip" } });
+}
+
 export async function timeoutFetch(input: RequestInfo | URL, init?: GitHubTimeoutFetchInit): Promise<Response> {
   const method = requestMethod(input, init);
   const url = requestUrl(input);
@@ -388,6 +481,8 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: GitHubTimeou
   }
   const useCache = responseCache !== null && cls !== null;
   if (!useCache) {
+    // No cache to hit → this IS a network read, so honor a caller's budget-gate before spending the request.
+    if (await shouldSkipGitHubNetworkRead(init)) return githubNetworkSkippedResponse();
     recordGitHubCacheMetric("bypassed", cacheBypassClass(method, url, headers));
     return fetchWithGitHubRetry(input, init);
   }
@@ -411,6 +506,10 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: GitHubTimeou
     const replay = await existing;
     if (replay) return responseFromCached(replay, "coalesced");
   }
+
+  // Cache MISS with no in-flight fetch to coalesce onto → a fresh network read. Honor a caller's budget-gate here
+  // (AFTER the cache-hit + coalesce checks, so a free cached/in-flight result is never suppressed by budget pressure).
+  if (await shouldSkipGitHubNetworkRead(init)) return githubNetworkSkippedResponse();
 
   const request = fetchAndMaybeCacheGitHubGet(input, init, url, cacheKey, cls).then(
     (result) => ({ ok: true as const, result }),

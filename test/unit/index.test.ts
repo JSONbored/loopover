@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../../src/index";
 import { recordGitHubRateLimitObservation } from "../../src/db/repositories";
+import { scheduledEnqueueDelaySeconds } from "../../src/selfhost/queue-common";
 import { createTestEnv } from "../helpers/d1";
 
 describe("worker entrypoint", () => {
@@ -276,6 +277,55 @@ describe("worker entrypoint", () => {
     expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
   });
 
+  it("does not enqueue scheduled sweep/backfill work while prior regate jobs are still queued", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+        snapshot: async () => ({
+          totals: { pending: 2, processing: 1, dead: 0, due: 2 },
+          byType: [
+            { type: "agent-regate-pr", status: "pending", count: 2, due: 2 },
+            { type: "agent-regate-sweep", status: "processing", count: 1, due: 0 },
+          ],
+        }),
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual([
+      { type: "repair-data-fidelity", requestedBy: "schedule" },
+      { type: "refresh-installation-health", requestedBy: "schedule" },
+    ]);
+  });
+
+  it("fails open when queue introspection is unavailable so scheduled maintenance still runs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+        snapshot: async () => {
+          throw new Error("snapshot unavailable");
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("selfhost_queue_snapshot_failed"));
+  });
+
   it("does not enqueue review sweeps from a broker-only Cloudflare runtime", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
@@ -416,6 +466,60 @@ describe("worker entrypoint", () => {
       { type: "build-contributor-decision-packs", requestedBy: "schedule" },
       { type: "file-upstream-drift-issues", requestedBy: "schedule" },
     ]);
+  });
+
+  it("phase-spreads the scheduled enqueue: sweep immediate, periodic maintenance jittered (#1948)", async () => {
+    const sent: Array<{
+      message: import("../../src/types").JobMessage;
+      delaySeconds?: number;
+    }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(
+          message: import("../../src/types").JobMessage,
+          options?: { delaySeconds?: number },
+        ) {
+          sent.push({
+            message,
+            ...(options?.delaySeconds === undefined
+              ? {}
+              : { delaySeconds: options.delaySeconds }),
+          });
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    // The enqueued SET is unchanged — jitter only spreads run_after timing, never which jobs are sent.
+    expect(sent.map((s) => s.message.type)).toEqual([
+      "agent-regate-sweep",
+      "backfill-registered-repos",
+      "repair-data-fidelity",
+      "refresh-installation-health",
+      "refresh-registry",
+      "refresh-scoring-model",
+      "refresh-upstream-drift",
+      "rollup-product-usage",
+      "generate-signal-snapshots",
+      "build-burden-forecasts",
+      "build-contributor-evidence",
+      "build-contributor-decision-packs",
+      "file-upstream-drift-issues",
+    ]);
+    // Each captured job's delay matches the deterministic policy: the every-tick sweep is immediate (sent with no
+    // options), the periodic maintenance jobs carry their stable per-type jitter slot.
+    for (const s of sent) {
+      const expected = scheduledEnqueueDelaySeconds(s.message.type);
+      if (expected > 0) expect(s.delaySeconds).toBe(expected);
+      else expect(s.delaySeconds).toBeUndefined();
+    }
+    // The priority sweep specifically stays immediate; at least one periodic job is actually deferred, so a
+    // top-of-6h tick no longer fires every heavy fan-out parent in the same instant.
+    expect(sent.find((s) => s.message.type === "agent-regate-sweep")?.delaySeconds).toBeUndefined();
+    expect(sent.some((s) => (s.delaySeconds ?? 0) > 0)).toBe(true);
   });
 
   it("enqueues the ops-alerts job hourly ONLY when GITTENSORY_REVIEW_OPS is ON (flag-OFF is byte-identical)", async () => {

@@ -13,6 +13,7 @@ type DashboardTarget = {
 
 type DashboardPanel = {
   id?: number;
+  title?: string;
   targets?: DashboardTarget[];
 };
 
@@ -23,6 +24,7 @@ type Dashboard = {
 const tmpRoots: string[] = [];
 const dashboardPath = join(process.cwd(), "grafana/dashboards/maintainer-reviews.json");
 const selfhostDashboardPath = join(process.cwd(), "grafana/dashboards/gittensory.json");
+const selfhostAlertsPath = join(process.cwd(), "prometheus/rules/alerts.yml");
 const timeFrom = "${__from:date:seconds}";
 const timeTo = "${__to:date:seconds}";
 
@@ -80,6 +82,69 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === "sum by (result) (rate(gittensory_github_response_cache_total[5m]))")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (class, result) (gittensory_github_response_cache_total)")).toBe(true);
     expect(targets.some((target) => target.legendFormat === "{{class}} {{result}}")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (remaining_bucket, key_scope) (rate(gittensory_github_rest_rate_limit_observations_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limited_by_type_total[5m])) or vector(0)")).toBe(true);
+  });
+
+  it("keeps Orb dashboard panels zero-safe when telemetry counters are absent", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+
+    expect(targets.some((target) => target.expr === "gittensory_orb_events_recorded_total or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "gittensory_orb_events_exported_total or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "gittensory_orb_installs_total or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (result) (rate(gittensory_orb_webhook_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "(gittensory_orb_events_recorded_total or vector(0)) - (gittensory_orb_events_exported_total or vector(0))")).toBe(true);
+  });
+
+  it("keeps rate-limit alerts grouped by the dashboard label dimensions", () => {
+    const alerts = readFileSync(selfhostAlertsPath, "utf8");
+
+    expect(alerts).toContain("sum by (status, retry, key_scope) (rate(gittensory_github_rest_rate_limit_responses_total[5m])) > 0");
+    expect(alerts).toContain("sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) > 0.05");
+    expect(alerts).toContain("sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) > 0.05");
+  });
+
+  it("surfaces Postgres internals and backup freshness panels", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+    const titles = dashboard.panels.map((panel) => panel.title);
+
+    expect(titles).toEqual(expect.arrayContaining(["Postgres & Backups", "Postgres Connections by State", "Postgres Locks & Slow Transactions", "Postgres Size & Table Growth", "Dead Tuples / Autovacuum", "Backup Freshness"]));
+    expect(targets.some((target) => target.expr === 'pg_up or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(pg_stat_activity_count{datname="gittensory"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum by (state) (pg_stat_activity_count{datname="gittensory"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(pg_stat_activity_count{datname="gittensory", wait_event_type="Lock"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'max(pg_stat_activity_max_tx_duration{datname="gittensory"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'pg_database_size_bytes{datname="gittensory"} or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_live_tup{datname="gittensory"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_dead_tup{datname="gittensory"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname="gittensory"}[1h])) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'gittensory_backup_files{target=~"postgres|sqlite|qdrant"} or vector(0)')).toBe(true);
+  });
+
+  it("ships Postgres and backup alerts for the same dashboarded failure modes", () => {
+    const alerts = readFileSync(selfhostAlertsPath, "utf8");
+
+    expect(alerts).toContain("alert: GittensoryPostgresConnectionPressure");
+    expect(alerts).toContain('sum(pg_stat_activity_count{datname="gittensory"})');
+    expect(alerts).toContain("alert: GittensoryPostgresLockWaits");
+    expect(alerts).toContain('pg_stat_activity_count{datname="gittensory", wait_event_type="Lock"}');
+    expect(alerts).toContain("alert: GittensoryPostgresSlowTransaction");
+    expect(alerts).toContain('pg_stat_activity_max_tx_duration{datname="gittensory"}');
+    expect(alerts).toContain("alert: GittensoryPostgresDeadlocks");
+    expect(alerts).toContain('pg_stat_database_deadlocks{datname="gittensory"}');
+    expect(alerts).toContain("alert: GittensoryPostgresDatabaseGrowingFast");
+    expect(alerts).toContain('deriv(pg_database_size_bytes{datname="gittensory"}[6h]) > 262144');
+    expect(alerts).toContain("alert: GittensoryPostgresDeadTuplesHigh");
+    expect(alerts).toContain('pg_stat_user_tables_n_dead_tup{datname="gittensory"}');
+    expect(alerts).toContain("alert: GittensoryBackupMissing");
+    expect(alerts).toContain('gittensory_backup_files{target=~"postgres|sqlite"} == 0');
+    expect(alerts).toContain("alert: GittensoryBackupStale");
+    expect(alerts).toContain('time() - gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600');
   });
 });
 

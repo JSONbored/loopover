@@ -290,6 +290,7 @@ export function isForeignAppInstallation(
 export function clearInstallationTokenCacheForTest(): void {
   installationTokenCache.clear();
   externalTokenStore = null;
+  appJwtCache.clear();
   clearGitHubResponseCacheForTest();
 }
 
@@ -357,12 +358,28 @@ export async function getRepositoryCollaboratorPermission(
   return payload.permission ?? null;
 }
 
+// The App JWT is valid ~9 min (iat backdated 60s, exp +540s). Re-signing (RS256) it on EVERY call is wasteful CPU
+// AND defeats response caching of App-level reads (/app/installations/{id}): the rotating JWT changes the
+// auth-scoped response-cache key on every call, so the metadata cache class never hits for its heaviest caller
+// (refresh-installation-health / the per-repo backfill). Reuse a minted JWT for a margin of its validity so
+// repeated App-JWT reads share ONE signature and ONE stable cache key. A Map keyed by App id — so a process that
+// alternates between App identities keeps a JWT per App instead of evicting one for another — with the private key
+// held in the entry so a same-App CREDENTIAL ROTATION invalidates immediately and never serves a JWT signed by the
+// now-revoked old key (a stale-key JWT would fail every App-level read once the old key is revoked). (#1940)
+const APP_JWT_REUSE_MS = 8 * 60_000;
+const appJwtCache = new Map<string, { privateKey: string; jwt: string; expiresAtMs: number }>();
+
 async function createAppJwt(env: Env): Promise<string> {
   if (!env.GITHUB_APP_PRIVATE_KEY) {
     throw new Error("GitHub App credentials are not configured.");
   }
-  const now = Math.floor(Date.now() / 1000);
-  return signRs256Jwt(
+  const nowMs = Date.now();
+  const cached = appJwtCache.get(env.GITHUB_APP_ID);
+  if (cached && cached.privateKey === env.GITHUB_APP_PRIVATE_KEY && cached.expiresAtMs > nowMs) {
+    return cached.jwt;
+  }
+  const now = Math.floor(nowMs / 1000);
+  const jwt = await signRs256Jwt(
     {
       iss: env.GITHUB_APP_ID,
       iat: now - 60,
@@ -370,6 +387,12 @@ async function createAppJwt(env: Env): Promise<string> {
     },
     env.GITHUB_APP_PRIVATE_KEY,
   );
+  appJwtCache.set(env.GITHUB_APP_ID, {
+    privateKey: env.GITHUB_APP_PRIVATE_KEY,
+    jwt,
+    expiresAtMs: nowMs + APP_JWT_REUSE_MS,
+  });
+  return jwt;
 }
 
 export async function createOrUpdateCheckRun(
@@ -464,6 +487,7 @@ export async function createOrUpdateSkippedGateCheckRun(
   advisory: Advisory,
   reason = "PR closed before full evaluation.",
   mode: AgentActionMode = "live",
+  options: { checkRunId?: number | undefined } = {},
 ): Promise<CheckRunOutcome | null> {
   return createOrUpdateNamedCheckRun(
     env,
@@ -474,6 +498,7 @@ export async function createOrUpdateSkippedGateCheckRun(
       name: GITTENSORY_GATE_CHECK_NAME,
       status: "completed",
       conclusion: "skipped",
+      checkRunId: options.checkRunId,
       output: {
         title: "Gittensory Orb Review Agent skipped",
         summary: reason,

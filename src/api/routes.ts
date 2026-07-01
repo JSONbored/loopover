@@ -3106,7 +3106,13 @@ export function createApp() {
     if (!isRagEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { repoFullName?: unknown };
     const repoFullName = typeof body?.repoFullName === "string" && body.repoFullName.trim().length > 0 ? body.repoFullName.trim() : undefined;
-    const message: JobMessage = { type: "rag-index-repo", requestedBy: "api", ...(repoFullName ? { repoFullName } : {}) };
+    const repo = repoFullName ? await getRepository(c.env, repoFullName) : null;
+    const message: JobMessage = {
+      type: "rag-index-repo",
+      requestedBy: "api",
+      ...(repoFullName ? { repoFullName } : {}),
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
+    };
     await c.env.JOBS.send(message);
     return c.json({ ok: true, status: "queued", scope: repoFullName ?? "all-configured-repos" }, 202);
   });
@@ -3139,10 +3145,12 @@ export function createApp() {
     const segment = parseBackfillSegment(body?.segment);
     if (!segment) return c.json({ error: "valid_segment_required" }, 400);
     const mode = body?.mode === "full" || body?.mode === "resume" ? body.mode : "light";
+    const repo = await getRepository(c.env, body.repoFullName);
     const message: JobMessage = {
       type: "backfill-repo-segment",
       requestedBy: "api",
       repoFullName: body.repoFullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
       segment,
       mode,
       force: body?.force === true,
@@ -3174,10 +3182,12 @@ export function createApp() {
     const body = await c.req.json().catch(() => ({}));
     if (typeof body?.repoFullName !== "string" || body.repoFullName.length === 0) return c.json({ error: "repo_full_name_required" }, 400);
     const mode = body?.mode === "full" || body?.mode === "resume" ? body.mode : "light";
+    const repo = await getRepository(c.env, body.repoFullName);
     const message: JobMessage = {
       type: "backfill-pr-details",
       requestedBy: "api",
       repoFullName: body.repoFullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
       mode,
       ...(Number.isFinite(Number(body?.cursor)) ? { cursor: Number(body.cursor) } : {}),
     };

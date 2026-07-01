@@ -3,6 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool, QueryResult } from "pg";
 import { createPgQueue } from "../../src/selfhost/pg-queue";
+import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
 
@@ -114,6 +116,7 @@ describe("createPgQueue (durable #977)", () => {
   beforeEach(() => { vi.spyOn(process.stdout, "write").mockImplementation(() => true); });
   afterEach(() => {
     vi.useRealTimers();
+    resetMetrics();
     vi.restoreAllMocks();
   });
 
@@ -329,6 +332,62 @@ describe("createPgQueue (durable #977)", () => {
     expect(m.pool.query).not.toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
       expect.arrayContaining([expect.stringContaining('"deliveryId":"ci-2"')]),
+    );
+  });
+
+  it("lets a pending full RAG index absorb a later repo incremental", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-full" }], rowCount: 1 });
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE status='pending' AND job_key=$1"),
+      ["rag-index-repo:jsonbored/gittensory:full"],
+    );
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([expect.stringContaining('"paths":["src/a.ts"]')]),
+    );
+  });
+
+  it("lets a full RAG index supersede pending repo incrementals", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-incremental" }], rowCount: 1 });
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("left(job_key, $1)=$2"),
+      ["rag-index-repo:jsonbored/gittensory:".length, "rag-index-repo:jsonbored/gittensory:"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET payload=$1, run_after=GREATEST"),
+      expect.arrayContaining([
+        expect.stringContaining('"requestedBy":"schedule"'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        "rag-index-repo:jsonbored/gittensory:full",
+        "existing-incremental",
+      ]),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM _selfhost_jobs"),
+      ["existing-incremental", "rag-index-repo:jsonbored/gittensory:".length, "rag-index-repo:jsonbored/gittensory:"],
     );
   });
 
@@ -549,6 +608,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
         ["gittensory_jobs_rate_limit_deferred_total", 1],
       );
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -635,6 +695,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("INSERT INTO _selfhost_job_stats"),
         ["gittensory_jobs_rate_limit_deferred_total", 1],
       );
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -929,6 +990,7 @@ describe("createPgQueue (durable #977)", () => {
       expect.stringContaining("DELETE FROM _selfhost_jobs WHERE id=$1"),
       ["2"],
     );
+    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
   });
 
   it("defers matching GitHub-budget jobs and coalesces a keyed rate-limit retry into the pending duplicate", async () => {
@@ -1028,6 +1090,9 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
         expect.arrayContaining([expect.stringContaining('"deliveryId":"after-rate-limit"'), expect.any(Number)]),
       );
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
+      expect(metrics).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_STARTUP_JITTER_MS;
       else process.env.QUEUE_STARTUP_JITTER_MS = oldJitter;
@@ -1314,5 +1379,44 @@ describe("createPgQueue (durable #977)", () => {
       gittensory_jobs_processed_total: 42,
       gittensory_jobs_dead_total: 0,
     });
+  });
+
+  it("snapshot() reports pending/processing/dead queue depth by job type", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    const now = Date.now();
+    m.fn.mockResolvedValueOnce({
+      rows: [
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "pending", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "processing", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("github-webhook")), status: "pending", run_after: String(now + 60_000) },
+        { payload: JSON.stringify(msg("rag-index-repo")), status: "dead", run_after: String(now - 1) },
+      ],
+      rowCount: 4,
+    });
+    m.fn.mockResolvedValueOnce({
+      rows: [
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "pending", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "processing", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("github-webhook")), status: "pending", run_after: String(now + 60_000) },
+        { payload: JSON.stringify(msg("rag-index-repo")), status: "dead", run_after: String(now - 1) },
+      ],
+      rowCount: 4,
+    });
+
+    const snapshot = await q.snapshot();
+    const bindingSnapshot = await queueSnapshotFromBinding(q.binding);
+
+    expect(snapshot.totals).toMatchObject({ pending: 2, processing: 1, dead: 1 });
+    expect(snapshot.byType).toEqual(
+      expect.arrayContaining([
+        { type: "agent-regate-pr", status: "pending", count: 1, due: 1 },
+        { type: "agent-regate-pr", status: "processing", count: 1, due: 0 },
+        { type: "github-webhook", status: "pending", count: 1, due: 0 },
+        { type: "rag-index-repo", status: "dead", count: 1, due: 0 },
+      ]),
+    );
+    expect(bindingSnapshot).toEqual(snapshot);
   });
 });

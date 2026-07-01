@@ -142,4 +142,22 @@ describe("buildLinkedIssueValidation", () => {
     expect(report.blockingReason).toMatch(/#999 was not found/i);
     assertPublicSafe(report);
   });
+
+  it("classifies duplicate targets beyond the 300-issue lifecycle cap (regression for pinned lifecycle lookup)", () => {
+    const manyIssues = Array.from({ length: 301 }, (_, index) =>
+      issue(index + 1, `Cached issue ${index + 1}`, {
+        updatedAt: new Date(Date.now() - index * 60_000).toISOString(),
+      }),
+    );
+    manyIssues[300] = issue(301, "Duplicate beyond lifecycle cap", {
+      labels: ["duplicate"],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+    const report = buildLinkedIssueValidation(repo("owner/repo"), manyIssues, [], [], "owner/repo", 301);
+    expect(report.lifecycle).toBe("duplicate");
+    expect(report.multiplierWouldApply).toBe(false);
+    expect(report.multiplierStatus).toBe("invalid");
+    expect(report.blockingReason).toMatch(/duplicate/i);
+    assertPublicSafe(report);
+  });
 });

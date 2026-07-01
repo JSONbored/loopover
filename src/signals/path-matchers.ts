@@ -120,6 +120,11 @@ const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
   "netlify.toml",
   "vercel.json",
   "railway.json",
+  "render.yaml",
+  "fly.toml",
+  "skaffold.yaml",
+  "earthfile",
+  "procfile",
   // Hosted CI pipeline definitions (single-file basenames).
   ".gitlab-ci.yml",
   "jenkinsfile",

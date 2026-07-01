@@ -1,6 +1,6 @@
 import {
   getLatestUpstreamRulesetSnapshot,
-  listUpstreamDriftReports,
+  getUpstreamDriftReportByFingerprint,
   upsertUpstreamDriftReport,
 } from "../db/repositories";
 import type { UpstreamDriftArea, UpstreamDriftReportRecord, UpstreamDriftSeverity } from "../types";
@@ -23,7 +23,10 @@ export async function syncUnmodeledScoringConstantDrift(
   },
 ): Promise<UpstreamDriftReportRecord | null> {
   const fingerprint = await unmodeledScoringConstantsFingerprint();
-  const existing = (await listUpstreamDriftReports(env, 50)).find((report) => report.fingerprint === fingerprint) ?? null;
+  // Key by fingerprint directly — `listUpstreamDriftReports` is capped and ordered by `updatedAt`, so an older
+  // unmodeled-constants report can fall off the newest-50 window and be treated as missing (duplicate open reports,
+  // lost issue metadata, resolve no-ops).
+  const existing = (await getUpstreamDriftReportByFingerprint(env, fingerprint)) ?? null;
   const now = nowIso();
 
   if (args.unmodeledConstants.length === 0) {

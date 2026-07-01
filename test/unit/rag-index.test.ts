@@ -525,9 +525,9 @@ describe("flag-off / missing-infra is a no-op (no GitHub fetch, no adapter use)"
 // ── Wiring: the rag-index-repo queue job (cron fan-out + per-repo dispatch) ─────────────────────────
 
 /** Register a repo (is_registered = 1) so it joins the cron fan-out's registered set. */
-async function registerRepo(env: Env, fullName: string): Promise<void> {
+async function registerRepo(env: Env, fullName: string, installationId: number | null = 123): Promise<void> {
   const [owner, name] = fullName.split("/") as [string, string];
-  await upsertRepositoryFromGitHub(env, { name, full_name: fullName, private: false, owner: { login: owner } }, 123);
+  await upsertRepositoryFromGitHub(env, { name, full_name: fullName, private: false, owner: { login: owner } }, installationId ?? undefined);
   await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind(fullName).run();
 }
 
@@ -539,21 +539,25 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     const env = createTestEnv({
       GITTENSORY_REVIEW_RAG: "true",
       // Allowlist only JSONbored/gittensory (acme/widgets is allowlisted by default but won't be registered here).
-      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,JSONbored/metagraphed",
       JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
     });
     await registerRepo(env, "JSONbored/gittensory"); // registered + allowlisted → indexed
+    await registerRepo(env, "JSONbored/metagraphed", null); // registered + allowlisted but not installed → indexed without installation metadata
     await registerRepo(env, "owner/not-allowlisted"); // registered but NOT allowlisted → skipped
 
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule" });
 
-    expect(sent).toEqual([{ type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" }]);
+    expect(sent).toEqual([
+      { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory", installationId: 123 },
+      { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/metagraphed" },
+    ]);
     const fanout = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("rag.index.fanout").first<{
       outcome: string;
       metadata_json: string;
     }>();
     expect(fanout?.outcome).toBe("queued");
-    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, requestedBy: "schedule" });
+    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 2, requestedBy: "schedule" });
   });
 
   it("cron fan-out ALSO indexes CONFIGURED (GITTENSORY_REVIEW_REPOS) repos never registered via webhook (brokered self-host fix)", async () => {

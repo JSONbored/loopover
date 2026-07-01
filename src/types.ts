@@ -50,6 +50,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
       repoFullName: string;
       segment: "labels" | "open_issues" | "open_pull_requests" | "recent_merged_pull_requests";
+      installationId?: number;
       mode?: "light" | "full" | "resume";
       force?: boolean;
       cursor?: string;
@@ -58,6 +59,7 @@ export type JobMessage =
       type: "backfill-pr-details";
       requestedBy: "schedule" | "api" | "test";
       repoFullName: string;
+      installationId?: number;
       mode?: "light" | "full" | "resume";
       cursor?: number;
     }
@@ -98,6 +100,9 @@ export type JobMessage =
       type: "build-contributor-evidence";
       requestedBy: "schedule" | "api" | "test";
       login?: string;
+      // A batch of logins to process in ONE job. Set by the cron fan-out (when the derived login set exceeds
+      // CONTRIBUTOR_EVIDENCE_BATCH_SIZE) so the per-login GitHub reads spread across the queue instead of bursting.
+      logins?: string[];
     }
   | {
       type: "build-contributor-decision-packs";
@@ -142,6 +147,7 @@ export type JobMessage =
       type: "agent-regate-sweep";
       requestedBy: "schedule" | "api" | "test";
       repoFullName?: string;
+      installationId?: number;
     }
   | {
       type: "run-agent";
@@ -187,6 +193,7 @@ export type JobMessage =
       type: "rag-index-repo";
       requestedBy: "schedule" | "api" | "webhook" | "test";
       repoFullName?: string;
+      installationId?: number;
       paths?: string[];
     }
   | {

@@ -52,6 +52,14 @@ LITESTREAM_REGION=us-east-1`}
       />
       <CodeBlock lang="bash" code={`docker compose --profile litestream up -d`} />
 
+      <h2>Scheduled backups</h2>
+      <p>
+        The bundled <code>backup</code> profile writes the active app database to the{" "}
+        <code>gittensory-backups</code> volume. SQLite installs use an online backup; Postgres
+        installs use <code>pg_dump</code>. The same run also snapshots Qdrant when it is enabled.
+      </p>
+      <CodeBlock lang="bash" code={`docker compose --profile backup up -d`} />
+
       <h2>Multi-instance: Postgres and Redis</h2>
       <FeatureRow
         items={[
@@ -74,9 +82,22 @@ LITESTREAM_REGION=us-east-1`}
       />
       <CodeBlock
         filename=".env"
-        code={`DATABASE_URL=postgres://gittensory:<password>@postgres:5432/gittensory
+        code={`POSTGRES_PASSWORD=<password>
+DATABASE_URL=postgres://gittensory:<password>@pgbouncer:5432/gittensory
 REDIS_URL=redis://redis:6379
-PGVECTOR_ENABLED=true`}
+QDRANT_URL=http://qdrant:6333`}
+      />
+      <CodeBlock lang="bash" code={`docker compose --profile pgbouncer --profile qdrant up -d`} />
+
+      <h2>One-time SQLite to Postgres copy</h2>
+      <p>
+        Existing SQLite installs can copy state into a fresh Postgres database with the bundled
+        migrator. It dry-runs by default and only commits when <code>--execute</code> is present.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --postgres-url "$DATABASE_URL"
+npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --postgres-url "$DATABASE_URL" --execute`}
       />
 
       <h2>Restore checks</h2>
@@ -88,6 +109,41 @@ PGVECTOR_ENABLED=true`}
         <li>Confirm migrations do not fail or reapply incorrectly.</li>
         <li>Confirm recent review rows and job state are present.</li>
       </ul>
+
+      <h2>Verify a backup is restorable</h2>
+      <p>
+        The <code>backup</code> profile ships <code>verify-backup.sh</code>, which checks the newest
+        backup without touching the live database: Postgres <code>.dump</code> archives with{" "}
+        <code>pg_restore --list</code>, and SQLite <code>.sqlite.gz</code> backups with a gzip and{" "}
+        <code>integrity_check</code> pass. Run it against the newest backup, or a specific file:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`docker compose --profile backup run --rm backup sh /verify-backup.sh
+docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/postgres/gittensory-<timestamp>.dump`}
+      />
+      <p>
+        A healthy run ends with <code>[verify] postgres archive OK: … (N TOC entries)</code> (or{" "}
+        <code>[verify] sqlite backup OK</code>), then <code>[verify] complete</code>, and exits 0.
+        Corruption, a missing backup, or an empty archive exits non-zero with a{" "}
+        <code>[verify]</code> reason.
+      </p>
+      <p>
+        To prove a dump actually restores, opt into a scratch restore into a <em>throwaway</em>{" "}
+        database — never the live one:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`docker compose --profile backup run --rm \\
+  -e VERIFY_RESTORE_SCRATCH=1 \\
+  -e GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/gittensory_verify \\
+  backup sh /verify-backup.sh`}
+      />
+      <Callout variant="warn">
+        The scratch restore runs <code>pg_restore --clean</code> against{" "}
+        <code>GITTENSORY_VERIFY_SCRATCH_DATABASE_URL</code>, so point it at a dedicated database you
+        can afford to drop. The script refuses to run when that URL equals the live backup source.
+      </Callout>
 
       <p>
         After scaling, revisit <Link to="/docs/self-hosting-operations">Operations</Link> and{" "}

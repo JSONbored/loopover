@@ -7,11 +7,17 @@ import { isOrbBrokerEnabled } from "./orb/broker";
 import { isOpsEnabled } from "./review/ops-wire";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
-import { isGitHubBudgetBackgroundJob } from "./selfhost/queue-common";
+import {
+  isGitHubBudgetBackgroundJob,
+  queueSnapshotBacklog,
+  queueSnapshotFromBinding,
+  scheduledEnqueueDelaySeconds,
+} from "./selfhost/queue-common";
 import { isReviewExecutionJob, isSelfHostedReviewRuntime } from "./selfhost/review-runtime";
 import type { JobMessage } from "./types";
 
 const app = createApp();
+const REGATE_BACKPRESSURE_TYPES = ["agent-regate-pr", "agent-regate-sweep"] as const;
 
 export { RateLimiter };
 
@@ -99,11 +105,26 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // tick (~2 min) retries, and after the bucket resets the sweep resumes. Webhooks never pre-yield.
   const jobs: JobMessage[] = [];
   const selfHostedReviews = isSelfHostedReviewRuntime(env);
+  const queueSnapshot = selfHostedReviews
+    ? await queueSnapshotFromBinding(env.JOBS).catch((error) => {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "selfhost_queue_snapshot_failed",
+            error: error instanceof Error ? error.message : "unknown error",
+          }),
+        );
+        return null;
+      })
+    : null;
+  const regateBacklog = queueSnapshotBacklog(queueSnapshot, REGATE_BACKPRESSURE_TYPES);
   let sweepThrottledUntil: string | undefined;
   if (selfHostedReviews) {
     sweepThrottledUntil = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
     if (sweepThrottledUntil) {
       console.log(JSON.stringify({ event: "regate_sweep_throttled", resetAt: sweepThrottledUntil }));
+    } else if (regateBacklog > 0) {
+      console.log(JSON.stringify({ event: "regate_sweep_backlog_deferred", backlog: regateBacklog }));
     } else {
       jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
     }
@@ -120,8 +141,10 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // 30-min tick retries, and after the bucket resets the backfill resumes. The cheap single-call health jobs
     // (repair-data-fidelity, refresh-installation-health) stay unconditional — they cost ~one call and keep
     // installation/health state fresh even while the budget is reserved.
-    if (selfHostedReviews && !sweepThrottledUntil) {
+    if (selfHostedReviews && !sweepThrottledUntil && regateBacklog === 0) {
       jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
+    } else if (selfHostedReviews && regateBacklog > 0) {
+      console.log(JSON.stringify({ event: "backfill_backlog_deferred", backlog: regateBacklog }));
     } else if (selfHostedReviews) {
       console.log(JSON.stringify({ event: "backfill_throttled", resetAt: sweepThrottledUntil }));
     }
@@ -164,5 +187,16 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // set is byte-identical to today.
     if (selfHostedReviews && isRagEnabled(env)) jobs.push({ type: "rag-index-repo", requestedBy: "schedule" });
   }
-  await Promise.all(jobs.map((job) => env.JOBS.send(job)));
+  // Phase-spread the enqueue (#1948): flushing every due job with run_after=now made the top-of-hour (and
+  // top-of-6h) tick fan out all the heavy per-repo maintenance parents in one instant, draining the shared REST
+  // bucket and tripping GitHub's secondary rate limit. Each job type gets a stable deterministic slot across the
+  // jitter window (the every-tick sweep/relay stay immediate); the enqueued SET is unchanged, only the timing.
+  await Promise.all(
+    jobs.map((job) => {
+      const delaySeconds = scheduledEnqueueDelaySeconds(job.type);
+      return delaySeconds > 0
+        ? env.JOBS.send(job, { delaySeconds })
+        : env.JOBS.send(job);
+    }),
+  );
 }

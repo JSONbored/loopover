@@ -6,6 +6,7 @@
 import type { SqliteDriver } from "./d1-adapter";
 import { logAudit, extractPayloadType } from "./audit";
 import { incr } from "./metrics";
+import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
 import { captureError } from "./sentry";
 import {
@@ -14,8 +15,12 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionTargetForJob,
+  githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
+  buildSelfHostQueueSnapshot,
+  jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceSupersededKeyPrefix,
   jobPriority,
   queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
@@ -25,6 +30,7 @@ import {
   rateLimitRetryDelayWithJitter,
   matchesGitHubRateLimitAdmissionTarget,
   type GitHubRateLimitAdmissionTarget,
+  type SelfHostQueueSnapshot,
 } from "./queue-common";
 import type { JobMessage } from "../types";
 
@@ -61,6 +67,7 @@ export interface DurableQueue {
   size(): number;
   deadCount(): number;
   stats(): Record<string, number>;
+  snapshot(): SelfHostQueueSnapshot;
 }
 
 interface JobRow {
@@ -167,6 +174,44 @@ export function createSqliteQueue(
     const priority = jobPriority(payload);
     const key = jobCoalesceKey(payload);
     const runAfter = now + delaySeconds * 1000;
+    const absorbedByKey = jobCoalesceAbsorbedByKey(payload);
+    if (absorbedByKey) {
+      const existingFull = driver.query(
+        `SELECT id FROM ${TABLE} WHERE status='pending' AND job_key=? ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+        [absorbedByKey],
+      ).rows[0] as { id: number } | undefined;
+      if (existingFull) {
+        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        kickOne();
+        return;
+      }
+    }
+    const supersededKeyPrefix = jobCoalesceSupersededKeyPrefix(payload);
+    if (key && supersededKeyPrefix) {
+      const prefixLength = supersededKeyPrefix.length;
+      const existing = driver.query(
+        `SELECT id FROM ${TABLE}
+         WHERE status='pending' AND job_key IS NOT NULL AND substr(job_key, 1, ?)=?
+         ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+        [prefixLength, supersededKeyPrefix],
+      ).rows[0] as { id: number } | undefined;
+      if (existing) {
+        driver.query(
+          `UPDATE ${TABLE}
+             SET payload=?, run_after=max(run_after, ?), created_at=?, priority=max(priority, ?), job_key=?, last_error=NULL
+           WHERE id=?`,
+          [payload, runAfter, now, priority, key, existing.id],
+        );
+        driver.query(
+          `DELETE FROM ${TABLE}
+           WHERE status='pending' AND id<>? AND job_key IS NOT NULL AND substr(job_key, 1, ?)=?`,
+          [existing.id, prefixLength, supersededKeyPrefix],
+        );
+        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        kickOne();
+        return;
+      }
+    }
     if (key) {
       const existing = driver.query(
         `SELECT id FROM ${TABLE} WHERE status='pending' AND job_key=? ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
@@ -280,31 +325,44 @@ export function createSqliteQueue(
       const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
       const rateLimitAdmission = rateLimitAdmissionDelayMs(driver, message);
       if (rateLimitAdmission !== null) {
-        const now = Date.now();
-        const retryAfter = now + rateLimitRetryDelayWithJitter(
-          rateLimitAdmission.delayMs,
-          `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+        const rateLimitMetric = githubRateLimitMetricContext(message, rateLimitAdmission);
+        await withReviewSpan(
+          "selfhost.queue.admission_deferred",
+          {
+            "job.type": message.type,
+            "queue.backend": "sqlite",
+            ...rateLimitMetric.spanAttributes,
+          },
+          async () => {
+            const now = Date.now();
+            const retryAfter = now + rateLimitRetryDelayWithJitter(
+              rateLimitAdmission.delayMs,
+              `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+            );
+            const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
+            const { changes } = driver.query(
+              `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+              [retryAfter, lastError, job.id],
+            );
+            if (changes) {
+              recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total");
+              incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
+              console.warn(
+                JSON.stringify({
+                  level: "warn",
+                  event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
+                  ...rateLimitMetric.logFields,
+                  retry_after_ms: Math.max(0, retryAfter - now),
+                }),
+              );
+            }
+          },
+          { parentTraceParent: jobTraceParent },
         );
-        const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
-        const { changes } = driver.query(
-          `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
-          [retryAfter, lastError, job.id],
-        );
-        if (changes) {
-          recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total");
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: `selfhost_queue_${rateLimitAdmission.kind}_admission_deferred`,
-              jobType: message.type,
-              retry_after_ms: Math.max(0, retryAfter - now),
-            }),
-          );
-        }
         return true;
       }
       try {
-        await withOtelSpan(
+        await withReviewSpan(
           "selfhost.queue.job",
           { "job.type": message.type, "queue.backend": "sqlite", "job.attempt": job.attempts + 1 },
           () => consume(message),
@@ -329,13 +387,15 @@ export function createSqliteQueue(
           const retryAfter = now + rateLimitRetryDelayWithJitter(rateLimitDelayMs, `${job.job_key ?? ""}:${job.id}:${job.payload}`);
           const target = githubRateLimitAdmissionTargetForJob(message);
           const deferred = target ? deferPendingJobsForRateLimit(driver, rateLimitDelayMs, now, target) : 0;
+          const rateLimitMetric = githubRateLimitMetricContext(message, target);
           if (target !== null && deferred > 0) {
             recordQueueMetric(driver, "gittensory_jobs_rate_limit_deferred_total", deferred);
+            incr("gittensory_jobs_rate_limit_budget_deferred_total", rateLimitMetric.labels, deferred);
             console.warn(
               JSON.stringify({
                 level: "warn",
                 event: "selfhost_queue_rate_limit_budget_deferred",
-                admission_key: target.admissionKey,
+                ...rateLimitMetric.logFields,
                 deferred,
               }),
             );
@@ -349,6 +409,7 @@ export function createSqliteQueue(
             );
           }
           recordQueueMetric(driver, "gittensory_jobs_rate_limited_total");
+          incr("gittensory_jobs_rate_limited_by_type_total", rateLimitMetric.labels);
           logAudit({
             event: "job_rate_limited",
             ts: Date.now(),
@@ -453,7 +514,15 @@ export function createSqliteQueue(
     ): Promise<void> {
       for (const m of messages) enqueue(m.body, m.delaySeconds ?? 0);
     },
-  } as unknown as Queue;
+    snapshot() {
+      return buildSelfHostQueueSnapshot(
+        driver.query(
+          `SELECT payload, status, run_after FROM ${TABLE} WHERE status IN ('pending','processing','dead')`,
+          [],
+        ).rows as Array<{ payload: string; status: string; run_after: number }>,
+      );
+    },
+  } as unknown as Queue & { snapshot(): SelfHostQueueSnapshot };
 
   return {
     binding,
@@ -501,6 +570,7 @@ export function createSqliteQueue(
     stats() {
       return readQueueStats(driver);
     },
+    snapshot: binding.snapshot,
   };
 }
 

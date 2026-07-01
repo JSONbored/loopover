@@ -30,7 +30,7 @@ export default defineConfig({
       exclude: ["src/env.d.ts", "apps/**"],
       // Emit lcov for Codecov to compute patch (changed-lines) coverage.
       reporter: ["text", "lcov"],
-      // The 97% requirement now lives in codecov.yml as a *patch* gate (changed
+      // The 99% requirement now lives in codecov.yml as a *patch* gate (changed
       // lines only), which is compositional: merging one PR can't drop another
       // below the bar. These global thresholds are only a loose catastrophe net
       // (e.g. a deleted test file), set well below actual coverage so routine

@@ -70,6 +70,39 @@ test("buildBrief uses the descriptor-derived default registry", async () => {
   assert.equal(brief.analyzerStatus.dependency, "skipped");
 });
 
+test("secret analyzer scans added lines beyond shared context cap", async () => {
+  const syntheticGithubToken = ["ghp", "abcdefghijklmnopqrstuvwxyz1234567890"].join("_");
+  const paddedPatch = [
+    "@@ -1,0 +1,5001 @@",
+    ...Array.from({ length: 5000 }, (_, index) => `+const harmless${index} = ${index};`),
+    `+const token = "${syntheticGithubToken}";`,
+  ].join("\n");
+
+  const brief = await buildBrief({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 1809,
+    analyzers: ["secret"],
+    files: [
+      {
+        path: "src/padded-secret.ts",
+        patch: paddedPatch,
+      },
+    ],
+  });
+
+  assert.equal(brief.partial, false);
+  assert.equal(brief.analyzerStatus.secret, "ok");
+  assert.deepEqual(brief.findings.secret, [
+    {
+      file: "src/padded-secret.ts",
+      line: 5001,
+      kind: "github_token",
+      confidence: "high",
+    },
+  ]);
+  assert.match(brief.promptSection, /src\/padded-secret\.ts:5001/);
+});
+
 test("migrated analyzers own their prompt rendering through descriptors", () => {
   assert.equal(typeof getAnalyzerDescriptor("dependency")?.render, "function");
   assert.equal(typeof getAnalyzerDescriptor("secret")?.render, "function");

@@ -11,6 +11,7 @@ import {
   upsertUpstreamDriftReport,
 } from "../db/repositories";
 import { timeoutFetch } from "../github/client";
+import { resolveUpstreamCommitSha } from "./commit";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { normalizeRegistryPayload } from "../registry/normalize";
 import { DEFAULT_GITTENSOR_UPSTREAM_REF, DEFAULT_GITTENSOR_UPSTREAM_REPO, detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
@@ -104,7 +105,7 @@ export type UpstreamStatus = {
 export async function refreshUpstreamSourceSnapshots(env: Env): Promise<UpstreamSourceSnapshotRecord[]> {
   const config = upstreamConfig(env);
   const fetchedAt = nowIso();
-  const [previousByKey, commitSha] = await Promise.all([latestSourcesByKey(env), fetchUpstreamCommitSha(env, config)]);
+  const [previousByKey, commitSha] = await Promise.all([latestSourcesByKey(env), resolveUpstreamCommitSha(env, config)]);
   const snapshots = await Promise.all(
     TRACKED_SOURCES.map((source) => fetchTrackedSource(env, config, source, fetchedAt, commitSha, previousByKey.get(source.key))),
   );
@@ -410,18 +411,6 @@ function upstreamConfig(env: Env): { repo: string; ref: string } {
 
 async function latestSourcesByKey(env: Env): Promise<Map<string, UpstreamSourceSnapshotRecord>> {
   return new Map((await listLatestUpstreamSourceSnapshotsByKey(env)).map((source) => [source.sourceKey, source]));
-}
-
-async function fetchUpstreamCommitSha(env: Env, config: { repo: string; ref: string }): Promise<string | null> {
-  const url = `https://api.github.com/repos/${config.repo}/commits/${encodeURIComponent(config.ref)}`;
-  try {
-    const response = await timeoutFetch(url, { headers: githubHeaders(env.GITHUB_PUBLIC_TOKEN, "application/vnd.github+json") });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { sha?: string };
-    return payload.sha ?? null;
-  } catch {
-    return null;
-  }
 }
 
 async function fetchTrackedSource(

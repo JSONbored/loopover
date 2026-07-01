@@ -11,9 +11,21 @@ vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
   removePullRequestLabel: vi.fn(async () => undefined),
 }));
+vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
+  return {
+    ...actual,
+    fetchPullRequestFreshness: vi.fn(async (_env: Env, args: { expectedHeadSha?: string | null }) => ({
+      status: "current" as const,
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+    })),
+  };
+});
 
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
+import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { actionParams, executeAgentMaintenanceActions, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
@@ -48,6 +60,11 @@ async function auditFor(env: Env, actionClass: string): Promise<{ outcome: strin
 describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
+      status: "current",
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+    }));
   });
 
   it("actionParams threads expectedHeadSha for an update_branch action (and omits absent fields)", () => {
@@ -67,6 +84,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "closing");
     expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
     expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
+    expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(6);
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
   });
 
@@ -77,6 +95,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const pinnedMerge: PlannedAgentAction = { actionClass: "merge", requiresApproval: false, reason: "clean", mergeMethod: "squash", expectedHeadSha: "reviewed-sha" };
     await executeAgentMaintenanceActions(env, ctx({ headSha: "live-sha" }), [pinnedMerge]);
     expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "reviewed-sha" });
+    expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ expectedHeadSha: "reviewed-sha" }));
   });
 
   it("LIVE label with labelOp=add + comment: adds the label AND posts the comment", async () => {
@@ -187,16 +206,93 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ mode: "dry_run" });
   });
 
-  it("LIVE with minimal action payloads: applies defensive defaults and omits the sha guard when headSha is absent", async () => {
+  it("LIVE with minimal action payloads: denies PR mutations when no reviewed head can be pinned", async () => {
     const env = createTestEnv({});
     const bare = (actionClass: PlannedAgentAction["actionClass"]): PlannedAgentAction => ({ actionClass, requiresApproval: false, reason: "x" });
-    await executeAgentMaintenanceActions(env, ctx({ headSha: undefined }), [bare("label"), bare("request_changes"), bare("approve"), bare("merge"), bare("close")]);
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "", { createMissingLabel: true });
-    expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "REQUEST_CHANGES", "");
-    expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "APPROVE", "");
-    expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash" }); // no sha guard
-    expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
-    expect(createIssueComment).not.toHaveBeenCalled(); // no closeComment → no comment posted
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ headSha: undefined }), [bare("label"), bare("request_changes"), bare("approve"), bare("merge"), bare("close"), bare("update_branch")]);
+    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["denied", "denied", "denied", "denied", "denied", "denied"]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(closePullRequest).not.toHaveBeenCalled();
+    expect(updatePullRequestBranch).not.toHaveBeenCalled();
+    expect(createIssueComment).not.toHaveBeenCalled();
+    expect(fetchPullRequestFreshness).not.toHaveBeenCalled();
+    expect(outcomes[0]?.detail).toContain("head guard unavailable");
+  });
+
+  it("LIVE: denies mutations when the PR was force-pushed after the action was planned", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValue({
+      status: "stale",
+      reason: "head_changed",
+      expectedHeadSha: "sha7",
+      liveHeadSha: "newsha",
+      liveState: "open",
+    });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, approve, merge, close, updateBranch]);
+
+    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["denied", "denied", "denied", "denied", "denied"]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(closePullRequest).not.toHaveBeenCalled();
+    expect(updatePullRequestBranch).not.toHaveBeenCalled();
+    expect(outcomes[0]?.detail).toContain("PR head changed from sha7 to newsha");
+    expect(outcomes.find((outcome) => outcome.actionClass === "update_branch")?.detail).toContain("PR head changed from sha7 to newsha");
+    const audit = await auditFor(env, "merge");
+    expect(audit?.outcome).toBe("denied");
+  });
+
+  it("LIVE: rechecks freshness after update_branch before later PR-visible actions", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness)
+      .mockResolvedValueOnce({
+        status: "current",
+        liveHeadSha: "sha7",
+        liveState: "open",
+      })
+      .mockResolvedValueOnce({
+        status: "stale",
+        reason: "head_changed",
+        expectedHeadSha: "sha7",
+        liveHeadSha: "sha8",
+        liveState: "open",
+      });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [updateBranch, approve]);
+
+    expect(outcomes.map((outcome) => outcome.outcome)).toEqual(["completed", "denied"]);
+    expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
+    expect(createPullRequestReview).not.toHaveBeenCalled();
+    expect(fetchPullRequestFreshness).toHaveBeenCalledTimes(2);
+    expect(fetchPullRequestFreshness).toHaveBeenNthCalledWith(1, env, expect.objectContaining({ expectedHeadSha: "sha7" }));
+    expect(fetchPullRequestFreshness).toHaveBeenNthCalledWith(2, env, expect.objectContaining({ expectedHeadSha: "sha7" }));
+    expect(outcomes[1]?.detail).toContain("PR head changed from sha7 to sha8");
+  });
+
+  it("LIVE: denies mutations when the PR is already closed", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValue({
+      status: "stale",
+      reason: "closed",
+      expectedHeadSha: "sha7",
+      liveHeadSha: "sha7",
+      liveState: "closed",
+    });
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        actionClass: "close",
+        outcome: "denied",
+        detail: expect.stringContaining("no longer open"),
+      }),
+    ]);
+    expect(createIssueComment).not.toHaveBeenCalled();
+    expect(closePullRequest).not.toHaveBeenCalled();
   });
 
   it("records a failed mutation as error rather than swallowing it", async () => {

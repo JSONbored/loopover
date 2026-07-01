@@ -2,25 +2,76 @@
 // env-gated, dynamically-imported selfhost-integration pattern (Redis/Qdrant/embed-provider in server.ts).
 // @sentry/node is NEVER imported at module top level — it loads lazily inside initSentry(), so it never enters
 // the Worker bundle (src/index.ts) and cloudflare:* stubbing stays clean. All helpers are safe to call when off.
-import { currentOtelTraceIds } from "./otel";
+import {
+  PUBLIC_LOCAL_PATH_SCRUB_PATTERN,
+  PUBLIC_UNSAFE_TERMS,
+} from "../signals/redaction";
+import { hostname } from "node:os";
+import {
+  currentOtelTraceIds,
+  openTelemetryTraceExportEnabled,
+  type OpenTelemetryBridge,
+} from "./otel";
+import { hashedInstallationIdWith } from "./review-tracing";
 
 type SentryNs = typeof import("@sentry/node");
+type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
 type SentryMonitorConfig = NonNullable<Parameters<SentryNs["captureCheckIn"]>[1]>;
 export type SentryMonitorName = "scheduled-loop" | "orb-export" | "orb-relay-drain";
 type SentryScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setTag(key: string, value: string): void;
 };
+type DigestHex = (input: string) => string;
 let Sentry: SentryNs | undefined;
+let sentryClient: SentryClient | undefined;
+let sentryTraceSampleRate: number | undefined;
 let active = false;
 let sentryEnvironment = "production";
+let digestHexSync: DigestHex | undefined;
 
 const SECRET_KEY =
   /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
+const PAYLOAD_KEY =
+  /(^|[_-])(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content)([_-]|$)|^(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content)$/i;
+const SECRET_VALUE = new RegExp(
+  [
+    `${"github" + "_pat_"}[A-Za-z0-9_]+`,
+    String.raw`gh[opsru]_[A-Za-z0-9_]{20,}`,
+    String.raw`sk-[A-Za-z0-9_-]{20,}`,
+    String.raw`xox[baprs]-[A-Za-z0-9-]+`,
+    String.raw`Bearer\s+[A-Za-z0-9._~+/=-]{12,}`,
+    String.raw`-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----`,
+  ].join("|"),
+  "gi",
+);
+const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+const QUERY_SECRET_VALUE =
+  /([?&;][^=\s&#;]*(?:token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)[^=\s&#;]*=)[^&#\s;]+/gi;
+const PRIVATE_TEXT =
+  /\b(raw[-_\s]?score|scoring context|private rubric|gate prompt|review prompt|guardrail paths?|pull request body|pr body|pr title|raw diff)\b/gi;
+const PUBLIC_UNSAFE_SCRUB = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
+const ALLOWED_CONTEXTS = new Set([
+  "gittensory",
+  "review",
+  "log",
+  "sentry_monitor",
+  "otel",
+  "trace",
+  "runtime",
+  "os",
+]);
+const REDACTED = "[redacted]";
 
 function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+async function loadNodeHasher(): Promise<void> {
+  const { createHash } = await import("node:crypto");
+  digestHexSync = (input: string): string =>
+    createHash("sha256").update(input).digest("hex");
 }
 
 const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryMonitorConfig }> = {
@@ -104,47 +155,242 @@ export function resolveSentryRelease(
   return nonBlank(env.SENTRY_RELEASE) ?? nonBlank(env.GITTENSORY_VERSION);
 }
 
+export function resolveSentryTracesSampleRate(
+  env: NodeJS.ProcessEnv,
+): number | undefined {
+  const raw = nonBlank(env.SENTRY_TRACES_SAMPLE_RATE);
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.min(parsed, 1);
+}
+
 /** beforeSend scrubber — redact anything token/secret-like before an event leaves the box (privacy boundary). */
-export function scrubEvent<T>(event: T): T {
-  const redact = (obj: unknown, depth: number): void => {
-    if (!obj || typeof obj !== "object" || depth > 6) return;
-    for (const key of Object.keys(obj as Record<string, unknown>)) {
-      const rec = obj as Record<string, unknown>;
-      if (SECRET_KEY.test(key)) rec[key] = "[redacted]";
-      else if (typeof rec[key] === "object") redact(rec[key], depth + 1);
-    }
-  };
+export function scrubEvent<T>(event: T): T | null {
   try {
     const e = event as {
-      request?: { headers?: unknown };
-      contexts?: unknown;
-      extra?: unknown;
+      request?: Record<string, unknown>;
+      contexts?: Record<string, unknown>;
+      extra?: Record<string, unknown>;
+      tags?: Record<string, unknown>;
+      breadcrumbs?: Array<Record<string, unknown>>;
+      exception?: unknown;
+      logentry?: unknown;
+      message?: unknown;
+      spans?: unknown;
+      transaction?: unknown;
+      user?: unknown;
     };
-    redact(e.request?.headers, 0);
-    redact(e.contexts, 0);
-    redact(e.extra, 0);
+    scrubRequest(e.request);
+    scrubAllowedContexts(e.contexts);
+    scrubRecord(e.extra, 0);
+    scrubRecord(e.tags, 0);
+    scrubRecord(e.exception, 0);
+    scrubRecord(e.logentry, 0);
+    scrubRecord(e.spans, 0);
+    delete e.user;
+    if (typeof e.message === "string") e.message = scrubString(e.message);
+    if (typeof e.transaction === "string") e.transaction = scrubString(e.transaction);
+    if (Array.isArray(e.breadcrumbs)) {
+      for (const breadcrumb of e.breadcrumbs) scrubRecord(breadcrumb, 0);
+    }
   } catch {
-    /* scrubbing must never break the send */
+    return null;
   }
   return event;
+}
+
+function shouldRedactKey(key: string): boolean {
+  const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return (
+    SECRET_KEY.test(key) ||
+    PAYLOAD_KEY.test(key) ||
+    /(body|payload|patch|diff|prompt|rubric|guardrail|header|cookie|title|config|reviewtext|reviewcontent|prcontent|pullrequest)/.test(compact)
+  );
+}
+
+function isInstallationIdKey(key: string): boolean {
+  return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase() === "installationid";
+}
+
+function installationIdHash(value: unknown): string | undefined {
+  if (!digestHexSync) return undefined;
+  return hashedInstallationIdWith(value, digestHexSync);
+}
+
+function hashedInstallationContext(
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  const hasInstallationId =
+    "installation_id" in context || "installationId" in context;
+  const hash = installationIdHash(context.installation_id ?? context.installationId);
+  if (!hash && !hasInstallationId) return context;
+  const safe: Record<string, unknown> = { ...context };
+  if (hash) safe.installation_id_hash = hash;
+  delete safe.installation_id;
+  delete safe.installationId;
+  return safe;
+}
+
+function tagHashedInstallation(scope: SentryScope, context: Record<string, unknown>): void {
+  const hash = installationIdHash(context.installation_id ?? context.installationId);
+  if (hash) scope.setTag("installation_id_hash", hash);
+}
+
+function scrubString(value: string): string {
+  return value
+    .replace(QUERY_SECRET_VALUE, `$1${REDACTED}`)
+    .replace(SECRET_VALUE, REDACTED)
+    .replace(JWT_VALUE, REDACTED)
+    .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
+    .replace(PUBLIC_UNSAFE_SCRUB, "private context")
+    .replace(PRIVATE_TEXT, "private context");
+}
+
+function scrubRecord(obj: unknown, depth: number): void {
+  if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const value = obj[i];
+      if (typeof value === "string") obj[i] = scrubString(value);
+      else if (value && typeof value === "object") {
+        if (depth >= 6) obj[i] = REDACTED;
+        else scrubRecord(value, depth + 1);
+      }
+    }
+    return;
+  }
+  const rec = obj as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (isInstallationIdKey(key)) {
+      const hash = installationIdHash(rec[key]);
+      if (hash) rec.installation_id_hash = hash;
+      delete rec[key];
+      continue;
+    }
+    if (shouldRedactKey(key)) {
+      rec[key] = REDACTED;
+      continue;
+    }
+    const value = rec[key];
+    if (typeof value === "string") rec[key] = scrubStringField(key, value);
+    else if (value && typeof value === "object") {
+      if (depth >= 6) rec[key] = REDACTED;
+      else scrubRecord(value, depth + 1);
+    }
+  }
+}
+
+function scrubStringField(key: string, value: string): string {
+  if (isUrlKey(key)) return scrubUrl(value);
+  if (isQueryKey(key)) return scrubQueryString(value);
+  return scrubString(value);
+}
+
+function isUrlKey(key: string): boolean {
+  return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase().endsWith("url");
+}
+
+function isQueryKey(key: string): boolean {
+  const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return compact === "query" || compact === "querystring";
+}
+
+function scrubUrl(value: string): string {
+  const scrubbed = scrubString(value);
+  const queryStart = scrubbed.indexOf("?");
+  if (queryStart === -1) return scrubbed;
+  try {
+    const parsed = new URL(scrubbed);
+    parsed.search = scrubQueryString(parsed.search);
+    return parsed.toString();
+  } catch {
+    return `${scrubbed.slice(0, queryStart + 1)}${scrubQueryString(
+      scrubbed.slice(queryStart + 1),
+    )}`;
+  }
+}
+
+function scrubQueryString(value: string): string {
+  const hasQuestionMark = value.startsWith("?");
+  const source = hasQuestionMark ? value.slice(1) : value;
+  const params = new URLSearchParams(source);
+  for (const key of Array.from(new Set(params.keys()))) {
+    const values = params.getAll(key);
+    params.delete(key);
+    for (const entry of values) {
+      params.append(key, shouldRedactKey(key) ? REDACTED : scrubString(entry));
+    }
+  }
+  const scrubbed = params.toString();
+  return hasQuestionMark ? `?${scrubbed}` : scrubbed;
+}
+
+function scrubRequest(request: Record<string, unknown> | undefined): void {
+  if (!request) return;
+  scrubRecord(request.headers, 0);
+  for (const key of ["url", "query_string", "queryString", "query"] as const) {
+    const value = request[key];
+    if (typeof value === "string") request[key] = scrubStringField(key, value);
+    else if (value && typeof value === "object") scrubRecord(value, 0);
+  }
+  for (const key of ["body", "data", "payload", "cookies"] as const) {
+    if (key in request) delete request[key];
+  }
+}
+
+function scrubAllowedContexts(contexts: Record<string, unknown> | undefined): void {
+  if (!contexts) return;
+  for (const key of Object.keys(contexts)) {
+    if (!ALLOWED_CONTEXTS.has(key)) {
+      delete contexts[key];
+      continue;
+    }
+    scrubRecord(contexts[key], 0);
+  }
 }
 
 /** Initialize Sentry from the environment. Returns false (and stays a no-op) when SENTRY_DSN is unset. */
 export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
   if (!env.SENTRY_DSN) return false;
+  await loadNodeHasher();
   Sentry = await import("@sentry/node");
   const release = resolveSentryRelease(env);
+  sentryTraceSampleRate = resolveSentryTracesSampleRate(env);
+  const useCustomOpenTelemetry =
+    sentryTraceSampleRate !== undefined || openTelemetryTraceExportEnabled(env);
   sentryEnvironment = nonBlank(env.SENTRY_ENVIRONMENT) ?? "production";
-  Sentry.init({
+  sentryClient = Sentry.init({
     dsn: env.SENTRY_DSN,
     environment: sentryEnvironment,
     ...(release ? { release } : {}),
-    tracesSampleRate: Number(env.SENTRY_TRACES_SAMPLE_RATE ?? "0"),
-    serverName: env.PUBLIC_API_ORIGIN,
+    ...(sentryTraceSampleRate !== undefined
+      ? { tracesSampleRate: sentryTraceSampleRate }
+      : {}),
+    ...(useCustomOpenTelemetry ? { skipOpenTelemetrySetup: true } : {}),
+    // Identify this instance by a CLEAN, configurable name, not the public-origin URL. An operator sets
+    // SENTRY_SERVER_NAME (e.g. "gittensory-us-east"); unset falls back to the OS hostname.
+    serverName: nonBlank(env.SENTRY_SERVER_NAME) ?? hostname(),
     beforeSend: (e) => scrubEvent(e),
+    beforeSendTransaction: (e) => scrubEvent(e),
   });
   active = true;
   return true;
+}
+
+export async function buildSentryOpenTelemetryBridge(): Promise<OpenTelemetryBridge | undefined> {
+  if (!active || !Sentry || !sentryClient) return undefined;
+  const SentryOtel = await import("@sentry/opentelemetry");
+  const exportSentrySpans = sentryTraceSampleRate !== undefined;
+  return {
+    ...(exportSentrySpans ? { sampler: new SentryOtel.SentrySampler(sentryClient) } : {}),
+    propagator: new SentryOtel.SentryPropagator(),
+    contextManager: new Sentry.SentryContextManager(),
+    ...(exportSentrySpans ? { spanProcessor: new SentryOtel.SentrySpanProcessor() } : {}),
+    validate: () => {
+      Sentry?.validateOpenTelemetrySetup?.();
+    },
+  };
 }
 
 /** Capture an error with optional structured context. No-op when Sentry is off. */
@@ -155,7 +401,8 @@ export function captureError(
   if (!active || !Sentry) return;
   Sentry.withScope((scope) => {
     setOtelTraceScope(scope);
-    if (context) scope.setContext("gittensory", context);
+    if (context) scope.setContext("gittensory", hashedInstallationContext(context));
+    if (context) tagHashedInstallation(scope, context);
     Sentry!.captureException(
       error instanceof Error ? error : new Error(String(error)),
     );
@@ -173,9 +420,11 @@ export function captureReviewFailure(
     scope.setLevel("error");
     setOtelTraceScope(scope);
     if (context) {
-      scope.setContext("review", context);
-      for (const tag of ["owner", "repo", "pr", "head_sha"]) {
-        const value = context[tag];
+      const safeContext = hashedInstallationContext(context);
+      scope.setContext("review", safeContext);
+      tagHashedInstallation(scope, context);
+      for (const tag of ["owner", "repo", "pr", "head_sha", "operation", "agent", "decision_outcome"]) {
+        const value = safeContext[tag];
         if (value !== undefined && value !== null)
           scope.setTag(tag, String(value));
       }
@@ -188,7 +437,7 @@ export function captureReviewFailure(
 
 // The structured-log fields worth indexing as Sentry tags — the dimensions operators filter + group by. Only
 // string|number values are tagged; everything else stays in the full "log" context.
-const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installationId", "installation_id", "pull", "pullNumber", "pr", "project", "kind", "deliveryId", "provider", "model", "effort", "timeoutMs", "trace_id", "span_id"] as const;
+const SENTRY_LOG_TAG_KEYS = ["repo", "repository", "installation_id_hash", "pull", "pullNumber", "pr", "project", "kind", "deliveryId", "provider", "model", "effort", "timeoutMs", "trace_id", "span_id", "operation", "agent", "decision_outcome"] as const;
 
 /** A SHORT location suffix — " (repo#pr)" — for a no-message error title, so the issue list shows WHERE without
  *  dumping every scalar field (which made titles unreadably long, e.g. trailing a full deliveryId). The complete
@@ -223,8 +472,13 @@ const SUMMARY_SKIP_KEYS = new Set([
   "error",
   "repo",
   "repository",
+  "installationId",
+  "installation_id",
+  "installation_id_hash",
   "pullNumber",
   "deliveryId",
+  "trace_id",
+  "span_id",
 ]);
 function redactSummaryValue(value: unknown, depth = 0): unknown {
   if (!value || typeof value !== "object") return value;
@@ -269,6 +523,7 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   } catch {
     return; // not JSON — an ordinary log line
   }
+  const safeObj = hashedInstallationContext(obj);
   // A console.error sink is error-level by DEFAULT even when the JSON omits an explicit level (many engine error
   // logs do) — that's how those errors reach Sentry instead of printing to stderr and vanishing. An EXPLICIT level
   // always wins, so a deliberate level:"warn" emitted via console.error is still skipped.
@@ -290,24 +545,34 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   // like close_breaker_engaged shows "project=x, closePrecision=0.6, floor=0.8") → else a context pointer.
   const value =
     detail ??
-    ([logLocation(obj).trim(), summarizeLogFields(obj)]
+    ([logLocation(safeObj).trim(), summarizeLogFields(safeObj)]
       .filter(Boolean)
       .join(" ") || "(no message — see the log context)");
   const errorEvent = new Error(value);
   errorEvent.name = event ?? "GittensoryLog";
+  // This exception is synthetic: it was minted from a console line, never thrown at the failing code. Strip the
+  // wrapper stack so Sentry does not attribute forwarded operational issues to this forwarding helper.
+  errorEvent.stack = `${errorEvent.name}: ${value}`;
   Sentry.withScope((scope) => {
     scope.setLevel(severity);
     setOtelTraceScope(scope);
-    scope.setContext("log", obj);
+    scope.setContext("log", safeObj);
     if (event) scope.setTag("event", event);
     // Index the dimensions operators filter + group by, so issues are findable without digging into the context.
     for (const key of SENTRY_LOG_TAG_KEYS) {
-      const tagValue = obj[key];
+      const tagValue = safeObj[key];
       if (typeof tagValue === "string" || typeof tagValue === "number")
         scope.setTag(key, String(tagValue));
     }
     // Group recurrences of ONE failure into a single issue (by event, not the variable detail in the value).
     if (event) scope.setFingerprint(["gittensory-log", event]);
+    // Sentry uses event.transaction as the issue culprit fallback when the stack has no frames; point it at the
+    // operational event slug rather than the forwarding helper.
+    if (event)
+      scope.addEventProcessor((sentryEvent) => {
+        sentryEvent.transaction = event;
+        return sentryEvent;
+      });
     Sentry!.captureException(errorEvent);
   });
 }
@@ -362,8 +627,11 @@ export async function flushSentry(timeoutMs = 2000): Promise<void> {
 /** Test-only: reset module state between cases. */
 export function resetSentryForTest(): void {
   Sentry = undefined;
+  sentryClient = undefined;
+  sentryTraceSampleRate = undefined;
   active = false;
   sentryEnvironment = "production";
+  digestHexSync = undefined;
 }
 
 interface StructuredLogConsole {

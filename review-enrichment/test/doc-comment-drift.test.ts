@@ -126,6 +126,13 @@ test("parseFunctionParams: comparison operators are not mistaken for generics (c
   assert.equal(parseFunctionParams("a = x<y, removed>0, b"), null);
 });
 
+test("parseFunctionParams: repeated unmatched generic probes stay linear", () => {
+  const params = Array.from({ length: 12_000 }, (_, i) => `p${i} = x<`).join(", ");
+  const start = performance.now();
+  assert.deepEqual(parseFunctionParams(params), Array.from({ length: 12_000 }, (_, i) => `p${i}`));
+  assert.ok(performance.now() - start < 500);
+});
+
 test("parseFunctionParams: fails closed (null) on destructuring or unbalanced brackets", () => {
   assert.equal(parseFunctionParams("{ a, b }"), null);
   assert.equal(parseFunctionParams("[a, b]"), null);

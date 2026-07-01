@@ -74,7 +74,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
-  fetchLiveCiAggregate,
+  fetchLiveCiAggregatePreferGraphQl,
   type LiveCiAggregate,
   fetchLivePullRequest,
   fetchLivePullRequestHeadSha,
@@ -503,11 +503,13 @@ function fetchLiveCiAggregateWithRequiredContexts(
   baseRef: string | null | undefined,
   token: string | undefined,
 ): Promise<LiveCiAggregate> {
-  // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay request-cached.
+  // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay
+  // request-cached. When the #1941 flag is on, fetchLiveCiAggregatePreferGraphQl collapses the check/status reads
+  // into one GraphQL rollup (reusing these requiredContexts), else it uses the proven REST aggregate.
   return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token)
     .catch(() => null)
     .then((requiredContexts) =>
-      fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts),
+      fetchLiveCiAggregatePreferGraphQl(env, repoFullName, headSha, token, requiredContexts),
     );
 }
 

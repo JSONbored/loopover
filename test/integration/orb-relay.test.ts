@@ -335,6 +335,41 @@ describe("retryFailedRelays", () => {
     expect(row?.attempts).toBe(1);
   });
 
+  it("SKIPS a row still inside its per-failure backoff window (#1950)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9600);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    // A row that last failed 1 minute ago (attempts=1) is inside the 5-minute backoff window.
+    await db(e)
+      .prepare("INSERT INTO orb_relay_failures (delivery_id, event_name, installation_id, raw_body, attempts, last_attempt_at) VALUES (?, ?, ?, ?, ?, datetime('now', '-1 minutes'))")
+      .bind("backoff-recent", "pull_request", 9600, "{}", 1)
+      .run();
+    let calls = 0;
+    const fetchFail = (() => {
+      calls += 1;
+      return Promise.resolve(new Response("bad", { status: 503 }));
+    }) as typeof fetch;
+    await retryFailedRelays(e, { fetchImpl: fetchFail });
+    expect(calls).toBe(0); // backed off → not re-POSTed this tick, so no fleet-wide storm on a down container
+    const row = await db(e).prepare("SELECT attempts FROM orb_relay_failures WHERE delivery_id='backoff-recent'").first<{ attempts: number }>();
+    expect(row?.attempts).toBe(1); // untouched
+  });
+
+  it("RETRIES a row once its per-failure backoff window has elapsed (#1950)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9601);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    // A row that last failed 10 minutes ago (attempts=1) is past the 5-minute backoff → eligible again.
+    await db(e)
+      .prepare("INSERT INTO orb_relay_failures (delivery_id, event_name, installation_id, raw_body, attempts, last_attempt_at) VALUES (?, ?, ?, ?, ?, datetime('now', '-10 minutes'))")
+      .bind("backoff-elapsed", "pull_request", 9601, "{}", 1)
+      .run();
+    const fetchFail = (() => Promise.resolve(new Response("bad", { status: 503 }))) as typeof fetch;
+    await retryFailedRelays(e, { fetchImpl: fetchFail });
+    const row = await db(e).prepare("SELECT attempts FROM orb_relay_failures WHERE delivery_id='backoff-elapsed'").first<{ attempts: number }>();
+    expect(row?.attempts).toBe(2); // eligible → retried, attempts incremented
+  });
+
   it("DELETES a row when forwardOrbEvent skips it (event no longer forwardable)", async () => {
     const e = brokeredEnv();
     // Store a failure for an event that was later removed from RELAY_FORWARD_EVENTS (e.g. check_run).

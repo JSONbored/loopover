@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../../src/auth/github-oauth";
 import { enforceRateLimit, RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
-import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, extractCookieValue, isAuthorizedGitHubSessionLogin, revokeSession, timingSafeEqual } from "../../src/auth/security";
+import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, extractCookieValue, isAuthorizedGitHubSessionLogin, isMcpActuationRepoAllowed, revokeSession, timingSafeEqual } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
 describe("private-beta auth and rate limiting", () => {
@@ -31,6 +31,23 @@ describe("private-beta auth and rate limiting", () => {
     const malformed = await createSessionForGitHubUser(env, { login: "malformed-expiry-user" });
     await env.DB.prepare("update auth_sessions set expires_at = ? where login = ?").bind("not-a-date", "malformed-expiry-user").run();
     await expect(authenticatePrivateToken(env, malformed.token)).resolves.toBeNull();
+  });
+
+  it("scopes MCP static-token actuation to an explicit repo allowlist, denying by default (#2253)", () => {
+    // Unset/empty ⇒ deny (fail closed — the shared GITTENSORY_MCP_TOKEN must not implicitly actuate everywhere).
+    expect(isMcpActuationRepoAllowed(undefined, "owner/repo")).toBe(false);
+    expect(isMcpActuationRepoAllowed("", "owner/repo")).toBe(false);
+    expect(isMcpActuationRepoAllowed("   ", "owner/repo")).toBe(false);
+    // An explicitly listed repo is allowed; a sibling repo NOT listed stays denied.
+    expect(isMcpActuationRepoAllowed("owner/repo", "owner/repo")).toBe(true);
+    expect(isMcpActuationRepoAllowed("owner/repo", "owner/other")).toBe(false);
+    // Case-insensitive, and accepts whitespace OR comma-separated lists (matches parseGitHubLoginList's parse).
+    expect(isMcpActuationRepoAllowed("Owner/Repo", "owner/repo")).toBe(true);
+    expect(isMcpActuationRepoAllowed("owner/one,owner/two", "owner/two")).toBe(true);
+    expect(isMcpActuationRepoAllowed("owner/one owner/two", "owner/two")).toBe(true);
+    // `*`/`all` is an explicit operator opt-in to the old unscoped-trust behavior — never the unset default.
+    expect(isMcpActuationRepoAllowed("*", "owner/anything")).toBe(true);
+    expect(isMcpActuationRepoAllowed("all", "owner/anything")).toBe(true);
   });
 
   it("handles auth helper fallbacks for cookies, login lists, and token comparison", async () => {

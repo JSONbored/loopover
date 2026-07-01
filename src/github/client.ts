@@ -49,6 +49,10 @@ export function setGitHubResponseCache(cache: GitHubResponseCache | null): void 
   responseCache = cache;
 }
 
+export function getGitHubResponseCache(): GitHubResponseCache | null {
+  return responseCache;
+}
+
 export type GitHubCacheClass = "branch_protection" | "metadata" | "commit";
 type EnvLookup = Record<string, string | undefined>;
 export type GitHubTimeoutFetchInit = RequestInit & {

@@ -3620,6 +3620,54 @@ describe("queue processors", () => {
     expect(skip?.detail).toBe("no_plan_generated");
   });
 
+  it("planner: respects agentPaused — never spends Workers AI on a paused repo (#2257)", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled(); // no speculative AI spend on a paused repo
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("agent_paused");
+  });
+
+  it("planner: respects a global freeze — never spends Workers AI while the DB kill-switch is engaged (#2257)", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AGENT_ACTIONS_PAUSED: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("planner: respects agentDryRun — never spends Workers AI on a dry-run repo (#2257)", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled();
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("dry_run");
+  });
+
   it("planner: enforces a per-actor per-repo cooldown before spending AI", async () => {
     const run = vi.fn(async () => ({ response: "## Summary\nPlan." }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
@@ -7342,6 +7390,106 @@ describe("queue processors", () => {
     expect(JSON.stringify(usageEvents)).not.toMatch(/wallet|hotkey|raw trust|deliveryId|installation-token/i);
   });
 
+  it("a @gittensory Q&A mention command respects agentPaused — never posts the answer card live (#2258)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Paused Q&A context",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      author_association: "NONE",
+      labels: [],
+      body: "Fixes #1",
+    });
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+      if (url.includes("/issues/") && url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/") && url.includes("/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 1001 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-help-paused",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Paused Q&A context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: { id: 1, body: "@gittensory help", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+      },
+    });
+
+    expect(calls.commentPosts).toBe(0); // the answer card must never post live on a paused repo
+    // REGRESSION: a paused command must not be audited/usage-tracked as a real, completed reply.
+    const replied = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.agent_command_replied").first<{ id: string }>();
+    expect(replied).toBeUndefined();
+    const skipped = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.agent_command_reply_skipped").first<{ outcome: string; detail: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "agent_paused" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventName: "agent_command_reply_skipped", outcome: "skipped" })]));
+    expect(usageEvents.some((event) => event.eventName === "agent_command_replied")).toBe(false);
+  });
+
+  it("a @gittensory maintainer-digest command respects agentDryRun — records dry_run, not agent_paused (#2258)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 78,
+      title: "Dry-run digest context",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      author_association: "NONE",
+      labels: [],
+      body: "Fixes #1",
+    });
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+      if (url.includes("/issues/") && url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/") && url.includes("/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 1002 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-queue-summary-dry-run",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 78, title: "Dry-run digest context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: { id: 2, body: "@gittensory queue-summary", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+      },
+    });
+
+    expect(calls.commentPosts).toBe(0); // the digest must never post live on a dry-run repo
+    const skipped = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.agent_command_reply_skipped")
+      .first<{ outcome: string; detail: string; metadata_json: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "dry_run" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ eventName: "agent_command_reply_skipped", outcome: "skipped", metadata: expect.objectContaining({ family: "queue_digest" }) })]),
+    );
+  });
+
   it("posts maintainer-only queue digest commands from cached public-safe metadata", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
@@ -8636,6 +8784,208 @@ describe("queue processors", () => {
     expect(settingsAfter?.gate_check_mode).toBe("enabled");
     const overrideAdvisory = await env.DB.prepare("select id from advisories where target_key = ?").bind("JSONbored/gittensory#90").first<{ id: string }>();
     expect(overrideAdvisory ?? null).toBeNull();
+  });
+
+  it("a real gate-override still completes even when the false-positive telemetry write fails (best-effort)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 94,
+      title: "Override me (telemetry write fails)",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "override-sha-telemetry" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const telemetrySpy = vi.spyOn(repositoriesModule, "markGateOutcomeOverridden").mockRejectedValueOnce(new Error("D1 write failed"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/commits/override-sha-telemetry/check-runs") && method === "GET") {
+        return Response.json({ total_count: 1, check_runs: [{ id: 559, name: "Gittensory Orb Review Agent" }] });
+      }
+      if (url.includes("/check-runs/559") && method === "PATCH") return Response.json({ id: 559 });
+      if (url.includes("/issues/94/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/94/comments") && method === "POST") return Response.json({ id: 9104 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-telemetry-fail",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 94, title: "Override me (telemetry write fails)", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 812, body: "@gittensory gate-override known flaky", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(telemetrySpy).toHaveBeenCalled();
+    // The override itself (audit + usage) still completed — the false-positive flag is best-effort and never
+    // affects the primary override outcome.
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.gate_overridden", "JSONbored/gittensory#94")
+      .first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed");
+  });
+
+  it("gate-override respects agentPaused — never flips the live check-run or posts a confirmation comment (#2256)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      agentPaused: true,
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 91,
+      title: "Override me while paused",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "paused-override-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { checkPatches: 0, commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/commits/paused-override-sha/check-runs") && method === "GET") {
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Orb Review Agent" }] });
+      }
+      if (url.includes("/check-runs/556") && method === "PATCH") {
+        calls.checkPatches += 1;
+        return Response.json({ id: 556 });
+      }
+      if (url.includes("/issues/91/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/91/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 9101 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-paused",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Override me while paused", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 810, body: "@gittensory gate-override please", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // Neither write reached GitHub — a pause must stop this exactly like every other agent-driven write.
+    expect(calls.checkPatches).toBe(0);
+    expect(calls.commentPosts).toBe(0);
+    // REGRESSION: a paused command must not be audited/usage-tracked as a real, completed override.
+    const overridden = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ id: string }>();
+    expect(overridden).toBeUndefined();
+    const skipped = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.gate_override_skipped").first<{ outcome: string; detail: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "agent_paused" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventName: "gate_override_skipped", outcome: "skipped" })]));
+    expect(usageEvents.some((event) => event.eventName === "gate_overridden")).toBe(false);
+  });
+
+  it("gate-override respects agentDryRun on a PR with no head sha — records dry_run, not agent_paused (#2256)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      agentDryRun: true,
+    });
+    // No head sha — also exercises the metadata's `?? null` fallback on the skip-path audit/usage records.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 93,
+      title: "Override me (dry-run, no head)",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: {},
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { checkPatches: 0, commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/pulls/93") && method === "GET") return Response.json({ number: 93, state: "open", head: {} });
+      if (url.includes("/issues/93/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/93/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 9103 });
+      }
+      if (url.includes("/check-runs") && method === "PATCH") {
+        calls.checkPatches += 1;
+        return Response.json({ id: 557 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-dry-run-no-head",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 93, title: "Override me (dry-run, no head)", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 811, body: "@gittensory gate-override please", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(calls.checkPatches).toBe(0);
+    expect(calls.commentPosts).toBe(0);
+    const skipped = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.gate_override_skipped")
+      .first<{ outcome: string; detail: string; metadata_json: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "dry_run" });
+    const metadata = JSON.parse(skipped?.metadata_json ?? "{}") as { headSha?: string | null; cachedHeadSha?: string | null; mode?: string };
+    expect(metadata.headSha).toBeNull();
+    expect(metadata.cachedHeadSha).toBeNull();
+    expect(metadata.mode).toBe("dry_run");
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventName: "gate_override_skipped", outcome: "skipped" })]));
   });
 
   it("overrides the LIVE head, not the stale cached SHA, when a commit landed after the command (#16)", async () => {

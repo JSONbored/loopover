@@ -159,13 +159,20 @@ jobs:
       # actual commit, not a synthetic merge), so HEAD has one parent and that recovery can't fire. Pass
       # the same explicit overrides as the trusted upload above so the report attaches to the real PR head,
       # not a merge sha GitHub's PR checks list has no reason to display.
+      #
+      # override_branch is prefixed with the fork owner (owner:branch) -- per Codecov's own docs, only a
+      # branch string containing a colon is recognized as "unprotected" and eligible for a tokenless
+      # upload; a bare branch name looks like it could be a real (possibly protected) branch on the base
+      # repo and gets rejected with "Token required because branch is protected" even with no token
+      # configured at all. codecov-cli's own auto-detection never adds this prefix either (verified in its
+      # source), so this must be supplied explicitly.
       - name: Upload coverage to Codecov (fork PR tokenless)
         if: ${{ success() && needs.changes.outputs.backend == 'true' && github.event.pull_request.head.repo.fork == true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage/lcov.info
           disable_search: true
-          override_branch: ${{ github.event.pull_request.head.ref }}
+          override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
           override_commit: ${{ github.event.pull_request.head.sha }}
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: true
@@ -191,7 +198,7 @@ jobs:
           files: ./reports/junit/vitest.xml
           report_type: test_results
           disable_search: true
-          override_branch: ${{ github.event.pull_request.head.ref }}
+          override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
           override_commit: ${{ github.event.pull_request.head.sha }}
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false

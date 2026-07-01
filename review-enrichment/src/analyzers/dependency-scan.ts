@@ -49,7 +49,13 @@ const NPM_VERSION_PREFIX_RE = /^[\^~>=<\s]+/;
 // stopped at `[` silently dropped every pinned-with-extras dependency from the CVE scan.
 const PYPI_RE =
   /^([A-Za-z0-9._-]+)(?:\[[A-Za-z0-9._,\s-]+\])?\s*==\s*([0-9][^\s;]*)/;
-const GO_RE = /^([a-z0-9.\/-]+)\s+v([0-9][^\s]*)/;
+// Go module paths are case-sensitive and the element grammar admits A-Z plus the full
+// punctuation set Go allows (`. _ ~ -`, per golang.org/x/mod/module modPathOK), not just `.`/`-`.
+// A narrower class silently drops uppercase or `_`/`~` paths (github.com/BurntSushi/toml,
+// github.com/foo_bar/baz, golang.org/x/~exp) from every dependency-fed scanner (CVE, license,
+// provenance, native-build). The class stays strictly more permissive, so lowercase paths are
+// unaffected, and the case-sensitive name is preserved verbatim for the OSV lookup.
+const GO_RE = /^([A-Za-z0-9._~\/-]+)\s+v([0-9][^\s]*)/;
 
 function parseLine(
   manifest: string,

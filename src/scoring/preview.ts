@@ -912,6 +912,15 @@ export function labelMatchesPattern(label: string, pattern: string): boolean {
   return labelPatternToRegExp(pattern.toLowerCase()).test(label.toLowerCase());
 }
 
+// Compiled fnmatch→RegExp matchers are memoized by pattern. The same small,
+// config-derived set of label keys is matched on every scored PR/issue, so the
+// per-call recompile inside the nested label loops in engine.ts is pure waste.
+// Keys are configured label patterns (bounded, not attacker-supplied), so the
+// cache needs no eviction bound. The compiled RegExp carries only the "i" flag
+// (no global/sticky `lastIndex` state), so sharing one instance across calls is
+// safe and byte-identical to recompiling on every call.
+const labelPatternRegExpCache = new Map<string, RegExp>();
+
 // Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
 // literal string: `fnmatch(label.lower(), pattern.lower())` in
 // gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or
@@ -923,6 +932,8 @@ export function labelMatchesPattern(label: string, pattern: string): boolean {
 // run, `?` any single character, and `[seq]`/`[!seq]` a character class. Literal keys are unaffected — for a
 // pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
 function labelPatternToRegExp(pattern: string): RegExp {
+  const cached = labelPatternRegExpCache.get(pattern);
+  if (cached !== undefined) return cached;
   let regex = "";
   let i = 0;
   while (i < pattern.length) {
@@ -960,7 +971,9 @@ function labelPatternToRegExp(pattern: string): RegExp {
       regex += char;
     }
   }
-  return new RegExp(`^${regex}$`, "i");
+  const compiled = new RegExp(`^${regex}$`, "i");
+  labelPatternRegExpCache.set(pattern, compiled);
+  return compiled;
 }
 
 function escapeRegExpLiteral(value: string): string {

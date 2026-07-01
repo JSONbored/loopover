@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLatestScoringModelSnapshot, listUpstreamDriftReports, persistScoringModelSnapshot } from "../../src/db/repositories";
 import { DEFAULT_ISSUE_DISCOVERY_SHARE, DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, getOrCreateScoringModelSnapshot, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot, SCORING_SNAPSHOT_STALE_MS, scoringSnapshotStalenessWarning } from "../../src/scoring/model";
-import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
+import { buildScorePreview, calculateTimeDecay, labelMatchesPattern, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
 import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { JsonValue, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
@@ -1888,5 +1888,29 @@ NOVELTY_BONUS_SCALAR = 3
       expect(saturationBase(1000)).toBe(saturationBase(500));
       expect(saturationBase(1000)).not.toBe(saturationBase(400));
     });
+  });
+});
+
+describe("label pattern matcher memoization (#2106)", () => {
+  it("returns identical fnmatch results on repeated calls for the same pattern (cache hit path)", () => {
+    // First call for `type:*` compiles + caches; subsequent calls must hit the cache
+    // and stay byte-identical. Repeating the pattern exercises the memoized branch.
+    expect(labelMatchesPattern("type:bug-fix", "type:*")).toBe(true);
+    expect(labelMatchesPattern("kind:chore", "type:*")).toBe(false);
+    expect(labelMatchesPattern("type:feature", "type:*")).toBe(true);
+    expect(labelMatchesPattern("type:bug-fix", "type:*")).toBe(true);
+  });
+
+  it("preserves case-insensitive fnmatch glob semantics through the cache", () => {
+    expect(labelMatchesPattern("Priority:1", "priority:?")).toBe(true);
+    expect(labelMatchesPattern("priority:10", "priority:?")).toBe(false);
+    expect(labelMatchesPattern("kind/bug", "kind/[bc]ug")).toBe(true);
+    expect(labelMatchesPattern("kind/dug", "kind/[!bc]ug")).toBe(true);
+    // Descending class is a never-match in Python fnmatch; an unclosed `[` stays literal.
+    expect(labelMatchesPattern("x", "[z-a]")).toBe(false);
+    expect(labelMatchesPattern("[bug", "[bug")).toBe(true);
+    // A literal key (no glob metacharacter) matches only its exact label.
+    expect(labelMatchesPattern("bug", "bug")).toBe(true);
+    expect(labelMatchesPattern("bugfix", "bug")).toBe(false);
   });
 });

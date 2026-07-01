@@ -44,7 +44,7 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAgentMaintenanceLock, claimAiReviewLock, contributorEvidenceBatchSize, processJob, releaseAgentMaintenanceLock, releaseAiReviewLock } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAgentMaintenanceLock, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, processJob, releaseAgentMaintenanceLock, releaseAiReviewLock, releasePrActuationLock } from "../../src/queue/processors";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -3674,6 +3674,74 @@ describe("queue processors", () => {
       claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block"),
     ]);
     expect([first, second]).toEqual([true, true]);
+  });
+
+  // claimPrActuationLock (#2135) mirrors claimAgentMaintenanceLock's atomic-claim design exactly — same test
+  // shapes, same reasoning, a different lock namespace.
+  it("claimPrActuationLock claims when free, denies when held (per-PR), and release frees it again (#2135)", async () => {
+    const env = createTestEnv({});
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(false);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 8)).toBe(true);
+    await releasePrActuationLock(env, "owner/act-repo", 7);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+  });
+
+  it("claimPrActuationLock fails OPEN on a broken transient cache — never itself blocks actuation (#2135)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { throw new Error("cache read error"); },
+        set: async () => { throw new Error("cache write error"); },
+        del: async () => { throw new Error("cache delete error"); },
+      },
+    });
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    await expect(releasePrActuationLock(env, "owner/act-repo", 7)).resolves.toBeUndefined();
+  });
+
+  it("claimPrActuationLock fails OPEN when the atomic claim primitive itself throws (#2135)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => undefined,
+        claim: async () => { throw new Error("redis unavailable"); },
+      },
+    });
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+  });
+
+  it("REGRESSION (#2135): claimPrActuationLock uses an atomic check-and-set, so two genuinely concurrent claims for the SAME PR can never both succeed", async () => {
+    const env = createTestEnv({});
+    const [first, second] = await Promise.all([
+      claimPrActuationLock(env, "owner/act-repo", 7),
+      claimPrActuationLock(env, "owner/act-repo", 7),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("REGRESSION (#2135): claimPrActuationLock calls the atomic claim primitive, not a separate get+set pair, when the cache supports it", async () => {
+    const calls: string[] = [];
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { calls.push("get"); return null; },
+        set: async () => { calls.push("set"); },
+        claim: async () => { calls.push("claim"); return true; },
+      },
+    });
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    expect(calls).toEqual(["claim"]); // never falls through to the racy get/set pair when claim is available
+  });
+
+  it("claimPrActuationLock falls back to the get/set pair and still denies a held key when the cache has no claim() (#2135)", async () => {
+    const values = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key: string) => values.get(key) ?? null,
+        set: async (key: string, value: string) => { values.set(key, value); },
+      },
+    });
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(false);
   });
 
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {
@@ -12276,6 +12344,37 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ n: number }>();
     expect(audit?.n).toBe(0); // no decision recorded either way — the in-flight delivery owns this pass
+  });
+
+  it("REGRESSION: exactly ONE of two genuinely concurrent draft-dodge deliveries for the SAME PR wins the actuation lock (#2135)", async () => {
+    // Unlike the lock-contended test above (which pre-seeds the key before the call even starts), this fires
+    // two deliveries together via Promise.all with NEITHER pre-claiming anything — exercising the actual
+    // check-and-set race claimPrActuationLock must arbitrate, not just "the key was already there". A
+    // get-then-set (non-atomic) implementation lets both deliveries observe an absent key and both proceed,
+    // which this test would catch as more than one PATCH / more than one completed audit row.
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments")) return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42")) return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await Promise.all([
+      processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-race-a", eventName: "pull_request", payload: draftPayload("contributor") }),
+      processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-race-b", eventName: "pull_request", payload: draftPayload("contributor") }),
+    ]);
+
+    const patchCalls = calls.filter((c) => c.includes("PATCH") && c.includes("/pulls/42"));
+    expect(patchCalls).toHaveLength(1); // exactly one delivery won the race and closed the PR
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and outcome = 'completed'").bind("github_app.draft_dodge_closed").first<{ n: number }>();
+    expect(audit?.n).toBe(1); // exactly one completed close recorded — not two (the race), not zero
   });
 
   it("no-ops when no prior gate failure exists for the PR", async () => {

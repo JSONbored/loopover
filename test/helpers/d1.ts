@@ -17,6 +17,9 @@ type SerializableDatabaseSync = DatabaseSync & {
 // Build the migrated schema ONCE per worker process, serialize it, and clone that snapshot for every
 // subsequent instance instead of re-executing ~90 files each time (~1000x faster per call; same resulting
 // schema, since node:sqlite's deserialize() loads the exact byte-for-byte database the snapshot came from).
+// This cache is process-local and never invalidated within a run — correct only because migrations/*.sql
+// are read-only for the lifetime of a worker process; no test mutates a migration file in-process. If that
+// ever changes, this snapshot would need invalidating too.
 let migratedSnapshot: Uint8Array | null = null;
 function getMigratedSnapshot(): Uint8Array {
   if (migratedSnapshot) return migratedSnapshot;

@@ -43,6 +43,10 @@ jobs:
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         with:
           filters: |
+            # MAINTENANCE NOTE: `mcpCliCluster` below intentionally copies every non-src/test category from
+            # this `backend` filter verbatim (see its own comment for why). If you add/remove a category HERE
+            # (e.g. a new config-file glob), mirror the change there too, or the MCP CLI test cluster could
+            # start skipping on a category this filter now considers backend-relevant.
             backend:
               - 'src/**'
               - 'test/**'

@@ -4362,6 +4362,12 @@ describe("queue processors", () => {
       slopAiAdvisory: true,
     });
     let gatePatchBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};
+    const cacheReadSpy = vi
+      .spyOn(repositoriesModule, "getCachedAiReview")
+      .mockRejectedValueOnce(new Error("cache read failed"));
+    const cacheWriteSpy = vi
+      .spyOn(repositoriesModule, "putCachedAiReview")
+      .mockRejectedValueOnce(new Error("cache write failed"));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
@@ -4402,6 +4408,10 @@ describe("queue processors", () => {
     // The AI usage event was recorded for the review (never with key material).
     const usage = await env.DB.prepare("select feature, status from ai_usage_events where feature = ?").bind("ai_review_pr").first<{ feature: string; status: string }>();
     expect(usage).toMatchObject({ feature: "ai_review_pr", status: "ok" });
+    expect(cacheReadSpy).toHaveBeenCalled();
+    expect(cacheWriteSpy).toHaveBeenCalled();
+    cacheReadSpy.mockRestore();
+    cacheWriteSpy.mockRestore();
   });
 
   it("finalizes the Gate to neutral instead of leaving it in_progress when gate completion fails", async () => {

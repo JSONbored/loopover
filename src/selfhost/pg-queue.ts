@@ -343,7 +343,7 @@ export function createPgQueue(
       const rateLimitAdmission = await rateLimitAdmissionDelayMs(message);
       if (rateLimitAdmission !== null) {
         const rateLimitMetric = githubRateLimitMetricContext(message, rateLimitAdmission);
-        await withOtelSpan(
+        await withReviewSpan(
           "selfhost.queue.admission_deferred",
           {
             "job.type": message.type,

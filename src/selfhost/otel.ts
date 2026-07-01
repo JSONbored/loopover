@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Attributes, Context, Tracer } from "@opentelemetry/api";
+import type { Attributes, Context, ContextManager, TextMapPropagator, Tracer } from "@opentelemetry/api";
+import type { ReadableSpan, Sampler, Span, SpanProcessor } from "@opentelemetry/sdk-trace-base";
 
 type OtelApi = typeof import("@opentelemetry/api");
 type OtelSdk = typeof import("@opentelemetry/sdk-trace-node");
@@ -9,6 +10,13 @@ type OtelProvider = {
   shutdown(): Promise<void>;
 };
 type SpanOptions = { parentTraceParent?: string | undefined };
+export type OpenTelemetryBridge = {
+  sampler?: Sampler;
+  spanProcessor?: SpanProcessor;
+  propagator?: TextMapPropagator;
+  contextManager?: ContextManager;
+  validate?: () => void;
+};
 export type OtelTraceIds = { trace_id: string; span_id: string };
 export type OtelTraceLogFields = { trace_id: string; span_id?: string };
 
@@ -42,6 +50,10 @@ export function resolveOtelTraceEndpoint(env: NodeJS.ProcessEnv): string | undef
   return trimmed.endsWith("/v1/traces") ? trimmed : `${trimmed}/v1/traces`;
 }
 
+export function openTelemetryTraceExportEnabled(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(resolveOtelTraceEndpoint(env) && traceExporterEnabled(env));
+}
+
 function serviceAttributes(env: NodeJS.ProcessEnv): Attributes {
   const attrs: Attributes = {
     "service.name": nonBlank(env.OTEL_SERVICE_NAME) ?? "gittensory-selfhost",
@@ -66,6 +78,48 @@ function samplerFromEnv(env: NodeJS.ProcessEnv, sdk: OtelSdk) {
   if (sampler === "parentbased_traceidratio")
     return new sdk.ParentBasedSampler({ root: new sdk.TraceIdRatioBasedSampler(ratioFromEnv(env.OTEL_TRACES_SAMPLER_ARG)) });
   return new sdk.ParentBasedSampler({ root: new sdk.AlwaysOnSampler() });
+}
+
+function processorSamplingContext(
+  parentContext: Context,
+  spanDecisions: WeakMap<object, boolean>,
+): Context {
+  const api = Otel;
+  const parentSpan = api?.trace.getSpan(parentContext);
+  if (!api || !parentSpan) return parentContext;
+  const sampled = spanDecisions.get(parentSpan);
+  if (sampled === undefined) return parentContext;
+  return api.trace.setSpanContext(parentContext, {
+    ...parentSpan.spanContext(),
+    traceFlags: sampled ? api.TraceFlags.SAMPLED : api.TraceFlags.NONE,
+  });
+}
+
+function sampledSpanProcessor(spanProcessor: SpanProcessor, sampler: Sampler, sampledDecision: number): SpanProcessor {
+  const spanDecisions = new WeakMap<object, boolean>();
+  return {
+    forceFlush: () => spanProcessor.forceFlush(),
+    shutdown: () => spanProcessor.shutdown(),
+    onStart(span: Span, parentContext: Context) {
+      const samplingContext = processorSamplingContext(parentContext, spanDecisions);
+      const decision = sampler.shouldSample(
+        samplingContext,
+        span.spanContext().traceId,
+        span.name,
+        span.kind,
+        span.attributes,
+        span.links,
+      ).decision;
+      const sampled = decision === sampledDecision;
+      spanDecisions.set(span, sampled);
+      if (!sampled) return;
+      spanProcessor.onStart(span, parentContext);
+    },
+    onEnd(span: ReadableSpan) {
+      if (!spanDecisions.get(span)) return;
+      spanProcessor.onEnd(span);
+    },
+  };
 }
 
 export function otelSafeAttributes(input: Record<string, unknown> | undefined): Attributes {
@@ -187,25 +241,58 @@ export function selfHostHttpResponseAttributes(status: number): Record<string, u
   };
 }
 
-/** Initialize self-host OTEL traces. No global provider registration: Sentry can coexist when both are enabled. */
-export async function initOpenTelemetry(env: NodeJS.ProcessEnv): Promise<boolean> {
+/** Initialize self-host OTEL traces. Sentry can attach its span processor/context bridge when configured. */
+export async function initOpenTelemetry(
+  env: NodeJS.ProcessEnv,
+  bridge?: OpenTelemetryBridge | undefined,
+): Promise<boolean> {
   const endpoint = resolveOtelTraceEndpoint(env);
-  if (!endpoint || !traceExporterEnabled(env)) return false;
+  const otlpEnabled = Boolean(endpoint && traceExporterEnabled(env));
+  if (!otlpEnabled && !bridge?.spanProcessor) return false;
   if (active) return true;
   const [api, sdk, exporterNs, resources] = await Promise.all([
     import("@opentelemetry/api"),
     import("@opentelemetry/sdk-trace-node"),
-    import("@opentelemetry/exporter-trace-otlp-http"),
+    otlpEnabled ? import("@opentelemetry/exporter-trace-otlp-http") : Promise.resolve(undefined),
     import("@opentelemetry/resources"),
   ]);
-  const exporter = new exporterNs.OTLPTraceExporter({ url: endpoint });
-  provider = new sdk.NodeTracerProvider({
+  const otelSampler = samplerFromEnv(env, sdk);
+  const independentBridgeSampler = Boolean(otlpEnabled && bridge?.spanProcessor && bridge.sampler);
+  const spanProcessors: SpanProcessor[] = [];
+  if (otlpEnabled && endpoint && exporterNs) {
+    const exporter = new exporterNs.OTLPTraceExporter({ url: endpoint });
+    const otlpSpanProcessor = new sdk.BatchSpanProcessor(exporter);
+    spanProcessors.push(
+      independentBridgeSampler
+        ? sampledSpanProcessor(otlpSpanProcessor, otelSampler, sdk.SamplingDecision.RECORD_AND_SAMPLED)
+        : otlpSpanProcessor,
+    );
+  }
+  if (bridge?.spanProcessor) {
+    const bridgeSpanProcessor = independentBridgeSampler && bridge.sampler
+      ? sampledSpanProcessor(bridge.spanProcessor, bridge.sampler, sdk.SamplingDecision.RECORD_AND_SAMPLED)
+      : bridge.spanProcessor;
+    spanProcessors.push(bridgeSpanProcessor);
+  }
+  const sampler = independentBridgeSampler
+    ? new sdk.AlwaysOnSampler()
+    : otlpEnabled
+      ? otelSampler
+      : bridge?.sampler ?? otelSampler;
+  const nextProvider = new sdk.NodeTracerProvider({
     resource: resources.resourceFromAttributes(serviceAttributes(env)),
-    sampler: samplerFromEnv(env, sdk),
-    spanProcessors: [new sdk.BatchSpanProcessor(exporter)],
+    sampler,
+    spanProcessors,
   });
+  if (bridge?.propagator || bridge?.contextManager)
+    nextProvider.register({
+      ...(bridge.propagator ? { propagator: bridge.propagator } : {}),
+      ...(bridge.contextManager ? { contextManager: bridge.contextManager } : {}),
+    });
+  bridge?.validate?.();
+  provider = nextProvider;
   Otel = api;
-  tracer = provider.getTracer("gittensory-selfhost");
+  tracer = nextProvider.getTracer("gittensory-selfhost");
   active = true;
   return true;
 }

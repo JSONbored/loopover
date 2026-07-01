@@ -3,19 +3,40 @@ import { hostname } from "node:os";
 
 // Mock @sentry/node so the dynamic import inside initSentry() resolves to spies. Hoisted so vi.mock can see it.
 const mocks = vi.hoisted(() => {
-  const scope = { setContext: vi.fn(), setLevel: vi.fn(), setTag: vi.fn(), setFingerprint: vi.fn(), addEventProcessor: vi.fn() };
+  const scope = {
+    setContext: vi.fn(),
+    setLevel: vi.fn(),
+    setTag: vi.fn(),
+    setFingerprint: vi.fn(),
+    addEventProcessor: vi.fn(),
+  };
+  const client = { id: "sentry-client" };
   return {
+    client,
     scope,
-    init: vi.fn(),
+    init: vi.fn(() => client),
     withScope: vi.fn((cb: (s: typeof scope) => void) => cb(scope)),
     captureException: vi.fn(),
     captureMessage: vi.fn(),
     captureCheckIn: vi.fn((checkIn: { checkInId?: string }) => checkIn.checkInId ?? "check-in-id"),
     flush: vi.fn().mockResolvedValue(true),
-    // Mirror @sentry/node's startSpan contract: invoke the callback inside the span and return its value.
-    startSpan: vi.fn(<T>(_opts: unknown, cb: () => T): T => cb()),
+    SentryContextManager: vi.fn(function (this: { kind: string }) {
+      this.kind = "context-manager";
+    }),
+    validateOpenTelemetrySetup: vi.fn(),
   };
 });
+const sentryOtelMocks = vi.hoisted(() => ({
+  SentrySampler: vi.fn(function (this: { client: unknown }, client: unknown) {
+    this.client = client;
+  }),
+  SentryPropagator: vi.fn(function (this: { kind: string }) {
+    this.kind = "propagator";
+  }),
+  SentrySpanProcessor: vi.fn(function (this: { kind: string }) {
+    this.kind = "span-processor";
+  }),
+}));
 const otelMocks = vi.hoisted(() => ({
   currentOtelTraceIds: vi.fn(),
 }));
@@ -26,13 +47,22 @@ vi.mock("@sentry/node", () => ({
   captureMessage: mocks.captureMessage,
   captureCheckIn: mocks.captureCheckIn,
   flush: mocks.flush,
-  startSpan: mocks.startSpan,
+  SentryContextManager: mocks.SentryContextManager,
+  validateOpenTelemetrySetup: mocks.validateOpenTelemetrySetup,
+}));
+vi.mock("@sentry/opentelemetry", () => ({
+  SentrySampler: sentryOtelMocks.SentrySampler,
+  SentryPropagator: sentryOtelMocks.SentryPropagator,
+  SentrySpanProcessor: sentryOtelMocks.SentrySpanProcessor,
 }));
 vi.mock("../../src/selfhost/otel", () => ({
   currentOtelTraceIds: otelMocks.currentOtelTraceIds,
+  openTelemetryTraceExportEnabled: (env: NodeJS.ProcessEnv) =>
+    Boolean(env.OTEL_TRACES_EXPORTER?.includes("otlp") && env.OTEL_EXPORTER_OTLP_ENDPOINT),
 }));
 
 import {
+  buildSentryOpenTelemetryBridge,
   initSentry,
   captureError,
   captureReviewFailure,
@@ -40,14 +70,11 @@ import {
   forwardStructuredLogToSentry,
   installStructuredLogForwarding,
   resolveSentryRelease,
+  resolveSentryTracesSampleRate,
   resolveSentryMonitorSlug,
-  resolveTracesSampleRate,
   scrubEvent,
   resetSentryForTest,
-  sentryTracingEnabled,
-  sentrySpanAttributes,
   withSentryMonitor,
-  withSentrySpan,
 } from "../../src/selfhost/sentry";
 
 beforeEach(() => {
@@ -65,6 +92,8 @@ const scrubbedEvent = <T>(event: T): T => {
   expect(scrubbed).not.toBeNull();
   return scrubbed as T;
 };
+const lastInitOptions = (): any =>
+  (mocks.init.mock.calls.at(-1) as unknown[] | undefined)?.[0] as any;
 const fakeClassicAccessToken = (): string => `${"github" + "_pat_"}${"a".repeat(24)}`;
 const fakeQueryTokenKey = (): string => "github" + "_token";
 
@@ -269,6 +298,31 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
 
     expect(scrubEvent(event)).toBeNull();
   });
+
+  it("drops raw installation ids before hashing is available and uses a stable hash after init", async () => {
+    const noHasherEvent = scrubbedEvent({
+      extra: { installationId: 143010787 },
+    }) as any;
+    expect(noHasherEvent.extra.installationId).toBeUndefined();
+    expect(noHasherEvent.extra.installation_id_hash).toBeUndefined();
+
+    const invalidEvent = scrubbedEvent({
+      extra: { installation_id: "not-an-installation" },
+    }) as any;
+    expect(invalidEvent.extra.installation_id).toBeUndefined();
+    expect(invalidEvent.extra.installation_id_hash).toBeUndefined();
+
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const ev = scrubbedEvent({
+      tags: { installationId: 143010787, repo: "owner/repo" },
+      contexts: { log: { installation_id: "143010787" } },
+    }) as any;
+
+    expect(ev.tags.installationId).toBeUndefined();
+    expect(ev.tags.installation_id_hash).toBe("68b9c2136087c5ca");
+    expect(ev.contexts.log.installation_id).toBeUndefined();
+    expect(ev.contexts.log.installation_id_hash).toBe("68b9c2136087c5ca");
+  });
 });
 
 describe("disabled when SENTRY_DSN is unset (modular opt-out → complete no-op)", () => {
@@ -308,6 +362,16 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(resolveSentryRelease({} as unknown as NodeJS.ProcessEnv)).toBeUndefined();
   });
 
+  it("resolves a positive Sentry trace sample rate and treats unset/zero/invalid as disabled", () => {
+    expect(resolveSentryTracesSampleRate({} as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: " " } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "0" } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "-1" } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "nope" } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "0.25" } as unknown as NodeJS.ProcessEnv)).toBe(0.25);
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "9" } as unknown as NodeJS.ProcessEnv)).toBe(1);
+  });
+
   it("returns true and wires init with defaults (?? right-hand branches) + the scrubber as beforeSend", async () => {
     expect(
       await initSentry({
@@ -315,10 +379,11 @@ describe("enabled when SENTRY_DSN is set", () => {
       } as unknown as NodeJS.ProcessEnv),
     ).toBe(true);
     expect(mocks.init).toHaveBeenCalledTimes(1);
-    const opts = mocks.init.mock.calls[0]![0];
+    const opts = lastInitOptions();
     expect(opts.environment).toBe("production");
     expect(opts.release).toBeUndefined();
-    expect(opts.tracesSampleRate).toBe(0);
+    expect(opts.tracesSampleRate).toBeUndefined();
+    expect(opts.skipOpenTelemetrySetup).toBeUndefined();
     expect(
       opts.beforeSend({ extra: { sessionToken: "s" } }).extra.sessionToken,
     ).toBe("[redacted]");
@@ -337,16 +402,51 @@ describe("enabled when SENTRY_DSN is set", () => {
       SENTRY_TRACES_SAMPLE_RATE: "0.5",
       SENTRY_SERVER_NAME: "gittensory-us-east",
     } as unknown as NodeJS.ProcessEnv);
-    const opts = mocks.init.mock.calls[0]![0];
+    const opts = lastInitOptions();
     expect(opts.environment).toBe("staging");
     expect(opts.release).toBe("v9");
     expect(opts.tracesSampleRate).toBe(0.5);
+    expect(opts.skipOpenTelemetrySetup).toBe(true);
     expect(opts.serverName).toBe("gittensory-us-east");
   });
 
   it("defaults serverName to the OS hostname (not the API-origin URL) when SENTRY_SERVER_NAME is unset/blank", async () => {
     await initSentry({ SENTRY_DSN: "d", SENTRY_SERVER_NAME: "  ", PUBLIC_API_ORIGIN: "https://self.host" } as unknown as NodeJS.ProcessEnv);
-    expect(mocks.init.mock.calls[0]![0].serverName).toBe(hostname());
+    expect(lastInitOptions().serverName).toBe(hostname());
+  });
+
+  it("uses the custom OpenTelemetry setup when OTLP traces are enabled even if Sentry trace export is off", async () => {
+    await initSentry({
+      SENTRY_DSN: "d",
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318",
+    } as unknown as NodeJS.ProcessEnv);
+    const opts = lastInitOptions();
+    expect(opts.tracesSampleRate).toBeUndefined();
+    expect(opts.skipOpenTelemetrySetup).toBe(true);
+  });
+
+  it("builds the Sentry OpenTelemetry bridge, adding the span processor only when Sentry traces are sampled", async () => {
+    await expect(buildSentryOpenTelemetryBridge()).resolves.toBeUndefined();
+
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    let bridge = await buildSentryOpenTelemetryBridge();
+    expect(sentryOtelMocks.SentrySampler).not.toHaveBeenCalled();
+    expect(sentryOtelMocks.SentryPropagator).toHaveBeenCalledTimes(1);
+    expect(mocks.SentryContextManager).toHaveBeenCalledTimes(1);
+    expect(sentryOtelMocks.SentrySpanProcessor).not.toHaveBeenCalled();
+    bridge?.validate?.();
+    expect(mocks.validateOpenTelemetrySetup).toHaveBeenCalledTimes(1);
+
+    resetSentryForTest();
+    vi.clearAllMocks();
+    await initSentry({
+      SENTRY_DSN: "d",
+      SENTRY_TRACES_SAMPLE_RATE: "0.5",
+    } as unknown as NodeJS.ProcessEnv);
+    bridge = await buildSentryOpenTelemetryBridge();
+    expect(bridge?.sampler).toBeInstanceOf(sentryOtelMocks.SentrySampler);
+    expect(bridge?.spanProcessor).toBeInstanceOf(sentryOtelMocks.SentrySpanProcessor);
   });
 
   it("uses the image-baked version as the release fallback and ignores blank overrides", async () => {
@@ -362,7 +462,7 @@ describe("enabled when SENTRY_DSN is set", () => {
       SENTRY_RELEASE: "",
       GITTENSORY_VERSION: "gittensory-selfhost@0.1.0",
     } as unknown as NodeJS.ProcessEnv);
-    expect(mocks.init.mock.calls[0]![0].release).toBe(
+    expect(lastInitOptions().release).toBe(
       "gittensory-selfhost@0.1.0",
     );
   });
@@ -384,9 +484,17 @@ describe("enabled when SENTRY_DSN is set", () => {
     });
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
     mocks.scope.setContext.mockClear();
+    captureError(new Error("invalid install"), {
+      kind: "job_dead",
+      installation_id: "not-an-installation",
+    });
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("gittensory", {
+      kind: "job_dead",
+    });
+    mocks.scope.setContext.mockClear();
     captureError("plain string with no context");
     expect(mocks.scope.setContext).not.toHaveBeenCalled();
-    expect(mocks.captureException).toHaveBeenCalledTimes(2);
+    expect(mocks.captureException).toHaveBeenCalledTimes(3);
   });
 
   it("captureReviewFailure sets error level + repo/PR/SHA tags, skipping null/undefined, and works without context", async () => {
@@ -395,12 +503,24 @@ describe("enabled when SENTRY_DSN is set", () => {
       repo: "o/r",
       pr: 7,
       head_sha: "abc",
+      installationId: 1,
+      operation: "gate_decision",
+      decision_outcome: "failure",
       owner: null,
     });
     expect(mocks.scope.setLevel).toHaveBeenCalledWith("error");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "o/r");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("pr", "7");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("head_sha", "abc");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installation_id_hash", "21ab41515eeee762");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("operation", "gate_decision");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("decision_outcome", "failure");
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("review", expect.objectContaining({
+      installation_id_hash: "21ab41515eeee762",
+    }));
+    expect(mocks.scope.setContext).not.toHaveBeenCalledWith("review", expect.objectContaining({
+      installationId: 1,
+    }));
     expect(mocks.scope.setTag).not.toHaveBeenCalledWith(
       "owner",
       expect.anything(),
@@ -627,7 +747,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(lastCapturedError().message).toBe("(JSONbored/awesome-claude#4240)");
   });
 
-  it("leads the title with the real error detail + indexes filterable tags + fingerprints by event (#observability)", async () => {
+  it("leads the title with the real error detail + indexes filterable hashed tenant tags + fingerprints by event (#observability)", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(
       JSON.stringify({
@@ -643,7 +763,14 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(lastCapturedError().message).toBe("The operation was aborted due to timeout");
     // The present log dimensions become filterable tags.
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "JSONbored/gittensory");
-    expect(mocks.scope.setTag).toHaveBeenCalledWith("installationId", "143010787");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installation_id_hash", "68b9c2136087c5ca");
+    expect(mocks.scope.setTag).not.toHaveBeenCalledWith("installationId", expect.anything());
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("log", expect.objectContaining({
+      installation_id_hash: "68b9c2136087c5ca",
+    }));
+    expect(mocks.scope.setContext).not.toHaveBeenCalledWith("log", expect.objectContaining({
+      installationId: 143010787,
+    }));
     // Recurrences of one failure group into a single issue by event.
     expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-log", "orb_broker_unavailable"]);
   });
@@ -651,29 +778,27 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
   it("strips the synthetic wrapper stack so the issue culprit is not forwardStructuredLogToSentry", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(
-      JSON.stringify({ level: "error", event: "orb_broker_unavailable", error: "timeout" }),
+      JSON.stringify({ level: "error", event: "orb_broker_unavailable", message: "timeout" }),
     );
-    // The captured Error's stack is reduced to its header line — no "at …" frames — so Sentry cannot attribute the
-    // issue to this forwarder (or the console sink) the way it did when the real (synthetic) stack was attached.
+
     const stack = lastCapturedError().stack ?? "";
     expect(stack).not.toMatch(/\n\s+at /);
     expect(stack).toBe("orb_broker_unavailable: timeout");
   });
 
-  it("sets the issue culprit (event.transaction) to the event slug, and skips it when there is no event", async () => {
+  it("sets the issue culprit transaction to the event slug, and skips it when there is no event", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(
-      JSON.stringify({ level: "error", event: "orb_broker_unavailable", error: "timeout" }),
+      JSON.stringify({ level: "error", event: "orb_broker_unavailable", message: "timeout" }),
     );
-    // The scoped event processor stamps the operational event slug as the transaction (Sentry's culprit input).
+
     const processor = mocks.scope.addEventProcessor.mock.calls.at(-1)?.[0] as (
-      e: Record<string, unknown>,
+      event: Record<string, unknown>,
     ) => Record<string, unknown>;
     expect(processor({})).toEqual({ transaction: "orb_broker_unavailable" });
 
-    // A no-event error log has no slug to use as a culprit, so no transaction processor is registered.
-    mocks.scope.addEventProcessor.mockClear();
-    forwardStructuredLogToSentry(JSON.stringify({ level: "error", code: 500 }));
+    vi.clearAllMocks();
+    forwardStructuredLogToSentry(JSON.stringify({ level: "error", message: "timeout" }));
     expect(mocks.scope.addEventProcessor).not.toHaveBeenCalled();
   });
 
@@ -861,7 +986,8 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     );
 
     expect(lastCapturedError().name).toBe("orb_broker_unavailable");
-    expect(lastCapturedError().message).toBe("installationId=1");
+    expect(lastCapturedError().message).toBe("(no message — see the log context)");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installation_id_hash", "21ab41515eeee762");
     expect(base.error).toHaveBeenCalledTimes(1);
   });
 
@@ -920,84 +1046,5 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
     expect(lastCapturedError().name).toBe("outer");
     expect(base.error).toHaveBeenCalledTimes(2);
-  });
-});
-
-const DSN = "https://k@o.ingest/1";
-const asEnv = (e: Record<string, string>) => e as unknown as NodeJS.ProcessEnv;
-
-describe("resolveTracesSampleRate — opt-in, clamped, safe default (#1734)", () => {
-  it("defaults to 0, parses a valid rate, clamps to [0,1], and treats a non-finite value as 0", () => {
-    expect(resolveTracesSampleRate(asEnv({}))).toBe(0);
-    expect(resolveTracesSampleRate(asEnv({ SENTRY_TRACES_SAMPLE_RATE: "0.25" }))).toBe(0.25);
-    expect(resolveTracesSampleRate(asEnv({ SENTRY_TRACES_SAMPLE_RATE: "5" }))).toBe(1);
-    expect(resolveTracesSampleRate(asEnv({ SENTRY_TRACES_SAMPLE_RATE: "-2" }))).toBe(0);
-    expect(resolveTracesSampleRate(asEnv({ SENTRY_TRACES_SAMPLE_RATE: "abc" }))).toBe(0);
-  });
-});
-
-describe("sentrySpanAttributes — safe, low-cardinality only", () => {
-  it("drops secret-keyed and null/undefined keys, keeps scalars, truncates long strings", () => {
-    const out = sentrySpanAttributes({
-      "ai.model": "gpt",
-      "job.attempt": 2,
-      ok: true,
-      apiKey: "shh",
-      token: "x",
-      missing: null,
-      undef: undefined,
-      nan: Number.NaN, // a non-finite number is dropped, never tagged
-      nested: { a: 1 }, // a non-scalar is dropped (no unbounded blobs on a span)
-      long: "z".repeat(200),
-    });
-    expect(out).toEqual({
-      "ai.model": "gpt",
-      "job.attempt": 2,
-      ok: true,
-      long: `${"z".repeat(157)}...`,
-    });
-  });
-
-  it("returns an empty object for undefined input", () => {
-    expect(sentrySpanAttributes(undefined)).toEqual({});
-  });
-});
-
-describe("tracing is a complete no-op unless sampling is configured > 0 (#1734)", () => {
-  it("with Sentry off, withSentrySpan runs fn but starts NO span and reports tracing disabled", async () => {
-    expect(sentryTracingEnabled()).toBe(false);
-    expect(await withSentrySpan("s", { a: 1 }, async () => "r")).toBe("r");
-    expect(mocks.startSpan).not.toHaveBeenCalled();
-  });
-
-  it("with the DSN set but sample rate 0 (default), tracing stays off and starts no span", async () => {
-    await initSentry(asEnv({ SENTRY_DSN: DSN })); // no SENTRY_TRACES_SAMPLE_RATE → 0
-    expect(sentryTracingEnabled()).toBe(false);
-    await withSentrySpan("s", undefined, async () => "r");
-    expect(mocks.startSpan).not.toHaveBeenCalled();
-  });
-});
-
-describe("tracing emits spans when sampling is enabled (#1734)", () => {
-  beforeEach(async () => {
-    await initSentry(asEnv({ SENTRY_DSN: DSN, SENTRY_TRACES_SAMPLE_RATE: "1" }));
-  });
-
-  it("starts a named span tagged with safe attributes and returns fn's value", async () => {
-    expect(sentryTracingEnabled()).toBe(true);
-    const result = await withSentrySpan("selfhost.ai.provider", { "ai.model": "gpt", apiKey: "shh" }, async () => 42);
-    expect(result).toBe(42);
-    expect(mocks.startSpan).toHaveBeenCalledTimes(1);
-    const [opts] = mocks.startSpan.mock.calls[0]!;
-    expect(opts).toMatchObject({ name: "selfhost.ai.provider", op: "selfhost.ai.provider" });
-    expect((opts as { attributes: Record<string, unknown> }).attributes).toEqual({ "ai.model": "gpt" }); // secret dropped
-  });
-
-  it("propagates an error thrown by fn (the caller's error is never swallowed by the span wrapper)", async () => {
-    await expect(
-      withSentrySpan("selfhost.queue.job", undefined, async () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
   });
 });

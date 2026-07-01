@@ -53,6 +53,7 @@ import {
   makeLocalReviewContextReader,
 } from "./selfhost/private-config";
 import {
+  buildSentryOpenTelemetryBridge,
   captureError,
   flushSentry,
   initSentry,
@@ -66,6 +67,7 @@ import {
 import {
   currentOtelTraceParent,
   initOpenTelemetry,
+  openTelemetryTraceExportEnabled,
   selfHostHttpRequestAttributes,
   selfHostHttpResponseAttributes,
   setCurrentOtelSpanAttributes,
@@ -251,10 +253,6 @@ function buildSqliteBackend(
 
 async function main(): Promise<void> {
   loadFileSecrets();
-  /* v8 ignore start -- importing this entrypoint starts the Node server; init behavior is covered in selfhost/otel tests. */
-  if (await initOpenTelemetry(process.env))
-    console.log(JSON.stringify({ event: "selfhost_otel", traces: "otlp" }));
-  /* v8 ignore stop */
   // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
   // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
   // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
@@ -270,7 +268,9 @@ async function main(): Promise<void> {
   // Error tracking (#1468): opt-in via SENTRY_DSN — a complete no-op when unset. When on, capture uncaught crashes
   // + unhandled rejections (flush before exit for the fatal case); per-subsystem captures (queue dead-letter,
   // review failures) are wired at their sites.
-  if (await initSentry(process.env)) {
+  /* v8 ignore start -- importing this entrypoint starts the Node server; Sentry/OTEL init behavior is covered in selfhost tests. */
+  const sentryEnabled = await initSentry(process.env);
+  if (sentryEnabled) {
     console.log(
       JSON.stringify({
         event: "selfhost_sentry",
@@ -290,6 +290,9 @@ async function main(): Promise<void> {
     // stderr. Wrap both sinks so every level:"error"/"fatal" line surfaces as a Sentry issue WITHOUT per-site wiring.
     installStructuredLogForwarding();
   }
+  if (await initOpenTelemetry(process.env, sentryEnabled ? await buildSentryOpenTelemetryBridge() : undefined))
+    console.log(JSON.stringify({ event: "selfhost_otel", traces: openTelemetryTraceExportEnabled(process.env) ? "otlp" : "sentry" }));
+  /* v8 ignore stop */
   const startedAt = Date.now();
 
   // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event

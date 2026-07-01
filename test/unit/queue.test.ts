@@ -1556,6 +1556,7 @@ describe("queue processors", () => {
       provider: null,
       model: null,
       reviewerPlan: env.AI_REVIEW_PLAN,
+      selfHostProviderConfig: null,
       profile: null,
       inlineComments: false,
       pathInstructions: [],
@@ -1682,6 +1683,82 @@ describe("queue processors", () => {
     expect(stickyComment.current?.body).toContain(PR_PANEL_COMMENT_MARKER);
     expect(stickyComment.current?.body).toContain("Thanks for the contribution");
     expect(stickyComment.current?.body).not.toContain("is reviewing");
+  });
+
+  it("computes the AI review cache fingerprint with a self-host reviewer plan and converged grounding/enrichment on (#2119)", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      // A self-host reviewer plan (not just BYOK/cloud provider/model) plus its underlying provider config.
+      AI_REVIEW_PLAN: { reviewers: [{ model: "claude-code" }], combine: "single" } as never,
+      CLAUDE_AI_MODEL: "sonnet",
+      CLAUDE_AI_EFFORT: "high",
+      // Grounding + enrichment ON, with the repo allowlisted for convergence, so both feature flags
+      // resolve past their `isXEnabled(env) && convergedRepoAllowed` check into the fingerprint.
+      GITTENSORY_REVIEW_GROUNDING: "true",
+      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      REES_URL: "https://rees.example",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      // REES enrichment + any other unmatched call degrade fail-open on a generic empty response.
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "self-host-plan-converged-features",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    // The review ran fresh (no pre-seeded cache to reuse), reaching the fingerprint computation with the
+    // self-host reviewer plan, its provider config, and both converged feature checks evaluated.
+    expect(aiCalls).toBeGreaterThan(0);
   });
 
   it("continues to final verdict when the reviewing placeholder audit write fails", async () => {

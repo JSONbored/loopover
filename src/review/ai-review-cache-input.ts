@@ -18,6 +18,30 @@ export type AiReviewCacheInput = {
       }
     | null
     | undefined;
+  // reviewerPlan only names WHICH self-host provider(s) are active (e.g. "claude-code") -- it does not carry that
+  // provider's own model/effort/timeout/base-url, which are resolved separately at review-call time (see
+  // src/selfhost/ai.ts's buildProvider). Fingerprint those too so switching a provider's underlying model or
+  // endpoint (while the provider name/plan stays the same) forces a cache miss instead of reusing a review
+  // produced against a different configuration. Deliberately excludes API keys (secrets, and irrelevant to output).
+  selfHostProviderConfig:
+    | {
+        claudeModel?: string | null | undefined;
+        claudeEffort?: string | null | undefined;
+        claudeTimeoutMs?: string | null | undefined;
+        codexModel?: string | null | undefined;
+        codexEffort?: string | null | undefined;
+        codexTimeoutMs?: string | null | undefined;
+        ollamaBaseUrl?: string | null | undefined;
+        ollamaModel?: string | null | undefined;
+        openaiCompatibleBaseUrl?: string | null | undefined;
+        openaiCompatibleModel?: string | null | undefined;
+        openaiBaseUrl?: string | null | undefined;
+        openaiModel?: string | null | undefined;
+        anthropicBaseUrl?: string | null | undefined;
+        anthropicModel?: string | null | undefined;
+      }
+    | null
+    | undefined;
   profile: ReviewProfile | null | undefined;
   inlineComments: boolean;
   pathInstructions: readonly ReviewPathInstruction[];
@@ -44,6 +68,24 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
       ? {
           combine: input.reviewerPlan.combine ?? null,
           reviewers: (input.reviewerPlan.reviewers ?? []).map((reviewer) => reviewer.model ?? null),
+        }
+      : null,
+    selfHostProviderConfig: input.selfHostProviderConfig
+      ? {
+          claudeModel: input.selfHostProviderConfig.claudeModel ?? null,
+          claudeEffort: input.selfHostProviderConfig.claudeEffort ?? null,
+          claudeTimeoutMs: input.selfHostProviderConfig.claudeTimeoutMs ?? null,
+          codexModel: input.selfHostProviderConfig.codexModel ?? null,
+          codexEffort: input.selfHostProviderConfig.codexEffort ?? null,
+          codexTimeoutMs: input.selfHostProviderConfig.codexTimeoutMs ?? null,
+          ollamaBaseUrl: input.selfHostProviderConfig.ollamaBaseUrl ?? null,
+          ollamaModel: input.selfHostProviderConfig.ollamaModel ?? null,
+          openaiCompatibleBaseUrl: input.selfHostProviderConfig.openaiCompatibleBaseUrl ?? null,
+          openaiCompatibleModel: input.selfHostProviderConfig.openaiCompatibleModel ?? null,
+          openaiBaseUrl: input.selfHostProviderConfig.openaiBaseUrl ?? null,
+          openaiModel: input.selfHostProviderConfig.openaiModel ?? null,
+          anthropicBaseUrl: input.selfHostProviderConfig.anthropicBaseUrl ?? null,
+          anthropicModel: input.selfHostProviderConfig.anthropicModel ?? null,
         }
       : null,
     profile: input.profile ?? null,

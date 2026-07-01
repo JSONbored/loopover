@@ -455,6 +455,28 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "depHealth",
+    title: "Dependency maintenance health",
+    category: "supply-chain",
+    cost: "registry",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files", "public-network"],
+    limits: {
+      maxQueries: 25,
+    },
+    docs: {
+      summary:
+        "Flags newly-added or upgraded dependencies that are deprecated, yanked, or long unmaintained.",
+      looksAt: "New or upgraded npm and PyPI direct dependency versions.",
+      reports:
+        "Package, version, ecosystem, and the maintenance kind: deprecated, yanked, or stale (with last release date).",
+      network: "Calls the npm registry and PyPI JSON API. No GitHub token required.",
+      notes:
+        "Registry prose is never returned; a package is called stale only after several years with no release, and any network failure fails safe.",
+    },
+  },
+  {
     name: "history",
     title: "Author and change-area history",
     category: "history",

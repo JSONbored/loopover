@@ -88,6 +88,7 @@ describe("isTestFile", () => {
 
   it("delegates to test-evidence isTestPath so matchers stay in sync", () => {
     expect(isTestFile("tests/integration/api.test.ts")).toBe(true);
+    expect(isTestFile("pkg/auth/testdata/golden.json")).toBe(true);
   });
 });
 

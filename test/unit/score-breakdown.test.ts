@@ -477,8 +477,8 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.components.find((entry) => entry.component === "credibilityMultiplier")).toMatchObject({ band: "blocked" });
     expect(breakdown.components.find((entry) => entry.component === "openPrMultiplier")).toMatchObject({ band: "blocked" });
   });
-  it("blocks base-score projection when the source-token gate has not passed", () => {
 
+  it("blocks base-score projection when the source-token gate has not passed", () => {
     const preview = buildScorePreview({
       repo,
       snapshot,

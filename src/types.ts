@@ -696,7 +696,11 @@ export type AgentPendingActionParams = {
   dismissStaleApproval?: boolean;
 };
 
-export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";
+// "errored" is distinct from "accepted": the maintainer's accept decision ran the staged action through the
+// executor, but the mutation itself threw (a real GitHub-call failure), as opposed to a clean "accepted" outcome
+// where the executor's own gates (autonomy/dry-run/freshness) declined to act -- that's an intentional policy
+// result, not a failure, and stays "accepted" (#2423).
+export type AgentPendingActionStatus = "pending" | "accepted" | "rejected" | "errored";
 
 /** Approval-queue row (#779): an `auto_with_approval` action the write-actions layer staged for a one-tap
  *  maintainer accept (→ execute) or reject (→ cancel). */

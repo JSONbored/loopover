@@ -520,6 +520,26 @@ describe("agent approval queue (#779)", () => {
     expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>())?.outcome).toBe("error");
   });
 
+  it("REGRESSION (#2423): accept persists status=errored, not accepted, when the executor's mutation call throws", async () => {
+    // Distinct from the "no write permission" test above: there, the executor's own gates cleanly DENY before
+    // ever attempting a mutation -- a legitimate, intentional non-action, correctly recorded as "accepted". Here
+    // every gate passes and the executor genuinely ATTEMPTS the GitHub call, which fails -- that failure must not
+    // read the same as a quiet, uneventful success in the approval-queue listing.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    vi.mocked(mergePullRequest).mockRejectedValueOnce(new Error("GitHub 500"));
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("errored");
+    expect(result.executionOutcome).toBe("error");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("errored");
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("error");
+  });
+
   it("actionParams extracts only the field for the action class", () => {
     expect(actionParams({ actionClass: "label", requiresApproval: false, reason: "x", label: "L" })).toEqual({ label: "L" });
     expect(actionParams({ actionClass: "request_changes", requiresApproval: false, reason: "x", reviewBody: "B" })).toEqual({ reviewBody: "B" });

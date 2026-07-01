@@ -404,7 +404,7 @@ const automationStateOutputSchema = {
 const listPendingActionsShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
-  status: z.enum(["pending", "accepted", "rejected"]).optional(),
+  status: z.enum(["pending", "accepted", "rejected", "errored"]).optional(),
 };
 
 const pendingActionEntrySchema = z.object({
@@ -2530,9 +2530,11 @@ export class GittensoryMcp {
       summary:
         result.status === "accepted"
           ? `Accepted ${pending.actionClass} on ${fullName}#${pending.pullNumber} (execution: ${result.executionOutcome}).`
-          : result.status === "rejected"
-            ? `Rejected ${pending.actionClass} on ${fullName}#${pending.pullNumber}.`
-            : `Action ${input.id} was already decided.`,
+          : result.status === "errored"
+            ? `Accepted ${pending.actionClass} on ${fullName}#${pending.pullNumber}, but execution errored: ${result.executionOutcome}.`
+            : result.status === "rejected"
+              ? `Rejected ${pending.actionClass} on ${fullName}#${pending.pullNumber}.`
+              : `Action ${input.id} was already decided.`,
       data: {
         status: result.status,
         ...(result.executionOutcome !== undefined ? { executionOutcome: result.executionOutcome } : {}),

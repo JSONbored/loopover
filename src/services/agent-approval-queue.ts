@@ -10,7 +10,7 @@ import type { AgentPendingActionParams, AgentPendingActionRecord } from "../type
 export type ApprovalDecision = "accept" | "reject";
 
 export type ApprovalDecisionResult = {
-  status: "accepted" | "rejected" | "already_decided" | "not_found";
+  status: "accepted" | "errored" | "rejected" | "already_decided" | "not_found";
   action?: AgentPendingActionRecord;
   // For an accept, the executor outcome of running the staged action (completed / denied / error / dry_run).
   executionOutcome?: string;
@@ -159,7 +159,14 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   );
   /* v8 ignore next -- the executor returns one outcome per planned action, so the fallback is defensive. */
   const execOutcome = outcomes[0]?.outcome ?? "no_outcome";
-  await setPendingAgentActionStatus(env, pending.id, { status: "accepted", decidedBy: input.decidedBy });
+  // "error" means performAction threw a real exception (a GitHub-call failure) -- persist "errored" so a
+  // maintainer scanning the queue can see the mutation itself failed, not just that a decision was recorded.
+  // Every OTHER outcome ("completed", "denied", "dry_run", "queued") is a clean result of the executor's own
+  // gates running to a normal conclusion -- "denied" in particular is an intentional policy decision (autonomy no
+  // longer authorizes, dry-run active, a live pre-condition failed cleanly), not a failure, so it correctly stays
+  // "accepted": the maintainer's accept WAS honored, the executor just chose not to act on it (#2423).
+  const finalStatus = execOutcome === "error" ? "errored" : "accepted";
+  await setPendingAgentActionStatus(env, pending.id, { status: finalStatus, decidedBy: input.decidedBy });
   await recordAuditEvent(env, {
     eventType: "agent.pending_action.accepted",
     actor: input.decidedBy,
@@ -168,5 +175,5 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     detail: `accepted ${pending.actionClass} → ${execOutcome}`,
     metadata: { ...baseMetadata, executionOutcome: execOutcome },
   });
-  return { status: "accepted", action: { ...pending, status: "accepted", decidedBy: input.decidedBy }, executionOutcome: execOutcome };
+  return { status: finalStatus, action: { ...pending, status: finalStatus, decidedBy: input.decidedBy }, executionOutcome: execOutcome };
 }

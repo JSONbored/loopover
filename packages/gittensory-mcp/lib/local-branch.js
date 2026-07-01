@@ -5,8 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+function stripTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 export function parseGitRemote(remoteUrl) {
-  const trimmed = String(remoteUrl ?? "").trim().replace(/\/+$/, "");
+  const trimmed = stripTrailingSlashes(String(remoteUrl ?? "").trim());
   const patterns = [
     /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/,
     /^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/,

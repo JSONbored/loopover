@@ -3,6 +3,7 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   buildSelfHostQueueSnapshot,
   consumingRetryDelayMs,
+  deterministicJitterMs,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionKeyScope,
   githubRateLimitAdmissionKeyForJob,
@@ -23,6 +24,8 @@ import {
   queueSnapshotFromBinding,
   queueStartupJitterMinJobs,
   queueStartupJitterMs,
+  scheduledEnqueueDelaySeconds,
+  scheduledEnqueueJitterMs,
 } from "../../src/selfhost/queue-common";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, timeoutFetch } from "../../src/github/client";
 import { RetryableJobError } from "../../src/queue/retryable";
@@ -810,6 +813,72 @@ describe("self-host queue common helpers", () => {
     } finally {
       if (old === undefined) delete process.env.QUEUE_STARTUP_JITTER_MIN_JOBS;
       else process.env.QUEUE_STARTUP_JITTER_MIN_JOBS = old;
+    }
+  });
+
+  it("parses the scheduled-enqueue jitter window with defensive fallbacks", () => {
+    const old = process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+    try {
+      delete process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+      expect(scheduledEnqueueJitterMs()).toBe(5 * 60_000); // default
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "42000";
+      expect(scheduledEnqueueJitterMs()).toBe(42000);
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "-1"; // negative → fallback
+      expect(scheduledEnqueueJitterMs()).toBe(5 * 60_000);
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "not-a-number"; // NaN → fallback
+      expect(scheduledEnqueueJitterMs()).toBe(5 * 60_000);
+    } finally {
+      if (old === undefined) delete process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+      else process.env.SCHEDULED_ENQUEUE_JITTER_MS = old;
+    }
+  });
+
+  it("keeps the every-tick priority jobs immediate and phase-spreads the periodic maintenance jobs (#1948)", () => {
+    const old = process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+    try {
+      delete process.env.SCHEDULED_ENQUEUE_JITTER_MS; // default 5-min window
+      // The timely-merge sweep and its Orb-relay retry run every ~2-min tick → never deferred.
+      expect(scheduledEnqueueDelaySeconds("agent-regate-sweep")).toBe(0);
+      expect(scheduledEnqueueDelaySeconds("retry-orb-relay")).toBe(0);
+
+      // A periodic maintenance job gets a stable, in-window slot derived from the shared jitter helper.
+      const window = 5 * 60_000;
+      for (const type of [
+        "refresh-registry",
+        "refresh-scoring-model",
+        "generate-signal-snapshots",
+        "build-contributor-evidence",
+      ]) {
+        const delay = scheduledEnqueueDelaySeconds(type);
+        expect(delay).toBe(Math.floor(deterministicJitterMs(type, window) / 1000));
+        expect(delay).toBeGreaterThanOrEqual(0);
+        expect(delay).toBeLessThanOrEqual(window / 1000);
+        expect(scheduledEnqueueDelaySeconds(type)).toBe(delay); // deterministic
+      }
+
+      // Distinct job types land in distinct slots → the enqueue is actually spread, not synchronized.
+      const slots = [
+        "refresh-registry",
+        "refresh-scoring-model",
+        "refresh-upstream-drift",
+        "generate-signal-snapshots",
+        "build-burden-forecasts",
+        "build-contributor-evidence",
+        "build-contributor-decision-packs",
+        "file-upstream-drift-issues",
+        "rollup-product-usage",
+      ].map(scheduledEnqueueDelaySeconds);
+      expect(new Set(slots).size).toBeGreaterThan(1);
+
+      // A sub-second window collapses every slot to an immediate send (covers the floor → 0 path).
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "500";
+      expect(scheduledEnqueueDelaySeconds("refresh-registry")).toBe(0);
+      // A zero window disables jitter entirely.
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "0";
+      expect(scheduledEnqueueDelaySeconds("generate-signal-snapshots")).toBe(0);
+    } finally {
+      if (old === undefined) delete process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+      else process.env.SCHEDULED_ENQUEUE_JITTER_MS = old;
     }
   });
 });

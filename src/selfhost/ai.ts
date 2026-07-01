@@ -10,7 +10,7 @@ import type { CombineStrategy, OnMerge } from "../services/ai-review";
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
 import { incr } from "./metrics";
-import { withOtelSpan } from "./otel";
+import { withReviewSpan } from "./tracing";
 import { delimiter } from "node:path";
 
 interface AiRunOptions {
@@ -627,7 +627,7 @@ function runProviderWithOtel(
   model: string,
   options: AiRunOptions,
 ): Promise<AiResult> {
-  return withOtelSpan(
+  return withReviewSpan(
     "selfhost.ai.provider",
     { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKind(options) },
     () => provider.ai.run(model, options),

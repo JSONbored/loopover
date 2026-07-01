@@ -74,9 +74,22 @@ LITESTREAM_REGION=us-east-1`}
       />
       <CodeBlock
         filename=".env"
-        code={`DATABASE_URL=postgres://gittensory:<password>@postgres:5432/gittensory
+        code={`POSTGRES_PASSWORD=<password>
+DATABASE_URL=postgres://gittensory:<password>@pgbouncer:5432/gittensory
 REDIS_URL=redis://redis:6379
-PGVECTOR_ENABLED=true`}
+QDRANT_URL=http://qdrant:6333`}
+      />
+      <CodeBlock lang="bash" code={`docker compose --profile pgbouncer --profile qdrant up -d`} />
+
+      <h2>One-time SQLite to Postgres copy</h2>
+      <p>
+        Existing SQLite installs can copy state into a fresh Postgres database with the bundled
+        migrator. It dry-runs by default and only commits when <code>--execute</code> is present.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --postgres-url "$DATABASE_URL"
+npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --postgres-url "$DATABASE_URL" --execute`}
       />
 
       <h2>Restore checks</h2>

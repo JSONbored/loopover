@@ -29,6 +29,7 @@ import {
   type RepoFitRecommendation,
   type RoleContext,
 } from "./engine";
+import { isFailingCheckSummary } from "./local-branch";
 
 export type RewardRiskActionKind =
   | "cleanup_existing_prs"
@@ -469,7 +470,7 @@ export function buildPullRequestReviewability(args: {
 }): PullRequestReviewability {
   const intelligence = buildPullRequestReviewIntelligence(args);
   const pr = args.pullRequest;
-  const failingChecks = args.checks.filter((check) => ["failure", "timed_out", "cancelled"].includes(check.conclusion ?? "")).length;
+  const failingChecks = args.checks.filter(isFailingCheckSummary).length;
   const broadDiff = intelligence.changeSummary.fileCount >= 12 || intelligence.changeSummary.additions + intelligence.changeSummary.deletions >= 800;
   const noiseSources = [
     ...(pr?.state && pr.state !== "open" ? [`PR is ${pr.state}.`] : []),

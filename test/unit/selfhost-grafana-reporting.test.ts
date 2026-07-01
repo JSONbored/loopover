@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ function sqlite(db: string, sql: string): string {
   return execFileSync("sqlite3", [db, sql], { encoding: "utf8" }).trim();
 }
 
-function runExporter(root: string, sourceDb: string, outDb: string): void {
+function runExporter(root: string, sourceDb: string, outDb: string, env: Record<string, string> = {}): void {
   execFileSync("sh", ["scripts/export-grafana-reporting-db.sh"], {
     cwd: process.cwd(),
     env: {
@@ -36,9 +36,87 @@ function runExporter(root: string, sourceDb: string, outDb: string): void {
       GITTENSORY_REPORTING_SOURCE_DB: sourceDb,
       GITTENSORY_REPORTING_DIR: root,
       GITTENSORY_REPORTING_DB: outDb,
+      ...env,
     },
     stdio: "pipe",
   });
+}
+
+function fakePsql(root: string): string {
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const psql = join(bin, "psql");
+  writeFileSync(
+    psql,
+    `#!/bin/sh
+args="$*"
+case "$args" in
+  *\\\\copy*)
+    echo 'unexpected psql meta-command copy' >&2
+    exit 9
+    ;;
+  *"information_schema.tables"*"pull_requests"*|*"information_schema.tables"*"advisories"*|*"information_schema.tables"*"review_targets"*|*"information_schema.tables"*"ai_usage_events"*)
+    printf '1\\n'
+    ;;
+  *"information_schema.columns"*"ai_usage_events"*"estimated_neurons"*)
+    printf '1\\n'
+    ;;
+  *"FROM current_pull_requests"*)
+    printf '"JSONbored/gittensory",1690,JSONbored,commented,comment,"fresh advisory PR",2026-06-28T21:00:00Z,2026-06-28T21:40:00Z\\n'
+    printf '"JSONbored/gittensory",1691,tmimmanuel,merged,merge,"fresh merged PR",2026-06-28T21:30:00Z,2026-06-28T21:47:40Z\\n'
+    ;;
+  *"FROM review_targets t"*)
+    printf '"JSONbored/gittensory",1049,bohdansolovie,closed,close,"historical PR",2026-06-22T17:28:56Z,2026-06-22T17:28:56Z\\n'
+    ;;
+  *"FROM ai_usage_events"*)
+    printf 'ai_review_pr,codex:gpt-5.5,ok,42,done,"{""repoFullName"" : ""JSONbored/gittensory"", ""pullNumber"" : 1678}",2026-06-28T00:00:00Z\\n'
+    ;;
+esac
+`,
+  );
+  chmodSync(psql, 0o755);
+  return bin;
+}
+
+function failingPsql(root: string): string {
+  const bin = join(root, "broken-bin");
+  mkdirSync(bin);
+  const psql = join(bin, "psql");
+  writeFileSync(
+    psql,
+    `#!/bin/sh
+echo 'connection refused' >&2
+exit 7
+`,
+  );
+  chmodSync(psql, 0o755);
+  return bin;
+}
+
+function failingCopyPsql(root: string): string {
+  const bin = join(root, "copy-fail-bin");
+  mkdirSync(bin);
+  const psql = join(bin, "psql");
+  writeFileSync(
+    psql,
+    `#!/bin/sh
+args="$*"
+case "$args" in
+  *"information_schema.tables"*"pull_requests"*|*"information_schema.tables"*"advisories"*|*"information_schema.tables"*"review_targets"*|*"information_schema.tables"*"ai_usage_events"*)
+    printf '1\\n'
+    ;;
+  *"information_schema.columns"*"ai_usage_events"*"estimated_neurons"*)
+    printf '1\\n'
+    ;;
+  *"FROM current_pull_requests"*)
+    echo 'copy failed' >&2
+    exit 7
+    ;;
+esac
+`,
+  );
+  chmodSync(psql, 0o755);
+  return bin;
 }
 
 (sqliteCliAvailable ? describe : describe.skip)("Grafana reporting exporter", () => {
@@ -180,5 +258,62 @@ function runExporter(root: string, sourceDb: string, outDb: string): void {
 
     expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
     expect(sqlite(outDb, "SELECT estimated_neurons FROM ai_usage_events;")).toBe("0");
+  });
+
+  it("exports the same redacted dashboard snapshot from Postgres", () => {
+    const root = tmpRoot();
+    const outDb = join(root, "reporting.sqlite");
+    const bin = fakePsql(root);
+    const csvTmp = join(root, "csv temp");
+    mkdirSync(csvTmp);
+
+    runExporter(root, join(root, "unused.sqlite"), outDb, {
+      DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory",
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      TMPDIR: csvTmp,
+    });
+
+    expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("3");
+    expect(sqlite(outDb, "SELECT submitter || '|' || status || '|' || verdict FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1690;")).toBe(
+      "JSONbored|commented|comment",
+    );
+    expect(sqlite(outDb, "SELECT title FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1049;")).toBe("historical PR");
+    expect(sqlite(outDb, "SELECT estimated_neurons FROM ai_usage_events;")).toBe("42");
+    expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.repoFullName') FROM ai_usage_events;")).toBe("JSONbored/gittensory");
+    expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.private') IS NULL FROM ai_usage_events;")).toBe("1");
+    expect(readdirSync(csvTmp)).toEqual([]);
+  });
+
+  it("fails closed when Postgres metadata cannot be inspected", () => {
+    const root = tmpRoot();
+    const outDb = join(root, "reporting.sqlite");
+    const bin = failingPsql(root);
+
+    expect(() =>
+      runExporter(root, join(root, "unused.sqlite"), outDb, {
+        DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory",
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      }),
+    ).toThrow();
+    expect(existsSync(outDb)).toBe(false);
+  });
+
+  it("cleans transient Postgres CSV files when COPY fails", () => {
+    const root = tmpRoot();
+    const outDb = join(root, "reporting.sqlite");
+    const bin = failingCopyPsql(root);
+    const csvTmp = join(root, "csv temp");
+    mkdirSync(csvTmp);
+
+    expect(() =>
+      runExporter(root, join(root, "unused.sqlite"), outDb, {
+        DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory",
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        TMPDIR: csvTmp,
+      }),
+    ).toThrow();
+    expect(existsSync(outDb)).toBe(false);
+    expect(readdirSync(csvTmp)).toEqual([]);
   });
 });

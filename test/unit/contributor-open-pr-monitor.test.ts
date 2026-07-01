@@ -246,6 +246,28 @@ describe("contributor open PR monitor", () => {
     expect(packet.nextSteps.join(" ")).not.toMatch(/\/Users\/|\/home\/|upload source/i);
   });
 
+  it("classifies status-carried and startup_failure checks as failing_checks (canonical classifier)", () => {
+    const classified = classifyOpenPullRequest({ pr: pr({ number: 55 }), roleContext: outsideContributorRole, reviews: [], checks: [] });
+    const statusCarried = __contributorOpenPrMonitorInternals.buildNextStepPacket(
+      classified,
+      [],
+      [{ id: "1", repoFullName: "entrius/allways-ui", pullNumber: 55, name: "ci", status: "failure", conclusion: null, payload: {} }],
+      false,
+      false,
+    );
+    expect(statusCarried.classification).toBe("failing_checks");
+    expect(statusCarried.nextSteps.join(" ")).toContain("Fix failing checks");
+
+    const startupFailure = __contributorOpenPrMonitorInternals.buildNextStepPacket(
+      classified,
+      [],
+      [{ id: "2", repoFullName: "entrius/allways-ui", pullNumber: 55, name: "ci", status: "completed", conclusion: "startup_failure", payload: {} }],
+      false,
+      false,
+    );
+    expect(startupFailure.classification).toBe("failing_checks");
+  });
+
   it("flags duplicate-prone titles across open PRs in the same repo", () => {
     const open = [pr({ number: 40, title: "fix parser bug" }), pr({ number: 41, title: "fix parser bug" })];
     const flagged = __contributorOpenPrMonitorInternals.duplicatePronePullNumbers(open);

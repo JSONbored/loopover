@@ -1058,7 +1058,7 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Missing aggregate CI", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
     const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
-    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregate").mockResolvedValue({
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
       ciState: "pending",
       hasPending: true,
       hasVisiblePending: false,
@@ -1106,7 +1106,7 @@ describe("queue processors", () => {
       7 * 24 * 3600,
     );
     const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
-    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregate").mockResolvedValue({
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
       ciState: "pending",
       hasPending: true,
       hasVisiblePending: false,
@@ -5720,7 +5720,7 @@ describe("queue processors", () => {
     let gateFinalized = false;
     let failedPostGateMint = false;
     const liveCiSpy = vi
-      .spyOn(backfillModule, "fetchLiveCiAggregate")
+      .spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl")
       .mockRejectedValueOnce(new Error("transient CI read failed"))
       .mockResolvedValue({
         ciState: "passed",

@@ -1023,6 +1023,45 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("skips the /files fetch for a merged PR whose changed files are already stored (#1941)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    // PR 9 was hydrated with files by a prior sync; a merged PR is immutable, so its files can never change.
+    await upsertRecentMergedPullRequest(env, {
+      repoFullName: "JSONbored/gittensory",
+      number: 9,
+      title: "Fix webhook",
+      authorLogin: "oktofeesh1",
+      mergedAt: "2026-05-22T00:00:00.000Z",
+      labels: ["bug"],
+      linkedIssues: [1],
+      changedFiles: ["src/github/webhook.ts"],
+      payload: {},
+    });
+    let fileFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 1, closedPullRequests: 1, labels: 0 });
+      if (url.includes("/pulls?state=closed")) {
+        return Response.json([{ number: 9, title: "Fix webhook processing (edited)", state: "closed", merged_at: "2026-05-22T00:00:00.000Z", user: { login: "oktofeesh1" }, labels: [{ name: "bug" }], body: "Fixes #1" }]);
+      }
+      if (url.includes("/pulls/9/files")) {
+        fileFetches += 1;
+        return Response.json([{ filename: "src/github/webhook.ts", status: "modified", additions: 12, deletions: 3, changes: 15 }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "recent_merged_pull_requests", mode: "full" });
+
+    expect(result).toMatchObject({ status: "complete" });
+    expect(fileFetches).toBe(0); // already hydrated → the per-PR /files fetch (the N+1) is skipped
+    // The cheap metadata is still refreshed (title updated) and the stored files are preserved.
+    expect(await listRecentMergedPullRequests(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ number: 9, title: "Fix webhook processing (edited)", changedFiles: ["src/github/webhook.ts"] })]),
+    );
+  });
+
   it("preserves previously-hydrated merged PR files when a later upsert has none", async () => {
     const env = createTestEnv();
     await upsertRecentMergedPullRequest(env, {
@@ -1281,6 +1320,41 @@ describe("GitHub backfill", () => {
     expect(await listRepoSyncStates(env)).toEqual(
       expect.arrayContaining([expect.objectContaining({ repoFullName: "JSONbored/gittensory", status: "success", labelsSyncedAt: expect.any(String) })]),
     );
+  });
+
+  it("validates unchanged single-page segments on the scheduled light cadence, not just resume (#1942)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const labelHeaders: Array<{ ifNoneMatch: string | null; ifModifiedSince: string | null }> = [];
+    let labelFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 1 });
+      if (url.includes("/labels?")) {
+        const headers = new Headers(init?.headers);
+        labelHeaders.push({ ifNoneMatch: headers.get("if-none-match"), ifModifiedSince: headers.get("if-modified-since") });
+        labelFetches += 1;
+        if (labelFetches === 1) {
+          return Response.json([{ name: "bug", color: "cc0000", description: "Bug" }], {
+            headers: { etag: '"labels-v1"', "last-modified": "Tue, 26 May 2026 00:00:00 GMT" },
+          });
+        }
+        return new Response(null, { status: 304, headers: { etag: '"labels-v1"', "last-modified": "Tue, 26 May 2026 00:00:00 GMT" } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const first = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+    const second = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+
+    expect(first).toMatchObject({ status: "complete", fetchedCount: 1, expectedCount: 1 });
+    // Before the fix, a light crawl loaded no prior segment, so the second pass sent no validators and re-listed in
+    // full ("complete"). The scheduled cadence now sends If-None-Match, and a 304 short-circuits to not_modified.
+    expect(second).toMatchObject({ status: "not_modified", fetchedCount: 1, expectedCount: 1 });
+    expect(labelHeaders).toEqual([
+      { ifNoneMatch: null, ifModifiedSince: null },
+      { ifNoneMatch: '"labels-v1"', ifModifiedSince: "Tue, 26 May 2026 00:00:00 GMT" },
+    ]);
   });
 
   it("preserves stored validators when an unauthenticated fallback returns not modified without validators", async () => {

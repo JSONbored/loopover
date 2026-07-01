@@ -17,6 +17,7 @@ import { extractPayloadType } from "./audit";
 const DEFAULT_RATE_LIMIT_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MS = 3 * 60_000;
 const DEFAULT_RECOVERY_JITTER_MS = 60_000;
+const DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MIN_JOBS = 8;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BACKGROUND_CONCURRENCY = 1;
@@ -545,6 +546,33 @@ export function deterministicJitterMs(seed: string, maxJitterMs: number): number
     h = Math.imul(h, 16777619);
   }
   return Math.abs(h >>> 0) % (Math.floor(maxJitterMs) + 1);
+}
+
+export function scheduledEnqueueJitterMs(): number {
+  return envDurationMs(
+    "SCHEDULED_ENQUEUE_JITTER_MS",
+    DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS,
+  );
+}
+
+// The every-tick priority scheduled jobs enqueue immediately; the periodic maintenance jobs are deterministically
+// phase-spread across the jitter window so a top-of-hour cron tick does not flush every heavy per-repo fan-out
+// parent in the same instant (which drains the shared GitHub REST bucket and trips the secondary rate limit). The
+// re-gate sweep and its Orb-relay retry run every ~2-min tick and drive timely merges/closes, so they stay
+// immediate; everything else (the 30-min, hourly, and six-hourly maintenance set) is offset by a stable per-type
+// slot. Deterministic (hash of the job type), so a type always lands in the same slot and the enqueued SET is
+// unchanged — only the run_after timing is spread, and the per-repo children each parent fans out inherit that
+// offset (their own index stagger is relative to when the parent runs). (#1948)
+const IMMEDIATE_SCHEDULED_JOB_TYPES = new Set<string>([
+  "agent-regate-sweep",
+  "retry-orb-relay",
+]);
+
+export function scheduledEnqueueDelaySeconds(jobType: string): number {
+  if (IMMEDIATE_SCHEDULED_JOB_TYPES.has(jobType)) return 0;
+  return Math.floor(
+    deterministicJitterMs(jobType, scheduledEnqueueJitterMs()) / 1000,
+  );
 }
 
 export function jobCoalesceKey(payload: string): string | null {

@@ -1993,6 +1993,73 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     expect([...store.keys()].some((key) => key.includes("Bearer "))).toBe(false);
   });
 
+  it("reuses the App JWT within its window so metadata reads keep cache-hitting despite rotation (#1940)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const rotatedKey = await generatePrivateKeyPem();
+    vi.useFakeTimers();
+    try {
+      const store = new Map<string, { status: number; body: string; contentType: string }>();
+      setGitHubResponseCache({ get: async (u) => store.get(u) ?? null, set: async (u, v) => void store.set(u, v) });
+      let fetches = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().endsWith("/app/installations/42")) {
+          fetches += 1;
+          return Response.json({ id: 42, account: { login: "JSONbored" } });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+      await getAppInstallation(env, 42); // cache empty → mint JWT → network fetch
+      vi.advanceTimersByTime(90_000); // 90s later: a freshly-minted JWT would rotate (new iat) and MISS the cache
+      await getAppInstallation(env, 42);
+      expect(fetches).toBe(1); // JWT reused → stable auth-scoped key → served from the response cache
+
+      // A same-App private-KEY rotation must re-mint immediately — never serve a JWT signed by the old, now-revoked
+      // key (which would fail every App-level read once GitHub rejects the old key). Still inside the reuse window.
+      const rotated = createTestEnv({ GITHUB_APP_PRIVATE_KEY: rotatedKey }); // same App id, new key
+      await getAppInstallation(rotated, 42);
+      expect(fetches).toBe(2); // key changed → cache invalid → re-mint → new auth key → cache miss → network fetch
+
+      vi.advanceTimersByTime(9 * 60_000); // past the reuse window → the JWT is re-minted
+      await getAppInstallation(rotated, 42);
+      expect(fetches).toBe(3);
+
+      // A different App id never reuses another App's cached JWT.
+      const otherApp = createTestEnv({ GITHUB_APP_PRIVATE_KEY: rotatedKey, GITHUB_APP_ID: "999999" });
+      await getAppInstallation(otherApp, 42);
+      expect(fetches).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a per-App JWT so alternating App identities do not evict each other (#1940)", async () => {
+    const keyA = await generatePrivateKeyPem();
+    const keyB = await generatePrivateKeyPem();
+    vi.useFakeTimers();
+    try {
+      const store = new Map<string, { status: number; body: string; contentType: string }>();
+      setGitHubResponseCache({ get: async (u) => store.get(u) ?? null, set: async (u, v) => void store.set(u, v) });
+      let fetches = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().endsWith("/app/installations/7")) {
+          fetches += 1;
+          return Response.json({ id: 7, account: { login: "JSONbored" } });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const appA = createTestEnv({ GITHUB_APP_PRIVATE_KEY: keyA }); // App 3824093
+      const appB = createTestEnv({ GITHUB_APP_PRIVATE_KEY: keyB, GITHUB_APP_ID: "555" });
+      await getAppInstallation(appA, 7); // mint A → fetch (caches /7 under A's JWT)
+      await getAppInstallation(appB, 7); // mint B → fetch
+      vi.advanceTimersByTime(30_000); // a re-mint here would rotate the JWT (new iat) and miss the cache
+      await getAppInstallation(appA, 7); // A still cached in the Map → reuse A's JWT → response-cache HIT → no fetch
+      expect(fetches).toBe(2); // A was NOT evicted by B — a single-entry cache would re-mint A → cache miss → fetch
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not cache a non-200 GitHub GET", async () => {
     const privateKey = await generatePrivateKeyPem();
     const store = new Map<

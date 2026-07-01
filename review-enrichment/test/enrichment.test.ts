@@ -130,6 +130,19 @@ test("extractDependencyChanges: PyPI + Go ecosystems", () => {
   assert.equal(eco.Go.to, "1.2.3");
 });
 
+test("extractDependencyChanges: PyPI exact pins with PEP 508 extras are parsed under the base name", () => {
+  // requests[security]==x is a valid exact pin; a path class that stopped at `[` dropped it from the
+  // OSV scan. The extras are consumed but not captured — OSV keys PyPI by the base project name.
+  const changes = extractDependencyChanges([
+    { path: "requirements.txt", patch: "+requests[security]==2.31.0\n-requests[security]==2.30.0" },
+    { path: "requirements.txt", patch: "+celery[redis,auth]==5.4.0" },
+  ]);
+  const byPkg = Object.fromEntries(changes.map((c) => [c.package, c]));
+  assert.equal(byPkg.requests.to, "2.31.0");
+  assert.equal(byPkg.requests.from, "2.30.0");
+  assert.equal(byPkg.celery.to, "5.4.0");
+});
+
 test("queryOsv: maps vulns; severity from database_specific; fixedIn from affected; [] on non-ok", async () => {
   const cves = await queryOsv(
     "npm",

@@ -11,6 +11,7 @@ import {
   isGitHubBudgetBackgroundJob,
   queueSnapshotBacklog,
   queueSnapshotFromBinding,
+  scheduledEnqueueDelaySeconds,
 } from "./selfhost/queue-common";
 import { isReviewExecutionJob, isSelfHostedReviewRuntime } from "./selfhost/review-runtime";
 import type { JobMessage } from "./types";
@@ -186,5 +187,16 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // set is byte-identical to today.
     if (selfHostedReviews && isRagEnabled(env)) jobs.push({ type: "rag-index-repo", requestedBy: "schedule" });
   }
-  await Promise.all(jobs.map((job) => env.JOBS.send(job)));
+  // Phase-spread the enqueue (#1948): flushing every due job with run_after=now made the top-of-hour (and
+  // top-of-6h) tick fan out all the heavy per-repo maintenance parents in one instant, draining the shared REST
+  // bucket and tripping GitHub's secondary rate limit. Each job type gets a stable deterministic slot across the
+  // jitter window (the every-tick sweep/relay stay immediate); the enqueued SET is unchanged, only the timing.
+  await Promise.all(
+    jobs.map((job) => {
+      const delaySeconds = scheduledEnqueueDelaySeconds(job.type);
+      return delaySeconds > 0
+        ? env.JOBS.send(job, { delaySeconds })
+        : env.JOBS.send(job);
+    }),
+  );
 }

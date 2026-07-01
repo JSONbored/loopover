@@ -294,6 +294,38 @@ describe("v2 signal builders", () => {
     expect(packet.reviewSignals.checkFailureCount).toBe(1);
   });
 
+  it("counts status-carried and startup_failure checks in maintainer packet and reviewability", () => {
+    const baseArgs = {
+      repo,
+      pullRequest: pullRequests[0]!,
+      issues,
+      pullRequests,
+      files: [],
+      reviews: [],
+      recentMergedPullRequests,
+      repoFullName: repo.fullName,
+      pullNumber: 10,
+    };
+    const statusCarried = buildPullRequestMaintainerPacket({
+      ...baseArgs,
+      checks: [{ id: "check-status", repoFullName: repo.fullName, pullNumber: 10, name: "validate", status: "failure", conclusion: null, payload: {} }],
+    });
+    expect(statusCarried.reviewSignals.checkFailureCount).toBe(1);
+    expect(statusCarried.findings.map((finding) => finding.code)).toContain("checks_need_attention");
+
+    const startupFailure = buildPullRequestMaintainerPacket({
+      ...baseArgs,
+      checks: [{ id: "check-startup", repoFullName: repo.fullName, pullNumber: 10, name: "validate", status: "completed", conclusion: "startup_failure", payload: {} }],
+    });
+    expect(startupFailure.reviewSignals.checkFailureCount).toBe(1);
+
+    const reviewability = buildPullRequestReviewability({
+      ...baseArgs,
+      checks: [{ id: "check-status", repoFullName: repo.fullName, pullNumber: 10, name: "validate", status: "failure", conclusion: null, payload: {} }],
+    });
+    expect(reviewability.noiseSources).toContain("1 failing or cancelled check(s).");
+  });
+
   it("reports registry changes between snapshots", () => {
     const current = snapshot("new", [
       { repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: { bug: 1.1 } },

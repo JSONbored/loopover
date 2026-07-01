@@ -113,6 +113,11 @@ describe("self-host observability trace config", () => {
         "./scripts/backup-metrics.sh:/backup-metrics.sh:ro",
       ]),
     );
+    expect(backupExporter.command).toEqual([
+      "/bin/sh",
+      "-c",
+      "apk add --no-cache busybox-extras >/dev/null 2>&1 && sh /backup-metrics.sh",
+    ]);
     expect(backupExporter.healthcheck?.test).toEqual([
       "CMD-SHELL",
       "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'",
@@ -126,6 +131,7 @@ describe("self-host observability trace config", () => {
         }),
         expect.objectContaining({
           job_name: "gittensory-backup",
+          fallback_scrape_protocol: "PrometheusText0.0.4",
           static_configs: [{ targets: ["backup-exporter:9101"] }],
         }),
       ]),

@@ -22,10 +22,14 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
     })),
   };
 });
+vi.mock("../../src/github/backfill", () => ({
+  refreshInstallationHealthForInstallation: vi.fn(async () => null),
+}));
 
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
+import { refreshInstallationHealthForInstallation } from "../../src/github/backfill";
 import { actionParams, executeAgentMaintenanceActions, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
@@ -319,6 +323,38 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(outcomes[0]?.outcome).toBe("error");
     expect(outcomes[0]?.detail).toMatch(/not mergeable/i);
     expect((await auditFor(env, "merge"))?.outcome).toBe("error");
+  });
+
+  it("opportunistically refreshes installation health when a PR-write mutation fails with a 403 (#2265)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(closePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
+    expect(outcomes[0]?.outcome).toBe("error");
+    expect(refreshInstallationHealthForInstallation).toHaveBeenCalledTimes(1);
+    expect(refreshInstallationHealthForInstallation).toHaveBeenCalledWith(env, 123);
+  });
+
+  it("does not refresh installation health for a non-403 mutation failure (#2265)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(closePullRequest).mockRejectedValueOnce(new Error("network timeout"));
+    await executeAgentMaintenanceActions(env, ctx(), [close]);
+    expect(refreshInstallationHealthForInstallation).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh installation health on a 403 from a non-PR-write action (label uses issues:write, not pull_requests) (#2265)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(ensurePullRequestLabel).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
+    await executeAgentMaintenanceActions(env, ctx(), [label]);
+    expect(refreshInstallationHealthForInstallation).not.toHaveBeenCalled();
+  });
+
+  it("swallows a failed installation-health refresh — best-effort, does not affect the recorded outcome (#2265)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(closePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
+    vi.mocked(refreshInstallationHealthForInstallation).mockRejectedValueOnce(new Error("refresh boom"));
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
+    expect(outcomes[0]?.outcome).toBe("error");
+    expect((await auditFor(env, "close"))?.outcome).toBe("error");
   });
 });
 

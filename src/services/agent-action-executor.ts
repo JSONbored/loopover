@@ -1,6 +1,8 @@
 import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, isGlobalAgentFrozen, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
+import { githubErrorStatus } from "../github/app";
+import { refreshInstallationHealthForInstallation } from "../github/backfill";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
@@ -147,6 +149,16 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       // re-planning it every sweep. A possibly-transient failure is retried up to MERGE_RETRY_CAP then held.
       if (action.actionClass === "merge" && ctx.headSha) {
         await handleMergeFailure(env, ctx, error);
+      }
+      // #2265: a 403 on a PR-write mutation often means the LOCAL installations.permissions snapshot is stale —
+      // GitHub webhooks a consented permission UPGRADE but sends nothing for a maintainer-initiated downgrade, so
+      // the write-permission readiness gate (step 6 above) can keep reporting "ready" for up to the 30-minute
+      // health-refresh cron interval after a live downgrade. Opportunistically refresh now so the DB row (and
+      // therefore every later sweep/webhook read of it, for this or any other PR on the installation) self-heals
+      // immediately instead of waiting for the next cron tick. GitHub's own server-side enforcement (this very
+      // 403) is already the real backstop, so a failed refresh here is safe to swallow.
+      if (PR_WRITE_CLASSES.has(action.actionClass) && githubErrorStatus(error) === 403) {
+        await refreshInstallationHealthForInstallation(env, ctx.installationId).catch(() => undefined);
       }
     }
   }

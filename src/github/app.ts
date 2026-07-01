@@ -142,7 +142,7 @@ export async function createInstallationToken(
   return mint;
 }
 
-function githubErrorStatus(error: unknown): number | null {
+export function githubErrorStatus(error: unknown): number | null {
   const err = error as {
     status?: number;
     response?: { status?: number } | null;

@@ -227,6 +227,12 @@ declare global {
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     GITTENSORY_REVIEW_SELFTUNE?: string;
+    /** #1941: route the live CI aggregate (the gate's check/status read) through ONE GraphQL statusCheckRollup
+     *  query instead of the paginated /check-runs + /status + /check-suites REST reads, moving that hot path onto
+     *  the separate GraphQL rate-limit bucket. Default OFF (byte-identical, proven REST aggregate); when ON the
+     *  GraphQL path reuses the REST-resolved required contexts and falls back to REST on any error, unexpected
+     *  shape, or >100 rollup contexts. See fetchLiveCiAggregateViaGraphQl. */
+    GITHUB_STATUS_ROLLUP_GRAPHQL?: string;
     /** Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
      *  through to the existing mention path, so the worker is byte-identical to today. Hosted planning is retired
      *  with the Cloudflare AI binding; self-host can run planning through the configured AI provider. */

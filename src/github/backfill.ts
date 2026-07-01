@@ -2046,7 +2046,7 @@ const GITHUB_ACTIONS_VALIDATE_AGGREGATE_PREREQUISITES = new Set([
   "validate-code",
 ]);
 
-function isOwnGitHubAppCheckRun(env: Env, run: GitHubCheckRunPayload): boolean {
+function isOwnGitHubAppCheckRun(env: Env, run: { name: string; app?: { slug?: string | null } | null }): boolean {
   const appSlug = typeof run.app?.slug === "string" ? run.app.slug.trim().toLowerCase() : "";
   const ownSlug = env.GITHUB_APP_SLUG.trim().toLowerCase();
   return ownSlug.length > 0 && appSlug === ownSlug && BOT_OWNED_CHECK_NAMES.has(run.name);
@@ -2111,6 +2111,118 @@ export async function fetchRequiredStatusContexts(env: Env, repoFullName: string
   return names;
 }
 
+// Minimal structural shape the CI reducer needs from a check-run — a superset of the REST GitHubCheckRunPayload
+// (so REST payloads assign directly) AND buildable from the GraphQL CheckRun node (which has no `id`).
+type LiveCiCheckRun = {
+  name: string;
+  status?: string | null;
+  conclusion?: string | null;
+  details_url?: string | null;
+  output?: { title?: unknown; summary?: unknown };
+  app?: { slug?: string | null } | null;
+};
+type LiveCiStatus = { context?: string | null; state?: string | null; description?: string | null; target_url?: string | null };
+type LiveCiSuite = { status?: string | null; app?: { slug?: string | null } | null };
+
+/**
+ * Pure reduction of a head SHA's check-runs + classic statuses (+ a lazily-fetched check-suite backstop) into the
+ * gate's LiveCiAggregate. Extracted so the REST fetch path (fetchLiveCiAggregate) and the GraphQL rollup path
+ * (fetchLiveCiAggregateViaGraphQl) produce BYTE-IDENTICAL verdicts from ONE set of rules — only the data source
+ * differs (#1941), which is what keeps the flag-gated GraphQL path semantically equivalent to the proven REST one.
+ * `fetchSuites` is invoked ONLY when the cheaper sources are fully settled (no failure, no pending, no incomplete
+ * read), mirroring the REST path's conditional suites read so neither path pays for it on an already-decided PR; it
+ * returns the suite list, or null when that read is unreadable (fail-closed).
+ */
+async function reduceLiveCiAggregate(
+  env: Env,
+  inputs: {
+    checkRuns: ReadonlyArray<LiveCiCheckRun>;
+    statuses: ReadonlyArray<LiveCiStatus>;
+    requiredContexts: ReadonlySet<string> | null | undefined;
+    checkRunsIncomplete: boolean;
+    statusIncomplete: boolean;
+    fetchSuites: () => Promise<ReadonlyArray<LiveCiSuite> | null>;
+  },
+): Promise<LiveCiAggregate> {
+  const { checkRuns, statuses, requiredContexts, checkRunsIncomplete, statusIncomplete, fetchSuites } = inputs;
+  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
+  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts!.has(name);
+  const failingDetails: LiveCiAggregate["failingDetails"] = [];
+  const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
+  let total = 0;
+  let anyPending = false;
+  let anyVisiblePending = false;
+  let sawFirstPartyCheckRun = false;
+  const seenContextNames = new Set<string>();
+
+  // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
+  for (const run of checkRuns) {
+    seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
+    if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
+    if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs
+    total += 1;
+    const conclusion = (run.conclusion ?? "").toLowerCase();
+    const status = (run.status ?? "").toLowerCase();
+    if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
+      const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
+      failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
+    } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
+      // concluded and not failing → passing
+    } else {
+      anyVisiblePending = true;
+      if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+    }
+  }
+
+  // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context).
+  for (const ctx of statuses) {
+    const name = ctx.context ?? "status";
+    total += 1;
+    seenContextNames.add(name);
+    const state = (ctx.state ?? "").toLowerCase();
+    if (state === "failure" || state === "error") {
+      const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
+      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
+    } else if (state === "success") {
+      // passing
+    } else {
+      anyVisiblePending = true;
+      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
+    }
+  }
+
+  // A required context that never appeared in any result is not safe to treat as passed — count it as pending.
+  if (enforceRequiredOnly) {
+    for (const ctx of requiredContexts!) {
+      if (!seenContextNames.has(ctx)) anyPending = true;
+    }
+  }
+
+  // Fold-all mode: a dependent aggregate check can briefly be absent after its prerequisites settled → pending.
+  if (!enforceRequiredOnly && missingConventionalValidateAggregate(seenContextNames)) {
+    anyPending = true;
+  }
+
+  // Check-suite hardening: read the check-SUITES too before certifying a commit settled (only when the cheaper
+  // sources found no failure, no pending, and no incomplete page, so it never adds a call to an already-decided PR).
+  if (failingDetails.length === 0 && !anyPending && !anyVisiblePending && !checkRunsIncomplete && !statusIncomplete) {
+    const suites = await fetchSuites();
+    if (!suites) {
+      // Unreadable suites: fail CLOSED (pending) only when we ALSO never saw a first-party run and checks exist.
+      if (!enforceRequiredOnly && !sawFirstPartyCheckRun && total > 0) anyPending = true;
+    } else if (suites.some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
+      anyPending = true; // a first-party GitHub Actions workflow has not completed
+      anyVisiblePending = true;
+    }
+  }
+
+  let ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
+  // Fail CLOSED on incomplete visibility: an OBSERVED failure is authoritative and preserved.
+  if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
+  const hasPending = anyVisiblePending || anyPending || checkRunsIncomplete || statusIncomplete || ciState === "pending";
+  return { ciState, hasPending, hasVisiblePending: anyVisiblePending, failingDetails, nonRequiredFailingDetails };
+}
+
 /**
  * Fetch the head SHA's LIVE CI aggregate over BOTH GitHub Check-runs AND classic commit-statuses. This is the
  * reviewbot `getAllChecksState` parity that the converged auto-maintain path needs: codecov (codecov/patch,
@@ -2130,31 +2242,12 @@ export async function fetchLiveCiAggregate(
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
   if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] };
-  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
-  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
-  const failingDetails: LiveCiAggregate["failingDetails"] = [];
-  const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
-  let total = 0;
-  let anyPending = false;
-  let anyVisiblePending = false;
-  // CI visibility flags: a failed/short read of either source means we did NOT enumerate the commit's full check
-  // set, so we must not certify it "passed". They drive the fail-CLOSED degrade below. In enforce-required mode
-  // the absent-context guard already catches this; this additionally closes the fold-all (unknown-required) seam
-  // where a transient fetch failure plus one green check could otherwise read as "passed".
+  // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
+  // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
+  const checkRuns: LiveCiCheckRun[] = [];
   let checkRunsIncomplete = false;
-  let statusIncomplete = false;
-  // Whether a FIRST-PARTY (GitHub Actions) check-run was observed at all. Used by the fold-all suites backstop:
-  // if the suites read is unreadable AND we never saw a first-party run, we cannot confirm the workflow ran, so
-  // we must fail CLOSED rather than certify "passed" off only always-on third-party checks (#review-audit, #1799).
-  let sawFirstPartyCheckRun = false;
-  // Track which context names actually appear in any API result. Required contexts use this to catch an absent
-  // required check, and fold-all mode uses it to catch this repo family's late-materializing aggregate `validate`
-  // check when branch-protection/ruleset contexts are not readable.
-  const seenContextNames = new Set<string>();
-
-  // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
-    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown }; app?: { slug?: string | null } | null }> }>(
+    const result = await githubJsonWithHeaders<{ check_runs?: Array<LiveCiCheckRun> }>(
       env,
       repoFullName,
       `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
@@ -2165,123 +2258,167 @@ export async function fetchLiveCiAggregate(
       checkRunsIncomplete = true;
       break;
     }
-    for (const run of result.data.check_runs ?? []) {
-      seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
-      if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
-      if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs (see above)
-      total += 1;
-      const conclusion = (run.conclusion ?? "").toLowerCase();
-      const status = (run.status ?? "").toLowerCase();
-      if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
-        const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
-        failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
-      } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
-        // concluded and not failing → passing
-      } else {
-        anyVisiblePending = true;
-        if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
-      }
-    }
+    checkRuns.push(...(result.data.check_runs ?? []));
     if (!hasNextPage(result.link)) break;
   }
-
-  // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context). The
-  // combined endpoint returns the LATEST status per context, so a context that flipped red→green is counted
-  // once at its current state. Paginated: the endpoint caps at 100 statuses/page, so a head with >100 contexts
-  // would silently drop the overflow (including a failing one) — accumulate every page before processing.
-  const commitStatuses: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> = [];
+  // The combined status endpoint caps at 100/page, so accumulate every page before the reducer processes them.
+  const statuses: LiveCiStatus[] = [];
+  let statusIncomplete = false;
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
-    const statusResult = await githubJsonWithHeaders<{ statuses?: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> }>(
+    const statusResult = await githubJsonWithHeaders<{ statuses?: Array<LiveCiStatus> }>(
       env,
       repoFullName,
       `/commits/${headSha}/status?per_page=100&page=${page}`,
       token,
     ).catch(() => undefined);
-    // A failed status fetch leaves the status set partially read — fail closed (see the degrade below).
     if (!statusResult) {
       statusIncomplete = true;
       break;
     }
-    commitStatuses.push(...(statusResult.data.statuses ?? []));
+    statuses.push(...(statusResult.data.statuses ?? []));
     if (!hasNextPage(statusResult.link)) break;
   }
-  for (const ctx of commitStatuses) {
-    const name = ctx.context ?? "status";
-    total += 1;
-    seenContextNames.add(name);
-    const state = (ctx.state ?? "").toLowerCase();
-    if (state === "failure" || state === "error") {
-      const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
-      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
-    } else if (state === "success") {
-      // passing
-    } else {
-      anyVisiblePending = true;
-      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
+  return reduceLiveCiAggregate(env, {
+    checkRuns,
+    statuses,
+    requiredContexts,
+    checkRunsIncomplete,
+    statusIncomplete,
+    // Lazily read the check-SUITES backstop only when the reducer finds the cheaper sources fully settled; a fetch
+    // error returns null so the reducer fails closed exactly as the inline path did.
+    fetchSuites: async () => {
+      const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<LiveCiSuite> }>(
+        env,
+        repoFullName,
+        `/commits/${headSha}/check-suites?per_page=100`,
+        token,
+      ).catch(() => undefined);
+      return suitesResult ? (suitesResult.data.check_suites ?? []) : null;
+    },
+  });
+}
+
+/** #1941 flag: route the live CI aggregate through the GraphQL status rollup. OFF by default (byte-identical
+ *  deploy); a truthy value opts a deployment in, and the GraphQL path still falls back to REST on any uncertainty. */
+export function isStatusRollupGraphQlEnabled(env: { GITHUB_STATUS_ROLLUP_GRAPHQL?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITHUB_STATUS_ROLLUP_GRAPHQL ?? "");
+}
+
+/**
+ * GraphQL equivalent of {@link fetchLiveCiAggregate}: ONE bounded query returns the head commit's statusCheckRollup
+ * (check-runs AND classic statuses, unified) plus its check-suites — replacing the paginated /check-runs + /status
+ * + /check-suites REST reads with a single call against the SEPARATE GraphQL points bucket (#1941). It reuses the
+ * caller's REST-resolved `requiredContexts` (so required-context semantics are identical) and the SAME
+ * reduceLiveCiAggregate rules, so the verdict is byte-identical to the REST path. Returns null — so the caller
+ * falls back to the proven REST path — on ANY uncertainty: missing token/owner, a GraphQL error, an unexpected
+ * shape, or >100 rollup contexts (a single page cannot enumerate them; the REST path paginates).
+ */
+export async function fetchLiveCiAggregateViaGraphQl(
+  env: Env,
+  repoFullName: string,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  requiredContexts?: ReadonlySet<string> | null,
+): Promise<LiveCiAggregate | null> {
+  if (!headSha || !token) return null;
+  const [owner, name] = repoFullName.split("/");
+  if (!owner || !name) return null;
+  const query = `query GittensoryLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status detailsUrl title summary checkSuite { app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } } } } } }`;
+  const result = await githubGraphQl<{
+    data?: {
+      repository?: {
+        object?: {
+          statusCheckRollup?: {
+            contexts?: {
+              nodes?: Array<{
+                __typename?: string;
+                name?: string | null;
+                conclusion?: string | null;
+                status?: string | null;
+                detailsUrl?: string | null;
+                title?: string | null;
+                summary?: string | null;
+                checkSuite?: { app?: { slug?: string | null } | null } | null;
+                context?: string | null;
+                state?: string | null;
+                description?: string | null;
+                targetUrl?: string | null;
+              }>;
+              pageInfo?: { hasNextPage?: boolean };
+            } | null;
+          } | null;
+          checkSuites?: { nodes?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> };
+        } | null;
+      } | null;
+    };
+    errors?: unknown[];
+  }>(env, query, token).catch(() => null);
+  if (!result) return null; // GraphQL fetch/HTTP error → fall back to REST
+  // A 200 with a top-level `errors` array is a PARTIAL result (a field resolver failed): the data is half-populated
+  // and must NOT be read as a settled/empty rollup — fall back so a partial error can't mask a failing or pending
+  // check as "no checks" and let the gate merge on it.
+  if (Array.isArray(result.errors) && result.errors.length > 0) return null;
+  const commit = result.data?.repository?.object;
+  // A resolved Commit ALWAYS returns a `checkSuites` connection whose `nodes` is an array. If it is absent or not an
+  // array, the object is not a Commit (or the shape is unexpected) → fall back rather than normalize the gap to
+  // empty inputs (the exact failure the doc above promises to avoid).
+  const suiteNodes = commit?.checkSuites?.nodes;
+  if (!commit || !Array.isArray(suiteNodes)) return null;
+  const rollup = commit.statusCheckRollup;
+  const contexts = rollup?.contexts;
+  // statusCheckRollup is null for a check-less commit (legitimate → empty inputs → "unverified"). A NON-null rollup
+  // must carry a well-formed `contexts.nodes` array; a present-but-malformed connection → fall back to REST.
+  if (rollup && !Array.isArray(contexts?.nodes)) return null;
+  if (contexts?.pageInfo?.hasNextPage) return null; // >100 contexts: not fully enumerated → let REST paginate
+  const checkRuns: LiveCiCheckRun[] = [];
+  const statuses: LiveCiStatus[] = [];
+  for (const node of contexts?.nodes ?? []) {
+    if (node.__typename === "CheckRun") {
+      // Field-name mapping only (detailsUrl→details_url, title/summary→output.*, checkSuite.app→app); the reducer
+      // lowercases GraphQL's UPPERCASE conclusion/status enums, so no case handling is needed here.
+      checkRuns.push({
+        name: node.name ?? "",
+        conclusion: node.conclusion ?? null,
+        status: node.status ?? null,
+        details_url: node.detailsUrl ?? null,
+        output: { title: node.title ?? undefined, summary: node.summary ?? undefined },
+        app: { slug: node.checkSuite?.app?.slug ?? null },
+      });
+    } else if (node.__typename === "StatusContext") {
+      statuses.push({ context: node.context ?? null, state: node.state ?? null, description: node.description ?? null, target_url: node.targetUrl ?? null });
     }
   }
+  const suites: LiveCiSuite[] = suiteNodes.map((suite) => ({ status: suite.status ?? null, app: { slug: suite.app?.slug ?? null } }));
+  return reduceLiveCiAggregate(env, {
+    checkRuns,
+    statuses,
+    requiredContexts,
+    checkRunsIncomplete: false,
+    statusIncomplete: false,
+    fetchSuites: async () => suites, // already fetched in the same query — never a second round-trip
+  });
+}
 
-  // A required context that never appeared in any result is not safe to treat as passed — count it as pending
-  // so the gate waits rather than approving a PR whose required CI never ran (e.g. a workflow that doesn't
-  // trigger on forks, or a check that was skipped).
-  if (enforceRequiredOnly) {
-    for (const ctx of requiredContexts!) {
-      if (!seenContextNames.has(ctx)) {
-        anyPending = true;
-      }
-    }
+/**
+ * The gate's CI-aggregate entrypoint. When the #1941 flag is ON, try the GraphQL statusCheckRollup path and use it
+ * UNLESS it returns null (any uncertainty — see fetchLiveCiAggregateViaGraphQl), otherwise the proven REST
+ * aggregate; flag OFF → always REST (byte-identical). Kept as its own function (not inline at the call site) so the
+ * flag + fallback branches are unit-testable in isolation.
+ */
+export async function fetchLiveCiAggregatePreferGraphQl(
+  env: Env,
+  repoFullName: string,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  requiredContexts?: ReadonlySet<string> | null,
+): Promise<LiveCiAggregate> {
+  if (isStatusRollupGraphQlEnabled(env)) {
+    // fetchLiveCiAggregateViaGraphQl handles all its own errors and returns null on any uncertainty (it never
+    // rejects), so a null result — not a throw — is the fall-back-to-REST signal.
+    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts);
+    if (rollup) return rollup;
   }
-
-  // Branch-protection reads can be unavailable for installation tokens/rulesets. In fold-all mode, a dependent
-  // aggregate check can briefly be absent after its prerequisites have settled; treat that as pending so the Orb
-  // check does not publish before the actual required `validate` context exists.
-  if (!enforceRequiredOnly && missingConventionalValidateAggregate(seenContextNames)) {
-    anyPending = true;
-  }
-
-  // Check-suite hardening (#ci-foldall-checksuites / #dependent-ci-materialization): the check-run/status scan can
-  // read "settled" before GitHub materializes downstream jobs whose `needs:` dependencies just completed
-  // (`coverage-upload` and then `validate` are the common shape). Read the check-SUITES too before certifying a
-  // commit settled: a GitHub-Actions suite still `queued`/`requested`/`waiting`/`in_progress` means first-party CI
-  // has not finished, even if every currently-visible check-run is completed. This runs only when the cheaper
-  // sources found no failure, no pending check, and no incomplete page, so it does not add a call to already-pending
-  // or already-failing PRs.
-  if (headSha && failingDetails.length === 0 && !anyPending && !anyVisiblePending && !checkRunsIncomplete && !statusIncomplete) {
-    const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> }>(
-      env,
-      repoFullName,
-      `/commits/${headSha}/check-suites?per_page=100`,
-      token,
-    ).catch(() => undefined);
-    // Downgrade on an AFFIRMATIVE incomplete suite. AND: if the suites read itself is UNREADABLE (it 403s under the
-    // very same missing administration:read that forced fold-all, or rate-limits) we can no longer rely on it — so
-    // fail CLOSED (pending) when we ALSO never saw a first-party GitHub Actions check-run, i.e. we cannot confirm the
-    // required workflow ran at all (the #1799 false-green: a fork PR awaiting approval with only an always-on
-    // third-party status). A readable, all-completed suites result still certifies "passed" (no mass false-pending).
-    if (!suitesResult) {
-      // total === 0 means the commit has NO checks at all → genuinely unverified (no CI), not a missing first-party
-      // run, so leave it; only pend when checks DO exist but none of them is a confirmed first-party run.
-      if (!enforceRequiredOnly && !sawFirstPartyCheckRun && total > 0) anyPending = true;
-    } else if ((suitesResult.data.check_suites ?? []).some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
-      anyPending = true; // a first-party GitHub Actions workflow has not completed (or downstream jobs are pending materialization)
-      anyVisiblePending = true;
-    }
-  }
-
-  // ciState reflects every completed red check/status. Required contexts additionally prevent absent or pending
-  // required checks from being treated as passed.
-  let ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
-  // Fail CLOSED on incomplete visibility: if either CI source could not be fully read, we cannot certify the
-  // commit as passed/clean — hold (pending) so the gate waits and re-evaluates on the next sweep instead of
-  // auto-merging on partial data. An OBSERVED failure ("failed") is authoritative and preserved.
-  if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
-  const hasPending =
-    anyVisiblePending ||
-    anyPending ||
-    checkRunsIncomplete ||
-    statusIncomplete ||
-    ciState === "pending";
-  return { ciState, hasPending, hasVisiblePending: anyVisiblePending, failingDetails, nonRequiredFailingDetails };
+  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts);
 }
 
 /**

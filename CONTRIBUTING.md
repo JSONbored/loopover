@@ -39,7 +39,7 @@ observations, not commitments or a service-level guarantee — reviews happen wh
 **One-shot, merge-ready as-is.** We do not request changes or iterate on contributor PRs — a PR is
 merged exactly as it stands or it is closed; there is no "changes requested" back-and-forth. Before CI
 we rebase your branch onto `main` with a **merge commit**, then review **after** CI completes — so a
-rebase conflict, or any red CI (including **~97% patch coverage, branch-counted, enforced by Codecov**),
+rebase conflict, or any red CI (including **~99% patch coverage, branch-counted, enforced by Codecov**),
 closes the PR. Recover by opening a **fresh, corrected PR**. PRs touching guarded paths (CI config, the
 review engine, migrations, and similar — the set varies) are held for manual review rather than
 auto-acted.
@@ -157,7 +157,7 @@ npm audit --audit-level=moderate
 ```
 
 `npm run test:ci` runs the normal combined gate. The coverage requirement is **patch coverage**:
-every line your PR adds or changes must be **97%+ covered** (statements, branches, functions, lines).
+every line your PR adds or changes must be **99%+ covered** (statements, branches, functions, lines).
 This is enforced by Codecov's `codecov/patch` status check, which looks only at your diff — so it
 depends solely on your own changes and is unaffected by what else merges. Run `npm run test:coverage`
 locally when you change behavior and make sure your new branches, fallback paths, and sanitizer rules

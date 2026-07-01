@@ -3507,11 +3507,15 @@ async function processGitHubWebhook(
             // could clear the gate failure, before this fires. Unlike the main gate-close path — which routes
             // every close through executeAgentMaintenanceActions's freshness guard — this handler acted purely
             // off the stale webhook-ingestion payload. Re-verify live state immediately before the mutation.
+            // requireDraft: head/state alone would still read "current" if the author converted the PR BACK
+            // to ready_for_review in that window -- the draft-dodge close's own justification no longer
+            // holds, since there is no longer a draft to be "dodging" the gate through.
             const freshness = await fetchPullRequestFreshness(env, {
               installationId,
               repoFullName,
               pullNumber: pr.number,
               expectedHeadSha: pr.headSha,
+              requireDraft: true,
             });
             if (freshness.status !== "current") {
               await recordAuditEvent(env, {
@@ -7538,6 +7542,21 @@ async function maybeRecloseDisallowedReopen(
       metadata: { deliveryId, repoFullName },
     }).catch(() => undefined);
     return true; // handled (decision made); a stale re-check still counts as handled, not a fallthrough
+  }
+  // Head/state freshness alone can't see a permission grant: the SAME reopener could be promoted to a
+  // maintainer/admin/write collaborator (or added as one) in the window since the check above ran, which
+  // would authorize exactly the reopen this handler is about to undo. Re-verify immediately before the
+  // mutation, not just once at ingestion time.
+  if (await hasMaintainerPermission(reopener)) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: `${reopener} now holds maintainer permission — reopen re-close not executed`,
+      metadata: { deliveryId, repoFullName },
+    }).catch(() => undefined);
+    return true; // handled (decision made); a newly-authorized reopener still counts as handled
   }
   await createIssueComment(
     env,

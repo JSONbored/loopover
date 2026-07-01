@@ -10646,6 +10646,41 @@ describe("one-shot reopen prevention", () => {
     expect(audit?.detail).toContain("reopen re-close not executed");
   });
 
+  it("REGRESSION: does NOT re-close when the reopener gained maintainer permission before the close fires (#2130 follow-up)", async () => {
+    // Same head, still open — a head/state-only freshness check would say "current". But the reopener could
+    // have been promoted to a write/maintain/admin collaborator (or added as one) in the window between the
+    // initial permission read and this handler's close, which retroactively authorizes exactly the reopen
+    // this handler is about to undo.
+    const calls: Array<{ url: string; method: string }> = [];
+    let contributorPermissionCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) {
+        contributorPermissionCalls += 1;
+        // First read (upstream decision to re-close at all): still just a reader. Second read (the live
+        // re-check right before the mutation): promoted to a write collaborator.
+        return Response.json({ permission: contributorPermissionCalls === 1 ? "read" : "write" });
+      }
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "reopen-promoted", eventName: "pull_request", payload: reopenedPayload("contributor") });
+
+    expect(contributorPermissionCalls).toBe(2);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("now holds maintainer permission");
+  });
+
   it("swallows a recordAuditEvent failure on the stale-reopen denial path — handler still completes (#2130)", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -10957,6 +10992,33 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
     expect(audit?.outcome).toBe("denied");
     expect(audit?.detail).toContain("draft-dodge close not executed");
+  });
+
+  it("REGRESSION: does NOT draft-dodge close when the PR was converted back to ready_for_review before the close fires (#2130 follow-up)", async () => {
+    // Same head, still open — a head/state-only freshness check would say "current". But the draft-dodge
+    // close's whole justification is "the author is dodging the gate via draft state", which no longer holds
+    // once the PR is ready_for_review again — closing here would be wrong even though nothing else moved.
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "no_longer_draft", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "open" });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-no-longer-draft", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ requireDraft: true }));
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("no longer a draft");
   });
 
   it("swallows a recordAuditEvent failure on the stale-draft-dodge denial path — handler still completes (#2130)", async () => {

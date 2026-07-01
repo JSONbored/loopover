@@ -18,6 +18,7 @@ import {
   getInstallation,
   getIssue,
   getPendingAgentAction,
+  getPullRequest,
   getRepository,
   getRepositorySettings,
   isGlobalAgentFrozen,
@@ -2457,11 +2458,17 @@ export class GittensoryMcp {
     await this.requireRepoManageAccess(fullName);
     const repo = await getRepository(this.env, fullName);
     if (!repo?.installationId) throw new Error("Cannot propose an action: the Gittensory App is not installed on this repository.");
+    // Pin the staged action to the head the proposer actually saw. Without this, the approval-queue accept
+    // path's force-push freshness guard (stagedHead && stagedHead !== pr.headSha) is a silent no-op for every
+    // MCP-staged action, since a falsy stagedHead never triggers it — an unreviewed force-push between
+    // proposal and accept would then merge/close/approve undetected. (#2255)
+    const pr = await getPullRequest(this.env, fullName, input.pullNumber);
     const params = {
       ...(input.label !== undefined ? { label: input.label } : {}),
       ...(input.reviewBody !== undefined ? { reviewBody: input.reviewBody } : {}),
       ...(input.mergeMethod !== undefined ? { mergeMethod: input.mergeMethod } : {}),
       ...(input.closeComment !== undefined ? { closeComment: input.closeComment } : {}),
+      ...(pr?.headSha ? { expectedHeadSha: pr.headSha } : {}),
     };
     const { action, created } = await createPendingAgentActionIfAbsent(this.env, {
       repoFullName: fullName,

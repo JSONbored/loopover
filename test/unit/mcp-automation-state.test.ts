@@ -124,6 +124,38 @@ describe("MCP gittensory_propose_action (#784)", () => {
     expect(staged?.params).toMatchObject({ label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" });
   });
 
+  it("pins a proposed action to the PR's current head (expectedHeadSha) so the accept-time force-push guard can fire (#2255)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-proposed" }, labels: [], body: "x" });
+    const client = await connect(env);
+    await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge", mergeMethod: "squash" } });
+    const [staged] = await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" });
+    expect(staged?.params).toMatchObject({ expectedHeadSha: "h-proposed" });
+  });
+
+  it("an MCP-staged merge is superseded on accept if the PR is force-pushed after proposal — the guard now actually fires (#2255)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-proposed" }, labels: [], body: "x" });
+    const client = await connect(env);
+    const proposed = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge", mergeMethod: "squash" } });
+    const { action } = proposed.structuredContent as { action: { id: string } };
+
+    // Force-push after staging: the head moves, but nothing re-evaluates the pending row until it's decided.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-force-pushed" }, labels: [], body: "x" });
+
+    const decided = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    const result = decided.structuredContent as { status: string; executionOutcome?: string };
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("head_moved");
+  });
+
   it("allows a session that maintains the repo (owned installation)", async () => {
     const env = createTestEnv();
     await upsertInstallation(env, {

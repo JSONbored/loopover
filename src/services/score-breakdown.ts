@@ -21,8 +21,9 @@ export type ScoreBreakdownExplanation = {
     component: string;
     lever: string;
     /** Other components that tie with the selected top component at the same leverageScore
-     *  (excludes the selected top component itself). Surfaced so a contributor can see the
-     *  alphabetical tie-breaker isn't a strictly-dominant choice. Empty when no tie exists. */
+     *  (excludes the selected top component itself). Ordered alphabetically (same tie-breaker
+     *  used to pick the top component). Surfaced so a contributor can see the alphabetical
+     *  tie-breaker isn't a strictly-dominant choice. Empty when no tie exists. */
     tiedLeverageComponents: string[];
     reason: string;
   };

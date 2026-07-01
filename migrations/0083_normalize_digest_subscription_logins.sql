@@ -1,12 +1,8 @@
--- Normalize digest_subscriptions login/email to lowercase, deduplicating rows that would collide under the
--- unique (login, email) index once normalized. Written WITHOUT a temp table: Cloudflare D1's SQL authorizer
--- rejects CREATE TEMP TABLE with "not authorized: SQLITE_AUTH [code: 7500]" (temp objects are unsupported on
--- the remote), so the original temp-table form applied fine on self-hosted SQLite but failed the remote
--- `wrangler d1 migrations apply`.
+-- Normalize digest_subscriptions login/email to lowercase, deduplicating rows that collide under the unique
+-- (login, email) index. No CREATE TEMP TABLE: Cloudflare D1's remote authorizer rejects temp objects with
+-- "not authorized: SQLITE_AUTH". Delete losers BEFORE lowercasing survivors, or canonicalization trips the index.
 
--- 1. Drop the losers: within each case-insensitive (login, email) group keep only the newest row and delete
---    the rest. The row_number() tie-break (updated_at, then created_at, then id — all DESC) matches the
---    original, so the surviving id per group is unchanged.
+-- Drop every row but the newest per case-insensitive (login, email) group (tie-break: updated_at, created_at, id).
 DELETE FROM digest_subscriptions
 WHERE id IN (
   SELECT id
@@ -22,8 +18,7 @@ WHERE id IN (
   WHERE rn > 1
 );
 
--- 2. Canonicalize the survivors. Post-dedup every surviving row already has a distinct
---    (lower(login), lower(email)), so lowering login/email in place cannot violate the unique index.
+-- Lowercase the survivors; post-dedup each has a distinct lowercased (login, email), so the unique index holds.
 UPDATE digest_subscriptions
 SET login = lower(login),
     email = lower(email);

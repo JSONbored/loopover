@@ -1548,6 +1548,7 @@ describe("queue processors", () => {
     await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
     // Pre-seed the AI review for this exact head SHA + mode → the sweep's block-mode review must reuse it, not re-run.
     const inputFingerprint = await aiReviewCacheInputFingerprint({
+      title: "Stale PR",
       mode: "block",
       byok: false,
       provider: null,

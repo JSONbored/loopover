@@ -7,6 +7,10 @@ import { sha256Hex } from "../utils/crypto";
 export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v1";
 
 export type AiReviewCacheInput = {
+  // The PR title is threaded into the reviewer prompt (see runAiReviewForAdvisory's pr.title), so a same-head
+  // `edited` event that changes only the title must miss the cache rather than replay a review generated for
+  // different prompt metadata.
+  title: string;
   mode: string;
   byok: boolean;
   provider: string | null | undefined;
@@ -85,6 +89,7 @@ export type AiReviewCacheInput = {
 export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): Promise<string> {
   const payload = {
     version: AI_REVIEW_CACHE_INPUT_VERSION,
+    title: input.title,
     mode: input.mode,
     byok: input.byok,
     provider: input.provider ?? null,

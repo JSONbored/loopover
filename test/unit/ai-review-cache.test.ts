@@ -4,6 +4,7 @@ import { aiReviewCacheInputFingerprint, type AiReviewCacheInput } from "../../sr
 import { createTestEnv } from "../helpers/d1";
 
 const baseFingerprintInput = (): AiReviewCacheInput => ({
+  title: "Fix the retry loop",
   mode: "block",
   byok: false,
   provider: null,

@@ -5,6 +5,7 @@ import {
 } from "../../src/review/ai-review-cache-input";
 
 const baseInput = (): AiReviewCacheInput => ({
+  title: "Fix the retry loop",
   mode: "block",
   byok: false,
   provider: null,
@@ -214,6 +215,18 @@ describe("aiReviewCacheInputFingerprint", () => {
 
     expect(emptyConfig).toBe(sparseConfig);
     expect(emptyConfig).not.toBe(nullConfig);
+  });
+
+  it("changes when the PR title changes even though nothing else does (#2119)", async () => {
+    // The title is threaded into the reviewer prompt (runAiReviewForAdvisory's pr.title), so a same-head
+    // `edited` event that changes only the title must miss the cache rather than replay a review generated
+    // against different prompt metadata.
+    const original = await aiReviewCacheInputFingerprint(baseInput());
+    const titleChanged = await aiReviewCacheInputFingerprint({ ...baseInput(), title: "Fix the retry loop (v2)" });
+    const repeated = await aiReviewCacheInputFingerprint(baseInput());
+
+    expect(titleChanged).not.toBe(original);
+    expect(repeated).toBe(original);
   });
 
   it("changes when aiReviewAllAuthors, aiReviewCloseConfidence, or gatePack change", async () => {

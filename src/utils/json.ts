@@ -29,8 +29,9 @@ export function normalizeRepoFullName(value: string): string {
 }
 
 export function repoParts(fullName: string): { owner: string; name: string } {
-  if (fullName.length === 0) return { owner: "", name: "" };
-  const [owner, ...rest] = fullName.split("/") as [string, ...string[]];
+  const normalized = fullName.trim();
+  if (normalized.length === 0) return { owner: "", name: "" };
+  const [owner, ...rest] = normalized.split("/") as [string, ...string[]];
   return {
     owner,
     name: rest.join("/"),

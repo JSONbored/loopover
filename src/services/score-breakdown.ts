@@ -132,20 +132,47 @@ function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
 }
 
 // Sibling of mergedHistoryBreakdown for the issue-discovery validity floor (upstream
-// MIN_VALID_SOLVED_ISSUES and MIN_ISSUE_CREDIBILITY): when linked-issue scoring is active and
-// contributor history is observed, falling below either floor zeroes the preview.
+// MIN_VALID_SOLVED_ISSUES and MIN_ISSUE_CREDIBILITY). Mirrors preview.ts: the multiplier
+// stays 1 unless linked-issue mode is active AND both history fields are observed.
 function issueDiscoveryHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { issueDiscoveryHistoryMultiplier } = preview.scoreEstimate;
   const { validSolvedIssues, validSolvedIssuesFloor, issueCredibility, issueCredibilityFloor } = preview.gates;
-  if (validSolvedIssues === undefined || issueCredibility === undefined) {
+  const linkedIssueMode = preview.linkedIssueMultiplier.mode;
+
+  if (linkedIssueMode === "none") {
+    return {
+      component: "issueDiscoveryHistoryMultiplier",
+      band: "neutral",
+      summary:
+        "Issue-discovery validity floor is not enforced for this preview (linked-issue mode is inactive; upstream only gates previews that claim linked-issue scoring).",
+      lever: "Use a linked-issue preview when planning issue-discovery work so validity floors can be evaluated.",
+      leverageScore: 0,
+    };
+  }
+
+  const hasValidSolved = validSolvedIssues !== undefined;
+  const hasIssueCredibility = issueCredibility !== undefined;
+  if (!hasValidSolved && !hasIssueCredibility) {
     return {
       component: "issueDiscoveryHistoryMultiplier",
       band: "neutral",
       summary: `Issue-discovery validity floor is not enforced for this preview (contributor issue-history is unobserved; upstream floors are ${validSolvedIssuesFloor} valid solved and ${issueCredibilityFloor} credibility).`,
-      lever: "No action needed for this preview; the validity floor applies once issue-discovery history is observed.",
+      lever: "No action needed for this preview; the validity floor applies once both valid solved count and issue credibility are observed.",
       leverageScore: 0,
     };
   }
+  if (!hasValidSolved || !hasIssueCredibility) {
+    return {
+      component: "issueDiscoveryHistoryMultiplier",
+      band: "neutral",
+      summary: hasValidSolved
+        ? "Issue-discovery validity floor is not enforced for this preview (valid solved count is observed but issue credibility is not; upstream requires both before gating)."
+        : "Issue-discovery validity floor is not enforced for this preview (issue credibility is observed but valid solved count is not; upstream requires both before gating).",
+      lever: "Supply both valid solved-issue count and issue credibility before relying on issue-discovery validity floors.",
+      leverageScore: 0,
+    };
+  }
+
   const band = bandForMultiplier(issueDiscoveryHistoryMultiplier);
   const meetsFloor = validSolvedIssues >= validSolvedIssuesFloor && issueCredibility >= issueCredibilityFloor;
   return {

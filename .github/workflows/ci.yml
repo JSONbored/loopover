@@ -79,15 +79,26 @@ jobs:
               - 'package-lock.json'
             # The MCP CLI test cluster (test/unit/mcp-cli-*.test.ts, mcp-discovery, mcp-output-schemas): slow
             # (subprocess-per-test / real MCP protocol handshakes, ~115s combined) and unconditionally bundled
-            # into `Test with coverage` today. Its real dependency surface is narrower than "any backend
-            # change" -- the CLI-harness tests spawn packages/gittensory-mcp against a fixture server (never
-            # importing src/ directly) seeded via src/db/repositories + src/registry/*, and mcp-discovery /
-            # mcp-output-schemas exercise src/mcp/server.ts in-process. package.json/package-lock.json are
-            # included too: a dependency bump can change MCP runtime behavior (e.g. the MCP SDK, node:sqlite)
-            # that this cluster is the ONLY thing exercising -- unlike a changed-lines gap, that risk is NOT
-            # caught by Codecov's patch-coverage number, so this path-scoped skip must cover it explicitly,
-            # matching how the pre-existing `mcp` filter above already treats dependency files as relevant.
+            # into `Test with coverage` today. DELIBERATE DESIGN: this is `backend` above, VERBATIM, for every
+            # category except src/**/test/** -- only those two are narrowed to the specific files this cluster
+            # actually touches (that's where the real savings are: most backend PRs touch SOME src/test file,
+            # but rarely these specific ones). Every other backend-relevant category (config, scripts, deps,
+            # migrations, the workflow file itself) is copied unchanged, so this can never silently drift out
+            # of sync with what `backend` already knows can affect a test run -- an earlier, narrower version
+            # of this filter missed test/helpers/**, vitest*.config.ts, migrations/**, and ci.yml itself before
+            # this was corrected to mirror `backend` directly instead of re-deriving a second opinion.
+            # Skipping tests can widen what Codecov's patch-coverage number can catch (a changed line this
+            # cluster uniquely covers just fails patch coverage loudly) but does NOT catch a pure runtime/
+            # dependency-behavior regression with no line-coverage signature -- hence copying `backend`'s
+            # non-src/test categories exactly, rather than re-guessing which of them matter.
             mcpCliCluster:
+              - 'vitest*.config.ts'
+              - 'tsconfig*.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'scripts/**'
+              - 'migrations/**'
+              - '.github/workflows/**'
               - 'packages/gittensory-mcp/**'
               - 'src/mcp/**'
               - 'src/auth/security.ts'
@@ -95,8 +106,7 @@ jobs:
               - 'src/registry/normalize.ts'
               - 'src/registry/sync.ts'
               - 'src/services/repo-outcome-patterns.ts'
-              - 'package.json'
-              - 'package-lock.json'
+              - 'test/helpers/**'
               - 'test/unit/mcp-cli-*.test.ts'
               - 'test/unit/mcp-discovery.test.ts'
               - 'test/unit/mcp-output-schemas.test.ts'

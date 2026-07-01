@@ -506,7 +506,7 @@ services:
       - runner-work:/tmp/runner
 
   # ── Backups (--profile backup) ────────────────────────────────────────────
-  # Online SQLite backup (WAL-safe, consistent even while the app writes) + a Qdrant snapshot, on a loop
+  # Active database backup (Postgres pg_dump or WAL-safe SQLite online backup) + a Qdrant snapshot, on a loop
   # (default daily), kept in the gittensory-backups volume with retention. Run on demand:
   #   docker compose --profile backup run --rm backup sh /backup.sh
   backup:
@@ -515,6 +515,8 @@ services:
     profiles: ["backup"]
     environment:
       DATABASE_PATH: /data/gittensory.sqlite
+      DATABASE_URL: "${DATABASE_URL:-}"
+      GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-}"
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       BACKUP_RETAIN: ${BACKUP_RETAIN:-7}
     volumes:
@@ -524,7 +526,7 @@ services:
       - ./scripts/backup.sh:/backup.sh:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "apk add --no-cache sqlite curl >/dev/null 2>&1 && while true; do sh /backup.sh || echo '[backup] run failed'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"
+      - "apk add --no-cache sqlite postgresql16-client curl >/dev/null 2>&1 && while true; do sh /backup.sh || echo '[backup] run failed'; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"
 
 volumes:
   gittensory-data:

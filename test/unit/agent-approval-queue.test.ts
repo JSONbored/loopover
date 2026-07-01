@@ -20,6 +20,16 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
     })),
   };
 });
+vi.mock("../../src/github/app", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/app")>()),
+  createInstallationToken: vi.fn(async () => "test-installation-token"),
+}));
+// The actuation-time live CI re-check (#2128) defaults to "still passing" so the existing accept tests stay
+// deterministic.
+vi.mock("../../src/github/backfill", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/backfill")>()),
+  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+}));
 
 import { mergePullRequest } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";

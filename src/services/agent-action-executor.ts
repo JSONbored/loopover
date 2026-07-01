@@ -1,6 +1,9 @@
 import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, isGlobalAgentFrozen, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
+import { createInstallationToken } from "../github/app";
+import { fetchLiveCiAggregate } from "../github/backfill";
+import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
@@ -114,12 +117,37 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
       continue;
     }
-    // 6) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
+    // 6) Live CI re-verification for a merge or a heuristic close (#2128): the CI aggregate that drove either
+    //    decision was read seconds-to-tens-of-seconds earlier, in the planning pass, and the freshness guard
+    //    above only re-checks head SHA/state, not CI. GitHub's own merge endpoint enforces branch-protection
+    //    REQUIRED checks server-side, but only as a backstop when a repo actually configures them; a heuristic
+    //    close has no server-side check at all. Re-read live CI right before the mutation so a check that
+    //    flipped in this narrow window is never acted on from stale information. Deterministic closes
+    //    (linked-issue hard-rule, blacklist) are exempt — they are zero-hallucination facts that do not depend
+    //    on CI, and the linked-issue rule already has its own flag-then-verify pass.
+    if (action.actionClass === "merge" || (action.actionClass === "close" && action.closeKind === "heuristic")) {
+      const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
+      const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
+      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, undefined, admissionKey);
+      const staleReason =
+        action.actionClass === "merge"
+          ? liveCi.ciState === "failed"
+            ? "live CI is now failing"
+            : null
+          : liveCi.ciState !== "failed"
+            ? `CI state changed since planning (now: ${liveCi.ciState})`
+            : null;
+      if (staleReason) {
+        await audit("denied", `${staleReason} — action not executed`);
+        continue;
+      }
+    }
+    // 7) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
       await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
       continue;
     }
-    // 7) live — perform the real mutation, recording success or the error.
+    // 8) live — perform the real mutation, recording success or the error.
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);

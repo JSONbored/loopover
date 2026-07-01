@@ -49,6 +49,19 @@ export type AiReviewCacheInput = {
   repoInstructions: string | null | undefined;
   excludePaths: readonly string[];
   changedPaths: readonly string[];
+  // A rebase or retarget (new base branch, same head commit) can change the diff GitHub reports for an
+  // otherwise-unchanged head SHA -- changedPaths (just the path list) stays the same when the same files
+  // are touched against the new base, but the actual patch content reviewed differs. baseSha plus a
+  // per-file content digest (path/status/patch/additions/deletions -- the fields buildAiReviewDiff and the
+  // grounding/RAG paths actually read) closes that gap.
+  baseSha: string | null | undefined;
+  reviewFiles: readonly {
+    path: string;
+    status?: string | null | undefined;
+    patch?: string | null | undefined;
+    additions: number;
+    deletions: number;
+  }[];
   features: {
     grounding: boolean;
     rag: boolean;
@@ -98,6 +111,16 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
     repoInstructions: input.repoInstructions?.trim() || null,
     excludePaths: normalizeStringList(input.excludePaths),
     changedPaths: normalizeStringList(input.changedPaths),
+    baseSha: input.baseSha ?? null,
+    reviewFiles: [...input.reviewFiles]
+      .map((file) => ({
+        path: file.path,
+        status: file.status ?? null,
+        patch: file.patch ?? null,
+        additions: file.additions,
+        deletions: file.deletions,
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
     features: input.features,
   };
   return `${AI_REVIEW_CACHE_INPUT_VERSION}:${await sha256Hex(stableStringify(payload))}`;

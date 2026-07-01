@@ -1557,6 +1557,8 @@ describe("queue processors", () => {
       model: null,
       reviewerPlan: env.AI_REVIEW_PLAN,
       selfHostProviderConfig: null,
+      baseSha: null,
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = value.length;", additions: 1, deletions: 0 }],
       profile: null,
       inlineComments: false,
       pathInstructions: [],
@@ -1732,7 +1734,12 @@ describe("queue processors", () => {
       const url = input.toString();
       const method = init?.method ?? "GET";
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
-      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/7/files"))
+        return Response.json([
+          { filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" },
+          // GitHub omits `patch` for binary/oversized files -- the fingerprint must still normalize this case.
+          { filename: "assets/logo.png", status: "modified", additions: 0, deletions: 0, changes: 0 },
+        ]);
       if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
       if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });

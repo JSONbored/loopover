@@ -5285,6 +5285,14 @@ async function maybePublishPrPublicSurface(
             repoInstructions: reviewInstructions,
             excludePaths: reviewExcludePaths,
             changedPaths,
+            baseSha: webhook.baseSha,
+            reviewFiles: reviewFilesForAi.map((file) => ({
+              path: file.path,
+              status: file.status,
+              patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+              additions: file.additions,
+              deletions: file.deletions,
+            })),
             features: {
               grounding: isGroundingEnabled(env) && convergedRepoAllowed,
               rag: resolveConvergedFeature(env, reviewManifest, "rag", repoFullName),

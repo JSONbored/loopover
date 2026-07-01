@@ -13,6 +13,8 @@ const baseInput = (): AiReviewCacheInput => ({
   model: null,
   reviewerPlan: null,
   selfHostProviderConfig: null,
+  baseSha: null,
+  reviewFiles: [],
   profile: null,
   inlineComments: false,
   pathInstructions: [],
@@ -86,6 +88,72 @@ describe("aiReviewCacheInputFingerprint", () => {
 
     expect(omittedReviewers).toBe(explicitEmpty);
     expect(sparse).toBe(explicit);
+  });
+
+  it("changes when the patch content or base sha differs even though the same file paths are touched (retarget/rebase)", async () => {
+    // A retarget (new base branch, same head commit) or certain rebases can change the diff GitHub reports
+    // for an otherwise-unchanged head SHA -- changedPaths (just the path list) stays identical when the
+    // same files are touched against the new base, but the actual reviewed content differs.
+    const original = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      baseSha: "base1",
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new", additions: 1, deletions: 1 }],
+    });
+    const samePathsDifferentPatch = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      baseSha: "base1",
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+completely different", additions: 1, deletions: 1 }],
+    });
+    const samePatchDifferentBase = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      baseSha: "base2",
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new", additions: 1, deletions: 1 }],
+    });
+    const repeated = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      baseSha: "base1",
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new", additions: 1, deletions: 1 }],
+    });
+    // File order must not matter -- only content -- so a re-fetched diff in a different row order still hits.
+    const reordered = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      baseSha: "base1",
+      reviewFiles: [
+        { path: "src/b.ts", status: "added", patch: "@@ -0,0 +1 @@\n+export {}", additions: 1, deletions: 0 },
+        { path: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new", additions: 1, deletions: 1 },
+      ],
+    });
+    const reorderedAgain = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      baseSha: "base1",
+      reviewFiles: [
+        { path: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new", additions: 1, deletions: 1 },
+        { path: "src/b.ts", status: "added", patch: "@@ -0,0 +1 @@\n+export {}", additions: 1, deletions: 0 },
+      ],
+    });
+
+    expect(samePathsDifferentPatch).not.toBe(original);
+    expect(samePatchDifferentBase).not.toBe(original);
+    expect(repeated).toBe(original);
+    expect(reordered).toBe(reorderedAgain);
+  });
+
+  it("normalizes a file entry with no status/patch (e.g. a rename with no content change) deterministically", async () => {
+    const omitted = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewFiles: [{ path: "src/a.ts", additions: 0, deletions: 0 }],
+    });
+    const explicitNull = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewFiles: [{ path: "src/a.ts", status: null, patch: null, additions: 0, deletions: 0 }],
+    });
+    const withStatusAndPatch = await aiReviewCacheInputFingerprint({
+      ...baseInput(),
+      reviewFiles: [{ path: "src/a.ts", status: "renamed", patch: "@@ -1 +1 @@", additions: 0, deletions: 0 }],
+    });
+
+    expect(omitted).toBe(explicitNull);
+    expect(omitted).not.toBe(withStatusAndPatch);
   });
 
   it("changes when a self-host provider's underlying model/effort/timeout changes, even with the same reviewer plan", async () => {

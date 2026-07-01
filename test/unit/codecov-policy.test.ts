@@ -52,7 +52,11 @@ describe("Codecov policy", () => {
     const coverageUpload = steps[coverageUploadIndex]!;
     const testResultsUpload = steps[testResultsUploadIndex]!;
 
-    expect(verifyStep.if).toBe(coverageUpload.if);
+    // Verify must run whenever coverage was generated at all (push or backend==true) -- it deliberately
+    // does NOT exclude forks, since both the trusted and the tokenless fork upload path below it need
+    // the report to exist first.
+    expect(String(verifyStep.if)).toBe("${{ success() && (github.event_name == 'push' || needs.changes.outputs.backend == 'true') }}");
+    expect(String(coverageUpload.if)).toContain(String(verifyStep.if).replace(/^\$\{\{\s*|\s*\}\}$/g, ""));
     expect(String(verifyStep.run)).toContain("coverage/lcov.info is missing or empty");
     expect(String(verifyStep.run)).toContain("exit 1");
 
@@ -65,5 +69,49 @@ describe("Codecov policy", () => {
     expect(testResultsUploadWith.report_type).toBe("test_results");
     expect(testResultsUploadWith.disable_search).toBe(true);
     expect(testResultsUploadWith.fail_ci_if_error).toBe(false);
+  });
+
+  it("uploads fork PR coverage tokenlessly instead of silently skipping it", () => {
+    // Fork PRs cannot read secrets.CODECOV_TOKEN. Previously the token-gated upload steps simply
+    // excluded forks with no replacement, so codecov/patch had no report to compare against and fell
+    // back to Codecov's if_not_found: success default -- a green "0.00%, not affected" check that never
+    // actually enforced the patch bar on fork contributions. codecov-action's tokenless upload path
+    // (public repos only) closes that gap with a single, synchronous, same-job upload: no separate
+    // workflow, no artifact staging, no fork-authored attribution data to trust or validate.
+    const workflow = readYaml(".github/workflows/ci.yml");
+    const validateCode = nestedRecord(workflow, ["jobs", "validate-code"]);
+    const steps = recordArray(validateCode.steps, "jobs.validate-code.steps");
+
+    const verifyStep = steps.find((step) => step.name === "Verify coverage report exists");
+    expect(verifyStep).toBeDefined();
+    // The existence check must apply to forks too now -- it used to explicitly exclude them.
+    expect(String(verifyStep!.if)).not.toContain("fork");
+
+    const forkCoverageUpload = steps.find((step) => step.name === "Upload coverage to Codecov (fork PR tokenless)");
+    expect(forkCoverageUpload).toBeDefined();
+    expect(String(forkCoverageUpload!.if)).toContain("github.event.pull_request.head.repo.fork == true");
+
+    const forkCoverageWith = record(forkCoverageUpload!.with, "fork coverage upload with");
+    expect(forkCoverageWith.token).toBeUndefined();
+    expect(forkCoverageWith.files).toBe("./coverage/lcov.info");
+    expect(forkCoverageWith.disable_search).toBe(true);
+    expect(forkCoverageWith.fail_ci_if_error).toBe(true);
+
+    const forkTestResultsUpload = steps.find(
+      (step) => step.name === "Upload Vitest results to Codecov (fork PR tokenless)",
+    );
+    expect(forkTestResultsUpload).toBeDefined();
+    const forkTestResultsWith = record(forkTestResultsUpload!.with, "fork test results upload with");
+    expect(forkTestResultsWith.token).toBeUndefined();
+    expect(forkTestResultsWith.report_type).toBe("test_results");
+    expect(forkTestResultsWith.fail_ci_if_error).toBe(false);
+
+    // The trusted (token) path must still explicitly exclude forks -- it must never see the token env
+    // used, and the two paths must be mutually exclusive so a fork PR never double-uploads.
+    const trustedCoverageUpload = steps.find((step) => step.name === "Upload coverage to Codecov");
+    expect(trustedCoverageUpload).toBeDefined();
+    expect(String(trustedCoverageUpload!.if)).toContain("github.event.pull_request.head.repo.fork != true");
+    const trustedWith = record(trustedCoverageUpload!.with, "trusted coverage upload with");
+    expect(trustedWith.token).toBe("${{ secrets.CODECOV_TOKEN }}");
   });
 });

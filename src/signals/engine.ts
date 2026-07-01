@@ -1321,7 +1321,11 @@ export function detectGittensorContributor(
   repoStats: ContributorRepoStatRecord[] = [],
 ): ContributorDetection {
   const priorPullRequests = pullRequests.filter(
-    (pr) => sameLogin(pr.authorLogin, login) && !(pr.repoFullName === currentPr.repoFullName && pr.number === currentPr.number),
+    // Exclude the current PR case-insensitively on repo name, matching `sameRepo` used everywhere else in
+    // this module (and the `sameLogin` in this same predicate). A raw `===` let a cached copy of the current
+    // PR stored under different repo-name casing (GitHub full-names are case-insensitive) slip through and be
+    // miscounted as the contributor's own "prior activity".
+    (pr) => sameLogin(pr.authorLogin, login) && !(sameRepo(pr.repoFullName, currentPr.repoFullName) && pr.number === currentPr.number),
   );
   const priorIssues = issues.filter((issue) => sameLogin(issue.authorLogin, login));
   const priorMergedPullRequests = priorPullRequests.filter((pr) => pr.mergedAt || pr.state === "merged");

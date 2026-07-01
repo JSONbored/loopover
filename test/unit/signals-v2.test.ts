@@ -200,6 +200,43 @@ describe("v2 signal builders", () => {
     ).toBe(true);
   });
 
+  it("still ranks by recency when linked PRs alone exceed the pairwise cap (regression)", () => {
+    // 130 linked-issue filler PRs, all older than the two overlapping linked PRs below. Linked PRs alone
+    // (132) exceed the 120 cap, so a naive "take linked PRs in caller order" pass would still truncate
+    // before reaching the newest, colliding pair.
+    const linkedFiller = Array.from({ length: 130 }, (_, index) => ({
+      ...pullRequests[0]!,
+      number: index + 1,
+      title: `Unrelated maintenance task ${index + 1} for widgets module`,
+      linkedIssues: [9000 + index],
+      updatedAt: isoDaysAgo(200),
+    }));
+    const overlapA: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 6000,
+      title: "Fix authentication retry backoff handler",
+      linkedIssues: [7000],
+      updatedAt: isoDaysAgo(1),
+    };
+    const overlapB: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 6001,
+      title: "Fix authentication retry backoff logic",
+      linkedIssues: [7001],
+      updatedAt: isoDaysAgo(1),
+    };
+    const manyPullRequests = [...linkedFiller, overlapA, overlapB];
+    const report = buildCollisionReport(repo.fullName, issues, manyPullRequests, []);
+    expect(
+      report.clusters.some(
+        (cluster) =>
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 6000) &&
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 6001) &&
+          /meaningful terms/i.test(cluster.reason),
+      ),
+    ).toBe(true);
+  });
+
   it("uses authoritative queue counts when signal inputs are sampled", () => {
     const sampledIssues = issues.slice(0, 1);
     const sampledPullRequests = pullRequests.slice(0, 1);

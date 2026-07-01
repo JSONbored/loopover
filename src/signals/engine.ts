@@ -5190,19 +5190,16 @@ function boundedCollisionIssues(openIssues: IssueRecord[], openPullRequests: Pul
 function boundedCollisionPullRequests(openPullRequests: PullRequestRecord[]): PullRequestRecord[] {
   /* v8 ignore start -- Large-queue PR sampling mirrors boundedCollisionIssues; linked and pairwise collision paths are covered above. */
   if (openPullRequests.length <= MAX_COLLISION_PAIRWISE_PULL_REQUESTS) return openPullRequests;
-  const selected = new Map<number, PullRequestRecord>();
-  for (const pullRequest of openPullRequests) {
-    if (pullRequest.linkedIssues.length > 0) selected.set(pullRequest.number, pullRequest);
-    if (selected.size >= MAX_COLLISION_PAIRWISE_PULL_REQUESTS) return [...selected.values()];
-  }
+  // Rank linked-issue PRs ahead of unlinked ones, then by recency within each group, so the cap keeps
+  // the most-relevant PRs even when linked PRs alone exceed the budget (not just whichever appear
+  // first in caller order).
   const ranked = [...openPullRequests].sort(
-    (left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") || left.number - right.number,
+    (left, right) =>
+      Number(left.linkedIssues.length === 0) - Number(right.linkedIssues.length === 0) ||
+      (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") ||
+      left.number - right.number,
   );
-  for (const pullRequest of ranked) {
-    selected.set(pullRequest.number, pullRequest);
-    if (selected.size >= MAX_COLLISION_PAIRWISE_PULL_REQUESTS) break;
-  }
-  return [...selected.values()];
+  return ranked.slice(0, MAX_COLLISION_PAIRWISE_PULL_REQUESTS);
   /* v8 ignore stop */
 }
 

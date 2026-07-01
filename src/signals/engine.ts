@@ -26,7 +26,7 @@ import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
-import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
+import { hasLocalTestEvidence } from "./test-evidence";
 import { isFailingCheckSummary } from "./local-branch";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
@@ -5469,7 +5469,14 @@ function isCodeFile(file: string): boolean {
 }
 
 function isTestFile(file: string): boolean {
-  return isTestPath(file);
+  return (
+    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
+    /(^|\/)src\/test\//i.test(file) ||
+    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
+    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
+    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file) ||
+    /(^|\/)testdata\//i.test(file)
+  );
 }
 
 function riskRank(risk: CollisionCluster["risk"]): number {

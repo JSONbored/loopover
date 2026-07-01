@@ -50,6 +50,7 @@ test("scanInstallScripts still accepts legacy packument-shaped test fixtures", a
 test("scanInstallScripts uses exact version metadata when custom versions field is present", async () => {
   const findings = await scanInstallScripts(npmAdd("malicious"), async () =>
     jsonResponse({
+      version: "1.0.0",
       scripts: { postinstall: "node ./postinstall.js" },
       time: "2026-06-30T00:00:00.000Z",
       versions: { "1.0.0": {} },
@@ -68,6 +69,21 @@ test("scanInstallScripts ignores custom versions field on exact metadata without
       versions: {
         "1.0.0": { scripts: { postinstall: "node ./nested.js" } },
       },
+    }),
+  );
+
+  assert.deepEqual(findings, []);
+});
+
+test("scanInstallScripts treats version-identifying exact metadata as top-level despite packument-looking fields", async () => {
+  const findings = await scanInstallScripts(npmAdd("pure-js"), async () =>
+    jsonResponse({
+      version: "1.0.0",
+      versions: {
+        "1.0.0": { scripts: { postinstall: "node ./nested.js" } },
+      },
+      time: { "1.0.0": "2026-06-30T00:00:00.000Z" },
+      "dist-tags": { latest: "1.0.0" },
     }),
   );
 

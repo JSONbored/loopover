@@ -27,6 +27,7 @@ interface ScanOptions {
 }
 
 interface NpmVersionMetadata {
+  version?: string;
   scripts?: Record<string, string>;
   time?: string;
 }
@@ -70,10 +71,23 @@ function hasVersionMetadata(
   );
 }
 
+function hasExactVersionIdentity(
+  data: NpmVersionMetadata | NpmPackumentMetadata,
+  version: string,
+): data is NpmVersionMetadata {
+  return (data as { version?: unknown }).version === version;
+}
+
+function exactPublishedAt(data: NpmVersionMetadata | NpmPackumentMetadata): string | null {
+  const time = (data as { time?: unknown }).time;
+  return typeof time === "string" ? time : null;
+}
+
 function versionMetadata(
   data: NpmVersionMetadata | NpmPackumentMetadata,
   version: string,
 ): NpmVersionMetadata | undefined {
+  if (hasExactVersionIdentity(data, version)) return data;
   if (hasVersionMetadata(data)) return data;
   return isPackumentMetadata(data) ? data.versions?.[version] : data;
 }
@@ -82,6 +96,7 @@ function publishedAt(
   data: NpmVersionMetadata | NpmPackumentMetadata,
   version: string,
 ): string | null {
+  if (hasExactVersionIdentity(data, version)) return exactPublishedAt(data);
   if (hasVersionMetadata(data)) return data.time ?? null;
   return isPackumentMetadata(data) ? data.time?.[version] ?? null : null;
 }

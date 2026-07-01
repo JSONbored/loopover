@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sanitizePublicComment } from "../../src/github/commands";
 import { buildScorePreview } from "../../src/scoring/preview";
 import { explainScoreBreakdown } from "../../src/services/score-breakdown";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
@@ -174,31 +175,32 @@ describe("explainScoreBreakdown", () => {
       leverageScore: 0,
     });
 
-    const meets = explainScoreBreakdown(
-      buildScorePreview({
+    const meetsPreview = buildScorePreview({
         repo: issueDiscoveryRepo,
         snapshot,
         input: { ...baseInput, validSolvedIssues: 4, issueCredibility: 0.9 },
-      }),
-    );
-    expect(meets.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
-      band: "full",
-      summary: expect.stringMatching(/4 valid solved, private context 0.9/i),
-    });
+      });
+    const meets = explainScoreBreakdown(meetsPreview);
+    const meetsEntry = meets.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")!;
+    const meetsRawSummary = `Issue-discovery history (4 valid solved, credibility 0.9) meets upstream floors (${meetsPreview.gates.validSolvedIssuesFloor} valid solved, ${meetsPreview.gates.issueCredibilityFloor} credibility).`;
+    expect(meetsEntry).toMatchObject({ band: "full" });
+    // explainScoreBreakdown sanitizes raw multiplier copy before returning it publicly.
+    expect(meetsEntry.summary).toBe(sanitizePublicComment(meetsRawSummary));
 
-    const blocked = explainScoreBreakdown(
-      buildScorePreview({
+    const blockedPreview = buildScorePreview({
         repo: issueDiscoveryRepo,
         snapshot,
         input: { ...baseInput, validSolvedIssues: 1, issueCredibility: 0.5 },
-      }),
-    );
-    expect(blocked.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      });
+    const blocked = explainScoreBreakdown(blockedPreview);
+    const blockedEntry = blocked.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")!;
+    const blockedRawSummary = `Issue-discovery history (1 valid solved, credibility 0.5) is below upstream floors (${blockedPreview.gates.validSolvedIssuesFloor} valid solved, ${blockedPreview.gates.issueCredibilityFloor} credibility), so this preview is zeroed.`;
+    expect(blockedEntry).toMatchObject({
       band: "blocked",
-      summary: expect.stringMatching(/private context.*zeroed/i),
       leverageScore: 100,
     });
-    expect(blocked.highestLeverageLever.lever).toMatch(/valid solved issues|issue credibility/i);
+    expect(blockedEntry.summary).toBe(sanitizePublicComment(blockedRawSummary));
+    expect(blocked.highestLeverageLever.lever).toMatch(/valid solved issues|issue private context/i);
     expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
   });
 
@@ -247,21 +249,21 @@ describe("explainScoreBreakdown", () => {
       linkedIssueMode: "standard" as const,
     };
 
-    const validSolvedOnly = explainScoreBreakdown(
-      buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: { ...baseInput, validSolvedIssues: 4 } }),
-    );
-    expect(validSolvedOnly.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
-      band: "neutral",
-      summary: expect.stringMatching(/valid solved count is observed but issue private context is not/i),
-    });
+    const validSolvedOnlyPreview = buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: { ...baseInput, validSolvedIssues: 4 } });
+    const validSolvedOnly = explainScoreBreakdown(validSolvedOnlyPreview);
+    const validSolvedOnlyEntry = validSolvedOnly.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")!;
+    const validSolvedOnlyRawSummary =
+      "Issue-discovery validity floor is not enforced for this preview (valid solved count is observed but issue credibility is not; upstream requires both before gating).";
+    expect(validSolvedOnlyEntry).toMatchObject({ band: "neutral" });
+    expect(validSolvedOnlyEntry.summary).toBe(sanitizePublicComment(validSolvedOnlyRawSummary));
 
-    const credibilityOnly = explainScoreBreakdown(
-      buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: { ...baseInput, issueCredibility: 0.9 } }),
-    );
-    expect(credibilityOnly.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
-      band: "neutral",
-      summary: expect.stringMatching(/issue private context is observed but valid solved count is not/i),
-    });
+    const credibilityOnlyPreview = buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: { ...baseInput, issueCredibility: 0.9 } });
+    const credibilityOnly = explainScoreBreakdown(credibilityOnlyPreview);
+    const credibilityOnlyEntry = credibilityOnly.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")!;
+    const credibilityOnlyRawSummary =
+      "Issue-discovery validity floor is not enforced for this preview (issue credibility is observed but valid solved count is not; upstream requires both before gating).";
+    expect(credibilityOnlyEntry).toMatchObject({ band: "neutral" });
+    expect(credibilityOnlyEntry.summary).toBe(sanitizePublicComment(credibilityOnlyRawSummary));
   });
 
   it("explains an over-threshold open-issue count as a blocked open-issue spam gate", () => {

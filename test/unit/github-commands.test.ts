@@ -172,6 +172,16 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("Issue-discovery history (2 valid solved, credibility 0.42) is below upstream floors (3 valid solved, 0.8 credibility).")).not.toMatch(
       /issue-discovery history|valid solved|upstream floors|0\.42|0\.8|\b2\b|\b3\b/i,
     );
+    expect(
+      sanitizePublicComment(
+        "Issue-discovery validity floor is not enforced for this preview (valid solved count is observed but issue credibility is not; upstream requires both before gating).",
+      ),
+    ).toMatch(/issue private context is not/i);
+    expect(
+      sanitizePublicComment(
+        "Issue-discovery validity floor is not enforced for this preview (issue credibility is observed but valid solved count is not; upstream requires both before gating).",
+      ),
+    ).toMatch(/issue private context is observed/i);
     expect(sanitizePublicComment("Credibility 0.12 is below floor 0.4.")).not.toMatch(/credibility|0\.12|floor|0\.4/i);
     expect(sanitizePublicComment("open_pr_pressure closed_pr_credibility low_credibility credibility updates")).not.toMatch(/open_pr_pressure|closed_pr_credibility|low_credibility|credibility/i);
     expect(sanitizePublicComment("Command: @gittensory reviewability")).toContain("@gittensory reviewability");

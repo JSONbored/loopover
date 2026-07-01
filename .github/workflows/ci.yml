@@ -27,6 +27,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       ui: ${{ steps.filter.outputs.ui }}
+      uiContract: ${{ steps.filter.outputs.uiContract }}
       mcp: ${{ steps.filter.outputs.mcp }}
       rees: ${{ steps.filter.outputs.rees }}
     steps:
@@ -51,14 +52,23 @@ jobs:
               - 'scripts/**'
               - 'migrations/**'
               - '.github/workflows/**'
+            # The UI's own app/extension code -- triggers the FULL toolchain (lint/typecheck/test/build).
+            # A dependency bump (package.json/package-lock.json) stays here too since it can break the UI
+            # build or types in ways only that full toolchain would catch.
             ui:
               - 'apps/gittensory-ui/**'
               - 'apps/gittensory-extension/**'
-              - 'src/**'
-              - 'scripts/write-ui-openapi.ts'
               - 'scripts/build-extension.mjs'
               - 'package.json'
               - 'package-lock.json'
+            # Backend changes that can drift the OpenAPI contract the UI type-checks against, but say
+            # nothing about the UI app's OWN code -- only the lightweight drift check needs to run, not
+            # ui:lint/typecheck/test/build (#ci-scope). If a backend PR's change IS UI-relevant, regenerating
+            # `apps/gittensory-ui/public/openapi.json` per CONTRIBUTING.md lands a change under `ui` above,
+            # which correctly re-triggers the full toolchain.
+            uiContract:
+              - 'src/**'
+              - 'scripts/write-ui-openapi.ts'
             mcp:
               # Self-contained package: build is `node --check` on its own files
               # and the pack check only inspects the tarball. Root src/ cannot
@@ -122,7 +132,12 @@ jobs:
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         env:
           VITEST_JUNIT_PATH: reports/junit/vitest.xml
-        run: npm run test:coverage -- --maxWorkers=100%
+        # Pinned to the self-hosted runner's actual Docker CPU quota (4), not "100%": Node's os.cpus()
+        # reports the HOST's full core count inside the container, ignoring the cgroup CPU limit, so
+        # --maxWorkers=100% oversubscribed the worker pool far past what the runner can actually execute
+        # in parallel, causing thrashing. A GitHub-hosted fork-PR runner has no such limit, but the
+        # standard 4-core GitHub runner makes 4 the right number there too.
+        run: npm run test:coverage -- --maxWorkers=4
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
@@ -215,10 +230,13 @@ jobs:
         if: ${{ github.event_name == 'push' || needs.changes.outputs.rees == 'true' }}
         run: npm run rees:test
       - name: OpenAPI drift check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.uiContract == 'true' }}
         run: npm run ui:openapi:check
+      # Checks apps/gittensory-ui/src' known-latest MCP version string against the published package, so
+      # its dependency is `ui` (the file it scans) + `mcp` (the package it checks against) -- NOT the
+      # OpenAPI contract, which this script never reads.
       - name: UI/MCP version audit
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.mcp == 'true' }}
         run: npm run ui:version-audit
       - name: UI lint
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}

@@ -269,15 +269,26 @@ function rateLimitAdmissionDelayForObservation(
 }
 
 function fallbackObservationCanOverrideExact(
+  kind: GitHubRateLimitAdmissionKind,
   fallback: AdmissionObservation | null,
   exact: AdmissionObservation | null,
+  nowMs: number,
 ): boolean {
   if (!fallback) return false;
   if (!exact) return true;
   const fallbackMs = observationMs(fallback);
   const exactMs = observationMs(exact);
-  if (fallbackMs === null) return false;
-  return exactMs === null || fallbackMs > exactMs;
+  if (fallbackMs === null || exactMs === null || fallbackMs <= exactMs) return false;
+  // The fallback is a newer observation, but recency alone must not let it move admission from
+  // permissive to restrictive: a null/unkeyed fallback row is frequently a DIFFERENT bucket (a public
+  // token, another consumer's traffic, or a pre-migration write that never carried an admission_key),
+  // so a newer-but-exhausted fallback pinning an otherwise-healthy, concretely-keyed installation
+  // bucket is a false positive, not a real signal about that installation's budget. Only let a newer
+  // fallback override when it is MORE permissive than the exact reading (clearing a stale exhaustion) —
+  // never when it would introduce a delay the exact observation alone would not have.
+  const exactDelay = rateLimitAdmissionDelayForObservation(kind, exact, nowMs);
+  const fallbackDelay = rateLimitAdmissionDelayForObservation(kind, fallback, nowMs);
+  return exactDelay !== null && fallbackDelay === null;
 }
 
 export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
@@ -379,9 +390,13 @@ export function matchesGitHubRateLimitAdmissionTarget(
   blocked: GitHubRateLimitAdmissionTarget,
 ): boolean {
   if (candidate === null) return false;
-  // Null-key GitHub jobs are legacy/unknown actor work; park them with a depleted known bucket,
-  // and park all GitHub-budget work when the depleted bucket itself is unknown.
-  if (blocked.admissionKey === null) return true;
+  // A null-key CANDIDATE is legacy/unknown-actor work whose true bucket we can't prove is unaffected,
+  // so it still parks alongside any confirmed exhaustion (known-keyed or null-keyed alike). But a
+  // null-key BLOCKED target (the job that actually failed had no admissionKey) does NOT justify
+  // parking every OTHER concretely-keyed installation's work too -- we only know ONE unscoped bucket
+  // is exhausted, not that a SPECIFIC installation's own budget is affected. Scoping this the same way
+  // as a keyed blocked target avoids the same false-positive class as a stale unkeyed observation
+  // pinning a healthy installation's webhooks (mirrors fallbackObservationCanOverrideExact above).
   return candidate.admissionKey === blocked.admissionKey || candidate.admissionKey === null;
 }
 
@@ -405,7 +420,7 @@ export function githubRateLimitAdmissionDelayMs(
       fallback = newerRateLimitObservation(fallback, candidate);
     }
   }
-  const observation = fallbackObservationCanOverrideExact(fallback, exact)
+  const observation = fallbackObservationCanOverrideExact(kind, fallback, exact, nowMs)
     ? fallback
     : exact;
   return rateLimitAdmissionDelayForObservation(kind, observation, nowMs);

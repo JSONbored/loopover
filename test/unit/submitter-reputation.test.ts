@@ -216,17 +216,20 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
 
     await recordSubmissionOutcome(mkEnv(), "p", "u", "merged");
     expect(seen[0]).toContain(", merged, last_seen)");
-    expect(seen[0]).toContain("merged = merged + 1");
+    expect(seen[0]).toContain("submissions = submitter_stats.submissions + 1");
+    expect(seen[0]).toContain("merged = submitter_stats.merged + 1");
 
     seen.length = 0;
     await recordSubmissionOutcome(mkEnv(), "p", "u", "closed");
     expect(seen[0]).toContain(", closed, last_seen)");
-    expect(seen[0]).toContain("closed = closed + 1");
+    expect(seen[0]).toContain("submissions = submitter_stats.submissions + 1");
+    expect(seen[0]).toContain("closed = submitter_stats.closed + 1");
 
     seen.length = 0;
     await recordSubmissionOutcome(mkEnv(), "p", "u", "manual");
     expect(seen[0]).toContain(", manual, last_seen)");
-    expect(seen[0]).toContain("manual = manual + 1");
+    expect(seen[0]).toContain("submissions = submitter_stats.submissions + 1");
+    expect(seen[0]).toContain("manual = submitter_stats.manual + 1");
   });
 
   it("recordSubmissionOutcome swallows a DB error fail-safe (logs, never throws)", async () => {

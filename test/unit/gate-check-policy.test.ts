@@ -50,12 +50,14 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
   it("overlays the friendly gate: alias over DB settings (incl. gate.enabled -> gateCheckMode)", () => {
     const eff = resolveEffectiveSettings(
       settings({ gateCheckMode: "enabled", linkedIssueGateMode: "advisory", duplicatePrGateMode: "block", qualityGateMode: "off", qualityGateMinScore: 10 }),
+      // readiness.mode: "block" is downgraded to "advisory" at parse time (#2267) — readiness/quality can
+      // never hard-block, so this exercises the SAME downgrade flowing through resolveEffectiveSettings.
       parseFocusManifest({ gate: { enabled: false, linkedIssue: "block", duplicates: "off", readiness: { mode: "block", minScore: 70 } } }),
     );
     expect(eff.gateCheckMode).toBe("off"); // gate.enabled: false disables from config
     expect(eff.linkedIssueGateMode).toBe("block");
     expect(eff.duplicatePrGateMode).toBe("off");
-    expect(eff.qualityGateMode).toBe("block");
+    expect(eff.qualityGateMode).toBe("advisory");
     expect(eff.qualityGateMinScore).toBe(70);
   });
 

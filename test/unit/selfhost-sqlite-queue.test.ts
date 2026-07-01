@@ -457,7 +457,10 @@ describe("createSqliteQueue (durable #980)", () => {
     }
   });
 
-  it("pre-yields from legacy repo exhaustion before older healthy exact observations", async () => {
+  it("REGRESSION: a newer legacy unkeyed exhaustion does not pin a healthy exact installation observation (self-host webhook backlog)", async () => {
+    // Before the fix: a stale/legacy null-admission_key row that happened to be observed MORE RECENTLY
+    // than the installation's own (healthy) exact reading would win purely on recency, deferring every
+    // webhook for a perfectly healthy installation. The exact reading must govern here.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -495,17 +498,8 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
       await q.drain();
 
-      expect(seen).toEqual([]);
-      const row = driver.query(
-        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
-        [],
-      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
-      expect(row).toMatchObject({
-        status: "pending",
-        attempts: 0,
-        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
-        last_error: "github rate-limit webhook admission",
-      });
+      expect(seen).toEqual(["github-webhook"]);
+      expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -513,7 +507,11 @@ describe("createSqliteQueue (durable #980)", () => {
     }
   });
 
-  it("does not keep webhook admission closed from stale exact rows after a newer healthy legacy observation", async () => {
+  it("REGRESSION: a newer healthy legacy observation does not clear a genuine exact installation exhaustion", async () => {
+    // An unkeyed/legacy fallback is not proven to report on the SAME budget as the exact installation
+    // key, so it must not "clear" a real exhaustion any more than it should be able to suppress a
+    // healthy exact reading -- both directions trust an unrelated bucket's signal over this
+    // installation's own. The exact observation's own reset_at already bounds the wait.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -551,8 +549,17 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send({ type: "github-webhook", deliveryId: "fresh", eventName: "pull_request", payload: { installation: { id: 123 }, repository: { full_name: "owner/repo" } } });
       await q.drain();
 
-      expect(seen).toEqual(["github-webhook"]);
-      expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
+      expect(seen).toEqual([]);
+      const row = driver.query(
+        "SELECT status, attempts, run_after, last_error FROM _selfhost_jobs",
+        [],
+      ).rows[0] as { status: string; attempts: number; run_after: number; last_error: string };
+      expect(row).toMatchObject({
+        status: "pending",
+        attempts: 0,
+        run_after: Date.parse("2026-06-24T12:10:15.000Z"),
+        last_error: "github rate-limit webhook admission",
+      });
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;

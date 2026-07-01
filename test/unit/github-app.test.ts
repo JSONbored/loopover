@@ -108,6 +108,47 @@ describe("GitHub check runs", () => {
     ).toBe(true);
   });
 
+  it("returns no published check-run outcome for dry-run suppressed writes", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (url.includes("/access_tokens"))
+          return Response.json({ token: "installation-token" });
+        if (url.includes("/check-runs"))
+          return Response.json({ check_runs: [] });
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const result = await createOrUpdateGateCheckRun(
+      env,
+      123,
+      "JSONbored/gittensory",
+      gateAdvisory("dry-run-gate"),
+      {},
+      {},
+      "dry_run",
+    );
+
+    expect(result).toBeNull();
+    expect(
+      calls.some(
+        (call) => call.startsWith("POST ") && call.includes("/check-runs"),
+      ),
+    ).toBe(false);
+    const audit = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE event_type = ?",
+    )
+      .bind("github.write.suppressed")
+      .first<{ detail: string }>();
+    expect(audit?.detail).toContain("suppressed POST");
+  });
+
   it("accepts GitHub App RSA private key PEMs for installation tokens", async () => {
     const privateKey = generateRsaPrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

@@ -100,6 +100,8 @@ import {
   getRepositoryAiKeyStatus,
   upsertRepositoryAiKey,
   deleteRepositoryAiKey,
+  getGlobalAgentFrozenState,
+  setGlobalAgentFrozen,
 } from "../db/repositories";
 import { pruneExpiredRecords, RETENTION_POLICY } from "../db/retention";
 import {
@@ -238,7 +240,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
-import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES, normalizeReadinessGateMode } from "../signals/focus-manifest";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
@@ -265,6 +267,7 @@ import type {
   PullRequestRecord,
   RepoSyncSegmentRecord,
   RepositoryRecord,
+  RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -686,6 +689,21 @@ const maintainerSettingsSchema = z
   })
   .partial();
 
+/** Readiness/quality can never hard-block a PR (buildQualityGateWarning is always advisory-severity;
+ *  isConfiguredGateBlocker has no branch for it) — downgrade a settings-write's `qualityGateMode: "block"` to
+ *  `"advisory"` here too, mirroring the same downgrade `.gittensory.yml`'s `gate.readiness.mode` /
+ *  `settings.qualityGateMode` already get in normalizeReadinessGateMode, so the dashboard/API save path can
+ *  never persist a value that implies enforcement it doesn't have (#2267). Callers check for `undefined`
+ *  (a PATCH-style save that didn't touch this field) before calling — this only handles the defined case, so
+ *  the return type never needs `undefined` under `exactOptionalPropertyTypes`. The warnings array is scratch;
+ *  these routes have no warnings-response protocol. */
+function downgradeQualityGateMode(mode: "off" | "advisory" | "block"): "off" | "advisory" {
+  /* v8 ignore next -- never null for a Zod-validated "off"|"advisory"|"block" input (normalizeReadinessGateMode's
+     "must be one of" branch only fires for a value outside that set); the fallback only satisfies the shared
+     parser's broader return type. */
+  return (normalizeReadinessGateMode(mode, "qualityGateMode", []) as "off" | "advisory" | null) ?? "advisory";
+}
+
 // Maintainer BYOK provider key. Write-only: the key is encrypted at rest and never returned. A loose
 // prefix check catches the common provider/key mismatch (e.g. pasting an OpenAI key under Anthropic)
 // without coupling to exact provider key formats: Anthropic keys start with `sk-ant-`; OpenAI keys
@@ -766,6 +784,12 @@ const commandFeedbackSchema = z
   .object({
     answerId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_.:-]+$/),
     vote: z.enum(["useful", "not_useful"]),
+  })
+  .strict();
+
+const killSwitchUpdateSchema = z
+  .object({
+    frozen: z.boolean(),
   })
   .strict();
 
@@ -1330,6 +1354,53 @@ export function createApp() {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
     return c.json(await buildOperatorDashboardPayload(c.env));
+  });
+
+  // Global agent kill-switch (#2359): the write side (setGlobalAgentFrozen) previously had zero callers — the
+  // only way to flip it was raw SQL. isGlobalAgentFrozen's fail-open read is right for the enforcement hot path,
+  // but wrong here: getGlobalAgentFrozenState throws instead, so a read failure surfaces as a clear error rather
+  // than a falsely reassuring "unfrozen".
+  app.get("/v1/app/kill-switch", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    try {
+      const state = await getGlobalAgentFrozenState(c.env);
+      return c.json({ ...state, generatedAt: nowIso() });
+    } catch (error) {
+      return c.json({ error: "kill_switch_read_failed", message: errorMessage(error) }, 503);
+    }
+  });
+
+  app.post("/v1/app/kill-switch", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- requireAppRole already rejects an unauthenticated caller before this handler runs. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const body = await c.req.json().catch(() => null);
+    const parsed = killSwitchUpdateSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_kill_switch_update", issues: parsed.error.issues }, 400);
+    const actorLogin = identity.actor;
+    await setGlobalAgentFrozen(c.env, parsed.data.frozen, actorLogin);
+    // Read-after-write verification (#2359): confirm the write actually landed before telling the caller it
+    // succeeded, rather than trusting the INSERT/UPDATE call not to have silently no-opped under a degraded D1.
+    let verified: { frozen: boolean; updatedAt: string | null; updatedBy: string | null };
+    try {
+      verified = await getGlobalAgentFrozenState(c.env);
+    } catch (error) {
+      return c.json({ error: "kill_switch_verify_failed", message: errorMessage(error) }, 503);
+    }
+    if (verified.frozen !== parsed.data.frozen) {
+      return c.json({ error: "kill_switch_write_unconfirmed", requested: parsed.data.frozen, observed: verified.frozen }, 502);
+    }
+    await recordAuditEvent(c.env, {
+      eventType: "operator.kill_switch_set",
+      actor: actorLogin,
+      targetKey: "global_agent_controls#singleton",
+      outcome: "completed",
+      metadata: { frozen: verified.frozen, identityKind: identity.kind },
+    });
+    return c.json({ ok: true, ...verified });
   });
 
   app.get("/v1/app/notification-model", async (c) => {
@@ -2105,7 +2176,8 @@ export function createApp() {
     const parsed = maintainerSettingsSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_repository_settings", issues: parsed.error.issues }, 400);
     const current = await getRepositorySettings(c.env, fullName);
-    const changes = Object.fromEntries(Object.entries(parsed.data).filter(([, value]) => value !== undefined));
+    const changes = Object.fromEntries(Object.entries(parsed.data).filter(([, value]) => value !== undefined)) as Partial<RepositorySettings>;
+    if (changes.qualityGateMode !== undefined) changes.qualityGateMode = downgradeQualityGateMode(changes.qualityGateMode);
     const updated = await upsertRepositorySettings(c.env, { ...current, ...changes, repoFullName: fullName });
     await recordAuditEvent(c.env, {
       eventType: "repo.settings_updated",
@@ -3424,7 +3496,7 @@ export function createApp() {
         gatePack: parsed.data.gatePack,
         linkedIssueGateMode: parsed.data.linkedIssueGateMode,
         duplicatePrGateMode: parsed.data.duplicatePrGateMode,
-        qualityGateMode: parsed.data.qualityGateMode,
+        qualityGateMode: downgradeQualityGateMode(parsed.data.qualityGateMode),
         qualityGateMinScore: parsed.data.qualityGateMinScore,
         aiReviewMode: parsed.data.aiReviewMode,
         aiReviewByok: parsed.data.aiReviewByok,

@@ -143,6 +143,20 @@ test("extractDependencyChanges: PyPI exact pins with PEP 508 extras are parsed u
   assert.equal(byPkg.celery.to, "5.4.0");
 });
 
+test("extractDependencyChanges: Go paths with uppercase and `_`/`~` punctuation are parsed", () => {
+  // Go module paths are case-sensitive and admit the full `. _ ~ -` punctuation set; a narrower
+  // path class would silently drop these deps from the OSV scan. Names are preserved verbatim.
+  const changes = extractDependencyChanges([
+    { path: "go.mod", patch: "+\tgithub.com/BurntSushi/toml v1.4.0" },
+    { path: "go.mod", patch: "+\tgithub.com/foo_bar/baz v0.9.1" },
+    { path: "go.mod", patch: "+\texample.com/x/~exp v1.0.0" },
+  ]);
+  const byPkg = Object.fromEntries(changes.map((c) => [c.package, c]));
+  assert.equal(byPkg["github.com/BurntSushi/toml"].to, "1.4.0");
+  assert.equal(byPkg["github.com/foo_bar/baz"].to, "0.9.1");
+  assert.equal(byPkg["example.com/x/~exp"].to, "1.0.0");
+});
+
 test("queryOsv: maps vulns; severity from database_specific; fixedIn from affected; [] on non-ok", async () => {
   const cves = await queryOsv(
     "npm",

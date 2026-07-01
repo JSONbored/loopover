@@ -20,6 +20,19 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
     })),
   };
 });
+// Without this mock, an unconfigured GITHUB_APP_PRIVATE_KEY leaves the accept-time live-recheck token mint
+// undefined; fetchLiveCiAggregate then FULFILLS with ciState "unverified" (not a rejection), which the
+// accept-time staleness check (agent-approval-queue.ts) now treats as non-"passed" — a genuine stale signal,
+// not a fail-open case. #2364's live CI re-check (in executeAgentMaintenanceActions) runs for every
+// merge/heuristic-close accept too. Default to "passed" so the existing "accept executes the staged merge"
+// happy path executes live instead of being (correctly) denied for CI neither test was simulating.
+vi.mock("../../src/github/backfill", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/github/backfill")>();
+  return {
+    ...actual,
+    fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+  };
+});
 
 import { mergePullRequest } from "../../src/github/pr-actions";
 import { createSessionForGitHubUser } from "../../src/auth/security";

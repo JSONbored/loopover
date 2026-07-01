@@ -359,6 +359,21 @@ function normalizeOptionalGateMode(value: JsonValue | undefined, field: string, 
   return null;
 }
 
+/** `gate.readiness.mode` (and its `settings.qualityGateMode` alias below) is documented and parsed as the shared
+ *  off/advisory/block tri-state, but buildQualityGateWarning (src/rules/advisory.ts) always produces a
+ *  warning-severity finding — never a blocker — and isConfiguredGateBlocker has no branch for it: readiness/
+ *  quality is intentionally informational-only and can never hard-block a PR. Without this, a maintainer who
+ *  sets `mode: block` believes a real quality floor is enforced when the effective behavior is silently
+ *  advisory-only (#2267). Downgrade "block" to "advisory" here, with a clear deprecation warning, so the parsed
+ *  config always matches what the gate actually does. Exported so the settings-write API routes (the
+ *  dashboard/API path for the SAME `qualityGateMode` field) can apply the identical downgrade before persisting. */
+export function normalizeReadinessGateMode(value: JsonValue | undefined, field: string, warnings: string[]): GateRuleMode | null {
+  const mode = normalizeOptionalGateMode(value, field, warnings);
+  if (mode !== "block") return mode;
+  warnings.push(`Manifest gate field "${field}" no longer accepts "block" — readiness/quality is informational-only and can never hard-block a PR; downgrading to "advisory". Use gate.manifestPolicy or another enforceable gate for a real quality floor.`);
+  return "advisory";
+}
+
 function normalizeOptionalBoolean(value: JsonValue | undefined, field: string, warnings: string[]): boolean | null {
   if (value === undefined || value === null) return null;
   if (typeof value === "boolean") return value;
@@ -424,7 +439,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
-    readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
+    readinessMode: normalizeReadinessGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
     slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
     slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
@@ -442,6 +457,13 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
+  // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
+  // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
+  // that inertness at parse time rather than leaving it silently no-op; `false`/unset matches the (also inert)
+  // default, so only an explicit `true` is worth flagging.
+  if (gate.firstTimeContributorGrace === true) {
+    warnings.push(`Manifest field "gate.firstTimeContributorGrace" is currently reserved/inert — it does not soften a blocker outcome for first-time contributors.`);
+  }
   gate.present =
     gate.enabled !== null ||
     gate.pack !== null ||
@@ -586,7 +608,10 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (duplicatePrGateMode !== null) out.duplicatePrGateMode = duplicatePrGateMode;
   const selfAuthoredLinkedIssueGateMode = normalizeOptionalGateMode(r.selfAuthoredLinkedIssueGateMode, "settings.selfAuthoredLinkedIssueGateMode", warnings);
   if (selfAuthoredLinkedIssueGateMode !== null) out.selfAuthoredLinkedIssueGateMode = selfAuthoredLinkedIssueGateMode;
-  const qualityGateMode = normalizeOptionalGateMode(r.qualityGateMode, "settings.qualityGateMode", warnings);
+  // Same tri-state field as gate.readiness.mode above (the friendly gate alias overlays onto it in
+  // resolveEffectiveSettings) — apply the identical "block" → "advisory" downgrade here too, so a maintainer
+  // setting `settings.qualityGateMode: block` directly hits the same deprecation warning (#2267).
+  const qualityGateMode = normalizeReadinessGateMode(r.qualityGateMode, "settings.qualityGateMode", warnings);
   if (qualityGateMode !== null) out.qualityGateMode = qualityGateMode;
   const qualityGateMinScore = normalizeOptionalScore(r.qualityGateMinScore, "settings.qualityGateMinScore", warnings);
   if (qualityGateMinScore !== null) out.qualityGateMinScore = qualityGateMinScore;
@@ -1001,6 +1026,14 @@ export function resolveEffectiveSettings(
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {
     effective.linkedIssueGateMode = "block";
   }
+  // Readiness/quality can never hard-block a PR (buildQualityGateWarning is always advisory-severity;
+  // isConfiguredGateBlocker has no branch for it). The write-time guards (the settings.qualityGateMode /
+  // gate.readiness.mode parsers above, and the settings-write API routes) stop a NEW "block" value from being
+  // introduced, but a repo whose DB row already has quality_gate_mode = "block" from before those guards
+  // existed would still resolve to it here. Downgrade it at this single resolver too, so the EFFECTIVE settings
+  // the gate/review pipeline AND the settings-preview dashboard read (both call this function) can never carry
+  // a value that implies enforcement it doesn't have, regardless of when or where it was written (#2267).
+  if (effective.qualityGateMode === "block") effective.qualityGateMode = "advisory";
   effective.contributorBlacklist = mergeContributorBlacklists(effective.contributorBlacklist ?? [], sharedContributorBlacklist);
   return effective;
 }

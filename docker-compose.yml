@@ -578,7 +578,7 @@ services:
     command:
       - /bin/sh
       - -c
-      - "sh /backup-metrics.sh"
+      - "apk add --no-cache busybox-extras && sh /backup-metrics.sh"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'"]
       interval: 30s

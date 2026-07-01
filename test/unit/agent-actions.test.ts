@@ -12,6 +12,7 @@ function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateChec
     changedPaths: [],
     hardGuardrailGlobs: [],
     authorIsOwner: false,
+    authorIsAdmin: false,
     authorIsAutomationBot: false,
     ciState: "passed",
     pr: { labels: [] },
@@ -114,6 +115,68 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe("stale-approval retraction (#2254)", () => {
+    it("retracts a stale approval when a newer commit is no longer review-good and the PR stays open (held, not closed)", () => {
+      // Owner-authored + closeOwnerAuthors unset ⇒ closeEligible is false ⇒ this bad-verdict PR is HELD, not
+      // closed — exactly the case where a stale APPROVE from an earlier good commit would otherwise linger.
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      const approveAction = plan.find((a) => a.actionClass === "approve");
+      expect(approveAction).toMatchObject({ dismissStaleApproval: true });
+    });
+
+    it("pins the retraction to the head that was actually evaluated as stale (#2361)", () => {
+      // Without expectedHeadSha, a queued (auto_with_approval) dismissal replays against whatever head is
+      // current at accept time — not the head that made the dismissal valid — so a delayed accept could retract
+      // a DIFFERENT, newer bot approval than the one this plan pass actually judged stale.
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto_with_approval" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      const approveAction = plan.find((a) => a.actionClass === "approve");
+      expect(approveAction).toMatchObject({ dismissStaleApproval: true, expectedHeadSha: "newsha" });
+    });
+
+    it("does NOT retract when the PR is closing instead — a close makes the stale approval moot", () => {
+      const plan = classes(
+        planAgentMaintenanceActions(
+          input({ conclusion: "failure", autonomy: { approve: "auto", close: "auto" }, blockerTitles: ["x"], pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+        ),
+      );
+      expect(plan).toContain("close");
+      const approveAction = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto", close: "auto" }, blockerTitles: ["x"], pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      ).find((a) => a.actionClass === "approve");
+      expect(approveAction).toBeUndefined();
+    });
+
+    it("does NOT retract when the newer commit IS review-good — a fresh approve fires instead", () => {
+      const good = { conclusion: "success" as const, autonomy: { approve: "auto" as const }, ciState: "passed" as const };
+      const approveAction = planAgentMaintenanceActions(input({ ...good, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } })).find((a) => a.actionClass === "approve");
+      expect(approveAction).toBeDefined();
+      expect(approveAction?.dismissStaleApproval).toBeUndefined(); // a normal fresh approve, not a retraction
+    });
+
+    it("does NOT retract when there is nothing stale to retract (never approved, or already approved this exact head)", () => {
+      const neverApproved = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha" } }),
+      ).find((a) => a.actionClass === "approve");
+      expect(neverApproved).toBeUndefined();
+
+      const sameHead = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto" }, authorIsOwner: true, pr: { labels: [], headSha: "abc123", approvedHeadSha: "abc123" } }),
+      ).find((a) => a.actionClass === "approve");
+      expect(sameHead).toBeUndefined();
+    });
+
+    it("respects the approve autonomy dial — no retraction when approve is not acting", () => {
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: {}, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      expect(plan.find((a) => a.actionClass === "approve")).toBeUndefined();
+    });
+  });
+
   it("merges only a clean, approved, passing PR (reviewDecision drives the approval gate)", () => {
     const ok = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
     expect(ok.find((a) => a.actionClass === "merge")).toMatchObject({ mergeMethod: "squash" });
@@ -135,12 +198,12 @@ describe("planAgentMaintenanceActions (#778)", () => {
 
   it("applies conservative defaults when autoMaintain / slopGateMinScore are omitted", () => {
     // no autoMaintain → requireApprovals defaults to 1 → a clean passing PR without APPROVED does NOT merge
-    expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAdmin: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
     // no slopGateMinScore → defaults to 60 → slopRisk 70 counts as noise and closes
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 70 } }))).toContain("close");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAdmin: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 70 } }))).toContain("close");
     // ...and slopRisk 50 (below the slop default) STILL closes — a failing-gate contributor PR is closed one-shot
     // regardless of slop; the slop score only adds a close reason (minimize-manual: merge-or-close).
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 50 } }))).toContain("close");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAdmin: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 50 } }))).toContain("close");
   });
 
   it("closes any non-passing contributor PR (citing noise when present), and never closes a passing PR", () => {
@@ -371,6 +434,28 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe("admin-login guard: ADMIN_GITHUB_LOGINS gets the same never-auto-close exemption as the owner (#2133)", () => {
+    it("does NOT auto-close a noisy failing PR authored by a fleet-operator admin login", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsAdmin: true, pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("still auto-merges a clean+approved admin-authored PR (the guard blocks only close, never merge)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, authorIsAdmin: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
+    });
+
+    it("DOES auto-close a failing admin PR when closeOwnerAuthors is enabled (the same per-repo opt-in covers admins)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsAdmin: true, closeOwnerAuthors: true, ciState: "passed", pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).toContain("close");
+    });
+
+    it("does NOT auto-close a red-CI PR authored by an admin login (mirrors the CI-policy owner exemption)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", request_changes: "auto", label: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], authorIsAdmin: true, pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
+    });
+  });
+
   describe("automation-bot guard: never auto-close maintainer-managed accumulator/dependency PRs", () => {
     it("does NOT auto-close a noisy failing PR authored by an automation bot (e.g. the readme-refresh accumulator)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsAutomationBot: true, pr: { labels: [], slopRisk: 95, linkedDuplicateCount: 3 } })));
@@ -421,6 +506,21 @@ describe("planAgentMaintenanceActions (#778)", () => {
 
     it("DEFERS every action while CI is still pending (settle-before-decide)", () => {
       expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "pending", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }))).toEqual([]);
+    });
+
+    it("DEFERS every action when optional visible CI is still pending after required CI passed", () => {
+      expect(
+        planAgentMaintenanceActions(
+          input({
+            conclusion: "success",
+            autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" },
+            autoMaintain: { requireApprovals: 0, mergeMethod: "squash" },
+            ciState: "passed",
+            ciHasPending: true,
+            pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+          }),
+        ),
+      ).toEqual([]);
     });
 
     it("HOLDS a contributor's gate-passing PR whose CI is UNVERIFIED — NEVER closes it (fork workflows awaiting approval) (#harm-stop)", () => {
@@ -714,8 +814,11 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     expect(classes(planAgentMaintenanceActions(blacklisted({ ciState: "pending" })))).toEqual(["label", "close"]);
   });
 
-  it("NEVER fires for the owner or an automation bot (standing rule) — the PR falls through to normal disposition", () => {
+  it("NEVER fires for the owner, an admin login, or an automation bot (standing rule) — the PR falls through to normal disposition", () => {
     expect(classes(planAgentMaintenanceActions(blacklisted({ authorIsOwner: true })))).not.toContain("close");
+    // #2133: a fleet-operator ADMIN_GITHUB_LOGINS author gets the identical exemption — the blacklist
+    // short-circuit must not treat a trusted admin as an ordinary contributor.
+    expect(classes(planAgentMaintenanceActions(blacklisted({ authorIsAdmin: true })))).not.toContain("close");
     expect(classes(planAgentMaintenanceActions(blacklisted({ authorIsAutomationBot: true })))).not.toContain("close");
   });
 

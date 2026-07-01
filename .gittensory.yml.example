@@ -112,7 +112,10 @@ gate:
 
   # Quality / merge-readiness score gate (the PR-quality score).
   readiness:
-    # off | advisory | block. Default: advisory.
+    # off | advisory. Default: advisory. Informational only — this dimension can
+    # never hard-block a PR, so "block" is not an accepted value (a config that
+    # still says "block" is downgraded to "advisory" with a warning). For an
+    # enforceable quality floor, use mergeReadiness or manifestPolicy below.
     mode: advisory
     # At/above this score the quality dimension passes.
     # Number 0–100, or null for the engine default band. Default: null.
@@ -142,10 +145,12 @@ gate:
   # off | advisory | block. Default: off.
   manifestPolicy: off
 
-  # First-time-contributor grace. When true, softens a would-be block to
-  # advisory for a genuine newcomer (0 merged PRs, < 3 closed-unmerged PRs).
-  # Repeat offenders and authors with merge history are gated normally.
-  # Bool. Default: false.
+  # First-time-contributor grace. RESERVED / currently INERT: this value is
+  # parsed and stored, but the gate does not read it — a first-time
+  # contributor with a real blocker is one-shot closed the same as a
+  # repeat contributor (blocker findings must remain closure outcomes).
+  # Setting this to true has no effect today; kept for potential future
+  # use. Bool. Default: false.
   firstTimeContributorGrace: false
 
   # AI maintainer review. Opt-in; the AI capabilities are switched on at the

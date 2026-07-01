@@ -46,6 +46,9 @@ const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "mix.lock",
   "package.resolved",
   "gradle.lockfile",
+  "pdm.lock",
+  "conan.lock",
+  "pixi.lock",
 ]);
 
 const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([

@@ -75,7 +75,7 @@ import {
   timeoutFetch,
   type GitHubRateLimitAdmissionKey,
 } from "./client";
-
+import { fetchCachedGitHubGraphQl } from "./graphql-cache";
 type GitHubLabelPayload = {
   name: string;
   color?: string;
@@ -2176,6 +2176,14 @@ export type LiveCiAggregate = {
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
   // Historical compatibility: non-required red checks are now folded into failingDetails so this stays empty.
   nonRequiredFailingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
+  // Informational-only (#2137): set when the aggregate resolved to "passed" with no branch-protection required
+  // contexts configured (`enforceRequiredOnly` false) — meaning a workflow that never triggers on this commit at
+  // all (e.g. path-filtered out, or a broken YAML trigger) is indistinguishable from one that doesn't exist, and
+  // would silently pass as long as at least one OTHER check ran and passed. NEVER changes ciState/disposition —
+  // a self-hosted repo without an expected-checks list would otherwise get stuck "pending" forever on a workflow
+  // that structurally can never complete. Surfaced to the operator as a nudge toward configuring branch
+  // protection or an expected-checks list, not a gate blocker.
+  ciCompletenessWarning: string | null;
 };
 
 /**
@@ -2331,7 +2339,17 @@ async function reduceLiveCiAggregate(
   // Fail CLOSED on incomplete visibility: an OBSERVED failure is authoritative and preserved.
   if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
   const hasPending = anyVisiblePending || anyPending || checkRunsIncomplete || statusIncomplete || ciState === "pending";
-  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, failingDetails, nonRequiredFailingDetails };
+  // #2137 interim mitigation: without required-context branch protection, a workflow that never triggers at all
+  // (path-filtered, or a broken trigger) is indistinguishable from one that doesn't exist, and folds into
+  // "passed" as long as some OTHER check ran and passed. Never changes ciState (a self-hosted repo with no
+  // expected-checks config would otherwise get stuck "pending" forever on a workflow that can structurally never
+  // complete) — informational only, for the operator to notice and configure branch protection / an
+  // expected-checks list against.
+  const ciCompletenessWarning =
+    !enforceRequiredOnly && ciState === "passed"
+      ? "CI resolved to passed with no branch-protection required checks configured — gittensory cannot verify every expected workflow ran on this commit (a path-filtered or misconfigured workflow that never triggers is indistinguishable from one that doesn't exist). Configure branch protection or an expected-checks list for full CI-completeness verification."
+      : null;
+  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, failingDetails, nonRequiredFailingDetails, ciCompletenessWarning };
 }
 
 /**
@@ -2353,7 +2371,7 @@ export async function fetchLiveCiAggregate(
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] };
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null };
   // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
   // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
   const checkRuns: LiveCiCheckRun[] = [];
@@ -3092,23 +3110,37 @@ async function githubPaged<T>(
   let status: RepoSyncSegmentRecord["status"] = "complete";
 
   try {
+    // Hold `per_page` CONSTANT for the whole crawl. GitHub's `page` offset is `(page-1)*per_page`, so it is
+    // only valid if `per_page` never changes mid-crawl. The previous code recomputed it from the shrinking
+    // budget (`min(100, limit - items.length)`), which broke offsets past page 1 whenever `limit` was not a
+    // multiple of 100 (per_page=50 on page 2 re-read items 51-100 instead of 101-150). Using
+    // `min(100, limit)` keeps the request/cursor grid stable: a small `limit` fetches exactly `limit` per
+    // page (so a page-precision resume cursor advances by one page), and a large `limit` fetches full 100s.
+    const perPage = Math.min(100, limit);
     for (let page = startPage; items.length < limit; page += 1) {
-      const pageLimit = Math.min(100, limit - items.length);
       const separator = path.includes("?") ? "&" : "?";
-      const pagePath = `${path}${separator}per_page=${pageLimit}&page=${page}`;
+      const pagePath = `${path}${separator}per_page=${perPage}&page=${page}`;
       const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, githubRateLimitOptions(admissionKey));
       etag = result.etag ?? etag;
       lastModified = result.lastModified ?? lastModified;
       lastCursor = String(page);
       pageCount += 1;
-      items.push(...result.data);
+      const remaining = limit - items.length;
+      // A page can only overrun `remaining` once we have already consumed at least one full page (so `page`
+      // has advanced past the crawl's start): resume from THIS page to pick up its unconsumed tail. On the
+      // first page `remaining >= perPage >= result.data.length`, so this is false and the cursor advances,
+      // which is why a small-`limit` (per_page = limit) crawl can never stall on its own start page.
+      const truncatedPage = result.data.length > remaining;
+      items.push(...result.data.slice(0, remaining));
       const hasNext = hasNextPage(result.link);
-      if (result.data.length < pageLimit || !hasNext) break;
-      nextCursor = String(page + 1);
-      if (items.length >= limit) {
+      if (items.length >= limit && (hasNext || truncatedPage)) {
+        nextCursor = String(truncatedPage ? page : page + 1);
         status = "capped";
         warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path}; next page cursor is ${nextCursor}.`);
+        break;
       }
+      if (result.data.length < perPage || !hasNext) break;
+      nextCursor = String(page + 1);
     }
   } catch (error) {
     status = error instanceof GitHubApiError && error.rateLimited ? "rate_limited" : items.length > 0 ? "partial" : "error";
@@ -3244,18 +3276,10 @@ async function githubGraphQl<T>(
   token: string,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<T> {
-  const response = await timeoutFetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      accept: "application/vnd.github+json",
-      "content-type": "application/json",
-      "user-agent": "gittensory/0.1",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query }),
-    ...(admissionKey ? { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: admissionKey } : {}),
-  });
-  await recordGitHubResponse(env, null, "/graphql", response, "graphql", admissionKey);
+  const response = await fetchCachedGitHubGraphQl(query, token, admissionKey);
+  if (!isGitHubResponseCacheReplay(response)) {
+    await recordGitHubResponse(env, null, "/graphql", response, "graphql", admissionKey);
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new GitHubApiError(

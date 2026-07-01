@@ -1,0 +1,45 @@
+{
+  "name": "@jsonbored/gittensory-engine",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "description": "Shared deterministic engine logic for the Gittensory review stack and gittensory-miner.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JSONbored/gittensory.git",
+    "directory": "packages/gittensory-engine"
+  },
+  "homepage": "https://github.com/JSONbored/gittensory#readme",
+  "bugs": {
+    "url": "https://github.com/JSONbored/gittensory/issues"
+  },
+  "keywords": [
+    "gittensor",
+    "gittensory",
+    "engine",
+    "deterministic",
+    "scoring",
+    "signals"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

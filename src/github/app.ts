@@ -41,10 +41,19 @@ export {
   rateLimitRetryMs,
   setGitHubResponseCache,
 } from "./client";
+export {
+  fetchCachedGitHubGraphQl,
+  githubGraphQlCacheTtlSeconds,
+  graphqlCacheClassForQuery,
+  graphqlOperationName,
+  isCacheableGraphQlQuery,
+  isCacheableGraphQlResponseBody,
+} from "./graphql-cache";
 
 type CheckRunResponse = {
   id: number;
   html_url?: string;
+  dryRunSuppressed?: boolean;
 };
 
 type CheckRunListResponse = {
@@ -616,7 +625,7 @@ async function createOrUpdateNamedCheckRun(
     const detailsUrlBody = detailsUrl ? { details_url: detailsUrl } : {};
 
     // POST a fresh check-run THIS App owns. Used for a brand-new run AND as the cross-app fallback below.
-    const postNewCheckRun = async (): Promise<CheckRunOutcome> => {
+    const postNewCheckRun = async (): Promise<CheckRunOutcome | null> => {
       const response = await octokit.request(
         "POST /repos/{owner}/{repo}/check-runs",
         {
@@ -719,8 +728,8 @@ async function createOrUpdateNamedCheckRun(
         }
       }
     };
-    const finish = async (outcome: CheckRunOutcome): Promise<CheckRunOutcome> => {
-      await finalizeLegacyPendingCheckRuns();
+    const finish = async (outcome: CheckRunOutcome | null): Promise<CheckRunOutcome | null> => {
+      if (outcome) await finalizeLegacyPendingCheckRuns();
       return outcome;
     };
 
@@ -788,7 +797,8 @@ function outputForCheckRunUpdate(output: CheckRunOutput): CheckRunOutput {
   return safeOutput;
 }
 
-function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {
+function publishedOutcome(data: CheckRunResponse): CheckRunOutcome | null {
+  if (data.dryRunSuppressed) return null;
   const outcome: { kind: "published"; id: number; html_url?: string } = {
     kind: "published",
     id: data.id,

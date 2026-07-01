@@ -78,6 +78,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
     GITHUB_APP_PRIVATE_KEY: "test-private-key",
     ADMIN_GITHUB_LOGINS: "jsonbored",
+    MCP_ACTUATION_REPO_ALLOWLIST: "*",
     SELFHOST_TRANSIENT_CACHE: {
       async get(key: string) {
         return transientCache.get(key) ?? null;
@@ -87,6 +88,15 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
       },
       async del(key: string) {
         transientCache.delete(key);
+      },
+      // Mirrors createRedisCache's atomic claim (#2129): the check-and-set below has no `await` between the
+      // `has` read and the `set` write, so it completes synchronously within one microtask — a concurrent
+      // caller can never observe the key as absent partway through another caller's claim, matching Redis's
+      // SET NX server-side atomicity.
+      async claim(key: string, value: string) {
+        if (transientCache.has(key)) return false;
+        transientCache.set(key, value);
+        return true;
       },
     },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the

@@ -9573,6 +9573,25 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
   });
 
+  it("no-ops when the PR author is an ADMIN_GITHUB_LOGINS fleet-operator, not just the literal repo owner (#2133)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory", ADMIN_GITHUB_LOGINS: "admin-user" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    // Author = "admin-user" ≠ repo owner "JSONbored", but IS in ADMIN_GITHUB_LOGINS → no close.
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-admin", eventName: "pull_request", payload: draftPayload("admin-user") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
   it("no-ops when the agent is paused (agentPaused=true)", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

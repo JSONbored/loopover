@@ -1635,6 +1635,12 @@ async function maybeRunAgentMaintenance(
   const authorIsOwner =
     authorLogin.length > 0 &&
     authorLogin.toLowerCase() === repoOwner.toLowerCase();
+  // Fleet-operator identity (#2133): the same ADMIN_GITHUB_LOGINS allowlist already honored by the
+  // reopen-reclose path's hasMaintainerPermission, folded into the primary close-eligibility computation so an
+  // admin login (not the literal repo owner) gets the identical never-auto-closed exemption everywhere.
+  const authorIsAdmin =
+    authorLogin.length > 0 &&
+    parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
 
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
@@ -1677,6 +1683,7 @@ async function maybeRunAgentMaintenance(
     changedPaths,
     hardGuardrailGlobs,
     authorIsOwner,
+    authorIsAdmin,
     authorIsAutomationBot,
     closeOwnerAuthors: settings.closeOwnerAuthors,
     ciState: ciAggregate.ciState,
@@ -3360,14 +3367,21 @@ async function processGitHubWebhook(
         const repoOwner = repoFullName.includes("/")
           ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase()
           : "";
+        const draftDodgeAuthorLogin = (pr.authorLogin ?? "").toLowerCase();
         const authorIsOwner =
-          (pr.authorLogin ?? "").toLowerCase() === repoOwner &&
-          repoOwner.length > 0;
+          draftDodgeAuthorLogin === repoOwner && repoOwner.length > 0;
+        // Fleet-operator identity (#2133): same ADMIN_GITHUB_LOGINS exemption as the primary close-eligibility
+        // computation above and hasMaintainerPermission below — an admin login must never be auto-closed here
+        // either, matching every other actuation path's trusted-operator definition.
+        const authorIsAdmin =
+          draftDodgeAuthorLogin.length > 0 &&
+          parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(draftDodgeAuthorLogin);
         if (
           block &&
           block.headSha === pr.headSha &&
           !block.overridden &&
-          !authorIsOwner
+          !authorIsOwner &&
+          !authorIsAdmin
         ) {
           // Respect the agent action mode (#killswitch-gap): the outer guard already excludes a per-repo pause,
           // but this close path must also honor the global freeze and dry-run — so a freeze is a COMPLETE stop

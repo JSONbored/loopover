@@ -131,6 +131,36 @@ function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
   };
 }
 
+// Sibling of mergedHistoryBreakdown for the issue-discovery validity floor (upstream
+// MIN_VALID_SOLVED_ISSUES and MIN_ISSUE_CREDIBILITY): when linked-issue scoring is active and
+// contributor history is observed, falling below either floor zeroes the preview.
+function issueDiscoveryHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { issueDiscoveryHistoryMultiplier } = preview.scoreEstimate;
+  const { validSolvedIssues, validSolvedIssuesFloor, issueCredibility, issueCredibilityFloor } = preview.gates;
+  if (validSolvedIssues === undefined || issueCredibility === undefined) {
+    return {
+      component: "issueDiscoveryHistoryMultiplier",
+      band: "neutral",
+      summary: `Issue-discovery validity floor is not enforced for this preview (contributor issue-history is unobserved; upstream floors are ${validSolvedIssuesFloor} valid solved and ${issueCredibilityFloor} credibility).`,
+      lever: "No action needed for this preview; the validity floor applies once issue-discovery history is observed.",
+      leverageScore: 0,
+    };
+  }
+  const band = bandForMultiplier(issueDiscoveryHistoryMultiplier);
+  const meetsFloor = validSolvedIssues >= validSolvedIssuesFloor && issueCredibility >= issueCredibilityFloor;
+  return {
+    component: "issueDiscoveryHistoryMultiplier",
+    band,
+    summary: meetsFloor
+      ? `Issue-discovery history (${validSolvedIssues} valid solved, credibility ${roundBand(issueCredibility)}) meets upstream floors (${validSolvedIssuesFloor} valid solved, ${issueCredibilityFloor} credibility).`
+      : `Issue-discovery history (${validSolvedIssues} valid solved, credibility ${roundBand(issueCredibility)}) is below upstream floors (${validSolvedIssuesFloor} valid solved, ${issueCredibilityFloor} credibility), so this preview is zeroed.`,
+    lever: meetsFloor
+      ? "Keep building valid solved-issue history with strong issue credibility."
+      : "Close more valid solved issues and improve issue credibility before relying on issue-discovery scoring.",
+    leverageScore: meetsFloor ? 8 : 100,
+  };
+}
+
 // Upstream time-decay (#703), env-gated by SCORING_TIME_DECAY_ENABLED (default OFF) and opted into per-preview
 // via input.applyTimeDecay. When the flag is off (the common case) or the PR is fresh, the multiplier is 1 and
 // the breakdown reads as "not enabled" / "fresh" — surfacing the value is a no-op for those previews but
@@ -318,6 +348,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     openPrBreakdown(preview),
     openIssueBreakdown(preview),
     mergedHistoryBreakdown(preview),
+    issueDiscoveryHistoryBreakdown(preview),
     timeDecayBreakdown(preview),
   ].map((entry) => ({
     ...entry,

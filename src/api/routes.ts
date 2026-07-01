@@ -149,6 +149,7 @@ import { buildRemediationPlan } from "../services/remediation-plan";
 import { handleDraftCreate, handleDraftOAuthCallback, handleDraftStatus } from "../services/draft";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { explainScoreBreakdown } from "../services/score-breakdown";
+import { explainScoreScenarios } from "../services/score-scenario-explain";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildAndPersistContributorDecisionPack,
@@ -1702,6 +1703,25 @@ export function createApp() {
     const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
+  });
+
+  app.post("/v1/scoring/explain-scenarios", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = scorePreviewSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_scoring_preview_request", issues: parsed.error.issues }, 400);
+    if (!parsed.data.contributorLogin) return c.json({ error: "contributor_login_required" }, 400);
+    const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
+    if (unauthorized) return unauthorized;
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
+      getRepository(c.env, parsed.data.repoFullName),
+      getOrCreateScoringModelSnapshot(c.env),
+      getContributorEvidence(c.env, parsed.data.contributorLogin),
+      listContributorIssues(c.env, parsed.data.contributorLogin),
+    ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    return c.json(explainScoreScenarios(preview));
   });
 
   app.get("/v1/sync/status", async (c) => {

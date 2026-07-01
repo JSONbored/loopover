@@ -502,6 +502,50 @@ server.registerTool(
 );
 
 server.registerTool(
+  "gittensory_explain_score_scenarios",
+  {
+    description: "Explain private score-preview what-if scenarios and gate deltas with ranked cleanup paths.",
+    inputSchema: localScoreShape,
+  },
+  async (input) => {
+    const workspaceInput = await withClientWorkspaceRoots(input);
+    const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
+    if (!contributorLogin) throw new Error("contributorLogin is required for score scenario explanation.");
+    const workspace = resolveWorkspaceCwd(workspaceInput);
+    const diff = collectLocalDiff(workspace.cwd, workspaceInput.baseRef, workspaceInput.workspaceRoots);
+    const branchPayload = buildBranchAnalysisPayload({
+      ...workspaceInput,
+      login: contributorLogin,
+      cwd: workspace.cwd,
+      repoFullName: workspaceInput.repoFullName,
+      baseRef: workspaceInput.baseRef,
+    });
+    const upstreamPreview = branchPayload.localScorerStatus;
+    const estimatedSourceLines = workspaceInput.sourceLines ?? Math.max(1, diff.changedLineCount - diff.testFiles.length);
+    const body = {
+      repoFullName: workspaceInput.repoFullName,
+      contributorLogin,
+      sourceTokenScore: workspaceInput.sourceTokenScore ?? estimatedSourceLines,
+      sourceLines: estimatedSourceLines,
+      totalTokenScore: workspaceInput.totalTokenScore ?? diff.changedLineCount,
+      testTokenScore: diff.testFiles.length,
+      openPrCount: workspaceInput.openPrCount,
+      credibility: workspaceInput.credibility,
+      changesRequestedCount: workspaceInput.changesRequestedCount,
+      pendingMergedPrCount: workspaceInput.pendingMergedPrCount,
+      pendingClosedPrCount: workspaceInput.pendingClosedPrCount,
+      approvedPrCount: workspaceInput.approvedPrCount,
+      expectedOpenPrCountAfterMerge: workspaceInput.expectedOpenPrCountAfterMerge,
+      projectedCredibility: workspaceInput.projectedCredibility,
+      scenarioNotes: workspaceInput.scenarioNotes,
+      branchEligibility: workspaceInput.branchEligibility,
+      metadataOnly: !upstreamPreview.ok,
+    };
+    return toolResult("Gittensory private score scenarios.", await apiPost("/v1/scoring/explain-scenarios", body));
+  },
+);
+
+server.registerTool(
   "gittensory_get_decision_pack",
   {
     description: "Return the canonical private contributor decision pack for a GitHub login.",

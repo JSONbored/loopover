@@ -1698,6 +1698,27 @@ describe("api routes", () => {
     expect(missingContributorBreakdown.status).toBe(400);
     await expect(missingContributorBreakdown.json()).resolves.toMatchObject({ error: "contributor_login_required" });
 
+    const scoreScenarios = await app.request(
+      "/v1/scoring/explain-scenarios",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify(agedScoreInput),
+      },
+      env,
+    );
+    expect(scoreScenarios.status).toBe(200);
+    const scoreScenariosBody = (await scoreScenarios.json()) as {
+      repoFullName: string;
+      scenarios: Array<{ name: string; lever: string }>;
+      recommendedPath: { scenario: string; lever: string };
+    };
+    expect(scoreScenariosBody).toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      scenarios: expect.arrayContaining([expect.objectContaining({ name: expect.any(String), lever: expect.any(String) })]),
+      recommendedPath: expect.objectContaining({ scenario: expect.any(String), lever: expect.any(String) }),
+    });
+
     for (const [signalType, payload] of [
       ["queue-health", { repoFullName: "entrius/allways-ui", signals: { openPullRequests: 2 } }],
       ["config-quality", { repoFullName: "entrius/allways-ui", notObservedConfiguredLabels: ["refactor"] }],
@@ -4911,6 +4932,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_preflight_local_diff");
     expect(toolNames).toContain("gittensory_preview_local_pr_score");
     expect(toolNames).toContain("gittensory_explain_score_breakdown");
+    expect(toolNames).toContain("gittensory_explain_score_scenarios");
     expect(toolNames).toContain("gittensory_get_outcome_calibration");
     expect(toolNames).toContain("gittensory_get_registry_changes");
     expect(toolNames).toContain("gittensory_get_upstream_drift");

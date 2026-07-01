@@ -31,6 +31,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_local_status",
   "gittensory_remediation_plan",
   "gittensory_explain_score_breakdown",
+  "gittensory_explain_score_scenarios",
 ];
 
 async function connectTestClient(env: Env = createTestEnv(), identity?: AuthIdentity) {
@@ -412,6 +413,30 @@ describe("MCP tool calls return schema-valid structured content", () => {
       arguments: { repoFullName: "octo/demo", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80 },
     });
     expect(result.isError).toBe(true);
+  });
+
+  it("gittensory_explain_score_scenarios returns validated structured content", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_explain_score_scenarios",
+      arguments: {
+        repoFullName: "octo/demo",
+        contributorLogin: "octo",
+        sourceTokenScore: 40,
+        totalTokenScore: 60,
+        sourceLines: 80,
+        openPrCount: 4,
+        credibility: 0.5,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(Array.isArray(data.scenarios)).toBe(true);
+    expect(data.recommendedPath).toBeTruthy();
+    expect(typeof data.headline).toBe("string");
   });
 
   it("gittensory_lint_pr_text returns a deterministic verdict and fixes", async () => {

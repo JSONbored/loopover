@@ -65,6 +65,7 @@ import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../
 import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
 import { buildRemediationPlan } from "../services/remediation-plan";
 import { explainScoreBreakdown } from "../services/score-breakdown";
+import { explainScoreScenarios } from "../services/score-scenario-explain";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
@@ -876,6 +877,16 @@ const scoreBreakdownOutputSchema = {
   highestLeverageLever: z.unknown().optional(),
 };
 
+const scoreScenarioExplanationOutputSchema = {
+  repoFullName: z.string().optional(),
+  scoreabilityStatus: z.string().optional(),
+  effectiveEstimatedScore: z.number().optional(),
+  headline: z.string().optional(),
+  scenarios: z.unknown().optional(),
+  gateDeltaNarratives: z.unknown().optional(),
+  recommendedPath: z.unknown().optional(),
+};
+
 const lintPrTextOutputSchema = {
   verdict: z.string().optional(),
   score: z.number().optional(),
@@ -1499,6 +1510,17 @@ export class GittensoryMcp {
         outputSchema: scoreBreakdownOutputSchema,
       },
       async (input) => this.toolResult(await this.explainScoreBreakdown(input)),
+    );
+
+    server.registerTool(
+      "gittensory_explain_score_scenarios",
+      {
+        description:
+          "Explain private score-preview what-if scenarios and gate deltas with ranked cleanup paths. Login and repo scoped; no new computation beyond the preview projection.",
+        inputSchema: scorePreviewShape,
+        outputSchema: scoreScenarioExplanationOutputSchema,
+      },
+      async (input) => this.toolResult(await this.explainScoreScenarios(input)),
     );
 
     server.registerTool(
@@ -2566,6 +2588,26 @@ export class GittensoryMcp {
     return {
       summary: `Private Gittensory score breakdown for ${input.contributorLogin} in ${input.repoFullName}. Highest leverage: ${breakdown.highestLeverageLever.component}.`,
       data: breakdown as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async explainScoreScenarios(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+    if (!input.contributorLogin) throw new Error("contributorLogin is required for score scenario explanation.");
+    this.requireContributorAccess(input.contributorLogin);
+    await this.requireRepoAccess(input.repoFullName);
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
+      getRepository(this.env, input.repoFullName),
+      getOrCreateScoringModelSnapshot(this.env),
+      getContributorEvidence(this.env, input.contributorLogin),
+      listContributorIssues(this.env, input.contributorLogin),
+    ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, input.repoFullName);
+    const scoreInput = { ...input, openIssueCount, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const preview = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
+    const explanation = explainScoreScenarios(preview);
+    return {
+      summary: `Private Gittensory score scenarios for ${input.contributorLogin} in ${input.repoFullName}. Recommended path: ${explanation.recommendedPath.scenario}.`,
+      data: explanation as unknown as Record<string, unknown>,
     };
   }
 

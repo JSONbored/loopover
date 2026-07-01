@@ -1407,6 +1407,48 @@ export const ScorePreviewSchema = z
   })
   .openapi("ScorePreview");
 
+export const ScoreScenarioExplanationSchema = z
+  .object({
+    repoFullName: z.string(),
+    scoreabilityStatus: z.enum(["blocked", "conditionally_scoreable", "scoreable", "hold"]),
+    effectiveEstimatedScore: z.number(),
+    headline: z.string(),
+    scenarios: z.array(
+      z.object({
+        name: z.enum(["current", "cleanGates", "afterPendingMerges", "afterApprovedPrsMerge", "afterStalePrsClose", "linkedIssueFixed", "bestReasonableCase"]),
+        source: z.enum(["current_data", "user_supplied", "github_observed", "gittensory_projection"]),
+        band: z.enum(["blocked", "conditionally_scoreable", "scoreable", "hold"]),
+        rank: z.number().int(),
+        summary: z.string(),
+        lever: z.string(),
+        assumptions: z.array(z.string()),
+        unlockDelta: z.string(),
+        leverageScore: z.number(),
+      }),
+    ),
+    gateDeltaNarratives: z.array(
+      z.object({
+        gate: z.enum([
+          "open_pr_threshold",
+          "open_issue_threshold",
+          "merged_pr_history_floor",
+          "issue_discovery_validity_floor",
+          "credibility_floor",
+          "linked_issue_multiplier",
+        ]),
+        narrative: z.string(),
+        lever: z.string(),
+      }),
+    ),
+    recommendedPath: z.object({
+      scenario: z.string(),
+      lever: z.string(),
+      reason: z.string(),
+      orderedLevers: z.array(z.string()),
+    }),
+  })
+  .openapi("ScoreScenarioExplanation");
+
 export const IssueQualityReportSchema = z
   .object({
     repoFullName: z.string(),

@@ -68,6 +68,7 @@ import {
   RoleContextSchema,
   RewardRiskActionSchema,
   ScorePreviewSchema,
+  ScoreScenarioExplanationSchema,
   ScoringModelSnapshotSchema,
   SignalFidelitySchema,
   SkippedPrAuditExportSchema,
@@ -144,6 +145,7 @@ export function buildOpenApiSpec() {
   registry.register("LaneAdvice", LaneAdviceSchema);
   registry.register("ScoringModelSnapshot", ScoringModelSnapshotSchema);
   registry.register("ScorePreview", ScorePreviewSchema);
+  registry.register("ScoreScenarioExplanation", ScoreScenarioExplanationSchema);
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
@@ -247,6 +249,14 @@ export function buildOpenApiSpec() {
     path: "/v1/scoring/preview",
     responses: {
       200: { description: "Private scoring preview artifact", content: { "application/json": { schema: ScorePreviewSchema } } },
+      400: { description: "Invalid scoring preview input" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/scoring/explain-scenarios",
+    responses: {
+      200: { description: "Private score scenario explanation", content: { "application/json": { schema: ScoreScenarioExplanationSchema } } },
       400: { description: "Invalid scoring preview input" },
     },
   });

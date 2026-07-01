@@ -12777,6 +12777,164 @@
           "weekly",
           "byProject"
         ]
+      },
+      "ScoreScenarioExplanation": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "scoreabilityStatus": {
+            "type": "string",
+            "enum": [
+              "blocked",
+              "conditionally_scoreable",
+              "scoreable",
+              "hold"
+            ]
+          },
+          "effectiveEstimatedScore": {
+            "type": "number"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "enum": [
+                    "current",
+                    "cleanGates",
+                    "afterPendingMerges",
+                    "afterApprovedPrsMerge",
+                    "afterStalePrsClose",
+                    "linkedIssueFixed",
+                    "bestReasonableCase"
+                  ]
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "current_data",
+                    "user_supplied",
+                    "github_observed",
+                    "gittensory_projection"
+                  ]
+                },
+                "band": {
+                  "type": "string",
+                  "enum": [
+                    "blocked",
+                    "conditionally_scoreable",
+                    "scoreable",
+                    "hold"
+                  ]
+                },
+                "rank": {
+                  "type": "integer"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "lever": {
+                  "type": "string"
+                },
+                "assumptions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unlockDelta": {
+                  "type": "string"
+                },
+                "leverageScore": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name",
+                "source",
+                "band",
+                "rank",
+                "summary",
+                "lever",
+                "assumptions",
+                "unlockDelta",
+                "leverageScore"
+              ]
+            }
+          },
+          "gateDeltaNarratives": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gate": {
+                  "type": "string",
+                  "enum": [
+                    "open_pr_threshold",
+                    "open_issue_threshold",
+                    "merged_pr_history_floor",
+                    "issue_discovery_validity_floor",
+                    "credibility_floor",
+                    "linked_issue_multiplier"
+                  ]
+                },
+                "narrative": {
+                  "type": "string"
+                },
+                "lever": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "gate",
+                "narrative",
+                "lever"
+              ]
+            }
+          },
+          "recommendedPath": {
+            "type": "object",
+            "properties": {
+              "scenario": {
+                "type": "string"
+              },
+              "lever": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "orderedLevers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "scenario",
+              "lever",
+              "reason",
+              "orderedLevers"
+            ]
+          }
+        },
+        "required": [
+          "repoFullName",
+          "scoreabilityStatus",
+          "effectiveEstimatedScore",
+          "headline",
+          "scenarios",
+          "gateDeltaNarratives",
+          "recommendedPath"
+        ]
       }
     },
     "parameters": {},
@@ -15637,6 +15795,33 @@
           },
           "400": {
             "description": "Malformed JSON or invalid payload shape"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/scoring/explain-scenarios": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Private score scenario explanation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreScenarioExplanation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scoring preview input"
           }
         },
         "security": [

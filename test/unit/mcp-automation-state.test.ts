@@ -10,6 +10,15 @@ import { createTestEnv } from "../helpers/d1";
 vi.mock("../../src/github/app", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/app")>()),
   getRepositoryCollaboratorPermission: vi.fn(),
+  createInstallationToken: vi.fn(async () => "test-installation-token"),
+}));
+// decidePendingAgentAction's accept-time live re-check (#2126) needs these off-network, deterministic here — the
+// dedicated staleness-supersede test coverage lives in agent-approval-queue.test.ts, not this MCP-surface file.
+vi.mock("../../src/github/backfill", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/backfill")>()),
+  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+  fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
+  fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
 }));
 const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
@@ -124,6 +133,38 @@ describe("MCP gittensory_propose_action (#784)", () => {
     expect(staged?.params).toMatchObject({ label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" });
   });
 
+  it("pins a proposed action to the PR's current head (expectedHeadSha) so the accept-time force-push guard can fire (#2255)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-proposed" }, labels: [], body: "x" });
+    const client = await connect(env);
+    await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge", mergeMethod: "squash" } });
+    const [staged] = await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" });
+    expect(staged?.params).toMatchObject({ expectedHeadSha: "h-proposed" });
+  });
+
+  it("an MCP-staged merge is superseded on accept if the PR is force-pushed after proposal — the guard now actually fires (#2255)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-proposed" }, labels: [], body: "x" });
+    const client = await connect(env);
+    const proposed = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge", mergeMethod: "squash" } });
+    const { action } = proposed.structuredContent as { action: { id: string } };
+
+    // Force-push after staging: the head moves, but nothing re-evaluates the pending row until it's decided.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-force-pushed" }, labels: [], body: "x" });
+
+    const decided = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    const result = decided.structuredContent as { status: string; executionOutcome?: string };
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("head_moved");
+  });
+
   it("allows a session that maintains the repo (owned installation)", async () => {
     const env = createTestEnv();
     await upsertInstallation(env, {
@@ -155,6 +196,47 @@ describe("MCP gittensory_propose_action (#784)", () => {
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toMatch(/write access/i);
     expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
+  });
+
+  it("denies a static MCP-token caller when the repo is not in MCP_ACTUATION_REPO_ALLOWLIST (#2253)", async () => {
+    // GITTENSORY_MCP_TOKEN is a shared, end-user-obtainable CLI credential — unlike an explicit maintainer
+    // session, it must not implicitly stage actions on every repo the App happens to be installed on.
+    // createTestEnv's own default is MCP_ACTUATION_REPO_ALLOWLIST: "*" (so unrelated tests aren't broken
+    // by this restriction); "" overrides that back to unset (isMcpActuationRepoAllowed treats "" the same
+    // as undefined) to exercise the real deny-by-default behavior.
+    const env = createTestEnv({ MCP_ACTUATION_REPO_ALLOWLIST: "" });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env); // default identity: { kind: "static", actor: "mcp" }
+    const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/MCP_ACTUATION_REPO_ALLOWLIST/);
+    expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
+  });
+
+  it("allows a static MCP-token caller once the repo is explicitly allowlisted, but not a sibling repo (#2253)", async () => {
+    const env = createTestEnv({ MCP_ACTUATION_REPO_ALLOWLIST: "owner/repo" });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositoryFromGitHub(env, { name: "other", full_name: "owner/other", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+
+    const allowed = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+    expect(allowed.isError).toBeFalsy();
+
+    const denied = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "other", pullNumber: 7, actionClass: "merge" } });
+    expect(denied.isError).toBe(true);
+    expect(await listPendingAgentActions(env, { repoFullName: "owner/other" })).toHaveLength(0);
+  });
+
+  it("leaves the api/internal static identities unconditionally trusted (unaffected by the mcp allowlist) (#2253)", async () => {
+    // api/internal are operator-only Worker secrets, never handed to end users — unlike the mcp actor, they are
+    // NOT scoped to MCP_ACTUATION_REPO_ALLOWLIST. Confirmed here with the allowlist unset, so this only passes
+    // because api/internal skip that check entirely (not because the repo happens to be allowlisted).
+    // MCP_ACTUATION_REPO_ALLOWLIST is irrelevant here: api/internal skip that check entirely (see below).
+    const env = createTestEnv({});
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env, { kind: "static", actor: "api" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+    expect(result.isError).toBeFalsy();
   });
 
   it("does not trust cached collaborator association without live write permission", async () => {
@@ -304,6 +386,29 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
     expect(data.status).toBe("accepted");
     expect(data.executionOutcome).toBe("dry_run");
     expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
+  });
+
+  it("denies a static MCP-token caller from deciding a pending action when the repo is not allowlisted (#2253)", async () => {
+    // "" overrides createTestEnv's own MCP_ACTUATION_REPO_ALLOWLIST: "*" default back to unset.
+    const env = createTestEnv({ MCP_ACTUATION_REPO_ALLOWLIST: "" });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/MCP_ACTUATION_REPO_ALLOWLIST/);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("pending"); // left untouched, not silently accepted
+  });
+
+  it("leaves the api/internal static identities unconditionally trusted for the approval queue too (#2253)", async () => {
+    // MCP_ACTUATION_REPO_ALLOWLIST is irrelevant here: api/internal skip that check entirely (see below).
+    const env = createTestEnv({});
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    const client = await connect(env, { kind: "static", actor: "internal" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect(result.isError).toBeFalsy();
   });
 
   it("is repo-scoped: a guessed id from another repo's queue is not_found and left untouched", async () => {

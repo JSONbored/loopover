@@ -75,7 +75,7 @@ import {
   timeoutFetch,
   type GitHubRateLimitAdmissionKey,
 } from "./client";
-
+import { fetchCachedGitHubGraphQl } from "./graphql-cache";
 type GitHubLabelPayload = {
   name: string;
   color?: string;
@@ -3244,18 +3244,10 @@ async function githubGraphQl<T>(
   token: string,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<T> {
-  const response = await timeoutFetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      accept: "application/vnd.github+json",
-      "content-type": "application/json",
-      "user-agent": "gittensory/0.1",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query }),
-    ...(admissionKey ? { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: admissionKey } : {}),
-  });
-  await recordGitHubResponse(env, null, "/graphql", response, "graphql", admissionKey);
+  const response = await fetchCachedGitHubGraphQl(query, token, admissionKey);
+  if (!isGitHubResponseCacheReplay(response)) {
+    await recordGitHubResponse(env, null, "/graphql", response, "graphql", admissionKey);
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new GitHubApiError(

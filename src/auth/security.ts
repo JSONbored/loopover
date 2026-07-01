@@ -141,6 +141,21 @@ export function parseGitHubLoginList(value: string | undefined): Set<string> {
   );
 }
 
+/** Is `repoFullName` within the operator's MCP_ACTUATION_REPO_ALLOWLIST? The static `mcp` identity is minted from
+ *  a single shared secret (GITTENSORY_MCP_TOKEN) that is documented as an ordinary end-user CLI credential — unlike
+ *  `api`/`internal`, it is not operator-only, so unlike those it must NOT be unconditionally trusted for every
+ *  installed repo. Unset/empty ⇒ deny (fail closed: an operator must explicitly opt a repo in). `*`/`all` ⇒ every
+ *  repo, an explicit escape hatch for an operator who wants the old unscoped-trust behavior. (#2253) */
+export function isMcpActuationRepoAllowed(value: string | undefined, repoFullName: string): boolean {
+  const entries = (value ?? "")
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  if (entries.length === 0) return false;
+  if (entries.includes("*") || entries.includes("all")) return true;
+  return entries.includes(repoFullName.toLowerCase());
+}
+
 type CookieOptions = {
   maxAge: number;
   path: string;

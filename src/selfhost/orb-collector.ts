@@ -141,8 +141,8 @@ const FLEET_QUERY = `
     LEFT JOIN rev ON gd.target_id = rev.target_id
     WHERE gd.rn = 1 AND po.rn = 1
   ) AS resolved
-  WHERE event_at > ?
-  ORDER BY event_at
+  WHERE (event_at > ?) OR (event_at = ? AND target_id > ?)
+  ORDER BY event_at ASC, target_id ASC
   LIMIT ?`;
 
 /** ms between the gate decision and the resolution; null if implausible (NaN or negative). */
@@ -176,12 +176,13 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
 
   // Read this instance's export watermark (resumes where the last run left off).
   const cursorRow = await db
-    .prepare(`SELECT last_exported_at FROM orb_export_cursor WHERE instance_hash = ?`)
+    .prepare(`SELECT last_exported_at, last_exported_target_id FROM orb_export_cursor WHERE instance_hash = ?`)
     .bind(instance)
-    .first<{ last_exported_at: string }>();
-  const cursor = cursorRow?.last_exported_at ?? "2000-01-01T00:00:00Z";
+    .first<{ last_exported_at: string; last_exported_target_id?: string }>();
+  const cursorAt = cursorRow?.last_exported_at ?? "2000-01-01T00:00:00Z";
+  const cursorTargetId = cursorRow?.last_exported_target_id ?? "";
 
-  const { results } = await db.prepare(FLEET_QUERY).bind(cursor, batchSize).all<FleetRow>();
+  const { results } = await db.prepare(FLEET_QUERY).bind(cursorAt, cursorAt, cursorTargetId, batchSize).all<FleetRow>();
   if (!results || results.length === 0) return 0;
 
   const payload: OrbExportPayload = {
@@ -223,11 +224,13 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
     return 0;
   }
 
-  // Advance the watermark to the newest event in this batch (rows are ordered by event_at ascending).
-  const newWatermark = results[results.length - 1]!.event_at;
+  // Advance the watermark to the newest event in this batch (rows are ordered by event_at, target_id).
+  const lastRow = results[results.length - 1]!;
   await db
-    .prepare(`INSERT OR REPLACE INTO orb_export_cursor (instance_hash, last_exported_at, updated_at) VALUES (?, ?, ?)`)
-    .bind(instance, newWatermark, new Date().toISOString())
+    .prepare(
+      `INSERT OR REPLACE INTO orb_export_cursor (instance_hash, last_exported_at, last_exported_target_id, updated_at) VALUES (?, ?, ?, ?)`,
+    )
+    .bind(instance, lastRow.event_at, lastRow.target_id, new Date().toISOString())
     .run();
 
   incr("gittensory_orb_events_exported_total", {}, results.length);

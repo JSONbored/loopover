@@ -683,6 +683,9 @@ export type AgentPendingActionParams = {
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
   expectedHeadSha?: string;
+  // WHICH kind of close this is (see PlannedAgentAction.closeKind) — must round-trip through staging so the
+  // close-precision circuit-breaker can still scope itself correctly when a staged close is later accepted (#2127).
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
 };
 
 export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";

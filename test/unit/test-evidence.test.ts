@@ -25,6 +25,8 @@ describe("test evidence helpers", () => {
     expect(isTestPath("src/playwright/client.ts")).toBe(false);
     expect(isTestPath("src/cypress/client.ts")).toBe(false);
     expect(isTestPath("src/e2e/client.ts")).toBe(false);
+    expect(isTestPath("src/contestdata/client.ts")).toBe(false);
+    expect(isTestPath("src/testdatabase/client.ts")).toBe(false);
     expect(isTestPath("src/integration/auth.test.ts")).toBe(true);
     expect(isTestPath("src/playwright/client.e2e.ts")).toBe(true);
     expect(isTestPath("src/cypress/client.cy.ts")).toBe(true);

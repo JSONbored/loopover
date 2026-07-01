@@ -7,6 +7,7 @@ import {
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionKeyScope,
   githubRateLimitAdmissionKeyForJob,
+  githubRateLimitAdmissionTargetForJob,
   githubRateLimitMetricContext,
   githubRateLimitMetricLabels,
   githubBackgroundRateLimitDelayMs,
@@ -175,6 +176,21 @@ describe("self-host queue common helpers", () => {
     expect(githubRateLimitAdmissionKeyForJob({ type: "agent-regate-pr", deliveryId: "sweep:owner/repo#1", repoFullName: "owner/repo", prNumber: 1, installationId: 123 })).toBe("installation:123");
     expect(githubRateLimitAdmissionKeyForJob({ type: "github-webhook", deliveryId: "d1", eventName: "pull_request", payload: { installation: { id: 456 } } })).toBe("installation:456");
     expect(githubRateLimitAdmissionKeyForJob({ type: "github-webhook", deliveryId: "d2", eventName: "pull_request", payload: {} })).toBeNull();
+  });
+
+  it("targets public-token admission for GitHub-budget background jobs without an installation", () => {
+    expect(githubRateLimitAdmissionTargetForJob({ type: "rag-index-repo", repoFullName: "owner/repo", requestedBy: "schedule" } as JobMessage)).toEqual({
+      kind: "background",
+      admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+    });
+    expect(githubRateLimitAdmissionTargetForJob({ type: "agent-regate-pr", deliveryId: "sweep:owner/repo#1", repoFullName: "owner/repo", prNumber: 1, installationId: 123 })).toEqual({
+      kind: "background",
+      admissionKey: "installation:123",
+    });
+    expect(githubRateLimitAdmissionTargetForJob({ type: "github-webhook", deliveryId: "d2", eventName: "pull_request", payload: {} })).toEqual({
+      kind: "webhook",
+      admissionKey: null,
+    });
   });
 
   it("computes background admission delays from persisted GitHub REST observations", () => {

@@ -368,9 +368,10 @@ export function githubRateLimitAdmissionTargetForJob(
     };
   }
   if (!isGitHubBudgetBackgroundJob(message)) return null;
+  const admissionKey = githubRateLimitAdmissionKeyForJob(message);
   return {
     kind: "background",
-    admissionKey: githubRateLimitAdmissionKeyForJob(message),
+    admissionKey: admissionKey ?? githubRateLimitAdmissionKeyForPublicToken(),
   };
 }
 

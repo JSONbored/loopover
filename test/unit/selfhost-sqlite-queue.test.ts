@@ -161,8 +161,8 @@ describe("createSqliteQueue (durable #980)", () => {
       );
       driver.query(
         `INSERT INTO github_rate_limit_observations (id, repo_full_name, admission_key, resource, path, status_code, limit_value, remaining, reset_at, observed_at)
-         VALUES (?, ?, NULL, 'rest', ?, 200, 5000, 120, ?, ?)`,
-        ["rl-bg-legacy", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
+         VALUES (?, ?, 'public-token', 'rest', ?, 200, 5000, 120, ?, ?)`,
+        ["rl-bg-public", "owner/repo", "/x", "2026-06-24T12:10:00.000Z", "2026-06-24T12:00:00.000Z"],
       );
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
@@ -191,7 +191,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 2 });
       const metrics = await renderMetrics();
       expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
-      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="unknown",kind="background"} 1');
+      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="public",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -1342,8 +1342,8 @@ describe("createSqliteQueue (durable #980)", () => {
       "SELECT status, last_error FROM _selfhost_jobs WHERE payload=?",
       ["{not json"],
     ).rows[0] as { status: string; last_error: string };
-    expect(seen).toEqual(["blocked-installation", "other-installation", "local-cleanup"]);
-    expect(rows).toHaveLength(3);
+    expect(seen).toEqual(["blocked-installation", "other-installation", "agent-regate-pr", "local-cleanup"]);
+    expect(rows).toHaveLength(2);
     expect(deadMalformed).toEqual({ status: "dead", last_error: "unparseable payload" });
     expect(rows.every((row) => row.status === "pending")).toBe(true);
     expect(rows.every((row) => row.attempts === 0)).toBe(true);
@@ -1358,14 +1358,14 @@ describe("createSqliteQueue (durable #980)", () => {
     }));
     expect(byType.get("blocked-installation")?.last_error).toBe("API rate limit exceeded for installation ID 123");
     expect(byType.get("agent-regate-pr:9")?.last_error).toBe("github rate-limit budget deferred");
-    expect(byType.get("agent-regate-pr:10")?.last_error).toBe("github rate-limit budget deferred");
+    expect(byType.has("agent-regate-pr:10")).toBe(false);
     expect(q.stats()).toMatchObject({
-      gittensory_jobs_processed_total: 2,
+      gittensory_jobs_processed_total: 3,
       gittensory_jobs_rate_limited_total: 1,
-      gittensory_jobs_rate_limit_deferred_total: 2,
+      gittensory_jobs_rate_limit_deferred_total: 1,
     });
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 2');
+    expect(metrics).toContain('gittensory_jobs_rate_limit_budget_deferred_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
     expect(metrics).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="github-webhook",key_scope="installation",kind="webhook"} 1');
   });
 

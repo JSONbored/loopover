@@ -615,14 +615,14 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
-  it("pre-yields GitHub-budget background jobs without repo fields from global REST observations", async () => {
+  it("pre-yields public-token GitHub-budget background jobs without installation ids", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
     process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
     try {
       const m = makePool();
-      m.setRateLimitRows([{ admission_key: null, repo_full_name: "owner/repo", remaining: "120", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" }]);
+      m.setRateLimitRows([{ admission_key: "public-token", repo_full_name: "owner/repo", remaining: "120", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" }]);
       m.enqueueJob("background", {
         type: "agent-regate-sweep",
         requestedBy: "schedule",
@@ -637,6 +637,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET status='pending', run_after=GREATEST"),
         [Date.parse("2026-06-24T12:10:15.000Z"), "github rate-limit background admission", "background"],
       );
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-sweep",key_scope="public",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -1062,7 +1063,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET run_after=GREATEST(run_after, $1), last_error=COALESCE"),
         expect.arrayContaining([expect.any(Number), "github rate-limit budget deferred", "pending-same"]),
       );
-      expect(fn).toHaveBeenCalledWith(
+      expect(fn).not.toHaveBeenCalledWith(
         expect.stringContaining("SET run_after=GREATEST(run_after, $1), last_error=COALESCE"),
         expect.arrayContaining([expect.any(Number), "github rate-limit budget deferred", "pending-legacy"]),
       );

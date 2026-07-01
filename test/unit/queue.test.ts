@@ -3168,6 +3168,27 @@ describe("queue processors", () => {
     expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(false);
   });
 
+  it("REGRESSION (#confirmed-bug): claimAgentMaintenanceLock's get/set fallback still can't be won by two genuinely concurrent callers when the cache has no claim()", async () => {
+    // A PLAIN get-then-set pair has a window between the read and the write where two concurrent callers can
+    // both observe an absent key before either writes, and both wrongly believe they claimed it — the exact
+    // defect flagged against claimAiReviewLock's identical fallback. Force that interleaving here: both get()
+    // calls yield via queueMicrotask before resolving, so with a plain get-then-set pair both would read "unset"
+    // and both would return true. The fallback's write-then-verify re-read must still let only one caller win.
+    const values = new Map<string, string>();
+    const yieldThenRun = <T,>(fn: () => T): Promise<T> => new Promise((resolve) => queueMicrotask(() => resolve(fn())));
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: (key: string) => yieldThenRun(() => values.get(key) ?? null),
+        set: (key: string, value: string) => yieldThenRun(() => { values.set(key, value); }),
+      },
+    });
+    const [first, second] = await Promise.all([
+      claimAgentMaintenanceLock(env, "owner/agent-repo", 7),
+      claimAgentMaintenanceLock(env, "owner/agent-repo", 7),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+  });
+
   it("claimAiReviewLock claims when free, denies when held (per-PR+head+mode, not globally), and release frees it again (#confirmed-bug)", async () => {
     const env = createTestEnv({});
     // First claim for this exact (repo, PR, head, mode) succeeds — no prior pass in-flight.
@@ -3196,6 +3217,12 @@ describe("queue processors", () => {
     });
     expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
     await expect(releaseAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).resolves.toBeUndefined();
+  });
+
+  it("claimAiReviewLock fails OPEN when no transient cache is configured at all — nothing to serialize against (#confirmed-bug)", async () => {
+    const env = createTestEnv({});
+    delete env.SELFHOST_TRANSIENT_CACHE;
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
   });
 
   it("claimAiReviewLock fails OPEN when the atomic claim primitive itself throws (#confirmed-bug)", async () => {
@@ -3249,6 +3276,28 @@ describe("queue processors", () => {
     });
     expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
     expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(false);
+  });
+
+  it("REGRESSION (#confirmed-bug): claimAiReviewLock's get/set fallback still can't be won by two genuinely concurrent callers when the cache has no claim()", async () => {
+    // The exact gap the gate flagged: a plain get-then-set pair has a window between the read and the write
+    // where two concurrent callers (a webhook pass and a sweep pass) can both observe an absent key before
+    // either writes, and both wrongly fire a real LLM call for the same PR head. Force that interleaving here:
+    // both get() calls yield via queueMicrotask before resolving, so with a plain get-then-set pair both would
+    // read "unset" and both would return true. The fallback's write-then-verify re-read must still let only one
+    // caller win — the other reads back the winner's token on its own final check and correctly backs off.
+    const values = new Map<string, string>();
+    const yieldThenRun = <T,>(fn: () => T): Promise<T> => new Promise((resolve) => queueMicrotask(() => resolve(fn())));
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: (key: string) => yieldThenRun(() => values.get(key) ?? null),
+        set: (key: string, value: string) => yieldThenRun(() => { values.set(key, value); }),
+      },
+    });
+    const [first, second] = await Promise.all([
+      claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block"),
+      claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block"),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
   });
 
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {

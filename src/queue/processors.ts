@@ -2381,6 +2381,42 @@ async function ciHeadShaResolutionCoalesced(
   );
 }
 
+/**
+ * Best-effort exclusive claim against the self-host transient cache, shared by every per-PR/per-review advisory
+ * lock below. Prefers the store's native atomic claim() (Redis SET NX) — the only way to fully CLOSE the race
+ * between two concurrent callers each observing an absent key. When the adapter hasn't implemented claim() yet,
+ * falls back to an optimistic write-then-verify instead of a plain get-then-set pair: write a token unique to
+ * THIS attempt, then read the key back. A correctly-behaved key-value store serializes writes to a single key —
+ * there is only ever one current value — so only the caller whose token survives the final read actually won;
+ * every other concurrent caller reads back a DIFFERENT (later) token and correctly backs off. A plain
+ * get-then-set pair can't make that distinction: both callers can observe an absent key BEFORE either writes,
+ * and both wrongly believe they claimed it (#confirmed-bug). A missing cache or any read/write error fails OPEN
+ * (returns true) — every lock built on this helper is defense-in-depth, never the primary safety gate, and must
+ * never itself block real work from running.
+ */
+async function claimTransientLock(
+  env: Env,
+  key: string,
+  ttlSeconds: number,
+): Promise<boolean> {
+  if (env.SELFHOST_TRANSIENT_CACHE?.claim) {
+    try {
+      return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", ttlSeconds);
+    } catch {
+      return true; // fail open — see the doc comment above.
+    }
+  }
+  if (!env.SELFHOST_TRANSIENT_CACHE) return true; // no cache configured — nothing to serialize against.
+  try {
+    if (await env.SELFHOST_TRANSIENT_CACHE.get(key)) return false; // already claimed by someone else
+    const token = crypto.randomUUID();
+    await env.SELFHOST_TRANSIENT_CACHE.set(key, token, ttlSeconds);
+    return (await env.SELFHOST_TRANSIENT_CACHE.get(key)) === token;
+  } catch {
+    return true; // fail open — a cache fault must never itself block real work.
+  }
+}
+
 // Per-PR advisory lock around maybeRunAgentMaintenance's plan-and-execute critical section (#2129). The TTL is a
 // crash-safety backstop only — the normal path releases explicitly in a finally block within a few seconds — so
 // it is sized well above any realistic pass duration (matches CI_COALESCE_WINDOW_SECONDS, an already-vetted
@@ -2401,25 +2437,11 @@ export async function claimAgentMaintenanceLock(
   repoFullName: string,
   prNumber: number,
 ): Promise<boolean> {
-  const key = agentMaintenanceLockKey(repoFullName, prNumber);
-  // Atomic claim (#2129): a get-then-set pair has a window between the read and the write where two concurrent
-  // passes for the SAME PR can both observe an absent key and both claim it, defeating the serializer entirely.
-  // env.SELFHOST_TRANSIENT_CACHE.claim performs the check-and-set as one operation (Redis SET NX server-side),
-  // closing that window. Falls back to the non-atomic get/set pair only for a cache adapter that hasn't
-  // implemented claim yet — strictly no worse than this function's prior behavior.
-  if (env.SELFHOST_TRANSIENT_CACHE?.claim) {
-    try {
-      return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", AGENT_MAINTENANCE_LOCK_TTL_SECONDS);
-    } catch {
-      return true; // fail open — see the doc comment above.
-    }
-  }
-  // getTransientKey/putTransientKey already fail open internally (a missing cache or a thrown read/write error
-  // both resolve rather than throw), so this never needs its own try/catch — a cache fault surfaces here as
-  // "no lock held", which correctly falls through to claiming it.
-  if (await getTransientKey(env, key)) return false; // another pass is already in-flight for this PR
-  await putTransientKey(env, key, "1", AGENT_MAINTENANCE_LOCK_TTL_SECONDS);
-  return true;
+  return claimTransientLock(
+    env,
+    agentMaintenanceLockKey(repoFullName, prNumber),
+    AGENT_MAINTENANCE_LOCK_TTL_SECONDS,
+  );
 }
 
 /** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */
@@ -2463,17 +2485,11 @@ export async function claimAiReviewLock(
   headSha: string,
   mode: string,
 ): Promise<boolean> {
-  const key = aiReviewLockKey(repoFullName, prNumber, headSha, mode);
-  if (env.SELFHOST_TRANSIENT_CACHE?.claim) {
-    try {
-      return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", AI_REVIEW_LOCK_TTL_SECONDS);
-    } catch {
-      return true; // fail open — see the doc comment above.
-    }
-  }
-  if (await getTransientKey(env, key)) return false; // another pass is already reviewing this exact head
-  await putTransientKey(env, key, "1", AI_REVIEW_LOCK_TTL_SECONDS);
-  return true;
+  return claimTransientLock(
+    env,
+    aiReviewLockKey(repoFullName, prNumber, headSha, mode),
+    AI_REVIEW_LOCK_TTL_SECONDS,
+  );
 }
 
 /** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */

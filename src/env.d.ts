@@ -210,6 +210,7 @@ declare global {
     REES_SHARED_SECRET?: string;
     REES_TIMEOUT_MS?: string;
     REES_ANALYZERS?: string;
+    REES_PROFILE?: string;
     REES_FORWARD_GITHUB_TOKEN?: string;
     /** Convergence flag: the deterministic content/registry SURFACE LANE drives the gate for registry-submission
      *  PRs (metagraphed surfaces[]/providers/candidates). Truthy ON *AND* the repo in GITTENSORY_REVIEW_REPOS —

@@ -1772,6 +1772,66 @@ describe("queue processors", () => {
     await expect(processJob(env, labeled("issue-enqueue-fail-2"))).resolves.toBeUndefined();
   });
 
+  it("REGRESSION: a TRANSIENT trailing-re-review enqueue failure does not permanently forfeit the trailing job — the next coalesced event retries", async () => {
+    // The dedupe marker must be claimed only AFTER env.JOBS.send actually succeeds. Claiming it eagerly (before
+    // the send settles) would let a transient queue failure permanently swallow the guarantee: every later
+    // coalesced event in the SAME window would see the marker already held and skip retrying, even though
+    // nothing was ever actually queued.
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    let sendAttempts = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sendAttempts += 1;
+          if (sendAttempts === 1) throw new Error("queue transiently unavailable");
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Linking PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Linking PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [{ name: "maintainer-only" }] });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    const labeled = (deliveryId: string) => ({
+      type: "github-webhook" as const,
+      deliveryId,
+      eventName: "issues",
+      payload: {
+        action: "labeled",
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        installation: { id: 9001 },
+        issue: { number: 1, title: "Issue", state: "open", labels: [{ name: "maintainer-only" }] },
+        label: { name: "maintainer-only" },
+      } as never,
+    });
+
+    await processJob(env, labeled("issue-transient-retry-1")); // live re-review, no enqueue
+    await processJob(env, labeled("issue-transient-retry-2")); // coalesced — the FIRST send attempt, throws
+    expect(sendAttempts).toBe(1);
+    expect(sent).toEqual([]); // the failed attempt must NOT have claimed the marker
+
+    await processJob(env, labeled("issue-transient-retry-3")); // still coalesced — retries the enqueue, succeeds
+    expect(sendAttempts).toBe(2);
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7 }), options: { delaySeconds: 60 } },
+    ]);
+
+    await processJob(env, labeled("issue-transient-retry-4")); // coalesced again — the successful claim now dedupes further retries
+    expect(sendAttempts).toBe(2);
+  });
+
   it("#4 stale-surface repair: a rebased PR resyncs + re-reviews at the new head, and the marker survives the resync", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });

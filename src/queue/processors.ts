@@ -2328,21 +2328,25 @@ async function scheduleTrailingIssueLinkedReReview(
   repoFullName: string,
   prNumber: number,
 ): Promise<void> {
-  const alreadyScheduled = await ciCompletionCoalesced(
-    env,
-    `issue-link-trailing:${repoFullName.toLowerCase()}#${prNumber}`,
-  );
-  if (alreadyScheduled) return;
-  await env.JOBS.send(
-    {
-      type: "agent-regate-pr",
-      deliveryId,
-      repoFullName,
-      prNumber,
-      installationId,
-    },
-    { delaySeconds: CI_COALESCE_WINDOW_SECONDS },
-  ).catch((error) =>
+  const key = `issue-link-trailing:${repoFullName.toLowerCase()}#${prNumber}`;
+  // Check-then-claim, but the CLAIM only happens after the send actually succeeds (#2371 follow-up): claiming
+  // eagerly (as ciCompletionCoalesced's own combined check-and-set does) would record "a trailing re-review is
+  // scheduled" even when the enqueue itself throws, permanently swallowing the guarantee this function exists to
+  // provide for the rest of the window — a later coalesced event would see the marker held and skip retrying,
+  // even though nothing was actually queued.
+  if (await getTransientKey(env, key)) return;
+  try {
+    await env.JOBS.send(
+      {
+        type: "agent-regate-pr",
+        deliveryId,
+        repoFullName,
+        prNumber,
+        installationId,
+      },
+      { delaySeconds: CI_COALESCE_WINDOW_SECONDS },
+    );
+  } catch (error) {
     console.log(
       JSON.stringify({
         ev: "issue_link_trailing_enqueue_failed",
@@ -2350,8 +2354,10 @@ async function scheduleTrailingIssueLinkedReReview(
         pull: prNumber,
         message: errorMessage(error).slice(0, 120),
       }),
-    ),
-  );
+    );
+    return; // do NOT claim — a later coalesced event in this window should retry the enqueue
+  }
+  await putTransientKey(env, key, "1", CI_COALESCE_WINDOW_SECONDS);
 }
 
 async function ciHeadShaResolutionCoalesced(

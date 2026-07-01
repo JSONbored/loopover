@@ -682,18 +682,17 @@ export type AgentPendingActionParams = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
-  // Which kind of close this is (linked-issue-hard-rule / blacklist / heuristic), persisted so a queued close's
-  // actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still fires correctly
-  // once the row is replayed through pendingActionToPlanned, not silently skipped for a lost discriminator.
+  // Which kind of close this is (see PlannedAgentAction.closeKind), persisted so it round-trips through staging:
+  // the close-precision circuit-breaker still scopes itself correctly when a staged close is later accepted
+  // (#2127), and the actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still
+  // fires correctly once the row is replayed through pendingActionToPlanned, rather than silently skipping for
+  // a lost discriminator.
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
   // For an `approve` action: retract the bot's own stale approval instead of posting a new one (see
   // PlannedAgentAction.dismissStaleApproval). Must round-trip through staging like every other action-specific
   // field. (#2254)
   dismissStaleApproval?: boolean;
-  // WHICH kind of close this is (see PlannedAgentAction.closeKind) — must round-trip through staging so the
-  // close-precision circuit-breaker can still scope itself correctly when a staged close is later accepted (#2127).
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
 };
 
 export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { retryableJobDelayMs } from "../queue/retryable";
 import {
   LOW_REST_RATE_LIMIT_REMAINING,
@@ -723,7 +725,8 @@ function normalizedPathScope(value: unknown): string | null {
         .map((entry) => entry.trim()),
     ),
   ].sort();
-  return paths.length > 0 ? JSON.stringify(paths) : null;
+  if (paths.length === 0) return null;
+  return `sha256:${createHash("sha256").update(JSON.stringify(paths)).digest("hex")}`;
 }
 
 function boolFlag(value: unknown): string {

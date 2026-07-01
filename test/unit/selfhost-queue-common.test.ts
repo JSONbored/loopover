@@ -606,7 +606,7 @@ describe("self-host queue common helpers", () => {
           paths: ["README.md", "src/a.ts", "README.md"],
         }),
       ),
-    ).toBe('rag-index-repo:jsonbored/gittensory:["README.md","src/a.ts"]');
+    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:8812e979fc698c98d98665ad4ccd8630e396dabdce08ebf87b41600c94bb1df5");
     expect(
       jobCoalesceKey(
         payload({
@@ -616,7 +616,7 @@ describe("self-host queue common helpers", () => {
           paths: ["a,b", "c"],
         }),
       ),
-    ).toBe('rag-index-repo:jsonbored/gittensory:["a,b","c"]');
+    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:569c363fb7e855f85eeae4e4dc032d1f8d262191b68ade7297566486982b5183");
     expect(
       jobCoalesceKey(
         payload({
@@ -626,7 +626,27 @@ describe("self-host queue common helpers", () => {
           paths: ["a", "b,c"],
         }),
       ),
-    ).toBe('rag-index-repo:jsonbored/gittensory:["a","b,c"]');
+    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:472ecd0a16762a33c3090345032fcadcfe6b34ee43a5cce5385fef8e72169c92");
+    const longPathKey = jobCoalesceKey(
+      payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: Array.from({ length: 100 }, (_, index) => `src/${index}-${"a".repeat(220)}.ts`),
+      }),
+    );
+    expect(longPathKey).toMatch(/^rag-index-repo:jsonbored\/gittensory:sha256:[a-f0-9]{64}$/);
+    expect(longPathKey?.length).toBe("rag-index-repo:jsonbored/gittensory:sha256:".length + 64);
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/Gittensory",
+          paths: [" ", null],
+        }),
+      ),
+    ).toBe("rag-index-repo:jsonbored/gittensory:full");
     expect(jobCoalesceKey(payload({ type: "prune-retention", requestedBy: "schedule", dryRun: true }))).toBe(
       "prune-retention:1",
     );

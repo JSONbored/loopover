@@ -76,6 +76,24 @@ INTERNAL_JOB_TOKEN=<random-32-byte-token>`}
         Any <code>FOO_FILE</code> is loaded into <code>FOO</code> at startup. Explicit{" "}
         <code>FOO</code> wins over the file variant.
       </p>
+      <Callout variant="warn" title="MCP_ACTUATION_REPO_ALLOWLIST">
+        <code>GITTENSORY_MCP_TOKEN</code> is a shared, end-user-obtainable CLI credential (the
+        normal alternative to <code>gittensory-mcp login</code>), so it must not implicitly stage
+        actions (merges, closes, approvals) on every repo the App happens to be installed on.{" "}
+        <code>MCP_ACTUATION_REPO_ALLOWLIST</code> scopes it to an explicit,
+        comma/whitespace-separated <code>owner/repo</code> list —{" "}
+        <strong>unset denies all actuation</strong> for this token. Set it to <code>*</code> or{" "}
+        <code>all</code> to opt back into the pre-scoping, any-repo behavior. If you already rely on{" "}
+        <code>GITTENSORY_MCP_TOKEN</code> for approval-queue actuation, set this variable after
+        upgrading or MCP actuation stops working.
+      </Callout>
+      <CodeBlock
+        filename=".env"
+        code={`# Deny-by-default: unset means the static MCP token cannot stage or decide any action.
+MCP_ACTUATION_REPO_ALLOWLIST=owner/repo-one, owner/repo-two
+# Restore pre-upgrade any-repo behavior:
+# MCP_ACTUATION_REPO_ALLOWLIST=*`}
+      />
 
       <h2>GitHub API cache</h2>
       <p>

@@ -27,6 +27,7 @@ describe("webhook signature verification", () => {
     expect(timingSafeEqualHex("", "00")).toBe(false);
     expect(timingSafeEqualHex("00", "01")).toBe(false);
     expect(timingSafeEqualHex("00", "00")).toBe(true);
+    expect(timingSafeEqualHex("ABCD", "abcd")).toBe(true);
   });
 
   it("uses timing-safe token comparisons and one-way token hashes", async () => {

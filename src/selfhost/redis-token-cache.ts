@@ -6,25 +6,42 @@
 // Also makes the cache shared across instances if the stack is ever scaled horizontally.
 import type { Redis } from "ioredis";
 import type { InstallationTokenStore } from "../github/app";
+import { incr } from "./metrics";
+
+const REDIS_TOKEN_CACHE_METRIC = "gittensory_redis_token_cache_total";
 
 const keyFor = (installationId: number): string =>
   `gh:insttoken:${installationId}`;
+
+function recordTokenCacheMetric(result: "hit" | "miss"): void {
+  incr(REDIS_TOKEN_CACHE_METRIC, { result });
+}
 
 export function createRedisTokenCache(redis: Redis): InstallationTokenStore {
   return {
     async get(installationId: number) {
       const raw = await redis.get(keyFor(installationId));
-      if (!raw) return null;
+      if (!raw) {
+        recordTokenCacheMetric("miss");
+        return null;
+      }
       try {
         const value = JSON.parse(raw) as {
           token?: unknown;
           expiresAtMs?: unknown;
         };
-        return typeof value.token === "string" &&
-          typeof value.expiresAtMs === "number"
-          ? { token: value.token, expiresAtMs: value.expiresAtMs }
-          : null;
+        if (typeof value.token !== "string") {
+          recordTokenCacheMetric("miss");
+          return null;
+        }
+        if (typeof value.expiresAtMs !== "number") {
+          recordTokenCacheMetric("miss");
+          return null;
+        }
+        recordTokenCacheMetric("hit");
+        return { token: value.token, expiresAtMs: value.expiresAtMs };
       } catch {
+        recordTokenCacheMetric("miss");
         return null;
       }
     },

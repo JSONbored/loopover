@@ -1,6 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import { getCachedAiReview, putCachedAiReview } from "../../src/db/repositories";
+import { aiReviewCacheInputFingerprint, type AiReviewCacheInput } from "../../src/review/ai-review-cache-input";
 import { createTestEnv } from "../helpers/d1";
+
+const baseFingerprintInput = (): AiReviewCacheInput => ({
+  title: "Fix the retry loop",
+  mode: "block",
+  byok: false,
+  provider: null,
+  model: null,
+  aiReviewAllAuthors: false,
+  aiReviewCloseConfidence: null,
+  gatePack: null,
+  reviewerPlan: null,
+  selfHostProviderConfig: null,
+  baseSha: null,
+  reviewFiles: [],
+  profile: null,
+  inlineComments: false,
+  pathInstructions: [],
+  pathGuidance: "",
+  repoInstructions: null,
+  excludePaths: [],
+  changedPaths: ["src/changed.ts"],
+  features: {
+    grounding: false,
+    rag: false,
+    enrichment: false,
+    reputation: false,
+  },
+});
 
 describe("AI review cache (#1)", () => {
   it("misses on a nullish head SHA (read returns null; write is a no-op)", async () => {
@@ -84,6 +113,53 @@ describe("AI review cache (#1)", () => {
       reviewerCount: 2,
       findings: [],
       metadata: { rag: { enabled: true, injected: false, retrievedPaths: [] } },
+    });
+  });
+
+  it("misses old cache rows when callers require an input fingerprint", async () => {
+    const env = createTestEnv();
+    await putCachedAiReview(env, "o/r", 10, "sha1", "block", {
+      notes: "old review",
+      reviewerCount: 1,
+    });
+
+    expect(await getCachedAiReview(env, "o/r", 10, "sha1", "block", "ai-review-input:v1:new")).toBeNull();
+    expect(await getCachedAiReview(env, "o/r", 10, "sha1", "block")).toEqual({
+      notes: "old review",
+      reviewerCount: 1,
+      findings: [],
+    });
+  });
+
+  it("reuses fingerprinted cache rows only when the review input fingerprint matches", async () => {
+    const env = createTestEnv();
+    const matching = await aiReviewCacheInputFingerprint({
+      ...baseFingerprintInput(),
+      repoInstructions: "Use the current repository review guide.",
+    });
+    const repeated = await aiReviewCacheInputFingerprint({
+      ...baseFingerprintInput(),
+      repoInstructions: "Use the current repository review guide.",
+    });
+    const changed = await aiReviewCacheInputFingerprint({
+      ...baseFingerprintInput(),
+      repoInstructions: "Use an older repository review guide.",
+    });
+    expect(repeated).toBe(matching);
+    expect(changed).not.toBe(matching);
+
+    await putCachedAiReview(env, "o/r", 11, "sha1", "block", {
+      notes: "fresh review",
+      reviewerCount: 2,
+      metadata: { inputFingerprint: matching },
+    });
+
+    expect(await getCachedAiReview(env, "o/r", 11, "sha1", "block", changed)).toBeNull();
+    expect(await getCachedAiReview(env, "o/r", 11, "sha1", "block", matching)).toEqual({
+      notes: "fresh review",
+      reviewerCount: 2,
+      findings: [],
+      metadata: { inputFingerprint: matching },
     });
   });
 });

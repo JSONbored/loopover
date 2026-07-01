@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
+import { authenticatePrivateToken, extractBearerToken, isMcpActuationRepoAllowed, type AuthIdentity } from "../auth/security";
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
@@ -1778,8 +1778,15 @@ export class GittensoryMcp {
   }
 
   // Stricter than requireRepoAccess (read): a maintainer-MANAGE gate for write actions (#784 propose-action).
-  // A session must own/maintain the repo (or be an operator); private-token / static identities are trusted.
+  // A session must own/maintain the repo (or be an operator); api/internal static identities are trusted (they
+  // are operator-only Worker secrets, never handed to end users). The static `mcp` identity is NOT trusted here:
+  // GITTENSORY_MCP_TOKEN is a shared, end-user-obtainable CLI credential, so it is scoped to an explicit
+  // operator-configured allowlist instead (#2253).
   private async requireRepoManageAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind === "static" && this.identity.actor === "mcp") {
+      if (isMcpActuationRepoAllowed(this.env.MCP_ACTUATION_REPO_ALLOWLIST, repoFullName)) return;
+      throw new Error("Forbidden: this repository is not in the operator's MCP_ACTUATION_REPO_ALLOWLIST.");
+    }
     if (this.identity.kind !== "session") return;
     const scope = await this.loadSessionAccessScope();
     if (scope.operator) return;
@@ -1800,7 +1807,13 @@ export class GittensoryMcp {
 
   // Approval-queue list/decide mirrors the HTTP requireRepoWriteAccess gate:
   // first require repo-scoped Gittensory maintainer/owner/operator authority, then verify live GitHub write.
+  // See requireRepoManageAccess above: api/internal static identities are trusted; the static `mcp` identity is
+  // scoped to MCP_ACTUATION_REPO_ALLOWLIST instead, since GITTENSORY_MCP_TOKEN is a shared end-user credential (#2253).
   private async requireRepoApprovalQueueAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind === "static" && this.identity.actor === "mcp") {
+      if (isMcpActuationRepoAllowed(this.env.MCP_ACTUATION_REPO_ALLOWLIST, repoFullName)) return;
+      throw new Error("Forbidden: this repository is not in the operator's MCP_ACTUATION_REPO_ALLOWLIST.");
+    }
     if (this.identity.kind !== "session") return;
     const scope = await this.loadSessionAccessScope();
     if (scope.operator) return;

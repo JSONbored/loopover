@@ -6345,6 +6345,15 @@ async function maybeProcessGateOverrideCommand(
     return true;
   }
 
+  // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2256). Without this,
+  // an operator's pause or the DB kill-switch does not stop a maintainer's @gittensory gate-override from
+  // flipping the live Gate check-run to neutral and posting a real confirmation comment.
+  const mode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+
   // #16 (audit): the cached pr.headSha can be stale if a commit landed between the comment and this processing.
   // The override is a per-commit neutral check-run, so posting it on the cached SHA is a silent no-op on the LIVE
   // head (whose Gate check stays blocking). Re-fetch the live head and override THAT commit (fail-open to the
@@ -6372,6 +6381,7 @@ async function maybeProcessGateOverrideCommand(
     repoFullName,
     advisory,
     { actor, reason: safeReason },
+    mode,
   );
   await recordAuditEvent(env, {
     eventType: "github_app.gate_overridden",
@@ -6406,6 +6416,7 @@ async function maybeProcessGateOverrideCommand(
     repoFullName,
     issue.number,
     confirmation,
+    mode,
   );
   await recordGithubProductUsage(env, "gate_overridden", {
     actor,
@@ -6529,6 +6540,26 @@ async function maybeProcessPlanCommand(
       targetKey,
       req.actor,
       "cooldown_active",
+    );
+    return true;
+  }
+  // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2257). Checked right
+  // before the only effectful work (a real Workers AI call + a public comment) so a paused/dry-run repo never
+  // incurs the AI cost speculatively — mirroring how the reopen-reclose handler skips its write uniformly for
+  // both dry_run and paused, not just paused.
+  const planMode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+  if (planMode !== "live") {
+    await recordPlanSkip(
+      env,
+      deliveryId,
+      req.repoFullName,
+      targetKey,
+      req.actor,
+      planMode === "dry_run" ? "dry_run" : "agent_paused",
     );
     return true;
   }
@@ -7210,6 +7241,13 @@ async function maybeProcessGittensoryMentionCommand(
         commenter,
       ),
     ]);
+  // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2258) — the answer
+  // card is a live public comment post, same as gate-override's confirmation comment.
+  const mentionMode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
   const pullRequestAuthor =
     cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
   const needsMinerDetection = commandAuthorizationNeedsMinerDetection({
@@ -7315,6 +7353,7 @@ async function maybeProcessGittensoryMentionCommand(
     repoFullName,
     issue.number,
     body,
+    mentionMode,
   );
   await upsertAgentCommandAnswer(env, {
     id: answerId,

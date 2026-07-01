@@ -255,8 +255,8 @@ settings:
   # Command authorization role policy — which roles (maintainer | collaborator | pr_author |
   # confirmed_miner) may invoke each bot command. Map. Default: the built-in policy.
   # Omit to inherit the DB-stored policy, or the built-in default if neither is set. An
-  # invalid shape falls back to the built-in default with a warning rather than being
-  # silently dropped.
+  # invalid top-level shape (not a mapping) is ignored with a warning rather than
+  # overwriting an existing DB-stored policy with the built-in default.
   # commandAuthorization:
   #   default: [maintainer, collaborator, confirmed_miner]
   #   commands:

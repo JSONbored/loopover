@@ -542,6 +542,22 @@ describe("self-host queue common helpers", () => {
     ).toBeNull();
   });
 
+  it("coalesces the event-driven jobs by their stable per-invocation id — and only true duplicates (#1942)", () => {
+    // A DUPLICATE re-enqueue of the SAME job (same id — e.g. a webhook redelivery) coalesces.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
+    expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
+    expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "webhook", event: { dedupKey: "review_requested:o/r#3:bob" } }))).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
+    // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", event: {} }))).toBeNull();
+  });
+
   it("coalesces recurring maintenance jobs while preserving their semantic scope", () => {
     expect(
       jobCoalesceKey(

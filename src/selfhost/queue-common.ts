@@ -598,6 +598,10 @@ export function jobCoalesceKey(payload: string): string | null {
       dryRun?: unknown;
       variant?: unknown;
       paths?: unknown;
+      runId?: unknown;
+      deliveryId?: unknown;
+      draftId?: unknown;
+      event?: { dedupKey?: unknown } | null;
       payload?: GitHubWebhookPayload | null;
     };
     const type = typeof message.type === "string" ? message.type : "";
@@ -687,6 +691,25 @@ export function jobCoalesceKey(payload: string): string | null {
           normalizedRepo(message.repoFullName) ?? "all",
           normalizedPathScope(message.paths) ?? "full",
         );
+      // Event-driven jobs carry a stable per-invocation id, so coalescing only ever merges a DUPLICATE re-enqueue of
+      // the SAME job (e.g. a webhook redelivery / retry) — never two distinct invocations, which have distinct ids.
+      // No id (a malformed payload) → null (uncoalesced), never a shared key that could drop a distinct job. (#1942)
+      case "run-agent": {
+        const runId = normalizedId(message.runId);
+        return runId ? keyOf(type, runId) : null;
+      }
+      case "notify-deliver": {
+        const deliveryId = normalizedId(message.deliveryId);
+        return deliveryId ? keyOf(type, deliveryId) : null;
+      }
+      case "notify-evaluate": {
+        const dedupKey = normalizedId(message.event?.dedupKey);
+        return dedupKey ? keyOf(type, dedupKey) : null;
+      }
+      case "submit-draft": {
+        const draftId = normalizedId(message.draftId);
+        return draftId ? keyOf(type, draftId) : null;
+      }
     }
     if (type !== "github-webhook") return null;
     const eventName =
@@ -739,6 +762,11 @@ function normalizedEnum(value: unknown): string | null {
 
 function normalizedCursor(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) return String(Math.floor(value));
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// A stable, case-preserving opaque id (runId / deliveryId / draftId / dedupKey) for coalesce keys.
+function normalizedId(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 

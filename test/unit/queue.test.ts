@@ -44,7 +44,7 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, contributorEvidenceBatchSize, processJob } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAgentMaintenanceLock, contributorEvidenceBatchSize, processJob, releaseAgentMaintenanceLock } from "../../src/queue/processors";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -3291,6 +3291,132 @@ describe("queue processors", () => {
     expect(sent.filter((m) => m.type === "agent-regate-sweep")).toEqual([]); // enqueues no redundant sweep
     const denied = await env.DB.prepare("select count(*) as n from audit_events where event_type='agent.sweep.fanout' and outcome='denied'").first<{ n: number }>();
     expect(denied?.n).toBe(1);
+  });
+
+  it("claimAgentMaintenanceLock claims when free, denies when held (per-PR, not per-repo), and release frees it again (#2129)", async () => {
+    const env = createTestEnv({});
+    // First claim for this PR succeeds — no prior pass in-flight.
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+    // A second, concurrent pass for the SAME PR (regardless of what triggered it — webhook or sweep) is denied
+    // while the first is still in-flight — exactly the race #2129 describes, since job-coalesce keys never
+    // match across trigger shapes but this lock is keyed purely on repo+PR.
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(false);
+    // A DIFFERENT PR in the same repo is unaffected — the lock is per-PR, not a repo-wide serializer.
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 8)).toBe(true);
+    // Release (the finally block's job) frees the PR — a subsequent pass can claim it again.
+    await releaseAgentMaintenanceLock(env, "owner/agent-repo", 7);
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+  });
+
+  it("claimAgentMaintenanceLock fails OPEN on a broken transient cache — never itself blocks actuation (#2129)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { throw new Error("cache read error"); },
+        set: async () => { throw new Error("cache write error"); },
+        del: async () => { throw new Error("cache delete error"); },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+    await expect(releaseAgentMaintenanceLock(env, "owner/agent-repo", 7)).resolves.toBeUndefined();
+  });
+
+  it("claimAgentMaintenanceLock fails OPEN when the atomic claim primitive itself throws (#2368)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => undefined,
+        claim: async () => { throw new Error("redis unavailable"); },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+  });
+
+  it("REGRESSION (#2368): claimAgentMaintenanceLock uses an atomic check-and-set, so two genuinely concurrent claims for the SAME PR can never both succeed", async () => {
+    // #2368: a get-then-set pair has a window between the read and the write where two concurrent callers can
+    // both observe an absent key and both claim it — exactly what the per-PR lock exists to prevent. This test
+    // races two claims for the same PR via Promise.all (both kick off before either resolves) against the
+    // default test cache's claim(), which mirrors createRedisCache's atomic SET NX: the check-and-set happens
+    // with no `await` boundary in between, so it is impossible for both callers to see "unclaimed".
+    const env = createTestEnv({});
+    const [first, second] = await Promise.all([
+      claimAgentMaintenanceLock(env, "owner/agent-repo", 7),
+      claimAgentMaintenanceLock(env, "owner/agent-repo", 7),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("REGRESSION (#2368): claimAgentMaintenanceLock calls the atomic claim primitive, not a separate get+set pair, when the cache supports it", async () => {
+    const calls: string[] = [];
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { calls.push("get"); return null; },
+        set: async () => { calls.push("set"); },
+        claim: async () => { calls.push("claim"); return true; },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+    expect(calls).toEqual(["claim"]); // never falls through to the racy get/set pair when claim is available
+  });
+
+  it("claimAgentMaintenanceLock falls back to the get/set pair and still denies a held key when the cache has no claim() (#2368)", async () => {
+    // A cache adapter that hasn't implemented the atomic claim() primitive yet must still deny a second claim —
+    // just via the older, non-atomic get-then-set pair (documented as strictly no worse than this function's
+    // prior behavior), not by skipping the check entirely.
+    const values = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key: string) => values.get(key) ?? null,
+        set: async (key: string, value: string) => { values.set(key, value); },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(false);
+  });
+
+  it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    let mergeCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/7/merge")) {
+        mergeCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/pulls/7/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.includes("/pulls/7/reviews")) return Response.json([]);
+      // Only the bare PR resource (no sub-path) — the more specific checks above already claimed
+      // /pulls/7/files, /pulls/7/merge, and /pulls/7/reviews.
+      if (/\/pulls\/7(\?|$)/.test(url)) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/a7/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      if (url.includes(".gittensory.yml")) return new Response("Not Found", { status: 404 });
+      if (url.endsWith("/check-runs") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.endsWith("/graphql")) return Response.json({ data: {} });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    // Simulate a webhook pass already in-flight for this exact PR — a github-webhook:pr-refresh job's coalesce
+    // key never matches agent-regate-pr's, so the two would never dedup against each other pre-#2129; the new
+    // per-PR advisory lock is what makes a second, independently-triggered pass defer instead of racing it.
+    await env.SELFHOST_TRANSIENT_CACHE?.set("agent-maintenance-lock:owner/agent-repo#7", "1", 60);
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "race-sweep", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    // The held lock made this pass skip its plan-and-execute critical section entirely — no mutation attempted.
+    expect(mergeCalls).toBe(0);
+    const actionAudits = await env.DB.prepare("select count(*) as n from audit_events where event_type like 'agent.action.%'").first<{ n: number }>();
+    expect(actionAudits?.n).toBe(0);
   });
 
   it("the sweep stamps the marker INLINE when the repo has no installation (audit-only, still converges) (#audit-sweep-fanout)", async () => {
@@ -10989,6 +11115,111 @@ describe("one-shot reopen prevention", () => {
     expect(webhookRow?.status).toBe("processed");
   });
 
+  it("does NOT re-close a disallowed reopen when live PR state has moved since the webhook was received (#2130, #2261)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    // A maintainer legitimately reopened/re-approved the PR — or a queue retry replayed a stale payload — in
+    // the window between the original webhook delivery and this handler's permission/closer-history reads. The
+    // live re-check must catch it and deny the re-close rather than overwriting a live maintainer decision.
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "head_changed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "open" });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "reopen-stale", eventName: "pull_request", payload: reopenedPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("reopen re-close not executed");
+  });
+
+  it("REGRESSION: does NOT re-close when the reopener gained maintainer permission before the close fires (#2130 follow-up)", async () => {
+    // Same head, still open — a head/state-only freshness check would say "current". But the reopener could
+    // have been promoted to a write/maintain/admin collaborator (or added as one) in the window between the
+    // initial permission read and this handler's close, which retroactively authorizes exactly the reopen
+    // this handler is about to undo.
+    const calls: Array<{ url: string; method: string }> = [];
+    let contributorPermissionCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) {
+        contributorPermissionCalls += 1;
+        // First read (upstream decision to re-close at all): still just a reader. Second read (the live
+        // re-check right before the mutation): promoted to a write collaborator.
+        return Response.json({ permission: contributorPermissionCalls === 1 ? "read" : "write" });
+      }
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "reopen-promoted", eventName: "pull_request", payload: reopenedPayload("contributor") });
+
+    expect(contributorPermissionCalls).toBe(2);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("now holds maintainer permission");
+  });
+
+  it("swallows a recordAuditEvent failure on the stale-reopen denial path — handler still completes (#2130)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "head_changed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "open" });
+    vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "reopen-stale-audit-fail", eventName: "pull_request", payload: reopenedPayload("contributor") }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("swallows a recordAuditEvent failure on the promoted-reopener denial path — handler still completes (#2130 follow-up)", async () => {
+    let contributorPermissionCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) {
+        contributorPermissionCalls += 1;
+        return Response.json({ permission: contributorPermissionCalls === 1 ? "read" : "write" });
+      }
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
+    vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "reopen-promoted-audit-fail", eventName: "pull_request", payload: reopenedPayload("contributor") }),
+    ).resolves.toBeUndefined();
+    expect(contributorPermissionCalls).toBe(2);
+  });
+
   it("does NOT re-close a disallowed reopen on an OBSERVE-only / un-opted-in repo (autonomy floor, #review-audit)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -11255,6 +11486,76 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ detail: string }>();
     expect(audit?.detail).toContain("abc123");
     expect(audit?.detail).toContain("contributor");
+  });
+
+  it("does NOT draft-dodge close when live PR state has moved since the webhook was received (#2130)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    // A maintainer merged/closed the PR — or a fresh commit resolved the gate failure — in the window between
+    // webhook ingestion and this handler's async DB reads (getGateBlockOutcome, isGlobalAgentFrozen). The live
+    // re-check must catch it and deny the close rather than firing blind off the stale ingestion-time payload.
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "closed" });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-stale", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("draft-dodge close not executed");
+  });
+
+  it("REGRESSION: does NOT draft-dodge close when the PR was converted back to ready_for_review before the close fires (#2130 follow-up)", async () => {
+    // Same head, still open — a head/state-only freshness check would say "current". But the draft-dodge
+    // close's whole justification is "the author is dodging the gate via draft state", which no longer holds
+    // once the PR is ready_for_review again — closing here would be wrong even though nothing else moved.
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "no_longer_draft", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "open" });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-no-longer-draft", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+    expect(fetchPullRequestFreshness).toHaveBeenCalledWith(env, expect.objectContaining({ requireDraft: true }));
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("no longer a draft");
+  });
+
+  it("swallows a recordAuditEvent failure on the stale-draft-dodge denial path — handler still completes (#2130)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "closed" });
+    vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-stale-audit-fail", eventName: "pull_request", payload: draftPayload("contributor") }),
+    ).resolves.toBeUndefined();
   });
 
   it("does NOT draft-dodge close while the global freeze is on (#killswitch-gap)", async () => {

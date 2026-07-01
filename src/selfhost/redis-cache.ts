@@ -16,6 +16,13 @@ export function createRedisCache(redis: Redis) {
     async del(key: string): Promise<void> {
       await redis.del(key);
     },
+    // Redis performs the existence check and the write as a single atomic command server-side (SET ... NX), so
+    // two concurrent callers racing on the same key can never both receive "OK" -- unlike a get-then-set pair,
+    // which has a window between the read and the write where both callers can observe an absent key.
+    async claim(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+      const result = await redis.set(key, value, "EX", ttlSeconds, "NX");
+      return result === "OK";
+    },
   };
 }
 

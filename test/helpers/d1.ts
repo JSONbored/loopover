@@ -4,13 +4,36 @@ import { DatabaseSync } from "node:sqlite";
 
 type BoundValue = string | number | null | Uint8Array;
 
+// node:sqlite's DatabaseSync supports serialize()/deserialize() at runtime (verified against the installed
+// Node binary), but the bundled @types/node (24.13.2) hasn't caught up with these newer methods yet — bridge
+// the gap with a narrow local type instead of widening DatabaseSync usage elsewhere to `any`.
+type SerializableDatabaseSync = DatabaseSync & {
+  serialize(): Uint8Array;
+  deserialize(data: Uint8Array): void;
+};
+
+// Replaying every migrations/*.sql file into a fresh DatabaseSync is the dominant cost of constructing a
+// TestD1Database (~1500 call sites across the suite; ~33ms/call measured, almost entirely migration replay).
+// Build the migrated schema ONCE per worker process, serialize it, and clone that snapshot for every
+// subsequent instance instead of re-executing ~90 files each time (~1000x faster per call; same resulting
+// schema, since node:sqlite's deserialize() loads the exact byte-for-byte database the snapshot came from).
+let migratedSnapshot: Uint8Array | null = null;
+function getMigratedSnapshot(): Uint8Array {
+  if (migratedSnapshot) return migratedSnapshot;
+  const template = new DatabaseSync(":memory:") as SerializableDatabaseSync;
+  for (const migrationFile of readdirSync("migrations").filter((file) => file.endsWith(".sql")).sort()) {
+    template.exec(readFileSync(`migrations/${migrationFile}`, "utf8"));
+  }
+  migratedSnapshot = template.serialize();
+  template.close();
+  return migratedSnapshot;
+}
+
 export class TestD1Database {
   readonly db = new DatabaseSync(":memory:");
 
   constructor() {
-    for (const migrationFile of readdirSync("migrations").filter((file) => file.endsWith(".sql")).sort()) {
-      this.db.exec(readFileSync(`migrations/${migrationFile}`, "utf8"));
-    }
+    (this.db as SerializableDatabaseSync).deserialize(getMigratedSnapshot());
   }
 
   prepare(sql: string) {

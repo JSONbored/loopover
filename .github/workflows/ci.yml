@@ -29,6 +29,7 @@ jobs:
       ui: ${{ steps.filter.outputs.ui }}
       uiContract: ${{ steps.filter.outputs.uiContract }}
       mcp: ${{ steps.filter.outputs.mcp }}
+      mcpCliCluster: ${{ steps.filter.outputs.mcpCliCluster }}
       rees: ${{ steps.filter.outputs.rees }}
     steps:
       - name: Checkout
@@ -76,6 +77,26 @@ jobs:
               - 'packages/gittensory-mcp/**'
               - 'scripts/check-mcp-package.mjs'
               - 'package-lock.json'
+            # The MCP CLI test cluster (test/unit/mcp-cli-*.test.ts, mcp-discovery, mcp-output-schemas): slow
+            # (subprocess-per-test / real MCP protocol handshakes, ~115s combined) and unconditionally bundled
+            # into `Test with coverage` today. Its real dependency surface is narrower than "any backend
+            # change" -- the CLI-harness tests spawn packages/gittensory-mcp against a fixture server (never
+            # importing src/ directly) seeded via src/db/repositories + src/registry/*, and mcp-discovery /
+            # mcp-output-schemas exercise src/mcp/server.ts in-process. Skipping tests can only ever make
+            # Codecov's patch-coverage number look WORSE, never hide a real bug (a changed line this cluster
+            # uniquely covers just fails patch coverage loudly), so a path-scoped skip is safe here.
+            mcpCliCluster:
+              - 'packages/gittensory-mcp/**'
+              - 'src/mcp/**'
+              - 'src/auth/security.ts'
+              - 'src/db/repositories.ts'
+              - 'src/registry/normalize.ts'
+              - 'src/registry/sync.ts'
+              - 'src/services/repo-outcome-patterns.ts'
+              - 'test/unit/mcp-cli-*.test.ts'
+              - 'test/unit/mcp-discovery.test.ts'
+              - 'test/unit/mcp-output-schemas.test.ts'
+              - 'test/unit/support/mcp-cli-harness.ts'
             rees:
               - 'review-enrichment/**'
               - '.github/workflows/ci.yml'
@@ -132,12 +153,25 @@ jobs:
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         env:
           VITEST_JUNIT_PATH: reports/junit/vitest.xml
+          # Push always runs the full suite (keeps the coverage baseline solid); a PR skips the slow MCP CLI
+          # cluster only when its real dependency surface (see the mcpCliCluster filter above) didn't change.
+          SKIP_MCP_CLI_CLUSTER: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliCluster != 'true' }}
         # Pinned to the self-hosted runner's actual Docker CPU quota (4), not "100%": Node's os.cpus()
         # reports the HOST's full core count inside the container, ignoring the cgroup CPU limit, so
         # --maxWorkers=100% oversubscribed the worker pool far past what the runner can actually execute
         # in parallel, causing thrashing. A GitHub-hosted fork-PR runner has no such limit, but the
         # standard 4-core GitHub runner makes 4 the right number there too.
-        run: npm run test:coverage -- --maxWorkers=4
+        run: |
+          EXCLUDE_ARGS=()
+          if [ "$SKIP_MCP_CLI_CLUSTER" = "true" ]; then
+            echo "Skipping the MCP CLI test cluster (no mcp-relevant paths changed)."
+            EXCLUDE_ARGS=(
+              --exclude "test/unit/mcp-cli-*.test.ts"
+              --exclude "test/unit/mcp-discovery.test.ts"
+              --exclude "test/unit/mcp-output-schemas.test.ts"
+            )
+          fi
+          npm run test:coverage -- --maxWorkers=4 "${EXCLUDE_ARGS[@]}"
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |

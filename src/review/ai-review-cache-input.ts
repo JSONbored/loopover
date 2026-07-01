@@ -81,7 +81,7 @@ export async function aiReviewCacheInputFingerprint(args: {
       reesGithubTokenForwarding: args.env.REES_FORWARD_GITHUB_TOKEN ?? null,
       reesProfile: args.env.REES_PROFILE ?? null,
       reesTimeoutMs: args.env.REES_TIMEOUT_MS ?? null,
-      reesUrlConfigured: Boolean(args.env.REES_URL),
+      reesUrl: args.env.REES_URL ?? null,
       reputation: args.env.GITTENSORY_REVIEW_REPUTATION ?? null,
       reviewRepos: args.env.GITTENSORY_REVIEW_REPOS ?? null,
     },

@@ -155,7 +155,11 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // issue between staging and accept (head SHA unchanged, so the check above doesn't catch it) would otherwise
   // still merge a now-ineligible PR. Mirrors the planner's own owner/automation exemption (closeEligible) so an
   // owner's staged merge, which the hard rule never blocks in the first place, is not wrongly denied here.
-  if (pending.actionClass === "merge" && pr) {
+  // Gated on the POST-downgrade `plan`, not `pending.actionClass`: the precision-breaker downgrade immediately
+  // above can already have replaced a staged merge with a needs-human-review label (downgradeMergeToHold) — that
+  // downgraded plan isn't going to merge anything, so a stale linked-issue violation must not reject the whole
+  // row and suppress the hold label; it only matters while a merge is still the thing about to execute.
+  if (plan.some((action) => action.actionClass === "merge") && pr) {
     const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
     const authorLogin = pr.authorLogin ?? "";
     const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
@@ -163,6 +167,14 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     const closeEligible = (!authorIsOwner && !authorIsAutomationBot) || (authorIsOwner && settings.closeOwnerAuthors === true);
     if (closeEligible) {
       const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, pending.repoFullName);
+      // Best-effort mint, same as the #2126 CI/mergeable/review re-check above: a failed mint here does NOT
+      // silently skip the recheck -- resolveLinkedIssueHardRule falls back to env.GITHUB_PUBLIC_TOKEN when
+      // ciToken is undefined and still attempts the fetch, only returning "not violated" if that ALSO can't
+      // gather issue facts. This is the same shared resolver + same fail-open contract the LIVE planning path
+      // (processors.ts) already relies on for the PRIMARY hard-rule decision; holding this SECONDARY, narrow-
+      // race-window recheck to a stricter fail-closed standard would deny otherwise-legitimate merges on every
+      // transient token-mint hiccup without closing a real gap (the executor mints its OWN token independently
+      // for the actual merge mutation, so a suspended/broken installation still fails there regardless).
       const ciToken = await createInstallationToken(env, pending.installationId).catch(() => undefined);
       const linkedIssueHardRule = await resolveLinkedIssueHardRule({
         env,

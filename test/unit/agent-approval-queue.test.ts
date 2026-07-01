@@ -368,6 +368,29 @@ describe("agent approval queue (#779)", () => {
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
   });
 
+  it("REGRESSION: a precision-breaker-downgraded merge still executes the hold/label plan even when the linked issue would now violate the hard rule", async () => {
+    // Before the fix, the linked-issue recheck gated on pending.actionClass (the ORIGINAL staged class), not the
+    // post-downgrade plan -- so a merge already downgraded to a needs-human-review label by the #2127 precision
+    // breaker above would still get its whole row rejected on a stale linked-issue violation, silently swallowing
+    // the hold label the breaker was supposed to guarantee.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", label: "auto" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs." });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    // The merge-precision breaker engages fleet-wide AFTER this merge was staged — same as the #2127 test above.
+    await env.DB.prepare("INSERT INTO system_flags (key, value) VALUES (?, ?)").bind("holdonly:owner/repo", "true").run();
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
+    // The recheck must not even run once the plan no longer contains a merge -- there's nothing left to validate.
+    expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
+  });
+
   it("accept executes a staged merge normally when the precision breaker is off", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });

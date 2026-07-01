@@ -1,0 +1,84 @@
+name: Codecov fork upload
+
+# Fork PR CI runs without access to secrets, so ci.yml cannot upload their coverage to Codecov directly —
+# it stashes the coverage report + PR metadata as the `fork-coverage` artifact. This workflow runs on
+# `workflow_run` in the BASE-repo context (so it CAN read secrets.CODECOV_TOKEN) and performs the upload,
+# keeping the codecov/patch gate enforced on fork PRs.
+#
+# Security: this is a privileged workflow processing a fork-produced artifact. It never checks out or runs
+# fork code — it only downloads the artifact and passes validated metadata to codecov-action. The job runs
+# ONLY for successful fork-PR CI runs, and every fork-controlled value is re-validated against a strict
+# charset before use.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upload:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'pull_request'
+          && github.event.workflow_run.head_repository.full_name != github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download fork coverage artifact
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fork-coverage
+          path: fork-coverage
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Read and validate coverage metadata
+        id: meta
+        run: |
+          f=fork-coverage/codecov-meta.env
+          if [ ! -f "$f" ]; then
+            echo "no fork-coverage artifact on this run — nothing to upload"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr="$(sed -n 's/^PR_NUMBER=//p' "$f" | head -1)"
+          sha="$(sed -n 's/^HEAD_SHA=//p' "$f" | head -1)"
+          branch="$(sed -n 's/^HEAD_BRANCH=//p' "$f" | head -1)"
+          # Reject anything that is not a plain PR number / hex sha / safe ref name — a fork controls these.
+          case "$pr" in '' | *[!0-9]*) echo "invalid PR number"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+          case "$sha" in '' | *[!0-9a-fA-F]*) echo "invalid head sha"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+          case "$branch" in '' | *[!A-Za-z0-9._/-]*) echo "invalid head branch"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+          {
+            echo "skip=false"
+            echo "pr=$pr"
+            echo "sha=$sha"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+      - name: Upload coverage to Codecov
+        if: ${{ steps.meta.outputs.skip == 'false' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: fork-coverage/lcov.info
+          disable_search: true
+          override_branch: ${{ steps.meta.outputs.branch }}
+          override_commit: ${{ steps.meta.outputs.sha }}
+          override_pr: ${{ steps.meta.outputs.pr }}
+          # Same hard-gate semantics as the inline upload: a failed upload must not silently drop patch data.
+          fail_ci_if_error: true
+      - name: Upload Vitest results to Codecov
+        if: ${{ steps.meta.outputs.skip == 'false' && hashFiles('fork-coverage/vitest.xml') != '' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: fork-coverage/vitest.xml
+          report_type: test_results
+          disable_search: true
+          override_branch: ${{ steps.meta.outputs.branch }}
+          override_commit: ${{ steps.meta.outputs.sha }}
+          override_pr: ${{ steps.meta.outputs.pr }}
+          fail_ci_if_error: false

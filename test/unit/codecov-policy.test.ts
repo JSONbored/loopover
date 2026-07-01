@@ -34,6 +34,16 @@ describe("Codecov policy", () => {
     expect(project.informational).toBe(true);
   });
 
+  it("keeps CONTRIBUTING patch-coverage guidance aligned with codecov.yml", () => {
+    const contributing = readFileSync("CONTRIBUTING.md", "utf8");
+    const patchTarget = nestedRecord(readYaml("codecov.yml"), ["coverage", "status", "patch", "default"]).target;
+    expect(patchTarget).toBe("99%");
+    expect(contributing).toMatch(/~99% patch coverage/i);
+    expect(contributing).toMatch(/99%\+ covered/i);
+    expect(contributing).not.toMatch(/~97% patch coverage/i);
+    expect(contributing).not.toMatch(/\b97%\+ covered/i);
+  });
+
   it("fails closed when the backend coverage report is missing or cannot upload", () => {
     const workflow = readYaml(".github/workflows/ci.yml");
     const validateCode = nestedRecord(workflow, ["jobs", "validate-code"]);

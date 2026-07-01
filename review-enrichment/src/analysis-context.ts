@@ -308,14 +308,19 @@ export function collectAddedLines(
   for (const file of files) {
     if (!file.patch) continue;
     let newLine = 0;
+    let inHunk = false;
     for (const line of boundedPatchLines(file.patch, options.metrics, "added_lines_patch_bytes")) {
-      if (line.startsWith("+++") || line.startsWith("---")) continue;
-      if (line.startsWith("diff ") || line.startsWith("index ")) continue;
       const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
       if (hunk) {
         newLine = Number(hunk[1]);
+        inHunk = true;
         continue;
       }
+      // Only the diff preamble (diff/index/mode lines and the `+++ `/`--- ` file headers) precedes the first
+      // hunk; skip it until a hunk begins. INSIDE a hunk the first character is the +/-/space op, so a body
+      // line like `+++x` (an added line whose content starts with `++`) is an addition, not a header — the
+      // old unanchored `startsWith("+++")` guard dropped it and mis-numbered every following added line.
+      if (!inHunk) continue;
       if (line.startsWith("+")) {
         if (addedLines.length >= MAX_CONTEXT_ADDED_LINES) {
           options.metrics?.recordCappedWork("added_lines", 1);
@@ -364,13 +369,19 @@ export function filesHaveAddedLines(
 ): boolean {
   for (const file of files) {
     if (!file.patch) continue;
+    let inHunk = false;
     for (const line of boundedPatchLines(
       file.patch,
       options.metrics,
       "has_added_lines_patch_bytes",
     )) {
-      if (line.startsWith("+++") || line.startsWith("---")) continue;
-      if (line.startsWith("+")) return true;
+      if (line.startsWith("@@")) {
+        inHunk = true;
+        continue;
+      }
+      // Gate on inHunk so a body line such as `+++x` counts as an addition; the `+++ `/`--- ` file headers
+      // only appear in the pre-hunk preamble (mirrors collectAddedLines).
+      if (inHunk && line.startsWith("+")) return true;
     }
     if (file.patch.length > MAX_CONTEXT_PATCH_BYTES) return true;
   }

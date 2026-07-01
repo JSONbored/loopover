@@ -2,7 +2,11 @@
 // migrations without fighting over the broad enrichment test file.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAnalysisContext } from "../dist/analysis-context.js";
+import {
+  collectAddedLines,
+  createAnalysisContext,
+  filesHaveAddedLines,
+} from "../dist/analysis-context.js";
 import {
   queryOsvBatch,
   scanDependencyChanges,
@@ -14,6 +18,29 @@ const jsonResponse = (body, init = {}) =>
     headers: { "content-type": "application/json" },
     ...init,
   });
+
+test("collectAddedLines keeps added lines whose content starts with ++ (rendered +++x)", () => {
+  // git renders an added line whose content is `++x` as `+` + `++x` = `+++x`; the old header guard skipped it
+  // as if it were a `+++ b/file` header, losing the line and mis-numbering the ones after it.
+  const files = [
+    {
+      path: "src/inc.ts",
+      patch: ["@@ -1,0 +1,2 @@", "+++x", "+const y = 1;"].join("\n"),
+    },
+  ];
+
+  assert.deepEqual(
+    collectAddedLines(files).map((added) => [added.line, added.text]),
+    [
+      [1, "++x"],
+      [2, "const y = 1;"],
+    ],
+  );
+  assert.equal(
+    filesHaveAddedLines([{ path: "src/inc.ts", patch: "@@ -1,0 +1,1 @@\n+++x" }]),
+    true,
+  );
+});
 
 test("createAnalysisContext parses common PR state once", () => {
   let now = 130;

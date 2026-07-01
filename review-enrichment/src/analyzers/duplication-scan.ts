@@ -249,6 +249,11 @@ interface MatchIndex {
   states: SuffixState[];
 }
 
+type SharedRunResult =
+  | { status: "matched"; headLine: number; sourceLine: number; length: number }
+  | { status: "aborted" }
+  | null;
+
 /** Build a suffix automaton over candidate significant lines, so longest-run lookup is exact and linear instead of
  *  order-dependent on a capped list of repeated MIN_RUN-window starts. */
 function buildMatchIndex(block: NormBlock, signal?: AbortSignal): MatchIndex | null {
@@ -310,16 +315,17 @@ function longestSharedRun(
   added: NormBlock,
   index: MatchIndex,
   signal?: AbortSignal,
-): { headLine: number; sourceLine: number; length: number } | null {
+): SharedRunResult {
   const cand = index.block;
   const states = index.states;
-  let best: { headLine: number; sourceLine: number; length: number } | null =
-    null;
+  let best: Extract<SharedRunResult, { status: "matched" }> | null = null;
   let state = 0;
   let length = 0;
 
   for (let a = 0; a < added.norm.length; a += 1) {
-    if ((a & (ABORT_POLL_INTERVAL - 1)) === 0 && signal?.aborted) return best;
+    if ((a & (ABORT_POLL_INTERVAL - 1)) === 0 && signal?.aborted) {
+      return { status: "aborted" };
+    }
 
     const token = added.norm[a]!;
     let next = states[state]!.next.get(token);
@@ -341,6 +347,7 @@ function longestSharedRun(
     if (length >= MIN_RUN && (!best || length > best.length)) {
       const sourceEnd = states[state]!.firstPos;
       best = {
+        status: "matched",
         headLine: added.lineNos[a - length + 1]!,
         sourceLine: cand.lineNos[sourceEnd - length + 1]!,
         length,
@@ -584,7 +591,11 @@ export async function scanDuplication(
               break;
             }
             const run = longestSharedRun(block, index, options.signal);
-            if (run && (!best || run.length > best.length)) best = run;
+            if (run?.status === "aborted") {
+              aborted = true;
+              break;
+            }
+            if (run?.status === "matched" && (!best || run.length > best.length)) best = run;
           }
           if (aborted) break;
           if (!best) continue;

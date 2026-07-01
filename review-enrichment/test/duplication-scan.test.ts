@@ -534,6 +534,43 @@ test("scanDuplication: an already-aborted signal yields [] without fetching", as
   assert.equal(counter.tree, 0); // never even fetched the tree
 });
 
+test("scanDuplication: aborting inside the synchronous matcher discards a partial best run", async () => {
+  // Regression for PR #1946 follow-up: cancellation during longestSharedRun must stop the scan, not publish the
+  // current best prefix as if the full comparison had completed.
+  const longShared = Array.from(
+    { length: 1100 },
+    (_, i) => `const abortSensitiveDuplicateLine${i} = computeAbortSensitiveDuplicateValue(inputValue, ${i})`,
+  );
+  let blobServed = false;
+  let readsAfterBlob = 0;
+  const controller = new AbortController();
+  Object.defineProperty(controller.signal, "aborted", {
+    configurable: true,
+    get() {
+      if (!blobServed) return false;
+      readsAfterBlob += 1;
+      return readsAfterBlob >= 5;
+    },
+  });
+  const req = baseReq({
+    files: [{ path: "src/new-long-copy.ts", status: "added", patch: addedPatch(longShared) }],
+  });
+  const baseFetch = makeFetch({
+    tree: [{ path: "src/existing-long-copy.ts", sha: "d".repeat(40) }],
+    blobs: { ["d".repeat(40)]: sourceWithBlock(longShared, 5) },
+  });
+  const fetchImpl = async (url) => {
+    const response = await baseFetch(url);
+    if (url.includes("/git/blobs/")) blobServed = true;
+    return response;
+  };
+
+  const findings = await scanDuplication(req, fetchImpl, { signal: controller.signal });
+
+  assert.deepEqual(findings, []);
+  assert.equal(readsAfterBlob, 5);
+});
+
 test("scanDuplication: no changed source files → [] without fetching", async () => {
   const req = baseReq({
     files: [{ path: "README.md", status: "modified", patch: addedPatch(SHARED) }],

@@ -3092,23 +3092,37 @@ async function githubPaged<T>(
   let status: RepoSyncSegmentRecord["status"] = "complete";
 
   try {
+    // Hold `per_page` CONSTANT for the whole crawl. GitHub's `page` offset is `(page-1)*per_page`, so it is
+    // only valid if `per_page` never changes mid-crawl. The previous code recomputed it from the shrinking
+    // budget (`min(100, limit - items.length)`), which broke offsets past page 1 whenever `limit` was not a
+    // multiple of 100 (per_page=50 on page 2 re-read items 51-100 instead of 101-150). Using
+    // `min(100, limit)` keeps the request/cursor grid stable: a small `limit` fetches exactly `limit` per
+    // page (so a page-precision resume cursor advances by one page), and a large `limit` fetches full 100s.
+    const perPage = Math.min(100, limit);
     for (let page = startPage; items.length < limit; page += 1) {
-      const pageLimit = Math.min(100, limit - items.length);
       const separator = path.includes("?") ? "&" : "?";
-      const pagePath = `${path}${separator}per_page=${pageLimit}&page=${page}`;
+      const pagePath = `${path}${separator}per_page=${perPage}&page=${page}`;
       const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, githubRateLimitOptions(admissionKey));
       etag = result.etag ?? etag;
       lastModified = result.lastModified ?? lastModified;
       lastCursor = String(page);
       pageCount += 1;
-      items.push(...result.data);
+      const remaining = limit - items.length;
+      // A page can only overrun `remaining` once we have already consumed at least one full page (so `page`
+      // has advanced past the crawl's start): resume from THIS page to pick up its unconsumed tail. On the
+      // first page `remaining >= perPage >= result.data.length`, so this is false and the cursor advances,
+      // which is why a small-`limit` (per_page = limit) crawl can never stall on its own start page.
+      const truncatedPage = result.data.length > remaining;
+      items.push(...result.data.slice(0, remaining));
       const hasNext = hasNextPage(result.link);
-      if (result.data.length < pageLimit || !hasNext) break;
-      nextCursor = String(page + 1);
-      if (items.length >= limit) {
+      if (items.length >= limit && (hasNext || truncatedPage)) {
+        nextCursor = String(truncatedPage ? page : page + 1);
         status = "capped";
         warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path}; next page cursor is ${nextCursor}.`);
+        break;
       }
+      if (result.data.length < perPage || !hasNext) break;
+      nextCursor = String(page + 1);
     }
   } catch (error) {
     status = error instanceof GitHubApiError && error.rateLimited ? "rate_limited" : items.length > 0 ? "partial" : "error";

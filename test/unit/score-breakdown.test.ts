@@ -85,6 +85,7 @@ describe("explainScoreBreakdown", () => {
         "openPrMultiplier",
         "openIssueMultiplier",
         "mergedHistoryMultiplier",
+        "issueDiscoveryHistoryMultiplier",
         "timeDecayMultiplier",
         "nonCodeLineCap",
       ]),
@@ -148,6 +149,119 @@ describe("explainScoreBreakdown", () => {
     expect(cap).toMatchObject({ band: "reduced", leverageScore: 30 });
     expect(cap.summary).toMatch(/exceed/i);
     expect(JSON.stringify(over)).not.toMatch(FORBIDDEN);
+  });
+
+  it("explains the issue-discovery validity floor as neutral (unobserved), full (meets floor), and blocked (below floor)", () => {
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+    };
+    const baseInput = {
+      repoFullName: issueDiscoveryRepo.fullName,
+      contributorLogin: "miner",
+      sourceTokenScore: 40,
+      totalTokenScore: 60,
+      sourceLines: 80,
+      openPrCount: 0,
+      credibility: 1,
+      mergedPullRequests: 5,
+      linkedIssueMode: "standard" as const,
+    };
+
+    const unobserved = explainScoreBreakdown(buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: baseInput }));
+    expect(unobserved.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "neutral",
+      leverageScore: 0,
+    });
+
+    const meets = explainScoreBreakdown(
+      buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 4, issueCredibility: 0.9 },
+      }),
+    );
+    expect(meets.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "full",
+      summary: expect.stringMatching(/4 valid solved, private context 0.9/i),
+    });
+
+    const blocked = explainScoreBreakdown(
+      buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 1, issueCredibility: 0.5 },
+      }),
+    );
+    expect(blocked.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "blocked",
+      summary: expect.stringMatching(/private context.*zeroed/i),
+      leverageScore: 100,
+    });
+    expect(blocked.highestLeverageLever.lever).toMatch(/valid solved issues|issue credibility/i);
+    expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
+  });
+
+  it("keeps issue-discovery validity neutral when linked-issue mode is inactive even if history is supplied", () => {
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+    };
+    const preview = buildScorePreview({
+      repo: issueDiscoveryRepo,
+      snapshot,
+      input: {
+        repoFullName: issueDiscoveryRepo.fullName,
+        sourceTokenScore: 40,
+        totalTokenScore: 60,
+        sourceLines: 80,
+        openPrCount: 0,
+        credibility: 1,
+        linkedIssueMode: "none",
+        validSolvedIssues: 4,
+        issueCredibility: 0.95,
+      },
+    });
+    expect(preview.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "neutral",
+      summary: expect.stringMatching(/linked-issue mode is inactive/i),
+      leverageScore: 0,
+    });
+  });
+
+  it("keeps issue-discovery validity neutral when only one history field is observed", () => {
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+    };
+    const baseInput = {
+      repoFullName: issueDiscoveryRepo.fullName,
+      sourceTokenScore: 40,
+      totalTokenScore: 60,
+      sourceLines: 80,
+      openPrCount: 0,
+      credibility: 1,
+      mergedPullRequests: 5,
+      linkedIssueMode: "standard" as const,
+    };
+
+    const validSolvedOnly = explainScoreBreakdown(
+      buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: { ...baseInput, validSolvedIssues: 4 } }),
+    );
+    expect(validSolvedOnly.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "neutral",
+      summary: expect.stringMatching(/valid solved count is observed but issue private context is not/i),
+    });
+
+    const credibilityOnly = explainScoreBreakdown(
+      buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: { ...baseInput, issueCredibility: 0.9 } }),
+    );
+    expect(credibilityOnly.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "neutral",
+      summary: expect.stringMatching(/issue private context is observed but valid solved count is not/i),
+    });
   });
 
   it("explains an over-threshold open-issue count as a blocked open-issue spam gate", () => {

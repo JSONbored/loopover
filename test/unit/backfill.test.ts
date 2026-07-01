@@ -3484,6 +3484,37 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("uses the shared GraphQL cache for allowlisted totals reads without double-counting rate-limit observations", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T00:05:00.000Z"));
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const store = new Map<string, CachedGitHubResponse>();
+    setGitHubResponseCache({
+      get: async (key) => store.get(key) ?? null,
+      set: async (key, value) => void store.set(key, value),
+    });
+    let graphQlFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        graphQlFetches += 1;
+        return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+      }
+      if (url.includes("/labels?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    await persistTotalsSnapshot(env, { fetchedAt: "2026-05-24T23:40:00.000Z", labelsTotal: 0 });
+    await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+    await env.DB.prepare(`update repo_github_totals_snapshots set fetched_at = '2026-05-24T23:40:00.000Z' where repo_full_name = 'JSONbored/gittensory'`).run();
+    await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+
+    expect(graphQlFetches).toBe(1);
+    expect([...store.keys()].some((key) => key.startsWith("gql:v1:"))).toBe(true);
+    expect((await listLatestGitHubRateLimitObservations(env)).filter((observation) => observation.resource === "graphql")).toHaveLength(1);
+  });
+
   it("records label rate limits, in-loop page caps, and expired rate observations", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

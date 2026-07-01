@@ -70,6 +70,9 @@ describe("isLockfile", () => {
       "mix.lock",
       "Package.resolved",
       "gradle.lockfile",
+      "pdm.lock",
+      "conan.lock",
+      "pixi.lock",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }
@@ -291,6 +294,9 @@ describe("classifyChangedFile", () => {
       ["deno.lock", "lockfile"],
       ["pubspec.lock", "lockfile"],
       ["ios/Podfile.lock", "lockfile"],
+      ["pdm.lock", "lockfile"],
+      ["conan.lock", "lockfile"],
+      ["pixi.lock", "lockfile"],
       ["package.json", "dependency_manifest"],
       ["deno.json", "dependency_manifest"],
       ["apps/web/deno.jsonc", "dependency_manifest"],

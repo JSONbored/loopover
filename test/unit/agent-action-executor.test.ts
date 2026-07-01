@@ -166,6 +166,23 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(await isGlobalAgentFrozen(broken)).toBe(false);
   });
 
+  it("isGlobalAgentFrozen's fail-open is never SILENT — a read error is observable, not indistinguishable from a genuine unfrozen state (#2125)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const broken = { ...createTestEnv({}), DB: null } as unknown as Env;
+    expect(await isGlobalAgentFrozen(broken)).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("global_kill_switch_read_error"));
+    warn.mockRestore();
+  });
+
+  it("isGlobalAgentFrozen also warns (but still fails open) when the table exists but the singleton row is absent (#2125)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const env = createTestEnv({});
+    await env.DB.prepare("DELETE FROM global_agent_controls WHERE id = 'singleton'").run();
+    expect(await isGlobalAgentFrozen(env)).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("global_kill_switch_row_missing"));
+    warn.mockRestore();
+  });
+
   it("auto_with_approval: stages the action (queued) instead of executing", async () => {
     const env = createTestEnv({});
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [{ ...merge, requiresApproval: true }]);

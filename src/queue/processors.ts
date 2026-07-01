@@ -2437,6 +2437,60 @@ export async function releaseAgentMaintenanceLock(
   }
 }
 
+// Per-(repo, PR, head SHA) advisory lock around runAiReviewForAdvisory's expensive grounding/RAG/enrichment/LLM
+// section (#confirmed-bug: a webhook pass and an agent-regate-pr sweep pass can independently reach this same
+// code for the SAME PR at the SAME head SHA, both miss the cache, and both fire a real LLM call — which can
+// return DIFFERENT verdicts). The TTL is a crash-safety backstop only (see AI_REVIEW_LOCK_TTL_SECONDS below), not
+// a throughput bound — same philosophy as AGENT_MAINTENANCE_LOCK_TTL_SECONDS (#2129/#2368).
+const AI_REVIEW_LOCK_TTL_SECONDS = 1_800; // 30 minutes — see justification below.
+
+function aiReviewLockKey(repoFullName: string, prNumber: number, headSha: string, mode: string): string {
+  return `ai-review-lock:${repoFullName.toLowerCase()}#${prNumber}@${headSha.toLowerCase()}:${mode}`;
+}
+
+/**
+ * Claim the per-(repo, PR, head SHA, mode) advisory lock before the expensive grounding/RAG/enrichment/LLM
+ * section of runAiReviewForAdvisory. Returns false when another pass already holds it for this exact head (the
+ * caller must treat this as "another pass is already reviewing this head" and return the inconclusive-hold shape
+ * below — the next webhook/sweep tick, or the pass that IS running, is the backstop that populates the cache).
+ * A missing cache or cache hiccup fails OPEN (returns true — the lock is defense-in-depth, never the primary
+ * safety gate, and must never itself block a real review from running).
+ */
+export async function claimAiReviewLock(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string,
+  mode: string,
+): Promise<boolean> {
+  const key = aiReviewLockKey(repoFullName, prNumber, headSha, mode);
+  if (env.SELFHOST_TRANSIENT_CACHE?.claim) {
+    try {
+      return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", AI_REVIEW_LOCK_TTL_SECONDS);
+    } catch {
+      return true; // fail open — see the doc comment above.
+    }
+  }
+  if (await getTransientKey(env, key)) return false; // another pass is already reviewing this exact head
+  await putTransientKey(env, key, "1", AI_REVIEW_LOCK_TTL_SECONDS);
+  return true;
+}
+
+/** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */
+export async function releaseAiReviewLock(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string,
+  mode: string,
+): Promise<void> {
+  try {
+    await env.SELFHOST_TRANSIENT_CACHE?.del?.(aiReviewLockKey(repoFullName, prNumber, headSha, mode));
+  } catch {
+    // best-effort; the TTL is the backstop if release fails
+  }
+}
+
 /** Read the CI head SHA off a `check_suite`/`check_run` `completed` payload (the event node carries `head_sha`;
  *  `check_run` also nests it under `check_suite.head_sha`). Returns "" when absent. The payload type doesn't model
  *  these events, so we narrow off `Record<string, unknown>` the same way the `pull_requests[]` read does. */
@@ -4491,6 +4545,39 @@ export async function runAiReviewForAdvisory(
     }))
   )
     return undefined;
+  // Per-(repo, PR, head SHA, mode) advisory lock (#confirmed-bug, mirrors #2129/#2368's claimAgentMaintenanceLock):
+  // a webhook pass and an agent-regate-pr sweep pass can independently reach this point for the SAME PR at the
+  // SAME head, both miss the cache (neither has written yet), and both fire a real, wasteful LLM call that can
+  // return different verdicts. Claim before the expensive section below; a pass that loses the race returns the
+  // same inconclusive-hold shape the "AI produced no usable verdict" path already returns, so the gate is held
+  // (neutral) for a human rather than either pass's independently-decided verdict racing the other's cache write.
+  if (
+    !(await claimAiReviewLock(
+      env,
+      args.repoFullName,
+      args.pr.number,
+      args.advisory.headSha,
+      args.settings.aiReviewMode,
+    ))
+  ) {
+    const findings: AdvisoryFinding[] = [
+      {
+        code: "ai_review_inconclusive",
+        severity: "warning",
+        title: "AI review already in progress for this PR head",
+        detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+        action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+      },
+    ];
+    args.advisory.findings.push(...findings);
+    return {
+      notes: "AI review is already running for this PR head in another Gittensory pass. Gittensory is holding this PR for manual review until that pass completes.",
+      reviewerCount: 0,
+      inlineFindings: [],
+      findings,
+      cacheable: false,
+    };
+  }
   try {
     // BYOK: decrypt the maintainer's provider key only for confirmed contributors when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
@@ -4782,6 +4869,14 @@ export async function runAiReviewForAdvisory(
       head_sha: args.advisory.headSha,
     });
     return undefined;
+  } finally {
+    await releaseAiReviewLock(
+      env,
+      args.repoFullName,
+      args.pr.number,
+      args.advisory.headSha,
+      args.settings.aiReviewMode,
+    );
   }
 }
 

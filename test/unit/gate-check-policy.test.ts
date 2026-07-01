@@ -131,6 +131,46 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
   });
 
+  it("holds the gate NEUTRAL (never a failure-close) when the AI review lock is held by another in-flight pass (#confirmed-bug)", () => {
+    // Same code, different finding text — the lock-contention finding constructed by runAiReviewForAdvisory's
+    // new claim-failure branch. advisory.ts only keys on `code`, so this proves the mechanism end-to-end for
+    // the new finding shape without needing to touch advisory.ts.
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        {
+          code: "ai_review_inconclusive",
+          title: "AI review already in progress for this PR head",
+          severity: "warning",
+          detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+          action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+        },
+      ],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toEqual([]);
+  });
+
+  it("a deterministic hard blocker (secret_leak) still FAILS even when the AI review is held by lock contention (#confirmed-bug)", () => {
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        { code: "secret_leak", title: "Possible leaked secret", severity: "critical", detail: "a committed token", action: "remove and rotate it" },
+        {
+          code: "ai_review_inconclusive",
+          title: "AI review already in progress for this PR head",
+          severity: "warning",
+          detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+          action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+        },
+      ],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
+  });
+
   it("an enforced pre-merge check (pre_merge_check_required) hard-blocks; the advisory variant never does (#review-pre-merge-checks)", () => {
     const enforced: Advisory = {
       ...missingIssueAdvisory(),

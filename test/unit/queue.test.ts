@@ -44,7 +44,7 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAgentMaintenanceLock, contributorEvidenceBatchSize, processJob, releaseAgentMaintenanceLock } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAgentMaintenanceLock, claimAiReviewLock, contributorEvidenceBatchSize, processJob, releaseAgentMaintenanceLock, releaseAiReviewLock } from "../../src/queue/processors";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -2315,6 +2315,92 @@ describe("queue processors", () => {
     expect(audit?.n).toBe(0);
   });
 
+  it("INVARIANT (#confirmed-bug): a second overlapping pass for the same PR head defers to the AI review lock, holds the gate NEUTRAL, and never calls the AI a second time", async () => {
+    // Simulates the confirmed TOCTOU race: a webhook pass and an agent-regate-pr sweep pass both reach
+    // runAiReviewForAdvisory for the SAME PR at the SAME head SHA before either has written the cache. The
+    // webhook pass (not modeled directly here — job-coalesce keys never match across trigger shapes) is
+    // simulated by pre-claiming the lock exactly as runAiReviewForAdvisory itself would; the agent-regate-pr
+    // pass under test must then defer instead of firing its own, potentially-divergent LLM call.
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 49, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a49" }, labels: [], body: "Closes #1" });
+    const commentBodies: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/49")) return Response.json({ number: 49, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a49" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a49/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a49/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/49/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/49/comments") && method === "POST") {
+        commentBodies.push(String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? ""));
+        return Response.json({ id: 49 }, { status: 201 });
+      }
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    // The "first pass" (webhook-shaped) claims the lock for this exact (repo, PR, head, mode) tuple and is still
+    // in-flight when the "second pass" (agent-regate-pr sweep-shaped) below reaches runAiReviewForAdvisory.
+    expect(await claimAiReviewLock(env, "JSONbored/gittensory", 49, "a49", "block")).toBe(true);
+
+    await expect(
+      processJob(env, {
+        type: "agent-regate-pr",
+        deliveryId: "race-ai-review",
+        repoFullName: "JSONbored/gittensory",
+        prNumber: 49,
+        installationId: 123,
+      }),
+    ).resolves.toBeUndefined();
+
+    // The losing pass never called the AI a second time — it deferred to the lock instead of double-spending.
+    expect(aiCalls).toBe(0);
+    const finalComment = commentBodies.find((body) => !body.includes("is reviewing"));
+    expect(finalComment).toContain("Gittensory review needs maintainer review");
+    expect(finalComment).toContain("AI review is already running for this PR head in another Gittensory pass");
+    // A lock-contention placeholder must never be cached — it would poison the cache for the legitimate attempt.
+    const cached = await env.DB.prepare("select count(*) as n from ai_review_cache where repo_full_name = ? and pull_number = ?")
+      .bind("JSONbored/gittensory", 49)
+      .first<{ n: number }>();
+    expect(cached?.n).toBe(0);
+  });
+
   it("publishes deterministic surface and reports missing summary when required AI is over quota", async () => {
     const aiRun = vi.fn(async () => ({ response: "{}" }));
     const env = createTestEnv({
@@ -3080,6 +3166,89 @@ describe("queue processors", () => {
     });
     expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
     expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(false);
+  });
+
+  it("claimAiReviewLock claims when free, denies when held (per-PR+head+mode, not globally), and release frees it again (#confirmed-bug)", async () => {
+    const env = createTestEnv({});
+    // First claim for this exact (repo, PR, head, mode) succeeds — no prior pass in-flight.
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
+    // A second, concurrent pass for the SAME PR at the SAME head and mode (regardless of what triggered it —
+    // webhook or sweep) is denied while the first is still in-flight — exactly the race this lock exists for.
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(false);
+    // A DIFFERENT head SHA for the same PR is unaffected — a new commit is a genuinely new review, not a dup.
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha2", "block")).toBe(true);
+    // A DIFFERENT mode for the same PR+head is also unaffected — advisory vs block are independent lock keys.
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "advisory")).toBe(true);
+    // A DIFFERENT PR in the same repo is unaffected — the lock is per-PR+head+mode, not repo-wide.
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 8, "sha1", "block")).toBe(true);
+    // Release (the finally block's job) frees the (PR, head, mode) tuple — a subsequent pass can claim it again.
+    await releaseAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block");
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
+  });
+
+  it("claimAiReviewLock fails OPEN on a broken transient cache — never itself blocks a real review from running (#confirmed-bug)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { throw new Error("cache read error"); },
+        set: async () => { throw new Error("cache write error"); },
+        del: async () => { throw new Error("cache delete error"); },
+      },
+    });
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
+    await expect(releaseAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).resolves.toBeUndefined();
+  });
+
+  it("claimAiReviewLock fails OPEN when the atomic claim primitive itself throws (#confirmed-bug)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => undefined,
+        claim: async () => { throw new Error("redis unavailable"); },
+      },
+    });
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
+  });
+
+  it("REGRESSION: claimAiReviewLock uses an atomic check-and-set, so two genuinely concurrent claims for the SAME (repo, PR, head, mode) can never both succeed", async () => {
+    // A get-then-set pair has a window between the read and the write where two concurrent callers can both
+    // observe an absent key and both claim it — exactly what this lock exists to prevent (a webhook pass and a
+    // sweep pass both missing the cache and both firing a real LLM call). This test races two claims for the
+    // same tuple via Promise.all (both kick off before either resolves) against the default test cache's
+    // claim(), which mirrors createRedisCache's atomic SET NX: the check-and-set happens with no `await`
+    // boundary in between, so it is impossible for both callers to see "unclaimed".
+    const env = createTestEnv({});
+    const [first, second] = await Promise.all([
+      claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block"),
+      claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block"),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("REGRESSION: claimAiReviewLock calls the atomic claim primitive, not a separate get+set pair, when the cache supports it", async () => {
+    const calls: string[] = [];
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { calls.push("get"); return null; },
+        set: async () => { calls.push("set"); },
+        claim: async () => { calls.push("claim"); return true; },
+      },
+    });
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
+    expect(calls).toEqual(["claim"]); // never falls through to the racy get/set pair when claim is available
+  });
+
+  it("claimAiReviewLock falls back to the get/set pair and still denies a held key when the cache has no claim() (#confirmed-bug)", async () => {
+    // A cache adapter that hasn't implemented the atomic claim() primitive yet must still deny a second claim —
+    // just via the older, non-atomic get-then-set pair, not by skipping the check entirely.
+    const values = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key: string) => values.get(key) ?? null,
+        set: async (key: string, value: string) => { values.set(key, value); },
+      },
+    });
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(true);
+    expect(await claimAiReviewLock(env, "owner/agent-repo", 7, "sha1", "block")).toBe(false);
   });
 
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {

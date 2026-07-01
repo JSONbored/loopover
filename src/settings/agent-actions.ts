@@ -465,8 +465,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       dismissStaleApproval: true,
       // Pin to the head that was actually evaluated as stale (mirrors the merge action's head pinning above) so
       // a queued (auto_with_approval) dismissal replayed later can't retract a DIFFERENT, newer bot approval if
-      // the head moved again while this row waited for a maintainer (#2361).
-      ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
+      // the head moved again while this row waited for a maintainer (#2361). input.pr.headSha is already
+      // narrowed non-null by the `else if` condition above (line ~454), so no fallback branch is needed here.
+      expectedHeadSha: input.pr.headSha,
     });
   }
 

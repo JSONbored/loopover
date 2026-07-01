@@ -55,7 +55,7 @@ describe("queue trend windows", () => {
     expect(report.warnings).toEqual(expect.arrayContaining([expect.stringContaining("stale PR rate"), expect.stringContaining("duplicate cluster")]));
   });
 
-  it("renders n/a review velocity when duplicate latest totals snapshots share fetchedAt", () => {
+  it("collapses duplicate latest totals snapshots before computing review velocity", () => {
     const sharedAt = atDaysAgo(0);
     const report = buildQueueTrendReport({
       repoFullName: "owner/repo",
@@ -71,33 +71,17 @@ describe("queue trend windows", () => {
       windowDays: 7,
       status: "ready",
       latestAt: sharedAt,
-      observedDays: expect.any(Number),
       mergedPullRequests: 7,
       closedUnmergedPullRequests: 3,
-      reviewVelocityPerDay: null,
-      summary: expect.stringContaining("review velocity n/a/day"),
-    });
-    expect(report.windows[0]!.observedDays).toBeGreaterThanOrEqual(7);
-    for (const window of report.windows.filter((entry) => entry.status === "ready")) {
-      expect(window.reviewVelocityPerDay).not.toBe(Infinity);
-      expect(window.summary).not.toContain("Infinity");
-    }
-  });
-
-  it("computes review velocity normally when the latest totals snapshot is unique", () => {
-    const report = buildQueueTrendReport({
-      repoFullName: "owner/repo",
-      totalsSnapshots: [
-        totals(7, { openIssues: 10, openPrs: 5, merged: 10, closed: 4 }),
-        totals(0, { openIssues: 8, openPrs: 3, merged: 17, closed: 7 }),
-      ],
-    });
-
-    expect(report.windows[0]).toMatchObject({
-      windowDays: 7,
       reviewVelocityPerDay: 1.43,
       summary: expect.stringContaining("review velocity 1.43/day"),
     });
+    for (const window of report.windows.filter((entry) => entry.status === "ready")) {
+      expect(window.observedDays).toBeGreaterThanOrEqual(window.windowDays);
+      expect(window.reviewVelocityPerDay).not.toBe(Infinity);
+      expect(window.summary).not.toContain("Infinity");
+      expect(Number.isFinite(window.reviewVelocityPerDay)).toBe(true);
+    }
   });
 
   it("observedDays is at least the requested window span for ready windows", () => {

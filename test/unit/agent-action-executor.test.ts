@@ -30,7 +30,7 @@ import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { actionParams, executeAgentMaintenanceActions, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
-import { isGlobalAgentFrozen, setGlobalAgentFrozen } from "../../src/db/repositories";
+import { isGlobalAgentFrozen, setGlobalAgentFrozen, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
@@ -101,6 +101,23 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("actionParams threads dismissStaleApproval for a stale-approval retraction action", () => {
     const dismiss: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "stale", dismissStaleApproval: true };
     expect(actionParams(dismiss)).toEqual({ dismissStaleApproval: true });
+  });
+
+  it("REGRESSION (#2361): retracting a stale approval does NOT stamp the current (unqualified) head as approved", async () => {
+    const env = createTestEnv({});
+    // approvedHeadSha starts at the OLD (actually-reviewed) commit; ctx().headSha ("sha7") is the NEWER,
+    // no-longer-qualifying commit this dismissal is reacting to.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "" });
+    const dismiss: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "stale approval retracted", dismissStaleApproval: true };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [dismiss]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(dismissLatestBotApproval).toHaveBeenCalled();
+    const row = await env.DB.prepare("select approved_head_sha as approvedHeadSha from pull_requests where repo_full_name = ? and number = ?")
+      .bind("owner/repo", 7)
+      .first<{ approvedHeadSha: string | null }>();
+    // A real approve would have set this to "sha7" (see the "LIVE: executes each action class" test above for
+    // that positive case) -- a dismissal must never mark the un-reviewed head as approved.
+    expect(row?.approvedHeadSha).not.toBe("sha7");
   });
 
   it("LIVE request_changes/approve without a reviewBody falls back to an empty string", async () => {

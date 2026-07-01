@@ -5,6 +5,11 @@ import type { AutoMergeMethod } from "../types";
 
 const ISSUE_EVENTS_PAGE_SIZE = 100;
 const ISSUE_EVENTS_RECENT_PAGE_LIMIT = 10;
+// Reviews are returned oldest-first with no sort override, so finding the LATEST bot approval means walking
+// every page rather than stopping at the first — a single per_page:100 fetch would only see the bot's
+// earliest reviews on a PR with a long review history and could dismiss (or miss) the wrong one.
+const REVIEW_PAGE_SIZE = 100;
+const REVIEW_PAGE_LIMIT = 10;
 
 // The GitHub write primitives the maintainer auto-maintain layer (#778) uses to act on a PR's STATE — never
 // its source. Thin wrappers over the installation-scoped REST API, mirroring labels.ts / comments.ts. Each
@@ -104,12 +109,16 @@ export async function dismissLatestBotApproval(env: Env, installationId: number,
     const token = await createInstallationToken(env, installationId);
     const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
     const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
-    const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner, repo, pull_number: pullNumber, per_page: 100 });
-    const reviews = response.data as Array<{ id: number; state?: string; user?: { login?: string | null } | null }>;
-    // Reviews are returned oldest-first; the LAST matching entry is the bot's most recent APPROVE.
+    // Reviews are returned oldest-first; the LAST matching entry across ALL pages is the bot's most recent
+    // APPROVE. Stopping at page 1 would find (or miss) the wrong review on a PR with >100 total reviews.
     let latestApprovalId: number | undefined;
-    for (const review of reviews) {
-      if (review.user?.login === botLogin && review.state === "APPROVED") latestApprovalId = review.id;
+    for (let page = 1; page <= REVIEW_PAGE_LIMIT; page += 1) {
+      const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner, repo, pull_number: pullNumber, per_page: REVIEW_PAGE_SIZE, page });
+      const batch = response.data as Array<{ id: number; state?: string; user?: { login?: string | null } | null }>;
+      for (const review of batch) {
+        if (review.user?.login === botLogin && review.state === "APPROVED") latestApprovalId = review.id;
+      }
+      if (batch.length < REVIEW_PAGE_SIZE) break;
     }
     if (latestApprovalId === undefined) return { dismissed: false };
     await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals", {

@@ -127,7 +127,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
       // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
       // Best-effort: a failed persist only risks one redundant re-approval, never a wrong disposition.
-      if (action.actionClass === "approve" && ctx.headSha) {
+      if (action.actionClass === "approve" && !action.dismissStaleApproval && ctx.headSha) {
         await markPullRequestApproved(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha).catch(() => undefined);
       }
       // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,

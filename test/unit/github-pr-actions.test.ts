@@ -309,6 +309,36 @@ describe("GitHub PR action primitives (#778)", () => {
     await expect(dismissLatestBotApproval(envWithKey(), 123, "owner/repo", 8, "retract")).resolves.toEqual({ dismissed: false });
   });
 
+  it("finds the bot's LATEST approve on a second page, not an earlier one from page 1 (#2361)", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    // Page 1 is a full 100-row page (forces pagination to continue) whose only bot review is an EARLIER
+    // approve; the actual latest bot approve is review id 999 on page 2 — a single-page fetch would wrongly
+    // dismiss the page-1 review (or miss the real latest one) instead.
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, state: "COMMENTED", user: { login: "human-reviewer" } }));
+    page1[0] = { id: 1, state: "APPROVED", user: { login: "gittensory[bot]" } };
+    const page2 = [
+      { id: 998, state: "CHANGES_REQUESTED", user: { login: "gittensory[bot]" } },
+      { id: 999, state: "APPROVED", user: { login: "gittensory[bot]" } },
+    ];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/pulls/10/reviews") && !url.includes("/dismissals") && method === "GET") {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        return Response.json(page === 1 ? page1 : page === 2 ? page2 : []);
+      }
+      if (url.includes("/pulls/10/reviews/999/dismissals") && method === "PUT") {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+        return Response.json({ id: 999, state: "DISMISSED" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await dismissLatestBotApproval(envWithKey(), 123, "owner/repo", 10, "stale approval retracted");
+    expect(result).toEqual({ dismissed: true });
+    expect(calls).toHaveLength(1); // page 1's review 1 was never dismissed
+  });
+
   it("is best-effort — an API error returns dismissed:false instead of throwing", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });

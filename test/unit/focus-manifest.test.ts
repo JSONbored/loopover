@@ -780,9 +780,11 @@ describe("public-safe invariant", () => {
 
 describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
-    const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
+    // readiness.mode uses "advisory" here (not "block") — readiness/quality can never hard-block (#2267);
+    // the block→advisory deprecation-downgrade behavior itself is covered separately below.
+    const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -892,6 +894,21 @@ describe("parseFocusManifest gate config", () => {
     expect(m.warnings.some((w) => /gate\.readiness\.mode/.test(w))).toBe(true);
   });
 
+  it("downgrades gate.readiness.mode: block to advisory with a deprecation warning (#2267)", () => {
+    // readiness/quality is informational-only (buildQualityGateWarning always produces a warning-severity
+    // finding; isConfiguredGateBlocker has no branch for it) — a config that says "block" is downgraded
+    // rather than silently accepted, so the parsed config always matches what the gate actually does.
+    const m = parseFocusManifest({ gate: { readiness: { mode: "block" } } });
+    expect(m.gate.readinessMode).toBe("advisory");
+    expect(m.gate.present).toBe(true);
+    expect(m.warnings.some((w) => /gate\.readiness\.mode.*no longer accepts "block"/.test(w))).toBe(true);
+    // Genuinely invalid values still take the ORIGINAL "must be one of" warning path, unchanged.
+    const bad = parseFocusManifest({ gate: { readiness: { mode: "sometimes" } } });
+    expect(bad.gate.readinessMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.readiness\.mode.*must be one of/.test(w))).toBe(true);
+    expect(bad.warnings.some((w) => /no longer accepts "block"/.test(w))).toBe(false);
+  });
+
   it("clamps and rounds the readiness minScore to 0-100", () => {
     expect(parseFocusManifest({ gate: { readiness: { minScore: 250 } } }).gate.readinessMinScore).toBe(100);
     expect(parseFocusManifest({ gate: { readiness: { minScore: -10 } } }).gate.readinessMinScore).toBe(0);
@@ -915,9 +932,9 @@ describe("parseFocusManifest gate config", () => {
   });
 
   it("parses the gate section from YAML content", () => {
-    const m = parseFocusManifestContent("gate:\n  duplicates: block\n  readiness:\n    mode: block\n    minScore: 80\n", "repo_file");
+    const m = parseFocusManifestContent("gate:\n  duplicates: block\n  readiness:\n    mode: advisory\n    minScore: 80\n", "repo_file");
     expect(m.gate.duplicates).toBe("block");
-    expect(m.gate.readinessMode).toBe("block");
+    expect(m.gate.readinessMode).toBe("advisory");
     expect(m.gate.readinessMinScore).toBe(80);
   });
 

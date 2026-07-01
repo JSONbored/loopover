@@ -357,6 +357,20 @@ function normalizeOptionalGateMode(value: JsonValue | undefined, field: string, 
   return null;
 }
 
+/** `gate.readiness.mode` is documented and parsed as the shared off/advisory/block tri-state, but
+ *  buildQualityGateWarning (src/rules/advisory.ts) always produces a warning-severity finding — never a
+ *  blocker — and isConfiguredGateBlocker has no branch for it: readiness/quality is intentionally
+ *  informational-only and can never hard-block a PR. Without this, a maintainer who sets `mode: block`
+ *  believes a real quality floor is enforced when the effective behavior is silently advisory-only (#2267).
+ *  Downgrade "block" to "advisory" here, with a clear deprecation warning, so the parsed config always
+ *  matches what the gate actually does. */
+function normalizeReadinessGateMode(value: JsonValue | undefined, field: string, warnings: string[]): GateRuleMode | null {
+  const mode = normalizeOptionalGateMode(value, field, warnings);
+  if (mode !== "block") return mode;
+  warnings.push(`Manifest gate field "${field}" no longer accepts "block" — readiness/quality is informational-only and can never hard-block a PR; downgrading to "advisory". Use gate.manifestPolicy or another enforceable gate for a real quality floor.`);
+  return "advisory";
+}
+
 function normalizeOptionalBoolean(value: JsonValue | undefined, field: string, warnings: string[]): boolean | null {
   if (value === undefined || value === null) return null;
   if (typeof value === "boolean") return value;
@@ -422,7 +436,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
-    readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
+    readinessMode: normalizeReadinessGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
     slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
     slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),

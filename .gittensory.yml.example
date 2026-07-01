@@ -112,7 +112,10 @@ gate:
 
   # Quality / merge-readiness score gate (the PR-quality score).
   readiness:
-    # off | advisory | block. Default: advisory.
+    # off | advisory. Default: advisory. Informational only — this dimension can
+    # never hard-block a PR, so "block" is not an accepted value (a config that
+    # still says "block" is downgraded to "advisory" with a warning). For an
+    # enforceable quality floor, use mergeReadiness or manifestPolicy below.
     mode: advisory
     # At/above this score the quality dimension passes.
     # Number 0–100, or null for the engine default band. Default: null.

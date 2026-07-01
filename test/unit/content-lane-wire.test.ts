@@ -105,6 +105,43 @@ describe("applySurfaceGate", () => {
     expect(out?.conclusion).toBe("failure"); // the secret still blocks the merge
     expect(out?.blockers).toEqual([secret]); // the generic blocker survives the override
   });
+  it("REGRESSION: an AI-judgment-only blocker (e.g. a hallucinated grounding/RAG claim) does not veto a decisive surface merge, and the generic gate's OTHER warnings survive", () => {
+    const aiConsensusDefect: AdvisoryFinding = {
+      code: "ai_consensus_defect",
+      title: "AI reviewers agree on a likely critical defect",
+      severity: "critical",
+      detail: "the current registry context already tracks this netuid under a different slug",
+    };
+    // A warning unrelated to the (overridden) AI blocker — e.g. a quality-readiness note — must NOT vanish just
+    // because the AI blocker next to it gets overridden.
+    const qualityWarning: AdvisoryFinding = { code: "quality_readiness_low", title: "Readiness is low", severity: "warning", detail: "" };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [qualityWarning] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericAiOnly, surfaceMerge);
+    // The surface lane is the sole, AI-free adjudicator for this structured data — an AI-judgment-only blocker
+    // has no standing to override its merge (unlike the real secret_leak blocker in the test above).
+    expect(out?.conclusion).toBe("success");
+    expect(out?.blockers).toEqual([]);
+    // The overridden AI blocker must NOT reappear (demoted or otherwise) — it was simply wrong. Only the
+    // generic gate's unrelated warning, plus any surface warnings, survive.
+    expect(out?.warnings).toEqual([qualityWarning]);
+  });
+  it("an AI-judgment-only generic failure still fails when the surface ITSELF closes (both agree, no override needed)", () => {
+    const split: AdvisoryFinding = { code: "ai_review_split", title: "Split", severity: "critical", detail: "one reviewer flagged a defect" };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [split], warnings: [] });
+    const out = applySurfaceGate(genericAiOnly, surfaceClose);
+    expect(out?.conclusion).toBe("failure");
+    expect(out?.blockers).toEqual([split, ...surfaceClose.blockers]); // union — the AI-only exception only applies to a surface MERGE
+  });
+  it("a MIXED generic failure (an AI-judgment code plus a real blocker) is not AI-judgment-only — still overrides a surface merge", () => {
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked key" };
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "" };
+    const genericMixed = gate({ conclusion: "failure", blockers: [aiConsensusDefect, secret], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericMixed, surfaceMerge);
+    expect(out?.conclusion).toBe("failure"); // the real blocker means this is NOT an AI-judgment-only failure
+    expect(out?.blockers).toEqual([aiConsensusDefect, secret]);
+  });
 });
 
 describe("runMetagraphedSurfaceGate (injected loader — adapter logic)", () => {
@@ -194,5 +231,55 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
       getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
     });
     expect(out?.conclusion).toBe("success"); // a clean append merges, overriding the generic gate
+  });
+
+  it("REGRESSION: overriding an AI-judgment-only failure also strips the stale AI finding from advisory.findings (so the public comment can't contradict the merge)", async () => {
+    const bodies: Record<string, string> = {
+      "HEAD:registry/subnets/foo.json": doc([existing, newEntry]),
+      "BASE:registry/subnets/foo.json": doc([existing]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "hallucinated" };
+    const otherWarning: AdvisoryFinding = { code: "quality_readiness_low", title: "Readiness is low", severity: "warning", detail: "" };
+    // Simulates the real pipeline: `runAiReviewForAdvisory` already pushed the SAME finding into advisory.findings
+    // (consumed independently by the unified-comment bridge's consensusDefectFromFindings) before the generic gate
+    // was evaluated from it.
+    const advisory = { findings: [aiConsensusDefect, otherWarning] };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const out = await evaluateWithSurfaceLane(wiredEnv, REPO, true, genericAiOnly, {
+      installationId: null,
+      pr: { headSha: "HEAD", baseRef: "BASE" },
+      repo: { defaultBranch: "main" },
+      advisory,
+      getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
+    });
+    expect(out?.conclusion).toBe("success");
+    // The overridden ai_consensus_defect must be gone from advisory.findings too — otherwise the unified-comment
+    // bridge would still recover it via consensusDefectFromFindings and render "Concerns raised" over a merge.
+    expect(advisory.findings).toEqual([otherWarning]);
+  });
+
+  it("does NOT touch advisory.findings when the surface lane defers or the generic gate isn't AI-judgment-only", async () => {
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "" };
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked" };
+    const advisory = { findings: [aiConsensusDefect, secret] };
+    // A real (non-AI) blocker alongside the AI one means isAiJudgmentOnlyFailure is false — no cleanup should run.
+    const genericMixed = gate({ conclusion: "failure", blockers: [aiConsensusDefect, secret], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    await evaluateWithSurfaceLane(wiredEnv, REPO, true, genericMixed, {
+      installationId: null,
+      pr: { headSha: "HEAD", baseRef: "BASE" },
+      repo: { defaultBranch: "main" },
+      advisory,
+      getChangedFiles: async () => [{ path: "README.md", status: "modified" }], // not a registry submission → surface defers (null)
+    });
+    expect(advisory.findings).toEqual([aiConsensusDefect, secret]);
   });
 });

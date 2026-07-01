@@ -134,6 +134,10 @@ declare global {
     GITTENSORY_API_TOKEN: string;
     GITTENSORY_MCP_TOKEN: string;
     INTERNAL_JOB_TOKEN: string;
+    /** Repos the shared GITTENSORY_MCP_TOKEN may propose/decide/manage actions on (comma/whitespace `owner/repo`
+     *  list, or `*`/`all` for every repo). Unset ⇒ none — GITTENSORY_MCP_TOKEN is a shared, end-user-obtainable
+     *  credential, so it must not implicitly actuate on every installed repo (#2253). */
+    MCP_ACTUATION_REPO_ALLOWLIST?: string;
     /** Shared bearer secret required by the hosted Orb ingest collector. */
     ORB_INGEST_TOKEN?: string;
     /** AES-256-GCM master secret for maintainer BYOK provider keys (encrypt/decrypt at rest). A Worker/self-host
@@ -206,6 +210,7 @@ declare global {
     REES_SHARED_SECRET?: string;
     REES_TIMEOUT_MS?: string;
     REES_ANALYZERS?: string;
+    REES_PROFILE?: string;
     REES_FORWARD_GITHUB_TOKEN?: string;
     /** Convergence flag: the deterministic content/registry SURFACE LANE drives the gate for registry-submission
      *  PRs (metagraphed surfaces[]/providers/candidates). Truthy ON *AND* the repo in GITTENSORY_REVIEW_REPOS —

@@ -6,7 +6,7 @@ import {
   shouldDowngradeToDeterministic,
   shouldSkipAiForReputation,
 } from "../../src/review/reputation-wire";
-import { getSubmitterReputation } from "../../src/review/submitter-reputation";
+import { getSubmitterReputation, recordSubmissionOutcome } from "../../src/review/submitter-reputation";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import type { Advisory, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -302,6 +302,29 @@ describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
     expect(stats.merged).toBe(1);
     expect(stats.closed).toBe(1);
     expect(stats.closeRate).toBeCloseTo(0.5, 5);
+  });
+
+  it("REGRESSION: qualifies submitter_stats counters in the upsert update for Postgres", async () => {
+    let preparedSql = "";
+    const env = {
+      DB: {
+        prepare: vi.fn((sql: string) => {
+          preparedSql = sql;
+          return {
+            bind: vi.fn(() => ({
+              run: vi.fn(async () => ({})),
+            })),
+          };
+        }),
+      },
+    } as unknown as Env;
+
+    await recordSubmissionOutcome(env, "acme/widgets", "alice", "merged");
+
+    expect(preparedSql).toContain("submissions = submitter_stats.submissions + 1");
+    expect(preparedSql).toContain("merged = submitter_stats.merged + 1");
+    expect(preparedSql).not.toContain("submissions = submissions + 1");
+    expect(preparedSql).not.toContain("merged = merged + 1");
   });
 });
 

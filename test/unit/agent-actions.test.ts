@@ -114,6 +114,68 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe("stale-approval retraction (#2254)", () => {
+    it("retracts a stale approval when a newer commit is no longer review-good and the PR stays open (held, not closed)", () => {
+      // Owner-authored + closeOwnerAuthors unset ⇒ closeEligible is false ⇒ this bad-verdict PR is HELD, not
+      // closed — exactly the case where a stale APPROVE from an earlier good commit would otherwise linger.
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      const approveAction = plan.find((a) => a.actionClass === "approve");
+      expect(approveAction).toMatchObject({ dismissStaleApproval: true });
+    });
+
+    it("pins the retraction to the head that was actually evaluated as stale (#2361)", () => {
+      // Without expectedHeadSha, a queued (auto_with_approval) dismissal replays against whatever head is
+      // current at accept time — not the head that made the dismissal valid — so a delayed accept could retract
+      // a DIFFERENT, newer bot approval than the one this plan pass actually judged stale.
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto_with_approval" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      const approveAction = plan.find((a) => a.actionClass === "approve");
+      expect(approveAction).toMatchObject({ dismissStaleApproval: true, expectedHeadSha: "newsha" });
+    });
+
+    it("does NOT retract when the PR is closing instead — a close makes the stale approval moot", () => {
+      const plan = classes(
+        planAgentMaintenanceActions(
+          input({ conclusion: "failure", autonomy: { approve: "auto", close: "auto" }, blockerTitles: ["x"], pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+        ),
+      );
+      expect(plan).toContain("close");
+      const approveAction = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto", close: "auto" }, blockerTitles: ["x"], pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      ).find((a) => a.actionClass === "approve");
+      expect(approveAction).toBeUndefined();
+    });
+
+    it("does NOT retract when the newer commit IS review-good — a fresh approve fires instead", () => {
+      const good = { conclusion: "success" as const, autonomy: { approve: "auto" as const }, ciState: "passed" as const };
+      const approveAction = planAgentMaintenanceActions(input({ ...good, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } })).find((a) => a.actionClass === "approve");
+      expect(approveAction).toBeDefined();
+      expect(approveAction?.dismissStaleApproval).toBeUndefined(); // a normal fresh approve, not a retraction
+    });
+
+    it("does NOT retract when there is nothing stale to retract (never approved, or already approved this exact head)", () => {
+      const neverApproved = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha" } }),
+      ).find((a) => a.actionClass === "approve");
+      expect(neverApproved).toBeUndefined();
+
+      const sameHead = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto" }, authorIsOwner: true, pr: { labels: [], headSha: "abc123", approvedHeadSha: "abc123" } }),
+      ).find((a) => a.actionClass === "approve");
+      expect(sameHead).toBeUndefined();
+    });
+
+    it("respects the approve autonomy dial — no retraction when approve is not acting", () => {
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: {}, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      expect(plan.find((a) => a.actionClass === "approve")).toBeUndefined();
+    });
+  });
+
   it("merges only a clean, approved, passing PR (reviewDecision drives the approval gate)", () => {
     const ok = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
     expect(ok.find((a) => a.actionClass === "merge")).toMatchObject({ mergeMethod: "squash" });

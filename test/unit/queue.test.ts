@@ -45,6 +45,7 @@ import {
   putCachedAiReview,
 } from "../../src/db/repositories";
 import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, contributorEvidenceBatchSize, processJob } from "../../src/queue/processors";
+import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -811,7 +812,7 @@ describe("queue processors", () => {
     expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ repoFullName: "owner/agent-repo", examined: 1 });
   });
 
-  it("agent re-gate sweep runs blocking AI review before auto-maintenance (regression)", async () => {
+  it("agent re-gate sweep ignores stale same-head AI cache inputs before auto-maintenance (regression)", async () => {
     let aiCalls = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -839,6 +840,11 @@ describe("queue processors", () => {
     });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
     await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
+    await putCachedAiReview(env, "owner/agent-repo", 7, "a7", "block", {
+      notes: "stale cached review from older review inputs",
+      reviewerCount: 2,
+      findings: [{ code: "ai_review_split", severity: "critical", title: "Old cache", detail: "Old prompt inputs." }],
+    });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -1689,12 +1695,12 @@ describe("queue processors", () => {
 
     await processJob(env, { type: "agent-regate-pr", deliveryId: "rebase-rereview", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
 
-    // The PR was resynced to b8 and re-reviewed at the new head (check-runs fetched at b8). The marker is NOT in the
-    // GitHub-sync SET clause, so the resync upsert preserved it (still a7) until a fresh publish advances it.
+    // The PR was resynced to b8 and re-reviewed at the new head (check-runs fetched at b8). The GitHub-sync SET
+    // clause still preserves the old marker; the successful gate publication is what advances it to the new head.
     expect(checkRunsFetchedAtNewHead).toBe(true);
     const stored = await getPullRequest(env, "owner/agent-repo", 7);
     expect(stored?.headSha).toBe("b8");
-    expect(stored?.lastPublishedSurfaceSha).toBe("a7"); // marker survived the resync (omitted from the sync SET clause)
+    expect(stored?.lastPublishedSurfaceSha).toBe("b8");
   });
 
   it("#4 over-publish dedup: a failing surface-published stamp is swallowed (fail-open) — the publish still completes", async () => {
@@ -1752,10 +1758,38 @@ describe("queue processors", () => {
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
     await upsertPullRequestFile(env, { repoFullName: "owner/agent-repo", pullNumber: 7, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const ok = value.length;" } });
     // Pre-seed the AI review for this exact head SHA + mode → the sweep's block-mode review must reuse it, not re-run.
+    const inputFingerprint = await aiReviewCacheInputFingerprint({
+      title: "Stale PR",
+      mode: "block",
+      byok: false,
+      provider: null,
+      model: null,
+      aiReviewAllAuthors: false,
+      aiReviewCloseConfidence: undefined,
+      gatePack: "oss-anti-slop",
+      reviewerPlan: env.AI_REVIEW_PLAN,
+      selfHostProviderConfig: null,
+      baseSha: null,
+      reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = value.length;", additions: 1, deletions: 0 }],
+      profile: null,
+      inlineComments: false,
+      pathInstructions: [],
+      pathGuidance: "",
+      repoInstructions: null,
+      excludePaths: [],
+      changedPaths: ["src/a.ts"],
+      features: {
+        grounding: false,
+        rag: false,
+        enrichment: false,
+        reputation: false,
+      },
+    });
     await putCachedAiReview(env, "owner/agent-repo", 7, "a7", "block", {
       notes: "cached review",
       reviewerCount: 2,
       findings: [{ code: "ai_consensus_defect", severity: "critical", title: "Cached defect", detail: "Cached critical defect." }],
+      metadata: { inputFingerprint },
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -1863,6 +1897,161 @@ describe("queue processors", () => {
     expect(stickyComment.current?.body).toContain(PR_PANEL_COMMENT_MARKER);
     expect(stickyComment.current?.body).toContain("Thanks for the contribution");
     expect(stickyComment.current?.body).not.toContain("is reviewing");
+  });
+
+  it("computes the AI review cache fingerprint with a self-host reviewer plan and converged grounding/enrichment on (#2119)", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      // A self-host reviewer plan (not just BYOK/cloud provider/model) plus its underlying provider config.
+      AI_REVIEW_PLAN: { reviewers: [{ model: "claude-code" }], combine: "single" } as never,
+      CLAUDE_AI_MODEL: "sonnet",
+      CLAUDE_AI_EFFORT: "high",
+      // Grounding + enrichment ON, with the repo allowlisted for convergence, so both feature flags
+      // resolve past their `isXEnabled(env) && convergedRepoAllowed` check into the fingerprint.
+      GITTENSORY_REVIEW_GROUNDING: "true",
+      GITTENSORY_REVIEW_ENRICHMENT: "true",
+      REES_URL: "https://rees.example",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files"))
+        return Response.json([
+          { filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" },
+          // GitHub omits `patch` for binary/oversized files -- the fingerprint must still normalize this case.
+          { filename: "assets/logo.png", status: "modified", additions: 0, deletions: 0, changes: 0 },
+        ]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      // REES enrichment + any other unmatched call degrade fail-open on a generic empty response.
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "self-host-plan-converged-features",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    // The review ran fresh (no pre-seeded cache to reuse), reaching the fingerprint computation with the
+    // self-host reviewer plan, its provider config, and both converged feature checks evaluated.
+    expect(aiCalls).toBeGreaterThan(0);
+  });
+
+  it("bypasses the AI review cache entirely while a dynamic-context feature (grounding) is active (#2119)", async () => {
+    // Grounding/RAG/enrichment/reputation each pull TIME-VARYING external context (live CI checks, the vector
+    // index, REES/CVE data, reputation) that can change for the SAME head SHA without the feature flags
+    // themselves flipping — so a cache hit here could replay a review built against now-stale context. A repo
+    // with any of these active must re-run AI on EVERY review of the same head, never reuse a prior cache entry.
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      GITTENSORY_REVIEW_GROUNDING: "true",
+      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "block",
+      gatePack: "oss-anti-slop",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    const webhook = {
+      type: "github-webhook" as const,
+      eventName: "pull_request" as const,
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" as const } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    };
+    await processJob(env, { ...webhook, deliveryId: "dynamic-context-bypass-1" });
+    const firstRunAiCalls = aiCalls;
+    expect(firstRunAiCalls).toBeGreaterThan(0);
+    // Re-review of the SAME head with the SAME (unchanged) inputs. A plain fingerprint match would reuse the
+    // first run's cached review here (leaving aiCalls unchanged) — this asserts the AI ran the SAME full set of
+    // calls again instead, proving the cache was never written (or never read) while grounding stayed active.
+    await processJob(env, { ...webhook, deliveryId: "dynamic-context-bypass-2" });
+    expect(aiCalls).toBe(firstRunAiCalls * 2);
   });
 
   it("continues to final verdict when the reviewing placeholder audit write fails", async () => {
@@ -2388,6 +2577,404 @@ describe("queue processors", () => {
     expect(typeof after?.last_regated_at).toBe("string"); // stamped via a D1 write at dispatch — convergence does not need a GitHub write
   });
 
+  it("agent re-gate sweep prioritizes PRs missing the current Gate check even when their surface marker is current", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9400, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9400);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (const number of [1, 2, 3, 4]) {
+      const headSha = `a${number}`;
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `PR${number}`, state: "open", user: { login: "c" }, head: { sha: headSha }, labels: [], body: "" });
+      await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", number, headSha);
+      if (number !== 2) {
+        await upsertCheckSummary(env, {
+          id: `gate-${number}`,
+          repoFullName: "owner/agent-repo",
+          pullNumber: number,
+          headSha,
+          name: "Gittensory Orb Review Agent",
+          status: "completed",
+          conclusion: "success",
+          payload: {},
+        });
+      }
+    }
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 5, title: "Draft without a head", state: "open", draft: true, user: { login: "c" }, labels: [], body: "" } as never);
+    await env.DB.prepare(
+      `update pull_requests
+          set last_regated_at = case number
+            when 1 then '2026-05-27T01:00:00.000Z'
+            when 2 then '2026-05-28T01:50:00.000Z'
+            when 3 then '2026-05-27T02:00:00.000Z'
+            when 4 then '2026-05-27T03:00:00.000Z'
+          end
+        where repo_full_name = ?`,
+    )
+      .bind("owner/agent-repo")
+      .run();
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    const fanned = sent.filter((job) => job.type === "agent-regate-pr");
+    expect(fanned.map((job) => (job as Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }>).prNumber)).toEqual([2, 1, 3]);
+  });
+
+  it("REGRESSION: scheduled sweeps repair every missing current Gate check without waiting behind another repo backlog", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+        snapshot() {
+          return {
+            totals: { pending: 0, processing: 1, dead: 0, due: 0 },
+            byType: [
+              {
+                type: "agent-regate-pr",
+                status: "processing",
+                count: 1,
+                due: 0,
+              },
+            ],
+          };
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9402, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9402);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (const number of [1, 2, 3, 4, 5]) {
+      const headSha = `repair-${number}`;
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Repair ${number}`, state: "open", user: { login: "c" }, head: { sha: headSha }, labels: [], body: "" });
+      await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", number, headSha);
+    }
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
+    expect(fanned.map((job) => job.prNumber)).toEqual([1, 2, 3, 4, 5]);
+    const audit = await env.DB.prepare("select metadata_json from audit_events where event_type = ? and outcome = ?")
+      .bind("agent.sweep.regate", "completed")
+      .first<{ metadata_json: string }>();
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({
+      repoFullName: "owner/agent-repo",
+      examined: 5,
+    });
+  });
+
+  it("REGRESSION: an active per-PR regate backlog restricts the sweep to priority repairs, not a full stale-PR batch too", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+        // A nonzero per-PR regate backlog (agent-regate-pr pending/processing > 0) -- the same signal the
+        // "waiting behind another repo backlog" deferral above reacts to.
+        snapshot() {
+          return {
+            totals: { pending: 1, processing: 0, dead: 0, due: 1 },
+            byType: [{ type: "agent-regate-pr", status: "pending", count: 1, due: 1 }],
+          };
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9403, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9403);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    // PR 1: missing its current Gate check -- the one priority repair.
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 1, title: "Repair 1", state: "open", user: { login: "c" }, head: { sha: "repair-1" }, labels: [], body: "" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 1, "repair-1");
+    // PRs 2-5: ordinary, already-current, stale-by-time PRs -- a normal (no-backlog) sweep would pick these up
+    // too, but while the backlog is draining they must sit out so the sweep only carries the priority repair.
+    for (const number of [2, 3, 4, 5]) {
+      const headSha = `stale-${number}`;
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Stale ${number}`, state: "open", user: { login: "c" }, head: { sha: headSha }, labels: [], body: "" });
+      await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", number, headSha);
+      await upsertCheckSummary(env, {
+        id: `gate-current-${number}`,
+        repoFullName: "owner/agent-repo",
+        pullNumber: number,
+        headSha,
+        name: "Gittensory Orb Review Agent",
+        status: "completed",
+        conclusion: "success",
+        payload: {},
+      });
+    }
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
+    expect(fanned.map((job) => job.prNumber)).toEqual([1]); // only the priority repair, not PRs 2-5
+  });
+
+  it("agent re-gate sweep fail-opens when current Gate check reads fail during repair priority selection", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9401, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9401);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Repair me", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7");
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/from\s+["`]?check_summaries["`]?/i.test(sql)) throw new Error("check summary read failed");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    const fanned = sent.filter((job) => job.type === "agent-regate-pr") as Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }>[];
+    expect(fanned.map((job) => job.prNumber)).toEqual([7]);
+  });
+
+  it("scheduled sweeps skip open-PR refresh when an allowlisted repo has not been registered locally yet", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      GITTENSORY_REVIEW_REPOS: "owner/missing-repo",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    const segmentSpy = vi.spyOn(repositoriesModule, "getRepoSyncSegment");
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment");
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/missing-repo" });
+
+    expect(segmentSpy).not.toHaveBeenCalled();
+    expect(backfillSpy).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+    segmentSpy.mockRestore();
+    backfillSpy.mockRestore();
+  });
+
+  it("scheduled sweeps can refresh stale open-PR rows with an Orb enrollment credential", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      ORB_ENROLLMENT_SECRET: "orb-secret",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9406, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9406);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertRepoSyncSegment(env, completeSegment("owner/agent-repo", "open_pull_requests"));
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment").mockResolvedValueOnce({
+      ok: true,
+      repoFullName: "owner/agent-repo",
+      segment: "open_pull_requests",
+      status: "complete",
+      fetchedCount: 0,
+      warnings: [],
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect(backfillSpy).toHaveBeenCalledWith(env, expect.objectContaining({ segment: "open_pull_requests", force: true }));
+    expect(sent.filter((job) => job.type === "agent-regate-pr")).toEqual([]);
+    backfillSpy.mockRestore();
+  });
+
+  it("REGRESSION: scheduled sweeps refresh stale open-PR rows so missed webhooks cannot hide PRs from repair", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9402, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9402);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertRepoSyncSegment(env, completeSegment("owner/agent-repo", "open_pull_requests"));
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        return Response.json({
+          data: {
+            rateLimit: { remaining: 4999, resetAt: "2026-05-28T03:00:00.000Z" },
+            repository: {
+              issues: { totalCount: 0 },
+              openPullRequests: { totalCount: 1 },
+              mergedPullRequests: { totalCount: 0 },
+              closedPullRequests: { totalCount: 0 },
+              labels: { totalCount: 0 },
+            },
+          },
+        });
+      }
+      if (url.includes("/pulls?state=open")) {
+        return Response.json([
+          {
+            number: 11,
+            title: "Webhook missed this PR",
+            state: "open",
+            user: { login: "contributor" },
+            head: { sha: "h11" },
+            labels: [],
+            body: "Fixes #1",
+            created_at: "2026-05-27T00:00:00.000Z",
+            updated_at: "2026-05-27T00:00:00.000Z",
+          },
+        ]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect((await getPullRequest(env, "owner/agent-repo", 11))?.headSha).toBe("h11");
+    const fanned = sent.filter((job) => job.type === "agent-regate-pr") as Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }>[];
+    expect(fanned.map((job) => job.prNumber)).toEqual([11]);
+    expect(sent.some((job) => job.type === "backfill-pr-details" && job.repoFullName === "owner/agent-repo")).toBe(true);
+  });
+
+  it("scheduled sweeps do not duplicate an active open-PR refresh", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9403, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9403);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertRepoSyncSegment(env, {
+      ...completeSegment("owner/agent-repo", "open_pull_requests"),
+      status: "running",
+    });
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json([]));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect(
+      fetchSpy.mock.calls
+        .map((call) => String((call as [RequestInfo | URL, RequestInit?])[0]))
+        .filter((url) => url === "https://api.github.com/graphql" || url.includes("/pulls?state=open")),
+    ).toEqual([]);
+    expect(sent.filter((job) => job.type === "agent-regate-pr")).toEqual([]);
+  });
+
+  it("scheduled sweeps fail open when open-PR sync state reads and refreshes fail", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9404, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9404);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    const segmentSpy = vi.spyOn(repositoriesModule, "getRepoSyncSegment").mockRejectedValueOnce(new Error("segment read failed"));
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment").mockRejectedValueOnce(new Error("open PR refresh failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect(backfillSpy).toHaveBeenCalledWith(env, expect.objectContaining({ segment: "open_pull_requests", mode: "light", force: true }));
+    expect(warn.mock.calls.some((call) => String(call[0]).includes("sweep_open_pr_sync_failed"))).toBe(true);
+    expect(sent.filter((job) => job.type === "agent-regate-pr")).toEqual([]);
+    segmentSpy.mockRestore();
+    backfillSpy.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("scheduled sweeps refresh incomplete open-PR sync segments", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9405, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9405);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertRepoSyncSegment(env, {
+      ...completeSegment("owner/agent-repo", "open_pull_requests"),
+      status: "partial",
+    });
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment").mockResolvedValueOnce({
+      ok: true,
+      repoFullName: "owner/agent-repo",
+      segment: "open_pull_requests",
+      status: "complete",
+      fetchedCount: 0,
+      warnings: [],
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect(backfillSpy).toHaveBeenCalledWith(env, expect.objectContaining({ segment: "open_pull_requests" }));
+    expect(sent.filter((job) => job.type === "agent-regate-pr")).toEqual([]);
+    backfillSpy.mockRestore();
+  });
+
+  it("scheduled sweeps refresh completed open-PR sync rows whose completion time is missing", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(m: import("../../src/types").JobMessage) {
+          sent.push(m);
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9407, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9407);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    const segmentSpy = vi.spyOn(repositoriesModule, "getRepoSyncSegment").mockResolvedValueOnce({
+      ...completeSegment("owner/agent-repo", "open_pull_requests"),
+      completedAt: undefined,
+    } as never);
+    const backfillSpy = vi.spyOn(backfillModule, "backfillRepositorySegment").mockResolvedValueOnce({
+      ok: true,
+      repoFullName: "owner/agent-repo",
+      segment: "open_pull_requests",
+      status: "complete",
+      fetchedCount: 0,
+      warnings: [],
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    expect(backfillSpy).toHaveBeenCalledWith(env, expect.objectContaining({ segment: "open_pull_requests", force: true }));
+    expect(sent.filter((job) => job.type === "agent-regate-pr")).toEqual([]);
+    segmentSpy.mockRestore();
+    backfillSpy.mockRestore();
+  });
+
   it("REGRESSION (#audit-sweep-dispatch-stamp): ONE sweep stamps ALL candidates AT DISPATCH, so the next fan-out skips the repo as draining — no overlapping sweeps", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
@@ -2470,6 +3057,17 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
     // Seeded "now" → within the freshness window → not a candidate; no clock advance.
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Fresh PR", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "x" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7");
+    await upsertCheckSummary(env, {
+      id: "gate-fresh-7",
+      repoFullName: "owner/agent-repo",
+      pullNumber: 7,
+      headSha: "a7",
+      name: "Gittensory Orb Review Agent",
+      status: "completed",
+      conclusion: "success",
+      payload: {},
+    });
 
     await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
 
@@ -2606,6 +3204,17 @@ describe("queue processors", () => {
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9201);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7");
+    await upsertCheckSummary(env, {
+      id: "gate-backlog-7",
+      repoFullName: "owner/agent-repo",
+      pullNumber: 7,
+      headSha: "a7",
+      name: "Gittensory Orb Review Agent",
+      status: "completed",
+      conclusion: "success",
+      payload: {},
+    });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
     const getRepo = vi.spyOn(repositoriesModule, "getRepository");
     const listOpen = vi.spyOn(repositoriesModule, "listOpenPullRequests");
@@ -2613,8 +3222,8 @@ describe("queue processors", () => {
     await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
 
     expect(sent.filter((m) => m.type === "agent-regate-pr")).toEqual([]);
-    expect(getRepo).not.toHaveBeenCalled();
-    expect(listOpen).not.toHaveBeenCalled();
+    expect(getRepo).toHaveBeenCalledWith(env, "owner/agent-repo");
+    expect(listOpen).toHaveBeenCalledWith(env, "owner/agent-repo");
     const audit = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.sweep.regate").first<{ outcome: string; metadata_json: string }>();
     expect(audit?.outcome).toBe("queued");
     expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ deferred: true, regateBacklog: 1 });
@@ -2652,7 +3261,7 @@ describe("queue processors", () => {
     ]);
   });
 
-  it("INVARIANT: a scheduled repo sweep fails open when queue introspection throws", async () => {
+  it("INVARIANT: a scheduled repo sweep does not require queue introspection", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
       JOBS: {
@@ -2959,7 +3568,7 @@ describe("queue processors", () => {
         // Non-confirmed author + linked-issue block + no issue → gated normally → failure (#gate-nonconfirmed).
         expect(body).toMatchObject({ name: "Gittensory Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Gittensory Orb Review Agent: No linked issue detected" } });
         calls.gateChecks += 1;
-        return Response.json({ id: 900 });
+        return Response.json({ id: 900, html_url: "https://github.com/checks/900" });
       }
       return new Response("not found", { status: 404 });
     });
@@ -2979,6 +3588,203 @@ describe("queue processors", () => {
     });
 
     expect(calls).toEqual({ minerList: 1, gateChecks: 2 });
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 42);
+    expect(stored?.lastPublishedSurfaceSha).toBe("gate123");
+    const published = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_published")
+      .first<{ metadata_json: string }>();
+    expect(published?.metadata_json).toContain('"publishedOutputs":["gate_check_run"]');
+    const summary = await env.DB.prepare("select name, status, conclusion from check_summaries where repo_full_name = ? and pull_number = ? and head_sha = ?")
+      .bind("JSONbored/gittensory", 42, "gate123")
+      .first<{ name: string; status: string; conclusion: string }>();
+    expect(summary).toMatchObject({
+      name: "Gittensory Orb Review Agent",
+      status: "completed",
+      conclusion: "failure",
+    });
+  });
+
+  it("stamps a gate-only surface even when local Gate check-summary persistence fails", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    env.DB.prepare = ((sql: string) => {
+      if (/insert\s+into\s+["`]?check_summaries["`]?/i.test(sql)) throw new Error("summary write failed");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-summary-fails/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 975 }, { status: 201 });
+      if (url.includes("/check-runs/975") && method === "PATCH") return Response.json({ id: 975, html_url: "https://github.com/checks/975" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-summary-fails",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 85, title: "Gate summary fails", state: "open", user: { login: "contributor" }, head: { sha: "gate-summary-fails" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 85);
+    expect(stored?.lastPublishedSurfaceSha).toBe("gate-summary-fails");
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("gate_check_summary_upsert_failed"))).toBe(true);
+    errors.mockRestore();
+  });
+
+  it("finalizes a permission-missing gate check through the neutral fallback before stamping the surface", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    env.DB.prepare = ((sql: string) => {
+      if (/insert\s+into\s+["`]?check_summaries["`]?/i.test(sql)) throw new Error("summary write failed");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    let patches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-permission-fallback/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 976 }, { status: 201 });
+      if (url.includes("/check-runs/976") && method === "PATCH") {
+        patches += 1;
+        if (patches === 1)
+          return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+        return Response.json({ id: 976, html_url: "https://github.com/checks/976" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-permission-fallback",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 86, title: "Gate permission fallback", state: "open", user: { login: "contributor" }, head: { sha: "gate-permission-fallback" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    expect(patches).toBe(2);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 86);
+    expect(stored?.lastPublishedSurfaceSha).toBe("gate-permission-fallback");
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("gate_check_permission_missing"))).toBe(true);
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("gate_check_summary_upsert_failed"))).toBe(true);
+    errors.mockRestore();
+  });
+
+  it("does not stamp a permission-missing gate check when the neutral fallback cannot publish", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    let patches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-permission-fallback-fails/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 977 }, { status: 201 });
+      if (url.includes("/check-runs/977") && method === "PATCH") {
+        patches += 1;
+        if (patches === 1)
+          return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+        return new Response("fallback update failed", { status: 500 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-permission-fallback-fails",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 87, title: "Gate permission fallback fails", state: "open", user: { login: "contributor" }, head: { sha: "gate-permission-fallback-fails" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    expect(patches).toBe(2);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 87);
+    expect(stored?.lastPublishedSurfaceSha ?? null).toBeNull();
+    const incomplete = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_incomplete")
+      .first<{ metadata_json: string }>();
+    expect(incomplete?.metadata_json).toContain('"publishedOutputs":[]');
+    const published = await env.DB.prepare("select event_type from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_published")
+      .all();
+    expect(published.results).toEqual([]);
   });
 
   it("suppresses public review output when the live PR head changed before publish", async () => {
@@ -3829,6 +4635,54 @@ describe("queue processors", () => {
     expect(usage?.status).toBe("quota_exceeded");
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("no_plan_generated");
+  });
+
+  it("planner: respects agentPaused — never spends Workers AI on a paused repo (#2257)", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled(); // no speculative AI spend on a paused repo
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("agent_paused");
+  });
+
+  it("planner: respects a global freeze — never spends Workers AI while the DB kill-switch is engaged (#2257)", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AGENT_ACTIONS_PAUSED: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("planner: respects agentDryRun — never spends Workers AI on a dry-run repo (#2257)", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled();
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("dry_run");
   });
 
   it("planner: enforces a per-actor per-repo cooldown before spending AI", async () => {
@@ -4808,7 +5662,11 @@ describe("queue processors", () => {
     const usage = await env.DB.prepare("select feature, status from ai_usage_events where feature = ?").bind("ai_review_pr").first<{ feature: string; status: string }>();
     expect(usage).toMatchObject({ feature: "ai_review_pr", status: "ok" });
     expect(cacheReadSpy).toHaveBeenCalled();
+    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(/^ai-review-input:v1:/);
     expect(cacheWriteSpy).toHaveBeenCalled();
+    expect(cacheWriteSpy.mock.calls[0]?.[5]).toMatchObject({
+      metadata: { inputFingerprint: expect.stringMatching(/^ai-review-input:v1:/) },
+    });
     cacheReadSpy.mockRestore();
     cacheWriteSpy.mockRestore();
   });
@@ -4850,6 +5708,12 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    env.DB.prepare = ((sql: string) => {
+      if (/insert\s+into\s+["`]?check_summaries["`]?/i.test(sql)) throw new Error("summary write failed");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
 
     await processJob(env, {
       type: "github-webhook",
@@ -4875,6 +5739,266 @@ describe("queue processors", () => {
       .bind("github_app.gate_check_failed_nonfatal", "JSONbored/gittensory#80")
       .first<{ outcome: string }>();
     expect(audit?.outcome).toBe("error");
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("gate_check_summary_upsert_failed"))).toBe(true);
+    errors.mockRestore();
+  });
+
+  it("does not stamp a current public surface when a required Gate check never finalizes", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    let commentPosts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.endsWith("/users/contributor")) return Response.json({ login: "contributor", public_repos: 1 });
+      if (url.includes("/users/contributor/repos")) return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-missing/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 972 }, { status: 201 });
+      if (url.includes("/check-runs/972") && method === "PATCH") return new Response("check update failed", { status: 500 });
+      if (url.includes("/issues/82/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/82/comments") && method === "POST") {
+        commentPosts += 1;
+        return Response.json({ id: 8200, html_url: "https://github.com/comment/8200" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-missing-but-comment-posted",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 82, title: "Comment cannot mask missing gate", state: "open", user: { login: "contributor" }, head: { sha: "gate-missing" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    expect(commentPosts).toBeGreaterThan(0);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 82);
+    expect(stored?.lastPublishedSurfaceSha ?? null).toBeNull();
+    const incomplete = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_incomplete")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(incomplete?.detail).toBe("required gate check did not finalize");
+    expect(incomplete?.metadata_json).toContain('"publishedOutputs":["comment"]');
+    const published = await env.DB.prepare("select event_type from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_published")
+      .all();
+    expect(published.results).toEqual([]);
+    const summary = await env.DB.prepare("select id from check_summaries where repo_full_name = ? and pull_number = ? and head_sha = ?")
+      .bind("JSONbored/gittensory", 82, "gate-missing")
+      .first<{ id: string }>();
+    expect(summary ?? null).toBeNull();
+  });
+
+  it("records the intended label in incomplete-surface audits when a label publishes but Gate never finalizes", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "label_only",
+      autoLabelEnabled: true,
+      createMissingLabel: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    let labelPosts = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-missing-label/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 978 }, { status: 201 });
+      if (url.includes("/check-runs/978") && method === "PATCH") return new Response("check update failed", { status: 500 });
+      if (url.includes("/issues/88/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/88/labels") && method === "POST") {
+        labelPosts += 1;
+        return Response.json([{ name: "gittensor" }]);
+      }
+      if (url.includes("/labels") && method === "POST") return Response.json({ name: "gittensor" }, { status: 201 });
+      if (url.includes("/labels/") && method === "DELETE") return new Response(null, { status: 204 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-missing-label-published",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 88, title: "Label cannot mask missing gate", state: "open", user: { login: "contributor" }, head: { sha: "gate-missing-label" }, labels: [], body: "Fixes #1" },
+      },
+    });
+
+    expect(labelPosts).toBeGreaterThan(0);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 88);
+    expect(stored?.lastPublishedSurfaceSha ?? null).toBeNull();
+    const incomplete = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
+      .bind("github_app.pr_public_surface_incomplete")
+      .first<{ metadata_json: string }>();
+    const metadata = JSON.parse(incomplete?.metadata_json ?? "{}");
+    expect(metadata).toMatchObject({
+      label: "gittensor",
+      publishedOutputs: ["label"],
+    });
+  });
+
+  it("does not stamp a gate-only surface when the incomplete-surface audit write fails", async () => {
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    let incompleteAuditWrites = 0;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.pr_public_surface_incomplete") {
+        incompleteAuditWrites += 1;
+        throw new Error("audit failed");
+      }
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-zero-missing/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 973 }, { status: 201 });
+      if (url.includes("/check-runs/973") && method === "PATCH") return new Response("check update failed", { status: 500 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-missing-zero-output",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 83, title: "Gate only missing", state: "open", user: { login: "contributor" }, head: { sha: "gate-zero-missing" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    expect(incompleteAuditWrites).toBe(1);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 83);
+    expect(stored?.lastPublishedSurfaceSha ?? null).toBeNull();
+    auditSpy.mockRestore();
+  });
+
+  it("does not stamp a comment surface when the incomplete-surface audit write fails", async () => {
+    const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    let incompleteAuditWrites = 0;
+    const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+      if (event.eventType === "github_app.pr_public_surface_incomplete") {
+        incompleteAuditWrites += 1;
+        throw new Error("audit failed");
+      }
+      await originalRecordAuditEvent(auditEnv, event);
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "off",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.endsWith("/users/contributor")) return Response.json({ login: "contributor", public_repos: 1 });
+      if (url.includes("/users/contributor/repos")) return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-comment-missing/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 974 }, { status: 201 });
+      if (url.includes("/check-runs/974") && method === "PATCH") return new Response("check update failed", { status: 500 });
+      if (url.includes("/issues/84/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/84/comments") && method === "POST") return Response.json({ id: 8400, html_url: "https://github.com/comment/8400" }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-missing-comment-audit-fails",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 84, title: "Comment missing gate", state: "open", user: { login: "contributor" }, head: { sha: "gate-comment-missing" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    expect(incompleteAuditWrites).toBe(1);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 84);
+    expect(stored?.lastPublishedSurfaceSha ?? null).toBeNull();
+    auditSpy.mockRestore();
   });
 
   it("propagates a rate-limited Gate completion so the queue retries and the pending Gate stays reviewing", async () => {
@@ -7553,6 +8677,106 @@ describe("queue processors", () => {
     expect(JSON.stringify(usageEvents)).not.toMatch(/wallet|hotkey|raw trust|deliveryId|installation-token/i);
   });
 
+  it("a @gittensory Q&A mention command respects agentPaused — never posts the answer card live (#2258)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Paused Q&A context",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      author_association: "NONE",
+      labels: [],
+      body: "Fixes #1",
+    });
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+      if (url.includes("/issues/") && url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/") && url.includes("/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 1001 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-help-paused",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Paused Q&A context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: { id: 1, body: "@gittensory help", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+      },
+    });
+
+    expect(calls.commentPosts).toBe(0); // the answer card must never post live on a paused repo
+    // REGRESSION: a paused command must not be audited/usage-tracked as a real, completed reply.
+    const replied = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.agent_command_replied").first<{ id: string }>();
+    expect(replied).toBeUndefined();
+    const skipped = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.agent_command_reply_skipped").first<{ outcome: string; detail: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "agent_paused" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventName: "agent_command_reply_skipped", outcome: "skipped" })]));
+    expect(usageEvents.some((event) => event.eventName === "agent_command_replied")).toBe(false);
+  });
+
+  it("a @gittensory maintainer-digest command respects agentDryRun — records dry_run, not agent_paused (#2258)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 78,
+      title: "Dry-run digest context",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      author_association: "NONE",
+      labels: [],
+      body: "Fixes #1",
+    });
+    const calls = { commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
+      if (url.includes("/issues/") && url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/") && url.includes("/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 1002 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-queue-summary-dry-run",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 78, title: "Dry-run digest context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: { id: 2, body: "@gittensory queue-summary", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+      },
+    });
+
+    expect(calls.commentPosts).toBe(0); // the digest must never post live on a dry-run repo
+    const skipped = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.agent_command_reply_skipped")
+      .first<{ outcome: string; detail: string; metadata_json: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "dry_run" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ eventName: "agent_command_reply_skipped", outcome: "skipped", metadata: expect.objectContaining({ family: "queue_digest" }) })]),
+    );
+  });
+
   it("posts maintainer-only queue digest commands from cached public-safe metadata", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
@@ -8847,6 +10071,208 @@ describe("queue processors", () => {
     expect(settingsAfter?.gate_check_mode).toBe("enabled");
     const overrideAdvisory = await env.DB.prepare("select id from advisories where target_key = ?").bind("JSONbored/gittensory#90").first<{ id: string }>();
     expect(overrideAdvisory ?? null).toBeNull();
+  });
+
+  it("a real gate-override still completes even when the false-positive telemetry write fails (best-effort)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 94,
+      title: "Override me (telemetry write fails)",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "override-sha-telemetry" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const telemetrySpy = vi.spyOn(repositoriesModule, "markGateOutcomeOverridden").mockRejectedValueOnce(new Error("D1 write failed"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/commits/override-sha-telemetry/check-runs") && method === "GET") {
+        return Response.json({ total_count: 1, check_runs: [{ id: 559, name: "Gittensory Orb Review Agent" }] });
+      }
+      if (url.includes("/check-runs/559") && method === "PATCH") return Response.json({ id: 559 });
+      if (url.includes("/issues/94/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/94/comments") && method === "POST") return Response.json({ id: 9104 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-telemetry-fail",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 94, title: "Override me (telemetry write fails)", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 812, body: "@gittensory gate-override known flaky", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(telemetrySpy).toHaveBeenCalled();
+    // The override itself (audit + usage) still completed — the false-positive flag is best-effort and never
+    // affects the primary override outcome.
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.gate_overridden", "JSONbored/gittensory#94")
+      .first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed");
+  });
+
+  it("gate-override respects agentPaused — never flips the live check-run or posts a confirmation comment (#2256)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      agentPaused: true,
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 91,
+      title: "Override me while paused",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "paused-override-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { checkPatches: 0, commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/commits/paused-override-sha/check-runs") && method === "GET") {
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Orb Review Agent" }] });
+      }
+      if (url.includes("/check-runs/556") && method === "PATCH") {
+        calls.checkPatches += 1;
+        return Response.json({ id: 556 });
+      }
+      if (url.includes("/issues/91/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/91/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 9101 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-paused",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Override me while paused", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 810, body: "@gittensory gate-override please", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // Neither write reached GitHub — a pause must stop this exactly like every other agent-driven write.
+    expect(calls.checkPatches).toBe(0);
+    expect(calls.commentPosts).toBe(0);
+    // REGRESSION: a paused command must not be audited/usage-tracked as a real, completed override.
+    const overridden = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ id: string }>();
+    expect(overridden).toBeUndefined();
+    const skipped = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.gate_override_skipped").first<{ outcome: string; detail: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "agent_paused" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventName: "gate_override_skipped", outcome: "skipped" })]));
+    expect(usageEvents.some((event) => event.eventName === "gate_overridden")).toBe(false);
+  });
+
+  it("gate-override respects agentDryRun on a PR with no head sha — records dry_run, not agent_paused (#2256)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      agentDryRun: true,
+    });
+    // No head sha — also exercises the metadata's `?? null` fallback on the skip-path audit/usage records.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 93,
+      title: "Override me (dry-run, no head)",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: {},
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { checkPatches: 0, commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/pulls/93") && method === "GET") return Response.json({ number: 93, state: "open", head: {} });
+      if (url.includes("/issues/93/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/93/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 9103 });
+      }
+      if (url.includes("/check-runs") && method === "PATCH") {
+        calls.checkPatches += 1;
+        return Response.json({ id: 557 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-dry-run-no-head",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 93, title: "Override me (dry-run, no head)", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 811, body: "@gittensory gate-override please", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(calls.checkPatches).toBe(0);
+    expect(calls.commentPosts).toBe(0);
+    const skipped = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.gate_override_skipped")
+      .first<{ outcome: string; detail: string; metadata_json: string }>();
+    expect(skipped).toMatchObject({ outcome: "completed", detail: "dry_run" });
+    const metadata = JSON.parse(skipped?.metadata_json ?? "{}") as { headSha?: string | null; cachedHeadSha?: string | null; mode?: string };
+    expect(metadata.headSha).toBeNull();
+    expect(metadata.cachedHeadSha).toBeNull();
+    expect(metadata.mode).toBe("dry_run");
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ eventName: "gate_override_skipped", outcome: "skipped" })]));
   });
 
   it("overrides the LIVE head, not the stale cached SHA, when a commit landed after the command (#16)", async () => {

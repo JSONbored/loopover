@@ -18,6 +18,7 @@ import {
   jobCoalesceKey,
   jobCoalesceSupersededKeyPrefix,
   jobPriority,
+  matchesGitHubRateLimitAdmissionTarget,
   nonConsumingRetryDelayMs,
   queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
@@ -241,6 +242,10 @@ describe("self-host queue common helpers", () => {
         now,
       ),
     ).toBeNull();
+    // A newer unkeyed/legacy fallback must NOT suppress a healthy exact installation observation, even
+    // though it is the most recently observed row -- the fallback is very likely an unrelated bucket
+    // (a public token, another consumer, or a pre-migration write), and recency alone is not evidence
+    // that THIS installation's own budget is exhausted (the incident this regression guards against).
     expect(
       githubRateLimitAdmissionDelayMs(
         "webhook",
@@ -251,7 +256,10 @@ describe("self-host queue common helpers", () => {
         ],
         now,
       ),
-    ).toBe(615_000);
+    ).toBeNull();
+    // A newer unkeyed/legacy fallback must not CLEAR a genuine exact exhaustion either -- it is the
+    // same untrustworthy, unrelated-bucket signal as the suppression case above, just pointing the
+    // other way. The exact reading's own reset_at already bounds how long this can block admission.
     expect(
       githubRateLimitAdmissionDelayMs(
         "webhook",
@@ -262,7 +270,7 @@ describe("self-host queue common helpers", () => {
         ],
         now,
       ),
-    ).toBeNull();
+    ).toBe(615_000);
     expect(
       githubRateLimitAdmissionDelayMs(
         "webhook",
@@ -306,6 +314,134 @@ describe("self-host queue common helpers", () => {
         now,
       ),
     ).toBe(615_000);
+  });
+
+  describe("fallback vs exact admission precedence (self-host webhook backlog regression)", () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    const key = githubRateLimitAdmissionKeyForInstallation(123);
+
+    it("REGRESSION: a healthy, newer-enough exact installation observation is never suppressed by a newer unkeyed exhausted fallback", () => {
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "webhook",
+          key,
+          [
+            { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T11:59:30.000Z" },
+            { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:01:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          ],
+          now,
+        ),
+      ).toBeNull();
+    });
+
+    it("REGRESSION: no exact installation observation + an exhausted unkeyed fallback still defers webhook admission", () => {
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "webhook",
+          key,
+          [{ admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" }],
+          now,
+        ),
+      ).toBe(615_000);
+    });
+
+    it("REGRESSION: an exhausted exact installation observation alone still defers webhook admission", () => {
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "webhook",
+          key,
+          [{ admission_key: key, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" }],
+          now,
+        ),
+      ).toBe(615_000);
+    });
+
+    it("INVARIANT: a newer unkeyed fallback cannot CLEAR a genuine exact exhaustion either -- an untrusted bucket is untrusted in both directions", () => {
+      // A null/unkeyed fallback is not proven to report on the SAME budget as this admission key, so
+      // it must not move admission in EITHER direction once an exact observation exists: it can't
+      // suppress a healthy exact reading (the original bug), and it equally can't manufacture an early
+      // "recovery" for a genuinely exhausted one. The exact reading's own reset_at already bounds the
+      // wait.
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "webhook",
+          key,
+          [
+            { admission_key: key, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+            { admission_key: null, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          ],
+          now,
+        ),
+      ).toBe(615_000);
+    });
+
+    it("background admission observes the same precedence: a newer exhausted fallback cannot suppress a healthy exact background observation", () => {
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "background",
+          key,
+          [
+            { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T11:59:30.000Z" },
+            { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:01:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          ],
+          now,
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe("matchesGitHubRateLimitAdmissionTarget", () => {
+    const installationKey = githubRateLimitAdmissionKeyForInstallation(123);
+    const otherInstallationKey = githubRateLimitAdmissionKeyForInstallation(456);
+
+    it("returns false for a candidate that is not GitHub-budget work at all", () => {
+      expect(matchesGitHubRateLimitAdmissionTarget(null, { kind: "webhook", admissionKey: installationKey })).toBe(false);
+    });
+
+    it("matches a candidate sharing the same admission key as a keyed blocked target", () => {
+      expect(
+        matchesGitHubRateLimitAdmissionTarget(
+          { kind: "webhook", admissionKey: installationKey },
+          { kind: "webhook", admissionKey: installationKey },
+        ),
+      ).toBe(true);
+    });
+
+    it("still conservatively matches a null-keyed (legacy/unknown) candidate against a keyed blocked target", () => {
+      expect(
+        matchesGitHubRateLimitAdmissionTarget(
+          { kind: "webhook", admissionKey: null },
+          { kind: "webhook", admissionKey: installationKey },
+        ),
+      ).toBe(true);
+    });
+
+    it("does not match a DIFFERENT concretely-keyed candidate against a keyed blocked target", () => {
+      expect(
+        matchesGitHubRateLimitAdmissionTarget(
+          { kind: "webhook", admissionKey: otherInstallationKey },
+          { kind: "webhook", admissionKey: installationKey },
+        ),
+      ).toBe(false);
+    });
+
+    it("REGRESSION: a null-keyed blocked target no longer parks EVERY concretely-keyed candidate (only null-keyed ones)", () => {
+      // Before the fix, a confirmed rate-limit failure on a job with NO admission key (legacy/unknown
+      // actor work) would defer every OTHER pending job regardless of its own key -- the same false
+      // positive class as a stale unkeyed observation pinning a healthy installation's webhooks.
+      expect(
+        matchesGitHubRateLimitAdmissionTarget(
+          { kind: "webhook", admissionKey: installationKey },
+          { kind: "webhook", admissionKey: null },
+        ),
+      ).toBe(false);
+      expect(
+        matchesGitHubRateLimitAdmissionTarget(
+          { kind: "webhook", admissionKey: null },
+          { kind: "webhook", admissionKey: null },
+        ),
+      ).toBe(true);
+    });
   });
 
   it("uses the newest local REST rate-limit observation for admission control", async () => {

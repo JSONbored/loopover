@@ -208,7 +208,7 @@ export async function recordSubmissionOutcome(env: Env, project: string, submitt
     await storage(env)
       .prepare(
         `INSERT INTO submitter_stats (project, submitter, submissions, ${col}, last_seen) VALUES (?, ?, 1, 1, CURRENT_TIMESTAMP)
-       ON CONFLICT(project, submitter) DO UPDATE SET submissions = submissions + 1, ${col} = ${col} + 1, last_seen = CURRENT_TIMESTAMP`,
+       ON CONFLICT(project, submitter) DO UPDATE SET submissions = submitter_stats.submissions + 1, ${col} = submitter_stats.${col} + 1, last_seen = CURRENT_TIMESTAMP`,
       )
       .bind(project, submitter)
       .run();

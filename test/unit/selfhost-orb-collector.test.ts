@@ -16,6 +16,7 @@ function makeDb(): D1Database {
     );
     CREATE TABLE orb_export_cursor (
       instance_hash TEXT PRIMARY KEY, last_exported_at TEXT NOT NULL DEFAULT '2000-01-01T00:00:00Z',
+      last_exported_target_id TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     );
     CREATE TABLE system_flags (
@@ -208,6 +209,20 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     expect(n).toBe(3); // batch cap
     expect(headers?.["x-orb-signature"]).toMatch(/^sha256=[a-f0-9]{64}$/);
     expect(headers?.authorization).toBe("Bearer collector-secret");
+  });
+
+  it("exports every PR sharing the same event_at across batched runs (composite cursor tie-break)", async () => {
+    const db = makeDb();
+    const at = "2026-06-01T02:00:00Z";
+    for (let pr = 1; pr <= 5; pr++) {
+      await audit(db, "o/r", pr, "gate_decision", "merge", "2026-06-01T00:00:00Z");
+      await audit(db, "o/r", pr, "pr_outcome", "merged", at);
+    }
+    const fetchOk = async () => new Response(null, { status: 200 });
+    expect(await exportOrbBatch(db, 2, fetchOk)).toBe(2);
+    expect(await exportOrbBatch(db, 2, fetchOk)).toBe(2);
+    expect(await exportOrbBatch(db, 2, fetchOk)).toBe(1);
+    expect(await exportOrbBatch(db, 2, fetchOk)).toBe(0);
   });
 
   it("falls back to GITHUB_APP_ID for the instance id and applies the anonymize default when ORB_* are unset", async () => {

@@ -273,11 +273,16 @@ function fallbackObservationCanOverrideExact(
   exact: AdmissionObservation | null,
 ): boolean {
   if (!fallback) return false;
-  if (!exact) return true;
-  const fallbackMs = observationMs(fallback);
-  const exactMs = observationMs(exact);
-  if (fallbackMs === null) return false;
-  return exactMs === null || fallbackMs > exactMs;
+  // A null/unkeyed fallback row is frequently a DIFFERENT bucket entirely (a public token, another
+  // consumer's traffic, or a pre-migration write that never carried an admission_key) -- we have no
+  // evidence it reports on the SAME budget as this admission key. That untrustworthiness applies
+  // regardless of which direction the fallback's reading points: it must not suppress a healthy exact
+  // observation (the original bug), but it must equally not CLEAR a genuine exact exhaustion either --
+  // both are the same category of false signal, just pointing opposite ways. Once an exact observation
+  // exists for this key, it alone governs; the exact reading's own reset_at already bounds how long an
+  // exhaustion can block admission, so there is no correctness reason to let an unrelated bucket
+  // override it in either direction. Fallback governs ONLY when no exact observation exists at all.
+  return !exact;
 }
 
 export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
@@ -379,9 +384,13 @@ export function matchesGitHubRateLimitAdmissionTarget(
   blocked: GitHubRateLimitAdmissionTarget,
 ): boolean {
   if (candidate === null) return false;
-  // Null-key GitHub jobs are legacy/unknown actor work; park them with a depleted known bucket,
-  // and park all GitHub-budget work when the depleted bucket itself is unknown.
-  if (blocked.admissionKey === null) return true;
+  // A null-key CANDIDATE is legacy/unknown-actor work whose true bucket we can't prove is unaffected,
+  // so it still parks alongside any confirmed exhaustion (known-keyed or null-keyed alike). But a
+  // null-key BLOCKED target (the job that actually failed had no admissionKey) does NOT justify
+  // parking every OTHER concretely-keyed installation's work too -- we only know ONE unscoped bucket
+  // is exhausted, not that a SPECIFIC installation's own budget is affected. Scoping this the same way
+  // as a keyed blocked target avoids the same false-positive class as a stale unkeyed observation
+  // pinning a healthy installation's webhooks (mirrors fallbackObservationCanOverrideExact above).
   return candidate.admissionKey === blocked.admissionKey || candidate.admissionKey === null;
 }
 

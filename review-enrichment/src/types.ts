@@ -239,6 +239,21 @@ export interface NativeBuildFinding {
   reason: string;
 }
 
+/** A newly-added/upgraded direct dependency whose registry metadata signals a maintenance risk the no-checkout
+ *  reviewer is blind to: a version marked DEPRECATED (npm), a YANKED release (PyPI), or a package with no release
+ *  in years (STALE). Adoption risk + future supply-chain liability. Reports package@version + the factual
+ *  maintenance property only — never the registry's deprecation/yank prose. (#1511) */
+export interface DepHealthFinding {
+  ecosystem: string;
+  package: string;
+  version: string;
+  kind: "deprecated" | "yanked" | "stale";
+  /** Short, public-safe explanation of the maintenance risk. */
+  reason: string;
+  /** `stale` only: the ISO date (YYYY-MM-DD) of the package's most recent release. */
+  lastRelease?: string;
+}
+
 /** Public-safe historical context the no-checkout reviewer is blind to and the engine deliberately does NOT compute:
  *  the author's track record IN THIS repo, past PRs that already changed the same files (with their outcome), and
  *  whether the diff covers the linked issue's stated requirement. Surfaced as a single block (0-or-1 element array).
@@ -304,6 +319,7 @@ export interface BriefFindings {
   commitSignature?: CommitSignatureFinding[];
   iacMisconfig?: IacMisconfigFinding[];
   nativeBuild?: NativeBuildFinding[];
+  depHealth?: DepHealthFinding[];
   history?: HistoryFinding[];
   docCommentDrift?: DocCommentDriftFinding[];
   duplication?: DuplicationFinding[];

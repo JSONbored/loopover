@@ -3,6 +3,7 @@ import { scanAssetWeight } from "./asset-weight.js";
 import { scanChurnHotspot } from "./churn-hotspot.js";
 import { scanCodeowners } from "./codeowners.js";
 import { scanCommitSignature } from "./commit-signature.js";
+import { scanDepHealth } from "./dep-health.js";
 import { dependencyAnalyzer } from "./dependency/descriptor.js";
 import { scanDocCommentDrift } from "./doc-comment-drift.js";
 import { scanDuplication } from "./duplication-scan.js";
@@ -336,6 +337,27 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanNativeBuild(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "depHealth",
+    title: "Dependency maintenance health",
+    category: "supply-chain",
+    cost: "registry",
+    defaultEnabled: true,
+    requires: ["files", "public-network"],
+    limits: { maxQueries: 25 },
+    docs: {
+      summary:
+        "Flags newly-added or upgraded dependencies that are deprecated, yanked, or long unmaintained.",
+      looksAt: "New or upgraded npm and PyPI direct dependency versions.",
+      reports:
+        "Package, version, ecosystem, and the maintenance kind: deprecated, yanked, or stale (with last release date).",
+      network: "Calls the npm registry and PyPI JSON API. No GitHub token required.",
+      notes:
+        "Registry prose is never returned; a package is called stale only after several years with no release, and any network failure fails safe.",
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanDepHealth(req, fetch, Date.now(), { signal, analysis, diagnostics }),
   }),
   descriptor({
     name: "history",

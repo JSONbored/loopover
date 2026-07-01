@@ -295,6 +295,21 @@ export function renderBrief(
     }
   }
 
+  const depHealth = findings.depHealth ?? [];
+  if (depHealth.length) {
+    lines.push(
+      "### Dependency maintenance health (deprecated / yanked / unmaintained)",
+    );
+    for (const item of depHealth) {
+      const label =
+        item.kind === "deprecated" ? "DEPRECATED" : item.kind === "yanked" ? "YANKED" : "STALE";
+      const suffix = item.lastRelease ? ` (last release ${item.lastRelease})` : "";
+      lines.push(
+        `- ${safeCodeSpan(`${item.package}@${item.version}`)} (${item.ecosystem}): **${label}** — ${item.reason}${suffix}`,
+      );
+    }
+  }
+
   const history = findings.history ?? [];
   for (const item of history) {
     const entries: string[] = [];

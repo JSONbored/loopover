@@ -27,6 +27,14 @@ import {
 } from "../dist/analyzers/actions-pin.js";
 import { scanEol, extractVersionPins } from "../dist/analyzers/eol-check.js";
 import {
+  classifyNpm,
+  classifyPypi,
+  npmLastPublishMs,
+  pypiLastUploadMs,
+  pypiVersionYanked,
+  scanDepHealth,
+} from "../dist/analyzers/dep-health.js";
+import {
   extractRegexSources,
   hasCatastrophicBacktracking,
   scanPatchForRedos,
@@ -141,6 +149,94 @@ test("extractDependencyChanges: PyPI exact pins with PEP 508 extras are parsed u
   assert.equal(byPkg.requests.to, "2.31.0");
   assert.equal(byPkg.requests.from, "2.30.0");
   assert.equal(byPkg.celery.to, "5.4.0");
+});
+
+const DEP_HEALTH_NOW = Date.parse("2026-06-30T00:00:00Z");
+
+test("scanDepHealth: flags a deprecated npm dependency version", async () => {
+  const findings = await scanDepHealth(
+    { files: [{ path: "package.json", patch: '+    "oldpkg": "1.0.0",' }] },
+    async () => ({
+      ok: true,
+      json: async () => ({
+        "dist-tags": { latest: "1.0.0" },
+        time: { modified: "2026-05-01T00:00:00Z", "1.0.0": "2026-05-01T00:00:00Z" },
+        versions: { "1.0.0": { deprecated: "use @scope/newpkg instead" } },
+      }),
+    }),
+    DEP_HEALTH_NOW,
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "deprecated");
+  assert.equal(findings[0].package, "oldpkg");
+  assert.equal(findings[0].version, "1.0.0");
+});
+
+test("scanDepHealth: flags a yanked PyPI release", async () => {
+  const findings = await scanDepHealth(
+    { files: [{ path: "requirements.txt", patch: "+badpkg==2.0.0" }] },
+    async () => ({
+      ok: true,
+      json: async () => ({
+        releases: {
+          "2.0.0": [{ yanked: true, upload_time_iso_8601: "2026-01-01T00:00:00Z" }],
+          "1.0.0": [{ yanked: false, upload_time_iso_8601: "2025-01-01T00:00:00Z" }],
+        },
+      }),
+    }),
+    DEP_HEALTH_NOW,
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "yanked");
+  assert.equal(findings[0].package, "badpkg");
+});
+
+test("scanDepHealth: flags a stale package and skips a recently-released one", async () => {
+  const findings = await scanDepHealth(
+    { files: [{ path: "requirements.txt", patch: "+abandoned==1.0.0\n+fresh==2.0.0" }] },
+    async (url) => ({
+      ok: true,
+      json: async () =>
+        String(url).includes("abandoned")
+          ? { releases: { "1.0.0": [{ upload_time_iso_8601: "2020-01-01T00:00:00Z" }] } }
+          : { releases: { "2.0.0": [{ upload_time_iso_8601: "2026-01-01T00:00:00Z" }] } },
+    }),
+    DEP_HEALTH_NOW,
+  );
+  const byPkg = Object.fromEntries(findings.map((f) => [f.package, f]));
+  assert.equal(byPkg.abandoned.kind, "stale");
+  assert.equal(byPkg.abandoned.lastRelease, "2020-01-01");
+  assert.equal(byPkg.fresh, undefined); // released within the window → not flagged
+});
+
+test("scanDepHealth: fails safe (no finding) on a non-ok registry response", async () => {
+  const findings = await scanDepHealth(
+    { files: [{ path: "package.json", patch: '+    "somepkg": "1.0.0",' }] },
+    async () => ({ ok: false, status: 500, json: async () => ({}) }),
+    DEP_HEALTH_NOW,
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("dep-health pure classifiers: publish-time selection, yanked, and null-health", () => {
+  // npmLastPublishMs: prefer time.modified, else the latest dist-tag's time, else max version time, else null.
+  assert.equal(npmLastPublishMs({ time: { modified: "2024-01-01T00:00:00Z" } }), Date.parse("2024-01-01T00:00:00Z"));
+  assert.equal(
+    npmLastPublishMs({ "dist-tags": { latest: "2.0.0" }, time: { "1.0.0": "2020-01-01T00:00:00Z", "2.0.0": "2023-01-01T00:00:00Z" } }),
+    Date.parse("2023-01-01T00:00:00Z"),
+  );
+  assert.equal(npmLastPublishMs({ time: {} }), null);
+  // pypiLastUploadMs = newest across all files; yanked only when the version has files and every one is yanked.
+  assert.equal(
+    pypiLastUploadMs({ releases: { "1.0.0": [{ upload_time_iso_8601: "2021-01-01T00:00:00Z" }], "2.0.0": [{ upload_time_iso_8601: "2022-06-01T00:00:00Z" }] } }),
+    Date.parse("2022-06-01T00:00:00Z"),
+  );
+  assert.equal(pypiVersionYanked({ releases: { "1.0.0": [{ yanked: true }, { yanked: false }] } }, "1.0.0"), false);
+  assert.equal(pypiVersionYanked({ releases: { "1.0.0": [{ yanked: true }] } }, "1.0.0"), true);
+  assert.equal(pypiVersionYanked({ releases: {} }, "9.9.9"), false);
+  // classify* returns null for a healthy, recent, non-deprecated version (exercises the fall-through).
+  assert.equal(classifyNpm({ time: { modified: "2026-05-01T00:00:00Z" }, versions: { "1.0.0": {} } }, "1.0.0", DEP_HEALTH_NOW), null);
+  assert.equal(classifyPypi({ releases: { "1.0.0": [{ upload_time_iso_8601: "2026-05-01T00:00:00Z" }] } }, "1.0.0", DEP_HEALTH_NOW), null);
 });
 
 test("queryOsv: maps vulns; severity from database_specific; fixedIn from affected; [] on non-ok", async () => {

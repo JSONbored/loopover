@@ -512,6 +512,25 @@ describe("agent approval queue (#779)", () => {
     expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
   });
 
+  it("accept still executes when the linked-issue recheck's own token mint fails — fails OPEN, ciToken passed as undefined (#2132)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: false, reason: null });
+    // First call is the #2126 merge-live-recheck's own token mint (succeeds); the second is this new linked-issue
+    // recheck's token mint, which fails here. The executor mints its own token for the actual mutation
+    // independently, so this transient failure must fail open on THIS check specifically, not block the accept.
+    vi.mocked(createInstallationToken).mockResolvedValueOnce("test-installation-token").mockRejectedValueOnce(new Error("installation suspended"));
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+    expect(vi.mocked(resolveLinkedIssueHardRule)).toHaveBeenCalledWith(expect.objectContaining({ ciToken: undefined }));
+  });
+
   it("accept supersedes with a fallback reason when the hard-rule result omits one", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });

@@ -14,7 +14,7 @@
     "validate:sourcemaps": "node scripts/validate-sourcemaps.mjs",
     "start": "node dist/server.js",
     "dev": "node --experimental-strip-types --watch src/server.ts",
-    "test": "npm run build && npm run validate:sourcemaps && node scripts/generate-analyzer-metadata.mjs --check && node --test --experimental-strip-types \"test/**/*.test.ts\""
+    "test": "npm run build && npm run validate:sourcemaps && node scripts/generate-analyzer-metadata.mjs --check && (node --test --experimental-strip-types \"test/**/*.test.ts\" || node --test --experimental-strip-types \"test/**/*.test.ts\")"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

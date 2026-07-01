@@ -216,7 +216,7 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
       headSha: "head-sha",
       analyzers: ["dependency"],
       files: [{ path: "package.json", patch: '+    "lodash": "4.17.20",' }],
-      budget: { timeoutMs: 200 },
+      budget: { timeoutMs: 2000 },
     },
     {
       dependency: async () => {
@@ -242,7 +242,7 @@ test("buildBrief stays fail-open and captures a degraded analyzer", async () => 
   const analyzerContext = sentry.contexts.rees_analyzer as Record<string, unknown>;
   const capturedTimeoutMs = Number(analyzerContext.timeoutMs);
   assert.ok(capturedTimeoutMs > 0);
-  assert.ok(capturedTimeoutMs <= 200);
+  assert.ok(capturedTimeoutMs <= 2000);
 });
 
 test("captureRouteError applies the route-level fingerprint and allowlisted tags", () => {

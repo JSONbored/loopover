@@ -85,6 +85,7 @@ describe("explainScoreBreakdown", () => {
         "openPrMultiplier",
         "openIssueMultiplier",
         "mergedHistoryMultiplier",
+        "issueDiscoveryHistoryMultiplier",
         "timeDecayMultiplier",
       ]),
     );
@@ -119,6 +120,57 @@ describe("explainScoreBreakdown", () => {
     );
     expect(blocked.components.find((entry) => entry.component === "mergedHistoryMultiplier")).toMatchObject({ band: "blocked", leverageScore: 100 });
     expect(blocked.highestLeverageLever.lever).toMatch(/merge/i);
+    expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
+  });
+
+  it("explains the issue-discovery validity floor as neutral (unobserved), full (meets floor), and blocked (below floor)", () => {
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+    };
+    const baseInput = {
+      repoFullName: issueDiscoveryRepo.fullName,
+      contributorLogin: "miner",
+      sourceTokenScore: 40,
+      totalTokenScore: 60,
+      sourceLines: 80,
+      openPrCount: 0,
+      credibility: 1,
+      mergedPullRequests: 5,
+      linkedIssueMode: "standard" as const,
+    };
+
+    const unobserved = explainScoreBreakdown(buildScorePreview({ repo: issueDiscoveryRepo, snapshot, input: baseInput }));
+    expect(unobserved.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "neutral",
+      leverageScore: 0,
+    });
+
+    const meets = explainScoreBreakdown(
+      buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 4, issueCredibility: 0.9 },
+      }),
+    );
+    expect(meets.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "full",
+      summary: expect.stringMatching(/4 valid solved, private context 0.9/i),
+    });
+
+    const blocked = explainScoreBreakdown(
+      buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 1, issueCredibility: 0.5 },
+      }),
+    );
+    expect(blocked.components.find((entry) => entry.component === "issueDiscoveryHistoryMultiplier")).toMatchObject({
+      band: "blocked",
+      summary: expect.stringMatching(/private context.*zeroed/i),
+      leverageScore: 100,
+    });
+    expect(blocked.highestLeverageLever.lever).toMatch(/valid solved issues|issue credibility/i);
     expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
   });
 

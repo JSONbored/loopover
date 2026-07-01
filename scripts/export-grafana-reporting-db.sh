@@ -6,9 +6,23 @@ PG_DB="${GITTENSORY_REPORTING_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT_DIR="${GITTENSORY_REPORTING_DIR:-/reporting}"
 OUT_DB="${GITTENSORY_REPORTING_DB:-$OUT_DIR/gittensory-reporting.sqlite}"
 TMP_DB="${OUT_DB}.tmp"
+CSV_TMP_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$CSV_TMP_DIR"
+}
+trap cleanup EXIT HUP INT TERM
 
 sql_string() {
   printf "%s" "$1" | sed "s/'/''/g"
+}
+
+sqlite_dot_string() {
+  printf "%s" "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
+}
+
+csv_temp_file() {
+  mktemp "$CSV_TMP_DIR/$1.XXXXXX.csv"
 }
 
 source_column_exists() {
@@ -56,9 +70,11 @@ sqlite_import_csv() {
   csv="$1"
   table="$2"
   [ -s "$csv" ] || return 0
+  csv_arg="$(sqlite_dot_string "$csv")"
+  table_arg="$(sqlite_dot_string "$table")"
   sqlite3 "$TMP_DB" <<SQL
 .mode csv
-.import $csv $table
+.import $csv_arg $table_arg
 SQL
 }
 
@@ -116,7 +132,7 @@ if pg_enabled; then
   fi
 
   if pg_table_exists "pull_requests" && pg_table_exists "advisories"; then
-    PR_CSV="$(mktemp)"
+    PR_CSV="$(csv_temp_file "pull-requests")"
     pg_copy_csv "
 WITH latest_advisories AS (
   SELECT
@@ -175,11 +191,10 @@ SELECT
 FROM current_pull_requests
 " "$PR_CSV"
     sqlite_import_csv "$PR_CSV" "review_targets"
-    rm -f "$PR_CSV"
   fi
 
   if pg_table_exists "review_targets"; then
-    LEGACY_CSV="$(mktemp)"
+    LEGACY_CSV="$(csv_temp_file "legacy-review-targets")"
     if pg_table_exists "pull_requests"; then
       LEGACY_FILTER="AND NOT EXISTS (SELECT 1 FROM pull_requests p WHERE p.repo_full_name = t.repo AND p.number = t.number)"
     else
@@ -200,11 +215,10 @@ WHERE t.kind = 'pull_request'
   $LEGACY_FILTER
 " "$LEGACY_CSV"
     sqlite_import_csv "$LEGACY_CSV" "review_targets"
-    rm -f "$LEGACY_CSV"
   fi
 
   if pg_table_exists "ai_usage_events"; then
-    AI_CSV="$(mktemp)"
+    AI_CSV="$(csv_temp_file "ai-usage-events")"
     if pg_column_exists "ai_usage_events" "estimated_neurons"; then
       ESTIMATED_NEURONS_EXPR="COALESCE(estimated_neurons, 0)"
     else
@@ -226,7 +240,6 @@ FROM ai_usage_events
 WHERE feature = 'ai_review_pr'
 " "$AI_CSV"
     sqlite_import_csv "$AI_CSV" "ai_usage_events"
-    rm -f "$AI_CSV"
   fi
 
   sqlite3 "$TMP_DB" "PRAGMA quick_check;" | grep -qx "ok"

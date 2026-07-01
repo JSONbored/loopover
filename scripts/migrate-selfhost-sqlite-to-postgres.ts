@@ -355,6 +355,9 @@ async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Pro
     }
     const primaryKey = await pgPrimaryKey(client, table);
     const keyColumns = primaryKey.filter((column) => commonColumns.includes(column));
+    if (targetRowsBefore > 0 && keyColumns.length === 0) {
+      throw new Error(`Target table ${table} already contains ${targetRowsBefore} row(s) but has no comparable copied primary key; --allow-non-empty cannot safely merge it`);
+    }
     if (targetRowsBefore > 0 && keyColumns.length > 0) {
       const conflicts = await countConflictingTargetRowsForSourceKeys(db, client, table, keyColumns, commonColumns, opts.batchSize);
       if (conflicts > 0) {

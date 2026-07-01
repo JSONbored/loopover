@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -87,6 +87,32 @@ function failingPsql(root: string): string {
     `#!/bin/sh
 echo 'connection refused' >&2
 exit 7
+`,
+  );
+  chmodSync(psql, 0o755);
+  return bin;
+}
+
+function failingCopyPsql(root: string): string {
+  const bin = join(root, "copy-fail-bin");
+  mkdirSync(bin);
+  const psql = join(bin, "psql");
+  writeFileSync(
+    psql,
+    `#!/bin/sh
+args="$*"
+case "$args" in
+  *"information_schema.tables"*"pull_requests"*|*"information_schema.tables"*"advisories"*|*"information_schema.tables"*"review_targets"*|*"information_schema.tables"*"ai_usage_events"*)
+    printf '1\\n'
+    ;;
+  *"information_schema.columns"*"ai_usage_events"*"estimated_neurons"*)
+    printf '1\\n'
+    ;;
+  *"FROM current_pull_requests"*)
+    echo 'copy failed' >&2
+    exit 7
+    ;;
+esac
 `,
   );
   chmodSync(psql, 0o755);
@@ -238,10 +264,13 @@ exit 7
     const root = tmpRoot();
     const outDb = join(root, "reporting.sqlite");
     const bin = fakePsql(root);
+    const csvTmp = join(root, "csv temp");
+    mkdirSync(csvTmp);
 
     runExporter(root, join(root, "unused.sqlite"), outDb, {
       DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory",
       PATH: `${bin}:${process.env.PATH ?? ""}`,
+      TMPDIR: csvTmp,
     });
 
     expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
@@ -253,6 +282,7 @@ exit 7
     expect(sqlite(outDb, "SELECT estimated_neurons FROM ai_usage_events;")).toBe("42");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.repoFullName') FROM ai_usage_events;")).toBe("JSONbored/gittensory");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.private') IS NULL FROM ai_usage_events;")).toBe("1");
+    expect(readdirSync(csvTmp)).toEqual([]);
   });
 
   it("fails closed when Postgres metadata cannot be inspected", () => {
@@ -267,5 +297,23 @@ exit 7
       }),
     ).toThrow();
     expect(existsSync(outDb)).toBe(false);
+  });
+
+  it("cleans transient Postgres CSV files when COPY fails", () => {
+    const root = tmpRoot();
+    const outDb = join(root, "reporting.sqlite");
+    const bin = failingCopyPsql(root);
+    const csvTmp = join(root, "csv temp");
+    mkdirSync(csvTmp);
+
+    expect(() =>
+      runExporter(root, join(root, "unused.sqlite"), outDb, {
+        DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory",
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        TMPDIR: csvTmp,
+      }),
+    ).toThrow();
+    expect(existsSync(outDb)).toBe(false);
+    expect(readdirSync(csvTmp)).toEqual([]);
   });
 });

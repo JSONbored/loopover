@@ -265,9 +265,23 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       if (action.closeComment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment);
       await closePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber);
       return;
-    case "update_branch":
-      await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.expectedHeadSha);
+    case "update_branch": {
+      // update_branch does NOT need the accept-flow-level "unpinned → deny" gate that #2377/#2422 added for
+      // approve/merge: it only merges the current BASE into the head (never contributor-controlled content), so
+      // it cannot itself ratify unreviewed code the way an approval or a merge does -- the worst case is a
+      // premature rebase that fires a fresh synchronize and gets re-reviewed on the next pass (#2424). It's also
+      // already covered by the generic guards that run before ANY action class reaches this switch: step 5's
+      // freshness check (`expectedHeadSha ?? ctx.headSha`) denies on a moved head, and the approval-queue
+      // accept-flow's supersede check (agent-approval-queue.ts) is actionClass-agnostic. The `?? ctx.headSha`
+      // fallback below is pure parity/defense-in-depth for the tiny window between that freshness read and this
+      // call, matching the same pattern used by approve/merge immediately above.
+      const updateSha = action.expectedHeadSha ?? ctx.headSha;
+      /* v8 ignore next -- the step-5 freshness guard above already denies the action when
+       * action.expectedHeadSha ?? ctx.headSha is falsy, so updateSha (the same expression) is always a
+       * truthy string here; the ?? undefined only satisfies updatePullRequestBranch's string|undefined type. */
+      await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, updateSha ?? undefined);
       return;
+    }
   }
 }
 

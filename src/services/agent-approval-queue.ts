@@ -1,8 +1,9 @@
 import { getInstallation, getPullRequest, getRepositorySettings, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
-import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
-import { downgradeCloseToHold, downgradeMergeToHold, type PlannedAgentAction } from "../settings/agent-actions";
-import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
 import { createInstallationToken } from "../github/app";
+import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
+import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
+import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
+import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
@@ -10,7 +11,7 @@ import type { AgentPendingActionParams, AgentPendingActionRecord } from "../type
 export type ApprovalDecision = "accept" | "reject";
 
 export type ApprovalDecisionResult = {
-  status: "accepted" | "rejected" | "already_decided" | "not_found";
+  status: "accepted" | "errored" | "rejected" | "already_decided" | "not_found";
   action?: AgentPendingActionRecord;
   // For an accept, the executor outcome of running the staged action (completed / denied / error / dry_run).
   executionOutcome?: string;
@@ -59,16 +60,21 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     });
     return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "head_moved" };
   }
-  // An unpinned staged approve (no expectedHeadSha) cannot be safety-verified against a force-push that
-  // happened during the queue wait: unlike merge's `sha` param (which GitHub 409s on mismatch), the reviews API's
-  // `commit_id` is purely advisory -- GitHub will happily post an APPROVE at any valid commit, current or not.
-  // The check above only fires when a pin EXISTS and disagrees with the live head; a row staged with no pin at
-  // all (e.g. by code predating this head-pinning fix, or a planning pass that ran against a transiently-null
-  // stored head SHA) would otherwise fall through to the executor's `ctx.headSha` fallback and silently approve
-  // whatever commit is live NOW, under the authority of a review that was never actually performed against it.
+  // An unpinned staged approve or merge (no expectedHeadSha) cannot be safety-verified against a force-push that
+  // happened during the queue wait. For a PINNED merge, GitHub's `sha` param 409s on mismatch -- a real backstop.
+  // But that backstop only exists because there's something to compare against; an UNPINNED merge falls back to
+  // performAction's `mergeSha = action.expectedHeadSha ?? ctx.headSha`, which by construction substitutes
+  // whatever head is live right now, so it trivially "matches" and no 409 is possible. The reviews API's
+  // `commit_id` has no server-side staleness rejection at all, pinned or not (#2377). Either way, the check above
+  // only fires when a pin EXISTS and disagrees with the live head; a row staged with no pin at all (e.g. by code
+  // predating this head-pinning fix, or a planning pass that ran against a transiently-null stored head SHA)
+  // would otherwise fall through to the executor's `ctx.headSha` fallback and silently ratify whatever commit is
+  // live NOW, under the authority of a review/merge that was never actually performed against it (#2422).
   // dismissStaleApproval is exempt: it RETRACTS the bot's existing approval rather than granting a new one at a
   // specific commit, so it carries no "ratify unreviewed code" risk and is safe to replay unpinned.
-  if (!stagedHead && pending.actionClass === "approve" && !pending.params.dismissStaleApproval) {
+  const isUnpinnedRatifyingAction =
+    !stagedHead && ((pending.actionClass === "approve" && !pending.params.dismissStaleApproval) || pending.actionClass === "merge");
+  if (isUnpinnedRatifyingAction) {
     await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
     await recordAuditEvent(env, {
       eventType: "agent.pending_action.superseded",
@@ -143,6 +149,58 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   if (holdOnly) plan = downgradeMergeToHold(plan, true);
   if (closeHoldOnly) plan = downgradeCloseToHold(plan, true);
 
+  // Re-validate a staged MERGE against the CURRENT linked-issue hard-rule state (#2132). The hard rule is
+  // evaluated fresh on every planning pass and takes precedence over merge (see planAgentMaintenanceActions),
+  // but a staged merge only replays the PLAN-TIME snapshot — a maintainer relabeling/reassigning the linked
+  // issue between staging and accept (head SHA unchanged, so the check above doesn't catch it) would otherwise
+  // still merge a now-ineligible PR. Mirrors the planner's own owner/automation exemption (closeEligible) so an
+  // owner's staged merge, which the hard rule never blocks in the first place, is not wrongly denied here.
+  // Gated on the POST-downgrade `plan`, not `pending.actionClass`: the precision-breaker downgrade immediately
+  // above can already have replaced a staged merge with a needs-human-review label (downgradeMergeToHold) — that
+  // downgraded plan isn't going to merge anything, so a stale linked-issue violation must not reject the whole
+  // row and suppress the hold label; it only matters while a merge is still the thing about to execute.
+  if (plan.some((action) => action.actionClass === "merge") && pr) {
+    const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
+    const authorLogin = pr.authorLogin ?? "";
+    const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
+    const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+    const closeEligible = (!authorIsOwner && !authorIsAutomationBot) || (authorIsOwner && settings.closeOwnerAuthors === true);
+    if (closeEligible) {
+      const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, pending.repoFullName);
+      // Best-effort mint, same as the #2126 CI/mergeable/review re-check above: a failed mint here does NOT
+      // silently skip the recheck -- resolveLinkedIssueHardRule falls back to env.GITHUB_PUBLIC_TOKEN when
+      // ciToken is undefined and still attempts the fetch, only returning "not violated" if that ALSO can't
+      // gather issue facts. This is the same shared resolver + same fail-open contract the LIVE planning path
+      // (processors.ts) already relies on for the PRIMARY hard-rule decision; holding this SECONDARY, narrow-
+      // race-window recheck to a stricter fail-closed standard would deny otherwise-legitimate merges on every
+      // transient token-mint hiccup without closing a real gap (the executor mints its OWN token independently
+      // for the actual merge mutation, so a suspended/broken installation still fails there regardless).
+      const ciToken = await createInstallationToken(env, pending.installationId).catch(() => undefined);
+      const linkedIssueHardRule = await resolveLinkedIssueHardRule({
+        env,
+        repoFullName: pending.repoFullName,
+        repoOwner,
+        config: linkedIssueRulesConfig,
+        body: pr.body,
+        linkedIssues: pr.linkedIssues,
+        ciToken,
+        installationId: pending.installationId,
+      });
+      if (linkedIssueHardRule?.violated) {
+        await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
+        await recordAuditEvent(env, {
+          eventType: "agent.pending_action.superseded",
+          actor: input.decidedBy,
+          targetKey,
+          outcome: "denied",
+          detail: `superseded merge: linked-issue hard rule now violated — ${linkedIssueHardRule.reason ?? "ineligible linked issue"}`,
+          metadata: { ...baseMetadata, linkedIssueReason: linkedIssueHardRule.reason },
+        });
+        return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "linked_issue_hard_rule" };
+      }
+    }
+  }
+
   const outcomes = await executeAgentMaintenanceActions(
     env,
     {
@@ -159,7 +217,14 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   );
   /* v8 ignore next -- the executor returns one outcome per planned action, so the fallback is defensive. */
   const execOutcome = outcomes[0]?.outcome ?? "no_outcome";
-  await setPendingAgentActionStatus(env, pending.id, { status: "accepted", decidedBy: input.decidedBy });
+  // "error" means performAction threw a real exception (a GitHub-call failure) -- persist "errored" so a
+  // maintainer scanning the queue can see the mutation itself failed, not just that a decision was recorded.
+  // Every OTHER outcome ("completed", "denied", "dry_run", "queued") is a clean result of the executor's own
+  // gates running to a normal conclusion -- "denied" in particular is an intentional policy decision (autonomy no
+  // longer authorizes, dry-run active, a live pre-condition failed cleanly), not a failure, so it correctly stays
+  // "accepted": the maintainer's accept WAS honored, the executor just chose not to act on it (#2423).
+  const finalStatus = execOutcome === "error" ? "errored" : "accepted";
+  await setPendingAgentActionStatus(env, pending.id, { status: finalStatus, decidedBy: input.decidedBy });
   await recordAuditEvent(env, {
     eventType: "agent.pending_action.accepted",
     actor: input.decidedBy,
@@ -168,5 +233,5 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     detail: `accepted ${pending.actionClass} → ${execOutcome}`,
     metadata: { ...baseMetadata, executionOutcome: execOutcome },
   });
-  return { status: "accepted", action: { ...pending, status: "accepted", decidedBy: input.decidedBy }, executionOutcome: execOutcome };
+  return { status: finalStatus, action: { ...pending, status: finalStatus, decidedBy: input.decidedBy }, executionOutcome: execOutcome };
 }

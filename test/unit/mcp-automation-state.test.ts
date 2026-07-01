@@ -3,6 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
+import { mergePullRequest } from "../../src/github/pr-actions";
 import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
@@ -12,6 +13,30 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
   getRepositoryCollaboratorPermission: vi.fn(),
   createInstallationToken: vi.fn(async () => "test-installation-token"),
 }));
+// No test in this file exercises a genuinely successful live mutation (every accept path here is dry-run,
+// rejected, or gate-denied before reaching performAction) except the dedicated #2423 "errored" test below, which
+// needs a controllable throw. Mocked the same shape as agent-approval-queue.test.ts's dedicated unit coverage.
+vi.mock("../../src/github/pr-actions", () => ({
+  createPullRequestReview: vi.fn(async () => ({ id: 1 })),
+  mergePullRequest: vi.fn(async () => ({ merged: true, sha: "merged-sha" })),
+  closePullRequest: vi.fn(async () => ({ state: "closed" })),
+  createIssueComment: vi.fn(async () => ({ id: 2 })),
+}));
+// The executor's step-5 freshness guard otherwise calls the REAL fetchPullRequestFreshness, which needs a live
+// GitHub token/API — unreachable in this test's offline env, so it fails "unavailable" and denies BEFORE the
+// #2423 test below ever reaches performAction. Only that one test needs this; every other accept path here is
+// denied/rejected/dry-run before step 5 is consulted, so defaulting to "current" is inert for them.
+vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
+  return {
+    ...actual,
+    fetchPullRequestFreshness: vi.fn(async (_env: Env, args: { expectedHeadSha?: string | null }) => ({
+      status: "current" as const,
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+    })),
+  };
+});
 // decidePendingAgentAction's accept-time live re-check (#2126) needs these off-network, deterministic here — the
 // dedicated staleness-supersede test coverage lives in agent-approval-queue.test.ts, not this MCP-surface file.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
@@ -378,7 +403,7 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
 
     const client = await connect(env);
     const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
@@ -386,6 +411,27 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
     expect(data.status).toBe("accepted");
     expect(data.executionOutcome).toBe("dry_run");
     expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
+  });
+
+  it("REGRESSION (#2423): reports status=errored (not accepted) and a distinct summary when the live mutation throws", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    vi.mocked(mergePullRequest).mockRejectedValueOnce(new Error("GitHub 500"));
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    const data = result.structuredContent as { status: string; executionOutcome: string };
+    expect(data.status).toBe("errored");
+    expect(data.executionOutcome).toBe("error");
+    expect(JSON.stringify(result)).toMatch(/execution errored/);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("errored");
   });
 
   it("denies a static MCP-token caller from deciding a pending action when the repo is not allowlisted (#2253)", async () => {

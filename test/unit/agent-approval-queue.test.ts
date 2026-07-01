@@ -34,11 +34,22 @@ vi.mock("../../src/github/backfill", async (importOriginal) => ({
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
 }));
+// resolveLinkedIssueHardRule defaults to the REAL implementation, which is a safe no-op here: loadLinkedIssueHardRules
+// (also real, unmocked) always returns the all-off default config, so the real resolver returns undefined (not
+// violated) without any GitHub fetch. Individual tests override it to exercise the accept-time recheck (#2132).
+vi.mock("../../src/review/linked-issue-hard-rules", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/review/linked-issue-hard-rules")>();
+  return {
+    ...actual,
+    resolveLinkedIssueHardRule: vi.fn(actual.resolveLinkedIssueHardRule),
+  };
+});
 
 import { createPullRequestReview, mergePullRequest } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../../src/github/backfill";
+import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-rules";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import { decidePendingAgentAction } from "../../src/services/agent-approval-queue";
 import {
@@ -129,7 +140,7 @@ describe("agent approval queue (#779)", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted");
@@ -170,6 +181,27 @@ describe("agent approval queue (#779)", () => {
     expect(result.executionOutcome).toBe("completed");
     // Pinned to the REVIEWED head from the staged params — not merely whatever the current head happens to be.
     expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+  });
+
+  it("REGRESSION (#2422): accept denies a merge staged with NO reviewed-head pin, rather than silently merging whatever commit is currently live", async () => {
+    // Unlike a PINNED merge, where GitHub's `sha` param 409s on mismatch (a real backstop), an UNPINNED merge
+    // falls back to performAction's `mergeSha = action.expectedHeadSha ?? ctx.headSha`, which by construction
+    // substitutes the current live head -- no mismatch is possible, so the 409 backstop never fires. This is the
+    // same class of gap #2377 closed for approve; the identical accept-flow gate now covers merge too.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-UNREVIEWED" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("unpinned_legacy_action");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("no reviewed-head pin");
   });
 
   it("accept executes a staged approve when the staged head still matches the live head, pinned to the reviewed SHA (#2262)", async () => {
@@ -336,6 +368,29 @@ describe("agent approval queue (#779)", () => {
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
   });
 
+  it("REGRESSION: a precision-breaker-downgraded merge still executes the hold/label plan even when the linked issue would now violate the hard rule", async () => {
+    // Before the fix, the linked-issue recheck gated on pending.actionClass (the ORIGINAL staged class), not the
+    // post-downgrade plan -- so a merge already downgraded to a needs-human-review label by the #2127 precision
+    // breaker above would still get its whole row rejected on a stale linked-issue violation, silently swallowing
+    // the hold label the breaker was supposed to guarantee.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", label: "auto" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs." });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    // The merge-precision breaker engages fleet-wide AFTER this merge was staged — same as the #2127 test above.
+    await env.DB.prepare("INSERT INTO system_flags (key, value) VALUES (?, ?)").bind("holdonly:owner/repo", "true").run();
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
+    // The recheck must not even run once the plan no longer contains a merge -- there's nothing left to validate.
+    expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
+  });
+
   it("accept executes a staged merge normally when the precision breaker is off", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
@@ -446,6 +501,108 @@ describe("agent approval queue (#779)", () => {
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 8, "gittensory:needs-human-review", { createMissingLabel: true });
   });
 
+  it("accept supersedes a staged merge when the linked issue trips a hard rule after staging (#2132)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    // Staged against a CONTRIBUTOR PR whose linked issue was eligible at plan time; between staging and accept
+    // another maintainer relabeled the linked issue (head SHA unchanged, so the freshness check above misses it).
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "Linked issue #9 is labeled `maintainer-only` — it is not open for community PRs." });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("linked_issue_hard_rule");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("maintainer-only");
+  });
+
+  it("accept executes a staged merge when the linked issue remains eligible", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: false, reason: null });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+  });
+
+  it("accept still executes when the linked-issue recheck's own token mint fails — fails OPEN, ciToken passed as undefined (#2132)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: false, reason: null });
+    // First call is the #2126 merge-live-recheck's own token mint (succeeds); the second is this new linked-issue
+    // recheck's token mint, which fails here. The executor mints its own token for the actual mutation
+    // independently, so this transient failure must fail open on THIS check specifically, not block the accept.
+    vi.mocked(createInstallationToken).mockResolvedValueOnce("test-installation-token").mockRejectedValueOnce(new Error("installation suspended"));
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+    expect(vi.mocked(resolveLinkedIssueHardRule)).toHaveBeenCalledWith(expect.objectContaining({ ciToken: undefined }));
+  });
+
+  it("accept supersedes with a fallback reason when the hard-rule result omits one", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: null });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("linked_issue_hard_rule");
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string }>();
+    expect(audit?.detail).toContain("ineligible linked issue");
+  });
+
+  it("accept tolerates a slash-less repoFullName and a missing PR author login (defensive fallbacks)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { merge: "auto_with_approval" } });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "solorepo", full_name: "solorepo", private: false, owner: { login: "owner" } }],
+    });
+    // No `user` on the payload → authorLogin stored null; repoFullName has no "/" → repoOwner falls back to "".
+    await upsertPullRequestFromGitHub(env, "solorepo", { number: 7, title: "PR", state: "open", head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "solorepo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "solorepo", 7, { mergeMethod: "squash", sha: "h7" });
+  });
+
+  it("accept does not consult the linked-issue hard rule for an owner-authored staged merge (mirrors the planner's closeEligible exemption)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    // Author IS the repo owner ("owner/repo" → owner login "owner"); closeOwnerAuthors defaults false, so the
+    // hard rule must never even be consulted for this PR, regardless of what it would say.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "owner" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "would have violated, but must not even be checked" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+    expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
+  });
+
   it("accept does not supersede when the PR record is absent (no live head to compare) — proceeds to the executor", async () => {
     const env = createTestEnv({});
     // No PR seeded → getPullRequest returns null → pr?.headSha is undefined, so the staleness guard is skipped
@@ -464,7 +621,7 @@ describe("agent approval queue (#779)", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted");
@@ -477,7 +634,7 @@ describe("agent approval queue (#779)", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { approve: "auto" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted");
@@ -512,12 +669,32 @@ describe("agent approval queue (#779)", () => {
   it("accept records error when the staged action cannot execute (no write permission)", async () => {
     const env = createTestEnv({});
     // No settings/installation seeded → autonomy is empty + no pull_requests:write → the merge is denied.
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted"); // the decision is recorded...
     expect(result.executionOutcome).toBe("denied"); // ...but the action could not run
     expect(mergePullRequest).not.toHaveBeenCalled();
     expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>())?.outcome).toBe("error");
+  });
+
+  it("REGRESSION (#2423): accept persists status=errored, not accepted, when the executor's mutation call throws", async () => {
+    // Distinct from the "no write permission" test above: there, the executor's own gates cleanly DENY before
+    // ever attempting a mutation -- a legitimate, intentional non-action, correctly recorded as "accepted". Here
+    // every gate passes and the executor genuinely ATTEMPTS the GitHub call, which fails -- that failure must not
+    // read the same as a quiet, uneventful success in the approval-queue listing.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    vi.mocked(mergePullRequest).mockRejectedValueOnce(new Error("GitHub 500"));
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("errored");
+    expect(result.executionOutcome).toBe("error");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("errored");
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.accepted").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("error");
   });
 
   it("actionParams extracts only the field for the action class", () => {

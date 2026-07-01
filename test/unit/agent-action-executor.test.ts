@@ -103,6 +103,18 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
   });
 
+  it("REGRESSION (#2424): LIVE update_branch falls back to ctx.headSha when the action carries no expectedHeadSha of its own", async () => {
+    // The `updateBranch` fixture above is pre-pinned (expectedHeadSha: "sha7"), so the big LIVE test never
+    // exercises the `?? ctx.headSha` fallback -- it's parity with approve/merge for the tiny window between
+    // step 5's freshness read and this call, matching a live sweep's construction (processors.ts:2196-2202
+    // always sets expectedHeadSha, but the fallback exists for any future/legacy caller that omits it).
+    const env = createTestEnv({});
+    const unpinnedUpdateBranch: PlannedAgentAction = { actionClass: "update_branch", requiresApproval: false, reason: "behind base" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ headSha: "sha7" }), [unpinnedUpdateBranch]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
+  });
+
   it("LIVE approve with dismissStaleApproval retracts the stale review instead of posting a new one (#2254)", async () => {
     const env = createTestEnv({});
     const dismiss: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "stale approval retracted", dismissStaleApproval: true };

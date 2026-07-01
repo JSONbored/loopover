@@ -2370,6 +2370,70 @@ async function ciReReviewCoalesced(
   );
 }
 
+// Issue-side wake coalescing (#2371): a DEDICATED key namespace, distinct from ciReReviewCoalesced's
+// `ci-coalesce:` window. The two triggers are semantically different — CI-completion webhooks for the same run
+// are interchangeable (whichever wins the race re-fetches the SAME already-settled CI state), but an issue-side
+// label/assignment change is not: a completely unrelated CI re-review claiming the shared window would silently
+// suppress a genuinely different issue-side signal, leaving the PR on stale linked-issue state until the window
+// expires or the sweep eventually reaches it. Reusing ciReReviewCoalesced's key made that cross-domain collision
+// possible; a separate namespace confines coalescing to a burst of same-PR issue-side events.
+async function issueLinkedPrReReviewCoalesced(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+): Promise<boolean> {
+  return ciCompletionCoalesced(
+    env,
+    `issue-link-coalesce:${repoFullName.toLowerCase()}#${prNumber}`,
+  );
+}
+
+// Unlike CI-completion events, same-PR issue-side events are NOT interchangeable within the coalesce window: an
+// add-then-remove label or assign-then-unassign sequence carries genuinely DIFFERENT states, so silently dropping
+// every event after the first (as ciCompletionCoalesced's plain throttle does) can leave the PR on a stale
+// verdict for up to the window's length. Schedule exactly ONE trailing agent-regate-pr re-review to run just
+// after the window closes, guaranteeing the LATEST state is always eventually captured — deduped (its own
+// window, same TTL) so a burst of N coalesced events schedules ONE trailing job, not N. Reuses the existing
+// agent-regate-pr sweep-unit job (already rate-limit-aware and retried), not a new job type (#2371).
+async function scheduleTrailingIssueLinkedReReview(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<void> {
+  const key = `issue-link-trailing:${repoFullName.toLowerCase()}#${prNumber}`;
+  // Check-then-claim, but the CLAIM only happens after the send actually succeeds (#2371 follow-up): claiming
+  // eagerly (as ciCompletionCoalesced's own combined check-and-set does) would record "a trailing re-review is
+  // scheduled" even when the enqueue itself throws, permanently swallowing the guarantee this function exists to
+  // provide for the rest of the window — a later coalesced event would see the marker held and skip retrying,
+  // even though nothing was actually queued.
+  if (await getTransientKey(env, key)) return;
+  try {
+    await env.JOBS.send(
+      {
+        type: "agent-regate-pr",
+        deliveryId,
+        repoFullName,
+        prNumber,
+        installationId,
+      },
+      { delaySeconds: CI_COALESCE_WINDOW_SECONDS },
+    );
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        ev: "issue_link_trailing_enqueue_failed",
+        repoFullName,
+        pull: prNumber,
+        message: errorMessage(error).slice(0, 120),
+      }),
+    );
+    return; // do NOT claim — a later coalesced event in this window should retry the enqueue
+  }
+  await putTransientKey(env, key, "1", CI_COALESCE_WINDOW_SECONDS);
+}
+
 async function ciHeadShaResolutionCoalesced(
   env: Env,
   repoFullName: string,
@@ -2657,6 +2721,73 @@ async function maybeReReviewOnCiCompletion(
     for (const prNumber of prNumbers) {
       // Coalesce the CI-completion storm: skip if this PR was re-reviewed within the window.
       if (await ciReReviewCoalesced(env, repoFullName, prNumber)) continue;
+      await reReviewStoredPullRequest(
+        env,
+        deliveryId,
+        installationId,
+        repoFullName,
+        prNumber,
+      );
+    }
+  }
+  await recordWebhookEvent(env, {
+    deliveryId,
+    eventName,
+    action: payload.action,
+    installationId,
+    repositoryFullName: repoFullName,
+    payloadHash: "processed",
+    status: "processed",
+  });
+  return true;
+}
+
+/**
+ * Wake linked PRs on an issue-side signal (#2259). Labeling/unlabeling (e.g. maintainer-only) or
+ * assigning/unassigning on a linked ISSUE can flip a linked-issue hard-rule verdict, but that only gets
+ * re-evaluated when the PR ITSELF receives a webhook or the staleness-ordered sweep eventually reaches it —
+ * which can lag for many cycles on a repo with more than a few open PRs. Re-review every OPEN PR that links
+ * this issue promptly instead of waiting. Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
+ * DISTINCT from CI-completion's — #2371): the two triggers are not interchangeable, so a shared window let an
+ * unrelated CI re-review silently suppress a genuinely different issue-side signal. Within the issue-side
+ * window itself, same-PR events are ALSO not interchangeable (an add-then-remove or assign-then-unassign
+ * sequence carries genuinely different states), so a coalesced event schedules a trailing re-review
+ * (scheduleTrailingIssueLinkedReReview) instead of silently dropping the state it represents.
+ */
+async function maybeReReviewOnLinkedIssueChange(
+  env: Env,
+  deliveryId: string,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  if (eventName !== "issues") return false;
+  if (
+    payload.action !== "labeled" &&
+    payload.action !== "unlabeled" &&
+    payload.action !== "assigned" &&
+    payload.action !== "unassigned"
+  )
+    return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  const issueNumber = payload.issue?.number;
+  if (!repoFullName || !installationId || !issueNumber) return false;
+  if (isConvergenceRepoAllowed(env, repoFullName)) {
+    const openPullRequests = await listOpenPullRequests(env, repoFullName);
+    const linkingPrNumbers = openPullRequests
+      .filter((pr) => pr.linkedIssues.includes(issueNumber))
+      .map((pr) => pr.number);
+    for (const prNumber of linkingPrNumbers) {
+      if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
+        await scheduleTrailingIssueLinkedReReview(
+          env,
+          deliveryId,
+          installationId,
+          repoFullName,
+          prNumber,
+        );
+        continue;
+      }
       await reReviewStoredPullRequest(
         env,
         deliveryId,
@@ -3562,6 +3693,13 @@ async function processGitHubWebhook(
     // deployment_status (preview deploy finished) → re-review so the visual before/after capture fills in.
     if (
       await maybeCaptureOnDeploymentStatus(env, deliveryId, eventName, payload)
+    )
+      return;
+    // Linked-issue label/assignment change (#2259) — an `issues` event carries no `payload.pull_request` either,
+    // so it must be handled here alongside the other non-PR wake triggers: it re-reviews every open PR that
+    // links this issue promptly, instead of waiting for a PR-side webhook or the staleness-ordered sweep.
+    if (
+      await maybeReReviewOnLinkedIssueChange(env, deliveryId, eventName, payload)
     )
       return;
 

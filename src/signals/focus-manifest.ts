@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
+import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
@@ -98,6 +99,7 @@ export type FocusManifestSettings = Partial<
     | "autoMaintain"
     | "agentPaused"
     | "agentDryRun"
+    | "commandAuthorization"
     | "contributorBlacklist"
     | "blacklistLabel"
   >
@@ -640,6 +642,22 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   // field) and overlays the DB value via the resolver. Only a mapping is honoured; anything else is ignored.
   if (typeof r.autoMaintain === "object" && r.autoMaintain !== null && !Array.isArray(r.autoMaintain)) {
     out.autoMaintain = normalizeAutoMaintainPolicy(r.autoMaintain);
+  }
+  // Command authorization policy (#2268 config-as-code parity): `settings.commandAuthorization` declares the
+  // full role policy the same way `autoMaintain` does — the normalizer fills any unset/invalid FIELD from
+  // DEFAULT_COMMAND_AUTHORIZATION_POLICY, so a partially-valid mapping yields a complete, safe policy that
+  // overlays the DB value via the resolver's `{...dbSettings, ...manifest.settings}` spread. But an invalid
+  // TOP-LEVEL shape (not a mapping at all) is a different case: normalizeCommandAuthorizationPolicy's own
+  // fallback there is meant for callers with no DB value to fall back to, not for this overlay — applying it
+  // here would let a typo'd config silently overwrite a stricter DB-persisted policy with the built-in
+  // default. So only apply the normalized policy when the raw value was actually a mapping; otherwise warn
+  // and leave `out.commandAuthorization` unset so the resolver preserves whatever the DB already has.
+  if (typeof r.commandAuthorization === "object" && r.commandAuthorization !== null && !Array.isArray(r.commandAuthorization)) {
+    const { policy, warnings: commandAuthorizationWarnings } = normalizeCommandAuthorizationPolicy(r.commandAuthorization);
+    warnings.push(...commandAuthorizationWarnings);
+    out.commandAuthorization = policy;
+  } else if (r.commandAuthorization !== undefined) {
+    warnings.push(`Manifest "settings.commandAuthorization" must be an object; ignoring it and keeping any existing policy.`);
   }
   // Contributor blacklist (#1425): `settings.contributorBlacklist` is a list of banned-login entries. Only set it
   // when at least one VALID entry survives normalization, so a malformed block never blanks the DB-configured

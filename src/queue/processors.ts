@@ -2314,7 +2314,15 @@ async function putTransientKey(
 // deliveries can never both win the claim — a short TTL, best-effort release. A lock-contended caller fails
 // OPEN (returns false / skips this pass) rather than blocking — the delivery holding the lock is evaluating
 // the SAME PR, and the periodic sweep is the backstop if this specific trigger is dropped.
-const PR_ACTUATION_LOCK_TTL_SECONDS = 60;
+//
+// KNOWN LIMITATION: the lock value is a constant, not a per-holder ownership token, so release does not verify
+// it still owns the key — if a holder ran past the TTL, a later claimer's live lock could be deleted by the
+// first holder's stale `finally` release, reopening the exact race this mutex exists to close. A per-holder
+// token + a conditional (check-then-delete) release would close this properly, but needs a new atomic
+// compare-and-delete primitive on the cache adapter — tracked alongside the Durable Object follow-up above. The
+// TTL is set generously long specifically so this window is practically unreachable: the guarded operations
+// (a handful of sequential GitHub API calls) should never legitimately run anywhere near this long.
+const PR_ACTUATION_LOCK_TTL_SECONDS = 600;
 function prActuationLockKey(repoFullName: string, prNumber: number): string {
   return `pr-actuation-lock:${repoFullName.toLowerCase()}#${prNumber}`;
 }

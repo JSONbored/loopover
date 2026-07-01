@@ -3234,7 +3234,7 @@ async function githubGraphQl<T>(
   token: string,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<T> {
-  const response = await fetchCachedGitHubGraphQl(query, token);
+  const response = await fetchCachedGitHubGraphQl(query, token, admissionKey);
   if (!isGitHubResponseCacheReplay(response)) {
     await recordGitHubResponse(env, null, "/graphql", response, "graphql", admissionKey);
   }

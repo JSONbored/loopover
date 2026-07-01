@@ -11,7 +11,9 @@ import {
 import {
   clearGitHubResponseCacheForTest,
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
+  githubRateLimitAdmissionKeyForInstallation,
   isGitHubResponseCacheReplay,
+  latestGitHubRestRateLimitObservation,
   setGitHubResponseCache,
   type CachedGitHubResponse,
 } from "../../src/github/client";
@@ -92,6 +94,36 @@ describe("graphql cache allowlist", () => {
 });
 
 describe("fetchCachedGitHubGraphQl", () => {
+  it("passes admission keys through on live GraphQL fetches", async () => {
+    clearGitHubResponseCacheForTest();
+    const admissionKey = githubRateLimitAdmissionKeyForInstallation(123);
+    vi.stubGlobal("fetch", async () =>
+      Response.json(
+        { data: { repository: { pullRequest: { title: "live" } } } },
+        { headers: { "x-ratelimit-remaining": "4200", "x-ratelimit-reset": "1782802800" } },
+      ),
+    );
+
+    await fetchCachedGitHubGraphQl(MUTABLE_QUERY, "token-a", admissionKey);
+
+    expect(latestGitHubRestRateLimitObservation(admissionKey)).toMatchObject({ remaining: 4200 });
+  });
+
+  it("passes admission keys through on cacheable GraphQL cold misses", async () => {
+    installMemoryResponseCache();
+    const admissionKey = githubRateLimitAdmissionKeyForInstallation(456);
+    vi.stubGlobal("fetch", async () =>
+      Response.json(
+        { data: { repository: { issues: { totalCount: 1 } } } },
+        { headers: { "x-ratelimit-remaining": "4100", "x-ratelimit-reset": "1782802800" } },
+      ),
+    );
+
+    await fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a", admissionKey);
+
+    expect(latestGitHubRestRateLimitObservation(admissionKey)).toMatchObject({ remaining: 4100 });
+  });
+
   it("serves a cache hit on the second identical totals query and skips duplicate network calls", async () => {
     const store = installMemoryResponseCache();
     let fetches = 0;

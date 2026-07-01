@@ -1,15 +1,15 @@
 import {
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
   getGitHubResponseCache,
-  isRateLimitedResponse,
-  rateLimitRetryMs,
+  timeoutFetch,
   type CachedGitHubResponse,
+  type GitHubRateLimitAdmissionKey,
+  type GitHubTimeoutFetchInit,
 } from "./client";
 import { incr } from "../selfhost/metrics";
 
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 const GITHUB_GRAPHQL_CACHE_METRIC = "gittensory_github_graphql_cache_total";
-const GITHUB_FETCH_TIMEOUT_MS = 12_000;
 const DEFAULT_GRAPHQL_TTL_SECONDS = 10 * 60;
 
 export type GitHubGraphQlCacheClass = "repo_totals" | "contributor_activity";
@@ -75,28 +75,26 @@ function responseFromCached(hit: CachedGitHubResponse, replayKind: "hit" | "coal
   return new Response(hit.body, { status: hit.status, headers });
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+function graphQlFetchInit(query: string, token: string, admissionKey?: GitHubRateLimitAdmissionKey): GitHubTimeoutFetchInit {
+  return {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      "content-type": "application/json",
+      "user-agent": "gittensory/0.1",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ query }),
+    ...(admissionKey ? { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: admissionKey } : {}),
+  };
+}
 
-const GITHUB_RATE_LIMIT_MAX_RETRIES = 3;
-
-async function fetchGraphQlWithRetry(query: string, token: string): Promise<Response> {
-  let response: Response;
-  for (let attempt = 0; ; attempt += 1) {
-    response = await fetch(GITHUB_GRAPHQL_URL, {
-      method: "POST",
-      headers: {
-        accept: "application/vnd.github+json",
-        "content-type": "application/json",
-        "user-agent": "gittensory/0.1",
-        authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
-    });
-    if (attempt >= GITHUB_RATE_LIMIT_MAX_RETRIES || !(await isRateLimitedResponse(response))) break;
-    await sleep(rateLimitRetryMs(response, attempt));
-  }
-  return response;
+async function fetchGraphQlWithRetry(
+  query: string,
+  token: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<Response> {
+  return timeoutFetch(GITHUB_GRAPHQL_URL, graphQlFetchInit(query, token, admissionKey));
 }
 
 async function fetchAndMaybeCacheGraphQl(
@@ -104,8 +102,9 @@ async function fetchAndMaybeCacheGraphQl(
   token: string,
   cacheKey: string,
   cls: GitHubGraphQlCacheClass,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<{ response: Response; cached: CachedGitHubResponse | null }> {
-  const response = await fetchGraphQlWithRetry(query, token);
+  const response = await fetchGraphQlWithRetry(query, token, admissionKey);
   if (response.status !== 200) return { response, cached: null };
   try {
     const body = await response.clone().text();
@@ -127,13 +126,17 @@ async function fetchAndMaybeCacheGraphQl(
 const inFlightGraphQlPosts = new Map<string, Promise<CachedGitHubResponse | null>>();
 
 /** Auth-aware shared cache for allowlisted stable GitHub GraphQL POST reads. */
-export async function fetchCachedGitHubGraphQl(query: string, token: string): Promise<Response> {
+export async function fetchCachedGitHubGraphQl(
+  query: string,
+  token: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<Response> {
   const cache = getGitHubResponseCache();
   const cls = graphqlCacheClassForQuery(query);
   const useCache = cache !== null && cls !== null;
   if (!useCache) {
     recordGraphQlCacheMetric("bypassed", cls ?? "sensitive");
-    return fetchGraphQlWithRetry(query, token);
+    return fetchGraphQlWithRetry(query, token, admissionKey);
   }
 
   const cacheKey = await graphqlCacheKey(query, token);
@@ -156,7 +159,7 @@ export async function fetchCachedGitHubGraphQl(query: string, token: string): Pr
     if (replay) return responseFromCached(replay, "coalesced");
   }
 
-  const request = fetchAndMaybeCacheGraphQl(query, token, cacheKey, cls).then(
+  const request = fetchAndMaybeCacheGraphQl(query, token, cacheKey, cls, admissionKey).then(
     (result) => ({ ok: true as const, result }),
     (error: unknown) => ({ ok: false as const, error }),
   );

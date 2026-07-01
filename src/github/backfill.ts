@@ -2687,8 +2687,12 @@ function isTrustedScannerReviewThreadAuthor(login: string | null | undefined): b
   return typeof login === "string" && TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS.has(login.toLowerCase());
 }
 
-function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
-  return /\bgittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
+// Match only OUR OWN app bot login (a `gittensory` / `gittensory-orb[bot]` PREFIX), never a third-party slug
+// that merely ENDS in `-gittensory[bot]`. Anchored to `^`: a `\b` boundary also fires after a hyphen, so the
+// prior `\bgittensory…` misclassified e.g. `evil-gittensory[bot]` as our own author and dropped its
+// review-thread comment as a self-authored non-blocker (fail-open) instead of evaluating it as external.
+export function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
+  return /^gittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
 }
 
 /** The deterministic linked-issue facts the hard-rule evaluator needs (labels / assignees / open-state). */

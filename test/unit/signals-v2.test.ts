@@ -1774,6 +1774,19 @@ describe("hasClearNoIssueRationale test-only spelling", () => {
   });
 });
 
+describe("hasClearNoIssueRationale refactor-only spelling", () => {
+  it("recognizes hyphenated and spaced refactor-only rationales", () => {
+    expect(hasClearNoIssueRationale({ title: "refactor only: split helper", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "refactor-only: split helper", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "Rename queue module", body: "This is a refactor only rename." })).toBe(true);
+  });
+
+  it("still rejects unrelated PR text that mentions refactors without a rationale", () => {
+    expect(hasClearNoIssueRationale({ title: "Refactor queue processor", body: "Extracts shared helper." })).toBe(false);
+    expect(hasClearNoIssueRationale({ title: "Improve signal engine structure", body: "" })).toBe(false);
+  });
+});
+
 function snapshot(
   id: string,
   repositories: Array<{

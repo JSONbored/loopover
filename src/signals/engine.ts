@@ -4977,8 +4977,9 @@ export function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "
   // `docs? only` missed the hyphen, so a docs-only PR with no linked issue was wrongly denied a clear
   // no-issue rationale and hard-blocked under `linkedIssueGateMode === "block"`.
   // `tests?[\s-]+only` extends the same rule to test-only PRs (regression/coverage-only diffs) — parallel
-  // to the docs-only hyphenation fix merged in #1905.
-  return /\b(?:no issue\s*(?:because\b|:)|no linked issue\s*(?:because\b|:)|no ticket\s*(?:because\b|:)|(?:maintenance|docs?[\s-]+only|tests?[\s-]+only|typo|chore|cleanup)\b)/i.test([pr.title, pr.body ?? ""].join(" "));
+  // to the docs-only hyphenation fix merged in #1905 and the test-only follow-up in #1993.
+  // `refactor[\s-]+only` covers internal refactors with no behavior change using the same spelling.
+  return /\b(?:no issue\s*(?:because\b|:)|no linked issue\s*(?:because\b|:)|no ticket\s*(?:because\b|:)|(?:maintenance|docs?[\s-]+only|tests?[\s-]+only|refactor[\s-]+only|typo|chore|cleanup)\b)/i.test([pr.title, pr.body ?? ""].join(" "));
 }
 
 function hasValidationNote(value: string): boolean {

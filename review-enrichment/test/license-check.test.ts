@@ -32,21 +32,31 @@ test("scanLicenses flags copyleft and unknown licenses while ignoring permissive
     ["permissive-lib", ["MIT", "Apache-2.0"]],
     ["copyleft-lib", ["GPL-3.0-only"]],
     ["unknown-lib", ["NOASSERTION"]],
+    ["@scope/encoded", ["BSD-3-Clause"]],
   ]);
+  const urls = [];
 
   const findings = await scanLicenses(
     req([
       npmAdd("permissive-lib"),
       npmAdd("copyleft-lib"),
       npmAdd("unknown-lib"),
+      npmAdd("@scope/encoded", "2.0.0"),
     ]),
     async (url) => {
+      urls.push(String(url));
       const match = /\/packages\/([^/]+)\/versions\//.exec(String(url));
       const packageName = decodeURIComponent(match?.[1] ?? "");
       return jsonResponse({ licenses: responses.get(packageName) ?? [] });
     },
   );
 
+  assert.deepEqual(urls, [
+    "https://api.deps.dev/v3/systems/npm/packages/permissive-lib/versions/1.0.0",
+    "https://api.deps.dev/v3/systems/npm/packages/copyleft-lib/versions/1.0.0",
+    "https://api.deps.dev/v3/systems/npm/packages/unknown-lib/versions/1.0.0",
+    "https://api.deps.dev/v3/systems/npm/packages/%40scope%2Fencoded/versions/2.0.0",
+  ]);
   assert.deepEqual(findings, [
     {
       ecosystem: "npm",
@@ -136,6 +146,10 @@ test("scanLicenses does not fetch or flag when no dependency version changed", a
       {
         path: "README.md",
         patch: "@@ -1,0 +1,1 @@\n+not a manifest",
+      },
+      {
+        path: "package.json",
+        patch: '@@ -1,0 +1,1 @@\n+  "workspace-lib": "workspace:*"',
       },
     ]),
     async () => {

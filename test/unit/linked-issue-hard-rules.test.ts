@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
+import * as backfillModule from "../../src/github/backfill";
 import {
   DEFAULT_LINKED_ISSUE_HARD_RULES,
   evaluateLinkedIssueHardRules,
@@ -301,5 +302,16 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", body: "closes #1", linkedIssues: [1] }));
     expect(r).toBeDefined();
     expect(typeof r?.violated).toBe("boolean");
+  });
+
+  it("derives the installation admission key from the ci token + installation id so installation reads attribute to the installation bucket, not 'unknown' (#1951 blocker)", async () => {
+    const spy = vi.spyOn(backfillModule, "fetchLinkedIssueFacts").mockResolvedValue(undefined);
+    await resolveLinkedIssueHardRule(
+      args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", installationId: 143010787, linkedIssues: [7] }),
+    );
+    // The key is DERIVED from the token it will actually read with (so it can never drift): a non-public token +
+    // finite installation id ⇒ the installation bucket, NOT undefined (which the metrics record as "unknown").
+    expect(spy).toHaveBeenCalledWith(expect.anything(), "owner/repo", 7, "installation-token", "installation:143010787");
+    spy.mockRestore();
   });
 });

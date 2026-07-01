@@ -1,5 +1,6 @@
 import { createInstallationToken } from "./app";
 import { fetchLivePullRequest } from "./backfill";
+import { githubRateLimitAdmissionKeyForToken } from "./client";
 import type { GitHubPullRequestPayload } from "../types";
 
 export type PullRequestFreshness =
@@ -66,7 +67,8 @@ export async function fetchPullRequestFreshness(
     (await createInstallationToken(env, args.installationId).catch(() => undefined)) ??
     env.GITHUB_PUBLIC_TOKEN;
   if (!token) return classifyPullRequestFreshness(undefined, args.expectedHeadSha);
-  const live = await fetchLivePullRequest(env, args.repoFullName, args.pullNumber, token);
+  const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, args.installationId);
+  const live = await fetchLivePullRequest(env, args.repoFullName, args.pullNumber, token, admissionKey);
   return classifyPullRequestFreshness(live, args.expectedHeadSha);
 }
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { hostname } from "node:os";
 
 // Mock @sentry/node so the dynamic import inside initSentry() resolves to spies. Hoisted so vi.mock can see it.
 const mocks = vi.hoisted(() => {
@@ -334,13 +335,18 @@ describe("enabled when SENTRY_DSN is set", () => {
       SENTRY_ENVIRONMENT: "staging",
       SENTRY_RELEASE: "v9",
       SENTRY_TRACES_SAMPLE_RATE: "0.5",
-      PUBLIC_API_ORIGIN: "https://self.host",
+      SENTRY_SERVER_NAME: "gittensory-us-east",
     } as unknown as NodeJS.ProcessEnv);
     const opts = mocks.init.mock.calls[0]![0];
     expect(opts.environment).toBe("staging");
     expect(opts.release).toBe("v9");
     expect(opts.tracesSampleRate).toBe(0.5);
-    expect(opts.serverName).toBe("https://self.host");
+    expect(opts.serverName).toBe("gittensory-us-east");
+  });
+
+  it("defaults serverName to the OS hostname (not the API-origin URL) when SENTRY_SERVER_NAME is unset/blank", async () => {
+    await initSentry({ SENTRY_DSN: "d", SENTRY_SERVER_NAME: "  ", PUBLIC_API_ORIGIN: "https://self.host" } as unknown as NodeJS.ProcessEnv);
+    expect(mocks.init.mock.calls[0]![0].serverName).toBe(hostname());
   });
 
   it("uses the image-baked version as the release fallback and ignores blank overrides", async () => {

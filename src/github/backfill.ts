@@ -68,7 +68,13 @@ import {
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
-import { isGitHubResponseCacheReplay, timeoutFetch } from "./client";
+import {
+  githubRateLimitAdmissionKeyForPublicToken,
+  githubRateLimitAdmissionKeyForToken,
+  isGitHubResponseCacheReplay,
+  timeoutFetch,
+  type GitHubRateLimitAdmissionKey,
+} from "./client";
 
 type GitHubLabelPayload = {
   name: string;
@@ -315,6 +321,24 @@ const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
 const repoGithubTotalsRefreshes = new Map<string, Promise<RepoGithubTotalsSnapshotRecord | undefined>>();
 
+function repoInstallationPayload(repo: RepositoryRecord): { installationId?: number } {
+  return typeof repo.installationId === "number" ? { installationId: repo.installationId } : {};
+}
+
+function repoAdmissionKeyForToken(
+  env: Env,
+  repo: RepositoryRecord,
+  token: string | undefined,
+): GitHubRateLimitAdmissionKey | undefined {
+  return githubRateLimitAdmissionKeyForToken(env, token, repo.installationId);
+}
+
+type GitHubRateLimitOptions = { rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey };
+
+function githubRateLimitOptions(admissionKey: GitHubRateLimitAdmissionKey | undefined): GitHubRateLimitOptions {
+  return admissionKey ? { rateLimitAdmissionKey: admissionKey } : {};
+}
+
 export async function backfillRegisteredRepositories(
   env: Env,
   options: { repoFullName?: string; limits?: Partial<BackfillLimits>; requestedBy?: string; force?: boolean; mode?: BackfillMode } = {},
@@ -426,7 +450,7 @@ export async function enqueueRepositoryOpenDataBackfill(
   await Promise.all(
     segments.map((segment, index) =>
       env.JOBS.send(
-        { type: "backfill-repo-segment", requestedBy: options.requestedBy, repoFullName: repo.fullName, segment, mode, ...(options.force === undefined ? {} : { force: options.force }) },
+        { type: "backfill-repo-segment", requestedBy: options.requestedBy, repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment, mode, ...(options.force === undefined ? {} : { force: options.force }) },
         { delaySeconds: index * 15 },
       ),
     ),
@@ -464,7 +488,7 @@ export async function backfillRepositorySegment(
       errorSummary: `Waiting for GitHub rate limit reset at ${resetAt}.`,
     });
     await env.JOBS.send(
-      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, segment: options.segment, mode, force: true },
+      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment: options.segment, mode, force: true },
       { delaySeconds: delayUntil(resetAt) },
     );
     return segmentJobResult(repo.fullName, options.segment, segment);
@@ -481,12 +505,12 @@ export async function backfillRepositorySegment(
   if ((result.status === "running" || result.status === "waiting_rate_limit") && (options.segment === "labels" || options.segment === "open_issues" || options.segment === "open_pull_requests")) {
     const delaySeconds = result.status === "waiting_rate_limit" && result.segment.rateLimitResetAt ? delayUntil(result.segment.rateLimitResetAt) : 20;
     await env.JOBS.send(
-      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, segment: options.segment, mode: "resume", force: true },
+      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment: options.segment, mode: "resume", force: true },
       { delaySeconds },
     );
   }
   if (options.segment === "open_pull_requests" && (result.status === "complete" || result.status === "not_modified")) {
-    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, mode: "resume", cursor: 0 }, { delaySeconds: 10 });
+    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode: "resume", cursor: 0 }, { delaySeconds: 10 });
   }
   await refreshRepoSyncStateFromSegments(env, repo, sourceKind);
   return segmentJobResult(repo.fullName, options.segment, result.segment);
@@ -552,7 +576,7 @@ export async function backfillOpenPullRequestDetails(
   const resetAt = await shouldWaitForGitHubRateLimit(env);
   if (resetAt) {
     const previous = await getRepoSyncSegment(env, repo.fullName, "pull_request_files");
-    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, mode, cursor: options.cursor ?? 0 }, { delaySeconds: delayUntil(resetAt) });
+    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode, cursor: options.cursor ?? 0 }, { delaySeconds: delayUntil(resetAt) });
     await completeSegment(env, repo, "pull_request_files", sourceKind, mode, nowIso(), {
       status: "waiting_rate_limit",
       fetchedCount: previous?.fetchedCount ?? 0,
@@ -575,10 +599,11 @@ export async function backfillOpenPullRequestDetails(
   const cursor = 0;
   const batch = incompleteOpenPullRequests.slice(cursor, cursor + PR_DETAIL_BATCH_SIZE[mode]);
   const warnings: string[] = [];
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   await mapWithConcurrency(batch, 2, async (pr) => {
     await upsertPullRequestDetailSyncState(env, { repoFullName: repo.fullName, pullNumber: pr.number, status: "running" });
     const before = warnings.length;
-    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings);
+    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey);
     const syncedAt = nowIso();
     const newWarnings = warnings.slice(before);
     await upsertPullRequestDetailSyncState(env, {
@@ -617,7 +642,7 @@ export async function backfillOpenPullRequestDetails(
     ),
   );
   if (nextCursor !== undefined) {
-    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, mode: "resume", cursor: nextCursor }, { delaySeconds: 20 });
+    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode: "resume", cursor: nextCursor }, { delaySeconds: 20 });
   }
   await refreshRepoSyncStateFromSegments(env, repo, sourceKind);
   return {
@@ -640,9 +665,10 @@ export async function refreshPullRequestDetails(
     return { ok: true, repoFullName, pullNumber, status: "partial", warnings: ["Repository or pull request was not found."] };
   }
   const token = await tokenForRepo(env, repo);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const warnings: string[] = [];
   await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
-  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings);
+  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey);
   const syncedAt = nowIso();
   const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
   await upsertPullRequestDetailSyncState(env, {
@@ -683,7 +709,12 @@ export async function refreshContributorActivity(
     const query = buildContributorActivityQuery(aliases);
     let payload: GitHubGraphQlContributorSearchResponse;
     try {
-      payload = await githubGraphQl<GitHubGraphQlContributorSearchResponse>(env, query, token);
+      payload = await githubGraphQl<GitHubGraphQlContributorSearchResponse>(
+        env,
+        query,
+        token,
+        githubRateLimitAdmissionKeyForPublicToken(),
+      );
     } catch (error) {
       warnings.push(`Contributor activity refresh failed for ${chunk.map((repo) => repo.fullName).join(", ")}: ${errorMessage(error)}`);
       continue;
@@ -1090,7 +1121,12 @@ async function refreshRepoGithubTotals(
       labels { totalCount }
     }
   }`;
-  const response = await githubGraphQl<GitHubRepoTotalsResponse>(env, query, token);
+  const response = await githubGraphQl<GitHubRepoTotalsResponse>(
+    env,
+    query,
+    token,
+    repoAdmissionKeyForToken(env, repo, token),
+  );
   const repository = response.data?.repository;
   /* v8 ignore next -- GitHub GraphQL should return repository data for an existing repo; this is provider anomaly handling. */
   if (!repository) throw new Error(`GitHub totals query did not return repository data for ${repo.fullName}.`);
@@ -1239,7 +1275,8 @@ async function backfillRecentMergedSegment(
       // Hydrate each merged PR's changed files (like the monolithic backfill path) so
       // recent_merged_pull_requests.changedFiles is populated instead of always empty.
       const warnings: string[] = [];
-      await hydrateMergedPullRequestFiles(env, repo.fullName, merged, token, warnings, 8);
+      const admissionKey = repoAdmissionKeyForToken(env, repo, token);
+      await hydrateMergedPullRequestFiles(env, repo.fullName, merged, token, warnings, 8, admissionKey);
       return merged.length;
     },
     { progressiveHistory: true, countPersisted: () => countRecentMergedPullRequests(env, repo.fullName) },
@@ -1257,6 +1294,7 @@ async function hydrateMergedPullRequestFiles(
   token: string | undefined,
   warnings: string[],
   concurrency: number,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
   const alreadyHydrated = new Set(
     (await listRecentMergedPullRequests(env, repoFullName))
@@ -1267,7 +1305,7 @@ async function hydrateMergedPullRequestFiles(
     // fetchPullRequestFiles never throws — it returns [] (and records a warning) on any fetch failure.
     const changedFiles = alreadyHydrated.has(pr.number)
       ? []
-      : await fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings);
+      : await fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey);
     await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repoFullName, pr, changedFiles));
   });
 }
@@ -1347,13 +1385,18 @@ async function fetchPagedSegment<T>(
     startPage === 1
       ? conditionalRequestForSegment(previous, expectedCount, { allowEtag: !requiresCurrentOpenScan })
       : undefined;
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   try {
     for (let page = startPage; page < startPage + SEGMENT_PAGE_BUDGET[mode]; page += 1) {
       const separator = path.includes("?") ? "&" : "?";
       const pagePath = `${path}${separator}per_page=100&page=${page}`;
       let result: GitHubJsonResponse<T[]>;
       if (conditionalRequest && page === 1) {
-        const conditionalResult = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, { validators: conditionalRequest.validators, allowNotModified: true });
+        const conditionalResult = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, {
+          validators: conditionalRequest.validators,
+          allowNotModified: true,
+          ...githubRateLimitOptions(admissionKey),
+        });
         if (isNotModifiedResponse(conditionalResult)) {
           const previousSegment = conditionalRequest.previous;
           status = "not_modified";
@@ -1367,7 +1410,7 @@ async function fetchPagedSegment<T>(
         }
         result = conditionalResult;
       } else {
-        result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token);
+        result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, githubRateLimitOptions(admissionKey));
       }
       etag = result.etag ?? etag;
       lastModified = result.lastModified ?? lastModified;
@@ -1464,6 +1507,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
   /* v8 ignore start -- Defensive GitHub GraphQL payload normalization is covered by sparse-payload backfill tests. */
   const existingNumbers = new Set(await listOpenIssueNumbers(env, repo.fullName));
   const { owner, name } = repoParts(repo.fullName);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   let after = "";
   let supplemented = 0;
   for (;;) {
@@ -1487,7 +1531,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
       }
       rateLimit { remaining resetAt }
     }`;
-    const response = await githubGraphQl<GitHubOpenIssuesResponse>(env, query, token);
+    const response = await githubGraphQl<GitHubOpenIssuesResponse>(env, query, token, admissionKey);
     const issues = response.data?.repository?.issues;
     for (const issue of issues?.nodes ?? []) {
       if (!issue?.number || existingNumbers.has(issue.number)) continue;
@@ -1518,6 +1562,7 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
   /* v8 ignore start -- Defensive GitHub GraphQL payload normalization is covered by sparse-payload backfill tests. */
   const existingNumbers = new Set((await listOpenPullRequests(env, repo.fullName)).map((pr) => pr.number));
   const { owner, name } = repoParts(repo.fullName);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   let after = "";
   let supplemented = 0;
   for (;;) {
@@ -1547,7 +1592,7 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
       }
       rateLimit { remaining resetAt }
     }`;
-    const response = await githubGraphQl<GitHubOpenPullRequestsResponse>(env, query, token);
+    const response = await githubGraphQl<GitHubOpenPullRequestsResponse>(env, query, token, admissionKey);
     const pullRequests = response.data?.repository?.pullRequests;
     for (const pr of pullRequests?.nodes ?? []) {
       if (!pr?.number || existingNumbers.has(pr.number)) continue;
@@ -1677,8 +1722,15 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const installationToken = repo.installationId ? await createInstallationToken(env, repo.installationId).catch(() => undefined) : undefined;
     const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
     const sourceKind = installationToken ? "installation" : "github";
+    const admissionKey = repoAdmissionKeyForToken(env, repo, token);
     await markSegmentRunning(env, repo, "metadata", sourceKind, mode, startedAt);
-    const metadata = await githubJson<GitHubRepositoryPayload & { open_issues_count?: number; language?: string | null }>(env, repo.fullName, "", token);
+    const metadata = await githubJson<GitHubRepositoryPayload & { open_issues_count?: number; language?: string | null }>(
+      env,
+      repo.fullName,
+      "",
+      token,
+      admissionKey,
+    );
     segmentResults.push(
       await completeSegment(env, repo, "metadata", sourceKind, mode, startedAt, {
         status: "complete",
@@ -1715,12 +1767,12 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const normalizedPullRequests = await mapWithConcurrency(pullRequests, 16, async (pr) => upsertPullRequestFromGitHub(env, repo.fullName, pr, { seenOpenAt: startedAt }));
 
     const mergedFileWarningStart = warnings.length;
-    await hydrateMergedPullRequestFiles(env, repo.fullName, recentMerged, token, warnings, limits.detailConcurrency);
+    await hydrateMergedPullRequestFiles(env, repo.fullName, recentMerged, token, warnings, limits.detailConcurrency, admissionKey);
 
     const detailTargets = normalizedPullRequests.slice(0, limits.pullRequestDetails);
     const detailWarningStart = warnings.length;
     await mapWithConcurrency(detailTargets, limits.detailConcurrency, async (pr) => {
-      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings);
+      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey);
     });
     const fileWarnings = warnings.slice(mergedFileWarningStart).filter((warning) => /File sync failed/i.test(warning));
     const reviewWarnings = warnings.slice(detailWarningStart).filter((warning) => /Review sync failed/i.test(warning));
@@ -1871,9 +1923,14 @@ async function fetchAndStorePullRequestDetails(
   pr: PullRequestRecord,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
   const warningStart = warnings.length;
-  const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
+  const [files, reviews, checks] = await Promise.all([
+    fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey),
+    fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings, admissionKey),
+    fetchPullRequestChecks(env, repoFullName, pr, token, warnings, admissionKey),
+  ]);
   const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
 
   if (!fileSyncFailed) {
@@ -1928,11 +1985,17 @@ async function fetchAndStorePullRequestDetails(
 // rather than dropping a successful first page.
 const PR_DETAIL_MAX_PAGES = 10;
 
-async function githubPaginatedList<T>(env: Env, repoFullName: string, path: string, token: string | undefined): Promise<T[] | undefined> {
+async function githubPaginatedList<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<T[] | undefined> {
   const items: T[] = [];
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
     // Callers pass query-less resource paths (/pulls/N/files, /pulls/N/reviews), so the page params start the query.
-    const result = await githubJsonWithHeaders<T[]>(env, repoFullName, `${path}?per_page=100&page=${page}`, token).catch(() => undefined);
+    const result = await githubJsonWithHeaders<T[]>(env, repoFullName, `${path}?per_page=100&page=${page}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
     if (!result) return page === 1 ? undefined : items;
     items.push(...result.data);
     if (!hasNextPage(result.link)) break;
@@ -1946,10 +2009,11 @@ async function fetchPullRequestFiles(
   pullNumber: number,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<GitHubFilePayload[]> {
-  const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token);
+  const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token, admissionKey);
   if (files) return files;
-  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
+  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token, admissionKey).catch(() => undefined) : undefined;
   if (fallback) return fallback.files;
   warnings.push(`File sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);
   return [];
@@ -1988,9 +2052,10 @@ export async function fetchAndStorePullRequestFilesForReview(
   repoFullName: string,
   pullNumber: number,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<PullRequestFileRecord[]> {
   const warnings: string[] = [];
-  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings).catch(() => [] as GitHubFilePayload[]);
+  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey).catch(() => [] as GitHubFilePayload[]);
   if (files.length === 0) return [];
   const records = files.map((file) => toPullRequestFileRecordFromGitHub(repoFullName, pullNumber, file));
   // Persist so the AI review, grounding, gate, check-run, and unified-comment reads in THIS run (and any later
@@ -2008,10 +2073,11 @@ async function fetchPullRequestReviews(
   pullNumber: number,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<GitHubReviewPayload[]> {
-  const reviews = await githubPaginatedList<GitHubReviewPayload>(env, repoFullName, `/pulls/${pullNumber}/reviews`, token);
+  const reviews = await githubPaginatedList<GitHubReviewPayload>(env, repoFullName, `/pulls/${pullNumber}/reviews`, token, admissionKey);
   if (reviews) return reviews;
-  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
+  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token, admissionKey).catch(() => undefined) : undefined;
   if (fallback) return fallback.reviews;
   warnings.push(`Review sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);
   return [];
@@ -2023,6 +2089,7 @@ async function fetchPullRequestChecks(
   pr: PullRequestRecord,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<{ check_runs?: GitHubCheckRunPayload[] }> {
   if (!pr.headSha) return { check_runs: [] };
   // Same pagination as files/reviews, but the check-runs endpoint wraps the list in { check_runs }.
@@ -2033,6 +2100,7 @@ async function fetchPullRequestChecks(
       repoFullName,
       `/commits/${pr.headSha}/check-runs?per_page=100&page=${page}`,
       token,
+      githubRateLimitOptions(admissionKey),
     ).catch(() => undefined);
     if (!result) {
       if (page === 1) {
@@ -2118,13 +2186,20 @@ export type LiveCiAggregate = {
  * fetchLiveCiAggregate fall back to folding ALL red checks into the gate, so a fetch failure can never silently
  * pass a required red check.
  */
-export async function fetchRequiredStatusContexts(env: Env, repoFullName: string, baseRef: string | null | undefined, token: string | undefined): Promise<Set<string> | null> {
+export async function fetchRequiredStatusContexts(
+  env: Env,
+  repoFullName: string,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<Set<string> | null> {
   if (!baseRef) return null;
   const result = await githubJsonWithHeaders<{ contexts?: Array<string | null> | null; checks?: Array<{ context?: string | null }> | null }>(
     env,
     repoFullName,
     `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`,
     token,
+    githubRateLimitOptions(admissionKey),
   ).catch(() => undefined);
   if (!result) return null; // 404 / 403 (no admin:read) / error → conservative fold-all.
   const names = new Set<string>();
@@ -2266,6 +2341,7 @@ export async function fetchLiveCiAggregate(
   // Branch-protection REQUIRED contexts are the trust boundary for required-context absence/pending detection.
   // Completed red checks/statuses still fail the aggregate even when they are not branch-protection-required.
   requiredContexts?: ReadonlySet<string> | null,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
   if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] };
   // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
@@ -2278,6 +2354,7 @@ export async function fetchLiveCiAggregate(
       repoFullName,
       `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
       token,
+      githubRateLimitOptions(admissionKey),
     ).catch(() => undefined);
     // A failed check-runs fetch (page 1 or mid-pagination) leaves the check set partially read — fail closed.
     if (!result) {
@@ -2296,6 +2373,7 @@ export async function fetchLiveCiAggregate(
       repoFullName,
       `/commits/${headSha}/status?per_page=100&page=${page}`,
       token,
+      githubRateLimitOptions(admissionKey),
     ).catch(() => undefined);
     if (!statusResult) {
       statusIncomplete = true;
@@ -2318,6 +2396,7 @@ export async function fetchLiveCiAggregate(
         repoFullName,
         `/commits/${headSha}/check-suites?per_page=100`,
         token,
+        githubRateLimitOptions(admissionKey),
       ).catch(() => undefined);
       return suitesResult ? (suitesResult.data.check_suites ?? []) : null;
     },
@@ -2345,6 +2424,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
   headSha: string | null | undefined,
   token: string | undefined,
   requiredContexts?: ReadonlySet<string> | null,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate | null> {
   if (!headSha || !token) return null;
   const [owner, name] = repoFullName.split("/");
@@ -2378,7 +2458,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
       } | null;
     };
     errors?: unknown[];
-  }>(env, query, token).catch(() => null);
+  }>(env, query, token, admissionKey).catch(() => null);
   if (!result) return null; // GraphQL fetch/HTTP error → fall back to REST
   // A 200 with a top-level `errors` array is a PARTIAL result (a field resolver failed): the data is half-populated
   // and must NOT be read as a settled/empty rollup — fall back so a partial error can't mask a failing or pending
@@ -2437,14 +2517,15 @@ export async function fetchLiveCiAggregatePreferGraphQl(
   headSha: string | null | undefined,
   token: string | undefined,
   requiredContexts?: ReadonlySet<string> | null,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
   if (isStatusRollupGraphQlEnabled(env)) {
     // fetchLiveCiAggregateViaGraphQl handles all its own errors and returns null on any uncertainty (it never
     // rejects), so a null result — not a throw — is the fall-back-to-REST signal.
-    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts);
+    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey);
     if (rollup) return rollup;
   }
-  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts);
+  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts, admissionKey);
 }
 
 /**
@@ -2455,8 +2536,14 @@ export async function fetchLiveCiAggregatePreferGraphQl(
  * merge decision sees the CURRENT state. `unknown` (GitHub still computing) ⇒ caller treats as not-yet-clean and
  * a later trigger / the sweep retries. Best-effort: a fetch error returns undefined (caller falls back to stored).
  */
-export async function fetchLivePullRequestMergeState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequestMergeState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data.mergeable_state ?? undefined;
 }
 
@@ -2464,8 +2551,14 @@ export async function fetchLivePullRequestMergeState(env: Env, repoFullName: str
  *  sibling closed/merged on GitHub can still read `open` locally; the duplicate-winner election (#dup-winner /
  *  audit #15) confirms a lower sibling's live state before treating this PR as a cluster loser. Best-effort:
  *  returns undefined on any error so the caller fails open to the stored state. */
-export async function fetchLivePullRequestState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequestState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data.state ?? undefined;
 }
 
@@ -2473,8 +2566,14 @@ export async function fetchLivePullRequestState(env: Env, repoFullName: string, 
  *  lands between a webhook and its processing; the gate-override command (#16 / audit) re-fetches the live head
  *  so the neutral check-run targets the commit a maintainer is actually looking at, not a phantom old SHA.
  *  Best-effort: returns undefined on any error so the caller fails open to the stored head. */
-export async function fetchLivePullRequestHeadSha(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequestHeadSha(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data.head?.sha ?? undefined;
 }
 
@@ -2483,8 +2582,14 @@ export async function fetchLivePullRequestHeadSha(env: Env, repoFullName: string
  *  self-host relay was down), so the re-review runs on the current head + fresh files instead of a stale cached diff
  *  the AI fail-closes as INCOHERENT_DIFF (#sweep-resync). Best-effort: returns undefined on any error so the caller
  *  fails open to the stored PR (the sweep must never stall on a hiccup). */
-export async function fetchLivePullRequest(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<GitHubPullRequestPayload | undefined> {
-  const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequest(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<GitHubPullRequestPayload | undefined> {
+  const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data ?? undefined;
 }
 
@@ -2492,7 +2597,13 @@ export async function fetchLivePullRequest(env: Env, repoFullName: string, prNum
  *  endpoint. This is the only PR↔commit resolution that works for FORK (cross-repo) PRs, whose CI-completion
  *  webhooks (`check_suite`/`check_run`) carry an EMPTY `pull_requests[]`. Returns the de-duplicated open PR numbers.
  *  Best-effort: an empty/whitespace SHA or any API error yields `[]` (the caller must never stall a PR on a hiccup). */
-export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullName: string, commitSha: string, token: string | undefined): Promise<number[]> {
+export async function fetchOpenPullRequestNumbersForCommit(
+  env: Env,
+  repoFullName: string,
+  commitSha: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<number[]> {
   const sha = commitSha.trim();
   if (!sha) return [];
   // GET /commits/{sha}/pulls returns the PRs (incl. cross-repo forks) whose head is this commit, on the default
@@ -2502,6 +2613,7 @@ export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullNam
     repoFullName,
     `/commits/${encodeURIComponent(sha)}/pulls?per_page=100`,
     token,
+    githubRateLimitOptions(admissionKey),
   ).catch(() => undefined);
   if (!result) return [];
   const numbers = result.data
@@ -2516,12 +2628,23 @@ export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullNam
  *  planner's approve/request-changes dedup was blind and re-posted a review every cycle — the re-review loop.
  *  Refreshing it live makes the dedup accurate. Best-effort: returns undefined on any error (caller falls back
  *  to the stored value). */
-export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+export async function fetchLivePullRequestReviewDecision(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
   if (!token) return undefined;
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return undefined;
   const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
-  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(env, query, token).catch(() => undefined);
+  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(
+    env,
+    query,
+    token,
+    admissionKey,
+  ).catch(() => undefined);
   return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
 }
 
@@ -2562,7 +2685,13 @@ type GitHubReviewThreadResponse = {
  *  review comments do not expose thread resolution; if GraphQL is unavailable this fails open to [] rather than
  *  guessing. Only maintainer/collaborator comments or known scanner-bot comments can create blockers, so
  *  public review comments from untrusted actors cannot influence merge/close state. */
-export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<ReviewThreadBlocker[]> {
+export async function fetchLiveReviewThreadBlockers(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<ReviewThreadBlocker[]> {
   if (!token) return [];
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return [];
@@ -2597,7 +2726,12 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
         }
       }
     }`;
-    const result: GitHubReviewThreadResponse | undefined = await githubGraphQl<GitHubReviewThreadResponse>(env, query, token).catch(() => undefined);
+    const result: GitHubReviewThreadResponse | undefined = await githubGraphQl<GitHubReviewThreadResponse>(
+      env,
+      query,
+      token,
+      admissionKey,
+    ).catch(() => undefined);
     const connection: GitHubReviewThreadConnection | null | undefined = result?.data?.repository?.pullRequest?.reviewThreads;
     if (!connection?.nodes) {
       if (threads.length === 0) return [];
@@ -2635,6 +2769,7 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
           repoFullName,
           token,
           memberPermissionCache,
+          admissionKey,
           comment.authorLogin,
           comment.authorAssociation,
         )
@@ -2657,13 +2792,14 @@ async function isAuthorizedReviewThreadAuthor(
   repoFullName: string,
   token: string,
   memberPermissionCache: Map<string, Promise<boolean>>,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
   login: string | null | undefined,
   association: string | null | undefined,
 ): Promise<boolean> {
   if (isOwnReviewThreadAuthor(login)) return false;
   if (isTrustedScannerReviewThreadAuthor(login)) return true;
   if (isMaintainerReviewThreadAuthor(association)) return true;
-  return isVerifiedMemberReviewThreadAuthor(env, repoFullName, token, memberPermissionCache, login, association);
+  return isVerifiedMemberReviewThreadAuthor(env, repoFullName, token, memberPermissionCache, admissionKey, login, association);
 }
 
 const MAINTAINER_REVIEW_THREAD_ASSOCIATIONS = new Set(["OWNER", "COLLABORATOR"]);
@@ -2678,6 +2814,7 @@ function isVerifiedMemberReviewThreadAuthor(
   repoFullName: string,
   token: string,
   memberPermissionCache: Map<string, Promise<boolean>>,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
   login: string | null | undefined,
   association: string | null | undefined,
 ): Promise<boolean> {
@@ -2692,6 +2829,7 @@ function isVerifiedMemberReviewThreadAuthor(
     repoFullName,
     `/collaborators/${encodeURIComponent(normalizedLogin)}/permission`,
     token,
+    githubRateLimitOptions(admissionKey),
   )
     .then((result) => {
       const permission = result.data.permission;
@@ -2722,14 +2860,20 @@ export type LinkedIssueFactsResult = { number: number; labels: string[]; assigne
  * live fetches. (Note: GitHub's issues endpoint also returns pull requests, which carry a `pull_request` field;
  * a PR number passed here would simply fail the rules — we only treat real issues' labels/assignees.)
  */
-export async function fetchLinkedIssueFacts(env: Env, repoFullName: string, issueNumber: number, token: string | undefined): Promise<LinkedIssueFactsResult | undefined> {
+export async function fetchLinkedIssueFacts(
+  env: Env,
+  repoFullName: string,
+  issueNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LinkedIssueFactsResult | undefined> {
   const result = await githubJsonWithHeaders<{
     number?: number;
     state?: string | null;
     labels?: Array<{ name?: string | null } | string | null> | null;
     assignees?: Array<{ login?: string | null } | null> | null;
     user?: { login?: string | null } | null;
-  }>(env, repoFullName, `/issues/${issueNumber}`, token).catch(() => undefined);
+  }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   if (!result) return undefined;
   const data = result.data;
   const labels = (data.labels ?? []).flatMap((label) => {
@@ -2751,6 +2895,7 @@ async function fetchPullRequestDetailsFromGraphQl(
   repoFullName: string,
   pullNumber: number,
   token: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<{ files: GitHubFilePayload[]; reviews: GitHubReviewPayload[] }> {
   /* v8 ignore start -- GitHub detail GraphQL sparse-node fallbacks are exercised through PR detail hydration tests. */
   const { owner, name } = repoParts(repoFullName);
@@ -2767,7 +2912,7 @@ async function fetchPullRequestDetailsFromGraphQl(
     }
     rateLimit { remaining resetAt }
   }`;
-  const response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token);
+  const response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token, admissionKey);
   const pullRequest = response.data?.repository?.pullRequest;
   if (!pullRequest) throw new GitHubApiError(`GitHub GraphQL failed for ${repoFullName} pull request #${pullNumber}: pull request not found`, 404, null, null, null, "");
   const files: GitHubFilePayload[] = (pullRequest.files?.nodes ?? []).flatMap((file) => {
@@ -2879,9 +3024,10 @@ async function syncLabels(
   const startedAt = nowIso();
   await markSegmentRunning(env, repo, "labels", sourceKind, mode, startedAt);
   const items: GitHubLabelPayload[] = [];
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   try {
     for (let page = 1; ; page += 1) {
-      const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token);
+      const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token, githubRateLimitOptions(admissionKey));
       items.push(...result.data);
       if (!hasNextPage(result.link)) break;
     }
@@ -2918,6 +3064,7 @@ async function githubPaged<T>(
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId ? "installation" : "github";
   const previous = mode === "resume" ? await getRepoSyncSegment(env, repo.fullName, segmentName) : null;
   await markSegmentRunning(env, repo, segmentName, sourceKind, mode, startedAt);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const startPage = mode === "resume" && previous?.nextCursor && Number.isFinite(Number(previous.nextCursor)) ? Number(previous.nextCursor) : 1;
   const priorFetched = mode === "resume" ? (previous?.fetchedCount ?? 0) : 0;
   const items: T[] = [];
@@ -2935,7 +3082,7 @@ async function githubPaged<T>(
       const pageLimit = Math.min(100, limit - items.length);
       const separator = path.includes("?") ? "&" : "?";
       const pagePath = `${path}${separator}per_page=${pageLimit}&page=${page}`;
-      const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token);
+      const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, githubRateLimitOptions(admissionKey));
       etag = result.etag ?? etag;
       lastModified = result.lastModified ?? lastModified;
       lastCursor = String(page);
@@ -2977,9 +3124,22 @@ async function githubPaged<T>(
   return { items, warnings, segment, fetchedCount };
 }
 
-async function githubJson<T>(env: Env, repoFullName: string, path: string, token?: string): Promise<T> {
-  return (await githubJsonWithHeaders<T>(env, repoFullName, path, token)).data;
+async function githubJson<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token?: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<T> {
+  return (await githubJsonWithHeaders<T>(env, repoFullName, path, token, githubRateLimitOptions(admissionKey))).data;
 }
+
+type GitHubJsonRequestOptions = {
+  validators?: GitHubConditionalValidators;
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey;
+};
+type GitHubJsonStandardOptions = GitHubJsonRequestOptions & { allowNotModified?: false };
+type GitHubJsonConditionalOptions = GitHubJsonRequestOptions & { allowNotModified: true };
 
 async function githubJsonWithHeaders<T>(
   env: Env,
@@ -2992,20 +3152,30 @@ async function githubJsonWithHeaders<T>(
   repoFullName: string,
   path: string,
   token: string | undefined,
-  options: { validators?: GitHubConditionalValidators; allowNotModified: true },
+  options: GitHubJsonConditionalOptions,
 ): Promise<GitHubJsonConditionalResponse<T>>;
 async function githubJsonWithHeaders<T>(
   env: Env,
   repoFullName: string,
   path: string,
+  token: string | undefined,
+  options: GitHubJsonStandardOptions,
+): Promise<GitHubJsonResponse<T>>;
+async function githubJsonWithHeaders<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
   token?: string,
-  options?: { validators?: GitHubConditionalValidators; allowNotModified?: boolean },
-): Promise<GitHubJsonConditionalResponse<T>> {
+  options?: GitHubJsonConditionalOptions | GitHubJsonStandardOptions,
+): Promise<GitHubJsonConditionalResponse<T> | GitHubJsonResponse<T>> {
   const { owner, name } = repoParts(repoFullName);
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}${path}`;
-  let response = await timeoutFetch(url, { headers: githubRestHeaders(token, options?.validators) });
+  let response = await timeoutFetch(url, {
+    headers: githubRestHeaders(token, options?.validators),
+    ...(options?.rateLimitAdmissionKey ? { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: options.rateLimitAdmissionKey } : {}),
+  });
   if (!isGitHubResponseCacheReplay(response)) {
-    await recordGitHubResponse(env, repoFullName, path, response, "rest");
+    await recordGitHubResponse(env, repoFullName, path, response, "rest", options?.rateLimitAdmissionKey);
   }
   if (response.status === 304 && options?.allowNotModified) return notModifiedResponse(response);
   if (response.status === 404 && token && token === env.GITHUB_PUBLIC_TOKEN) {
@@ -3054,7 +3224,12 @@ function githubRestHeaders(token?: string, validators?: GitHubConditionalValidat
   };
 }
 
-async function githubGraphQl<T>(env: Env, query: string, token: string): Promise<T> {
+async function githubGraphQl<T>(
+  env: Env,
+  query: string,
+  token: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<T> {
   const response = await timeoutFetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
@@ -3064,8 +3239,9 @@ async function githubGraphQl<T>(env: Env, query: string, token: string): Promise
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ query }),
+    ...(admissionKey ? { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: admissionKey } : {}),
   });
-  await recordGitHubResponse(env, null, "/graphql", response, "graphql");
+  await recordGitHubResponse(env, null, "/graphql", response, "graphql", admissionKey);
   if (!response.ok) {
     const body = await response.text();
     throw new GitHubApiError(
@@ -3195,11 +3371,13 @@ async function recordGitHubResponse(
   path: string,
   response: Response,
   resource: "rest" | "graphql",
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
   const resetHeader = response.headers.get("x-ratelimit-reset");
   const resetAt = resetHeader && Number.isFinite(Number(resetHeader)) ? new Date(Number(resetHeader) * 1000).toISOString() : undefined;
   await recordGitHubRateLimitObservation(env, {
     repoFullName,
+    admissionKey,
     resource,
     path,
     statusCode: response.status,

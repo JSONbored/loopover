@@ -65,6 +65,26 @@ export function githubRateLimitAdmissionKeyForInstallation(installationId: numbe
   return `installation:${Math.trunc(installationId)}`;
 }
 
+export function githubRateLimitAdmissionKeyForPublicToken(): GitHubRateLimitAdmissionKey {
+  return "public-token";
+}
+
+/** The SINGLE token→admission-key resolver, so every GitHub read attributes consistently and a token can never
+ *  travel without its matching key: the public bucket for the shared public token, the installation bucket for an
+ *  installation token with a known installation id, else undefined (unattributed). Callers pass whichever token
+ *  they will actually read with, so the key is always derived from the SAME token and cannot drift apart from it. */
+export function githubRateLimitAdmissionKeyForToken(
+  env: { GITHUB_PUBLIC_TOKEN?: string },
+  token: string | undefined,
+  installationId: number | null | undefined,
+): GitHubRateLimitAdmissionKey | undefined {
+  if (!token) return undefined;
+  if (token === env.GITHUB_PUBLIC_TOKEN) return githubRateLimitAdmissionKeyForPublicToken();
+  return typeof installationId === "number" && Number.isFinite(installationId)
+    ? githubRateLimitAdmissionKeyForInstallation(installationId)
+    : undefined;
+}
+
 /** Only cache explicitly stable GitHub REST reads. PR/issue/comment/label/event/check/status reads are mutable
  * review inputs and must always reflect the current GitHub state. Exported for tests. */
 export function isCacheableGithubUrl(url: string): boolean {
@@ -128,9 +148,15 @@ function recordGitHubCacheMetric(result: "hit" | "miss" | "set" | "coalesced" | 
   incr(GITHUB_RESPONSE_CACHE_METRIC, { result, class: cls });
 }
 
-function githubAdmissionKeyScope(admissionKey: GitHubRateLimitAdmissionKey | null | undefined): "installation" | "global" | "other" {
-  if (!admissionKey) return "global";
-  return admissionKey.startsWith("installation:") ? "installation" : "other";
+// Keep this classification identical to selfhost/queue-common's githubRateLimitAdmissionKeyScope so both metric
+// surfaces label a given admission key the same way (installation / public / global / unknown / other). Exported so
+// the classification is unit-tested directly (mirroring the queue-common helper's test), not only via rendered metrics.
+export function githubAdmissionKeyScope(admissionKey: GitHubRateLimitAdmissionKey | null | undefined): "installation" | "public" | "global" | "unknown" | "other" {
+  if (!admissionKey) return "unknown";
+  if (admissionKey.startsWith("installation:")) return "installation";
+  if (admissionKey === githubRateLimitAdmissionKeyForPublicToken()) return "public";
+  if (admissionKey.startsWith("global:")) return "global";
+  return "other";
 }
 
 function restRemainingBucket(remaining: number): "0" | "1-75" | "76-150" | "151+" {

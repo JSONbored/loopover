@@ -50,6 +50,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
       repoFullName: string;
       segment: "labels" | "open_issues" | "open_pull_requests" | "recent_merged_pull_requests";
+      installationId?: number;
       mode?: "light" | "full" | "resume";
       force?: boolean;
       cursor?: string;
@@ -58,6 +59,7 @@ export type JobMessage =
       type: "backfill-pr-details";
       requestedBy: "schedule" | "api" | "test";
       repoFullName: string;
+      installationId?: number;
       mode?: "light" | "full" | "resume";
       cursor?: number;
     }
@@ -142,6 +144,7 @@ export type JobMessage =
       type: "agent-regate-sweep";
       requestedBy: "schedule" | "api" | "test";
       repoFullName?: string;
+      installationId?: number;
     }
   | {
       type: "run-agent";
@@ -187,6 +190,7 @@ export type JobMessage =
       type: "rag-index-repo";
       requestedBy: "schedule" | "api" | "webhook" | "test";
       repoFullName?: string;
+      installationId?: number;
       paths?: string[];
     }
   | {

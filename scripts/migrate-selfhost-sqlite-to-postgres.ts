@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import pg, { type PoolClient } from "pg";
 import { createPgAdapter } from "../src/selfhost/pg-adapter";
 import { createPgQueue } from "../src/selfhost/pg-queue";
@@ -32,6 +33,7 @@ interface SkipResult {
 
 const INTERNAL_SQLITE_TABLES = new Set(["d1_migrations", "_cf_KV", "__drizzle_migrations", "_selfhost_migrations"]);
 const TABLES_ALLOWED_AFTER_SCHEMA_INIT = new Set(["global_agent_controls", "global_contributor_blacklist"]);
+const POSTGRES_TEXT_NUL_REPLACEMENT = "\uFFFD";
 
 function usage(): string {
   return `Usage: npm run selfhost:postgres:migrate -- --sqlite <path> --postgres-url <url> [--execute]
@@ -242,6 +244,16 @@ function valuePlaceholder(index: number, table: string, column: string): string 
   return base;
 }
 
+export function normalizePostgresValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  // SQLite text can contain NUL bytes from arbitrary repo files; Postgres text/json inputs cannot.
+  return value.includes("\0") ? value.replaceAll("\0", POSTGRES_TEXT_NUL_REPLACEMENT) : value;
+}
+
+function sqliteCellForPostgres(row: Record<string, unknown>, column: string): unknown {
+  return normalizePostgresValue(row[column] ?? null);
+}
+
 function insertSql(table: string, columns: string[], primaryKey: string[], rowCount: number): string {
   const columnSql = columns.map(quoteIdent).join(", ");
   const valuesSql = Array.from({ length: rowCount }, (_, rowIndex) => {
@@ -260,7 +272,7 @@ async function copyTable(db: DatabaseSync, client: PoolClient, table: string, co
   for (let offset = 0; offset < total; offset += batchSize) {
     const rows = sqliteRows(db, table, columns, batchSize, offset);
     if (rows.length === 0) continue;
-    const values = rows.flatMap((row) => columns.map((column) => row[column] ?? null));
+    const values = rows.flatMap((row) => columns.map((column) => sqliteCellForPostgres(row, column)));
     await client.query(insertSql(table, columns, primaryKey, rows.length), values);
   }
   return total;
@@ -280,7 +292,7 @@ async function countTargetRowsMatchingSourceRows(
     if (rows.length === 0) continue;
     const values: unknown[] = [];
     for (const row of rows) {
-      for (const column of columns) values.push(row[column] ?? null);
+      for (const column of columns) values.push(sqliteCellForPostgres(row, column));
     }
     const condition = rows
       .map((_, rowIndex) => {
@@ -313,7 +325,7 @@ async function countConflictingTargetRowsForSourceKeys(
       .map((row) => {
         const parameterByColumn = new Map<string, number>();
         for (const column of compareColumns) {
-          values.push(row[column] ?? null);
+          values.push(sqliteCellForPostgres(row, column));
           parameterByColumn.set(column, values.length);
         }
         const keyPredicates = keyColumns.map((column) => `${quoteIdent(column)} IS NOT DISTINCT FROM $${parameterByColumn.get(column)}`);
@@ -460,7 +472,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

@@ -27,7 +27,7 @@ import {
   scheduledEnqueueDelaySeconds,
   scheduledEnqueueJitterMs,
 } from "../../src/selfhost/queue-common";
-import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, timeoutFetch } from "../../src/github/client";
+import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, githubRateLimitAdmissionKeyForPublicToken, timeoutFetch } from "../../src/github/client";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
 
@@ -131,7 +131,9 @@ describe("self-host queue common helpers", () => {
     } as JobMessage;
 
     expect(githubRateLimitAdmissionKeyScope("installation:123")).toBe("installation");
-    expect(githubRateLimitAdmissionKeyScope(null)).toBe("global");
+    expect(githubRateLimitAdmissionKeyScope(githubRateLimitAdmissionKeyForPublicToken())).toBe("public");
+    expect(githubRateLimitAdmissionKeyScope("global:shared")).toBe("global");
+    expect(githubRateLimitAdmissionKeyScope(null)).toBe("unknown");
     expect(githubRateLimitAdmissionKeyScope("pat:shared")).toBe("other");
     expect(githubRateLimitMetricLabels(webhookJob, {
       kind: "webhook",
@@ -143,7 +145,7 @@ describe("self-host queue common helpers", () => {
     });
     expect(githubRateLimitMetricLabels({ type: "rag-index-repo", requestedBy: "schedule" } as JobMessage, null)).toEqual({
       job_type: "rag-index-repo",
-      key_scope: "global",
+      key_scope: "unknown",
       kind: "unknown",
     });
     expect(githubRateLimitMetricContext(webhookJob, {

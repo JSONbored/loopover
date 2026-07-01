@@ -6,6 +6,7 @@ import {
   PUBLIC_LOCAL_PATH_SCRUB_PATTERN,
   PUBLIC_UNSAFE_TERMS,
 } from "../signals/redaction";
+import { hostname } from "node:os";
 import { currentOtelTraceIds } from "./otel";
 
 type SentryNs = typeof import("@sentry/node");
@@ -312,7 +313,10 @@ export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
     environment: sentryEnvironment,
     ...(release ? { release } : {}),
     tracesSampleRate,
-    serverName: env.PUBLIC_API_ORIGIN,
+    // Identify this instance by a CLEAN, configurable name — not the public-origin URL. An operator sets
+    // SENTRY_SERVER_NAME (e.g. "gittensory-us-east"); unset falls back to the OS hostname, which is dynamic
+    // per instance with no hardcoded value and reads as a name rather than a URL.
+    serverName: nonBlank(env.SENTRY_SERVER_NAME) ?? hostname(),
     beforeSend: (e) => scrubEvent(e),
     beforeSendTransaction: (e) => scrubEvent(e),
   });

@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearGitHubResponseCacheForTest,
   forcedSelfhostMode,
+  githubAdmissionKeyScope,
   githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
+  githubRateLimitAdmissionKeyForToken,
   GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
   githubResponseCacheTtlSeconds,
   isCacheableGithubUrl,
@@ -150,6 +153,28 @@ describe("resolveRepoActionMode", () => {
   });
 });
 
+describe("githubRateLimitAdmissionKeyForToken — the single token→admission-key resolver (no duplication, no drift)", () => {
+  it("resolves the public and installation buckets, and stays undefined without a usable token+id", () => {
+    const env = { GITHUB_PUBLIC_TOKEN: "public-tok" };
+    expect(githubRateLimitAdmissionKeyForToken(env, undefined, 5)).toBeUndefined(); // no token → unattributed
+    expect(githubRateLimitAdmissionKeyForToken(env, "public-tok", 5)).toBe(githubRateLimitAdmissionKeyForPublicToken());
+    expect(githubRateLimitAdmissionKeyForToken(env, "install-tok", 5)).toBe(githubRateLimitAdmissionKeyForInstallation(5));
+    expect(githubRateLimitAdmissionKeyForToken(env, "install-tok", undefined)).toBeUndefined(); // non-public token, no id
+    expect(githubRateLimitAdmissionKeyForToken(env, "install-tok", Number.NaN)).toBeUndefined(); // non-finite id
+  });
+});
+
+describe("githubAdmissionKeyScope — classify an admission key the SAME way as queue-common's helper", () => {
+  it("labels installation / public / global / unknown / other keys consistently", () => {
+    expect(githubAdmissionKeyScope(githubRateLimitAdmissionKeyForInstallation(123))).toBe("installation");
+    expect(githubAdmissionKeyScope(githubRateLimitAdmissionKeyForPublicToken())).toBe("public");
+    expect(githubAdmissionKeyScope("global:shared")).toBe("global");
+    expect(githubAdmissionKeyScope(null)).toBe("unknown");
+    expect(githubAdmissionKeyScope(undefined)).toBe("unknown");
+    expect(githubAdmissionKeyScope("pat:shared")).toBe("other");
+  });
+});
+
 describe("timeoutFetch", () => {
   it("passes an explicit caller signal straight through", async () => {
     const seen: Array<RequestInit | undefined> = [];
@@ -268,6 +293,33 @@ describe("timeoutFetch", () => {
     expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="installation",remaining_bucket="1-75"} 1');
     expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="76-150"} 1');
     expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="other",remaining_bucket="151+"} 1');
+  });
+
+  it("labels public-token REST observations separately from installation and unknown buckets", async () => {
+    const reset = String(Math.floor(Date.parse("2026-06-24T12:10:00.000Z") / 1000));
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response("ok", {
+          headers: {
+            "x-ratelimit-resource": "core",
+            "x-ratelimit-remaining": "22",
+            "x-ratelimit-reset": reset,
+          },
+        }),
+    );
+
+    await timeoutFetch("https://api.github.com/repos/o/r/issues?bucket=public", {
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+    });
+
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_observations_total{key_scope="public",remaining_bucket="1-75"} 1');
+    expect(latestGitHubRestRateLimitObservation(githubRateLimitAdmissionKeyForPublicToken())).toMatchObject({
+      remaining: 22,
+      resetAt: "2026-06-24T12:10:00.000Z",
+    });
   });
 
   it("records keyed REST admission telemetry from installation Octokit reads", async () => {
@@ -499,8 +551,8 @@ describe("timeoutFetch", () => {
     expect(getFetches).toBe(4);
     expect(set).not.toHaveBeenCalled();
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="global",retry="scheduled",status="403"} 3');
-    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="global",retry="exhausted",status="403"} 1');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown",retry="scheduled",status="403"} 3');
+    expect(metrics).toContain('gittensory_github_rest_rate_limit_responses_total{key_scope="unknown",retry="exhausted",status="403"} 1');
   });
 
   it("does not negative-cache stable metadata denials outside branch protection", async () => {

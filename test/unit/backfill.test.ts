@@ -44,6 +44,8 @@ import {
 } from "../../src/github/backfill";
 import {
   clearGitHubResponseCacheForTest,
+  githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
   setGitHubResponseCache,
   type CachedGitHubResponse,
 } from "../../src/github/client";
@@ -2570,14 +2572,14 @@ describe("GitHub backfill", () => {
       return Response.json([]);
     });
 
-    const labels = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", requestedBy: "api", mode: "light" });
+    const labels = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", requestedBy: "test", mode: "light" });
     const openPrs = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_pull_requests", requestedBy: "api", mode: "full" });
 
     expect(labels).toMatchObject({ status: "running", fetchedCount: 200, expectedCount: 300 });
     expect(openPrs).toMatchObject({ status: "complete", fetchedCount: 1, expectedCount: 1 });
     expect(sent).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: "backfill-repo-segment", segment: "labels", mode: "resume" }),
+        expect.objectContaining({ type: "backfill-repo-segment", requestedBy: "test", segment: "labels", mode: "resume" }),
         expect.objectContaining({ type: "backfill-pr-details", repoFullName: "JSONbored/gittensory", mode: "resume", cursor: 0 }),
       ]),
     );
@@ -2878,6 +2880,37 @@ describe("GitHub backfill", () => {
 
     expect(result).toMatchObject({ status: "partial", processed: 1 });
     expect(result.warnings.join("\n")).toMatch(/File sync failed|Review sync failed/);
+  });
+
+  it("does not attempt GraphQL PR detail fallbacks without any GitHub token", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 32,
+      title: "Unavailable without token",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "missing-token" },
+      labels: [],
+      body: "",
+    });
+    let graphqlCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        graphqlCalls += 1;
+        return Response.json({ data: { repository: { pullRequest: null } } });
+      }
+      if (url.includes("/pulls/32/files") || url.includes("/pulls/32/reviews")) return new Response("", { status: 404 });
+      if (url.includes("/commits/missing-token/check-runs")) return Response.json({});
+      return Response.json([]);
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+
+    expect(result).toMatchObject({ status: "partial", processed: 1 });
+    expect(result.warnings.join("\n")).toMatch(/File sync failed|Review sync failed/);
+    expect(graphqlCalls).toBe(0);
   });
 
   it("hydrates open PR details in small batches and records partial detail failures", async () => {
@@ -3380,7 +3413,74 @@ describe("GitHub backfill", () => {
     expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
       expect.arrayContaining([expect.objectContaining({ segment: "labels", sourceKind: "installation" })]),
     );
-    expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ type: "backfill-repo-segment", segment: "labels" })]));
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "backfill-repo-segment",
+          segment: "labels",
+          installationId: 123,
+        }),
+      ]),
+    );
+    const observations = await listLatestGitHubRateLimitObservations(env, 20);
+    expect(observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          resource: "graphql",
+          path: "/graphql",
+          admissionKey: githubRateLimitAdmissionKeyForInstallation(123),
+        }),
+        expect.objectContaining({
+          resource: "rest",
+          path: "/labels?per_page=100&page=1",
+          admissionKey: githubRateLimitAdmissionKeyForInstallation(123),
+        }),
+      ]),
+    );
+  });
+
+  it("persists public-token admission keys for public backfill REST and GraphQL reads", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        return Response.json({
+          data: {
+            rateLimit: { remaining: 4999, resetAt: "2026-06-24T12:30:00.000Z" },
+            repository: {
+              issues: { totalCount: 0 },
+              openPullRequests: { totalCount: 0 },
+              mergedPullRequests: { totalCount: 0 },
+              closedPullRequests: { totalCount: 0 },
+              labels: { totalCount: 0 },
+            },
+          },
+        });
+      }
+      if (url.includes("/labels?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    await expect(backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light" })).resolves.toMatchObject({
+      status: "complete",
+      fetchedCount: 0,
+    });
+
+    expect(await listLatestGitHubRateLimitObservations(env, 20)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          resource: "graphql",
+          path: "/graphql",
+          admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+        }),
+        expect.objectContaining({
+          resource: "rest",
+          path: "/labels?per_page=100&page=1",
+          admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+        }),
+      ]),
+    );
   });
 
   it("records label rate limits, in-loop page caps, and expired rate observations", async () => {

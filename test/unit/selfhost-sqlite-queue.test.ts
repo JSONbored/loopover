@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
+import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
@@ -190,7 +191,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limit_deferred_total: 2 });
       const metrics = await renderMetrics();
       expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-pr",key_scope="installation",kind="background"} 1');
-      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="global",kind="background"} 1');
+      expect(metrics).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="rag-index-repo",key_scope="unknown",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -837,6 +838,7 @@ describe("createSqliteQueue (durable #980)", () => {
     );
 
     const snapshot = q.snapshot();
+    const bindingSnapshot = await queueSnapshotFromBinding(q.binding);
 
     expect(snapshot.totals).toMatchObject({ pending: 2, processing: 1, dead: 1 });
     expect(snapshot.byType).toEqual(
@@ -847,6 +849,7 @@ describe("createSqliteQueue (durable #980)", () => {
         { type: "rag-index-repo", status: "dead", count: 1, due: 0 },
       ]),
     );
+    expect(bindingSnapshot).toEqual(snapshot);
   });
 
   it("coalesces recurring maintenance jobs by semantic scope and keeps distinct scopes separate", async () => {
@@ -1210,7 +1213,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(pending[0]!.last_error).toBe("API rate limit exceeded for installation ID 123");
     expect(q.stats()).toMatchObject({ gittensory_jobs_rate_limited_total: 1 });
     expect(q.stats()).not.toHaveProperty("gittensory_jobs_rate_limit_deferred_total");
-    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="global",kind="unknown"} 1');
+    expect(await renderMetrics()).toContain('gittensory_jobs_rate_limited_by_type_total{job_type="refresh-registry",key_scope="unknown",kind="unknown"} 1');
   });
 
   it("defers only the depleted keyed GitHub budget while unrelated work keeps draining", async () => {

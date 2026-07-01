@@ -7,6 +7,7 @@ import {
 } from "../github/rate-limit";
 import {
   githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
   latestGitHubRestRateLimitObservation,
   type GitHubRateLimitAdmissionKey,
 } from "../github/client";
@@ -298,7 +299,7 @@ export type GitHubRateLimitAdmissionTarget = {
   admissionKey: GitHubRateLimitAdmissionKey | null;
 };
 
-export type GitHubRateLimitKeyScope = "installation" | "global" | "other";
+export type GitHubRateLimitKeyScope = "installation" | "public" | "global" | "unknown" | "other";
 export type GitHubRateLimitMetricLabels = {
   job_type: string;
   key_scope: GitHubRateLimitKeyScope;
@@ -320,8 +321,11 @@ export type GitHubRateLimitMetricContext = {
 export function githubRateLimitAdmissionKeyScope(
   admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
 ): GitHubRateLimitKeyScope {
-  if (!admissionKey) return "global";
-  return admissionKey.startsWith("installation:") ? "installation" : "other";
+  if (!admissionKey) return "unknown";
+  if (admissionKey.startsWith("installation:")) return "installation";
+  if (admissionKey === githubRateLimitAdmissionKeyForPublicToken()) return "public";
+  if (admissionKey.startsWith("global:")) return "global";
+  return "other";
 }
 
 export function githubRateLimitMetricLabels(

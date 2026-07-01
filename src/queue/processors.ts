@@ -135,7 +135,12 @@ import {
   ensurePullRequestLabel,
   removePullRequestLabel,
 } from "../github/labels";
-import { githubRateLimitAdmissionKeyForInstallation, resolveRepoActionMode } from "../github/client";
+import {
+  githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForToken,
+  resolveRepoActionMode,
+  type GitHubRateLimitAdmissionKey,
+} from "../github/client";
 import {
   fetchPullRequestFreshness,
   pullRequestFreshnessDetail,
@@ -451,6 +456,14 @@ function liveFactTokenPart(token: string | undefined): string {
   return `token:${token.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function githubAdmissionKeyForToken(
+  env: Env,
+  installationId: number | null | undefined,
+  token: string | undefined,
+): GitHubRateLimitAdmissionKey | undefined {
+  return githubRateLimitAdmissionKeyForToken(env, token, installationId);
+}
+
 function primeLiveMergeState(
   facts: LiveGithubFacts,
   repoFullName: string,
@@ -471,6 +484,7 @@ function cachedRequiredStatusContexts(
   facts: LiveGithubFacts,
   baseRef: string | null | undefined,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<Set<string> | null> {
   const key = liveFactKey(repoFullName, baseRef, liveFactTokenPart(token));
   const cached = facts.requiredContexts.get(key);
@@ -478,7 +492,7 @@ function cachedRequiredStatusContexts(
   const next = evictLiveFactOnReject(
     facts.requiredContexts,
     key,
-    fetchRequiredStatusContexts(env, repoFullName, baseRef, token),
+    fetchRequiredStatusContexts(env, repoFullName, baseRef, token, admissionKey),
   );
   facts.requiredContexts.set(key, next);
   return next;
@@ -502,14 +516,15 @@ function fetchLiveCiAggregateWithRequiredContexts(
   headSha: string | null | undefined,
   baseRef: string | null | undefined,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
   // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay
   // request-cached. When the #1941 flag is on, fetchLiveCiAggregatePreferGraphQl collapses the check/status reads
   // into one GraphQL rollup (reusing these requiredContexts), else it uses the proven REST aggregate.
-  return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token)
+  return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token, admissionKey)
     .catch(() => null)
     .then((requiredContexts) =>
-      fetchLiveCiAggregatePreferGraphQl(env, repoFullName, headSha, token, requiredContexts),
+      fetchLiveCiAggregatePreferGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey),
     );
 }
 
@@ -520,6 +535,7 @@ function cachedLiveCiAggregate(
   headSha: string | null | undefined,
   baseRef: string | null | undefined,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
   const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token));
   const cached = facts.ciAggregates.get(key);
@@ -534,6 +550,7 @@ function cachedLiveCiAggregate(
       headSha,
       baseRef,
       token,
+      admissionKey,
     ),
   );
   facts.ciAggregates.set(key, next);
@@ -547,6 +564,7 @@ function refreshLiveCiAggregate(
   headSha: string | null | undefined,
   baseRef: string | null | undefined,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
   const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token));
   const next = evictLiveFactOnReject(
@@ -559,6 +577,7 @@ function refreshLiveCiAggregate(
       headSha,
       baseRef,
       token,
+      admissionKey,
     ),
   );
   facts.ciAggregates.set(key, next);
@@ -571,6 +590,7 @@ function cachedLiveMergeState(
   facts: LiveGithubFacts,
   prNumber: number,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<string | undefined> {
   const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
   const cached = facts.mergeStates.get(key);
@@ -578,7 +598,7 @@ function cachedLiveMergeState(
   const next = evictLiveFactOnReject(
     facts.mergeStates,
     key,
-    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token),
+    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
   return next;
@@ -590,12 +610,13 @@ function refreshLiveMergeState(
   facts: LiveGithubFacts,
   prNumber: number,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<string | undefined> {
   const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
   const next = evictLiveFactOnReject(
     facts.mergeStates,
     key,
-    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token),
+    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
   return next;
@@ -979,14 +1000,21 @@ async function fanOutAgentRegateSweepJobs(
   // that can merge/close. The action layer (maybeRunAgentMaintenance) stays autonomy-gated, so an observe repo is
   // re-reviewed but never auto-actioned. This is what makes advisory reviews fire on existing open PRs without
   // depending on a fresh webhook per PR.
-  const byKey = new Map<string, string>();
-  for (const repo of await listRepositories(env))
-    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
-  for (const fullName of listConvergenceRepos(env))
-    byKey.set(fullName.toLowerCase(), fullName);
-  const configured: string[] = [];
+  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const byKey = new Map<string, { fullName: string; installationId?: number }>();
+  for (const repo of repositoriesByKey.values())
+    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
+  for (const fullName of listConvergenceRepos(env)) {
+    const repo = repositoriesByKey.get(fullName.toLowerCase());
+    byKey.set(fullName.toLowerCase(), {
+      fullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
+    });
+  }
+  const configured: Array<{ fullName: string; installationId?: number }> = [];
   let skippedDraining = 0;
-  for (const repoFullName of byKey.values()) {
+  for (const repo of byKey.values()) {
+    const repoFullName = repo.fullName;
     const settings = await resolveRepositorySettings(env, repoFullName);
     if (
       !(
@@ -1005,14 +1033,15 @@ async function fanOutAgentRegateSweepJobs(
       skippedDraining += 1;
       continue;
     }
-    configured.push(repoFullName);
+    configured.push(repo);
   }
   await Promise.all(
-    configured.map((repoFullName, index) => {
+    configured.map((repo, index) => {
       const message: JobMessage = {
         type: "agent-regate-sweep",
         requestedBy,
-        repoFullName,
+        repoFullName: repo.fullName,
+        ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
       return delaySeconds > 0
@@ -1076,24 +1105,31 @@ async function fanOutRagIndexJobs(
   // registration webhook), so a registered-only fan-out never indexed them — leaving reviews without codebase context.
   // Deduped case-insensitively (a repo can be both registered AND configured). Each is then filtered by whether RAG is
   // active for it (`features.rag` override → GITTENSORY_REVIEW_REPOS allowlist default), so nothing extra is indexed.
-  const byKey = new Map<string, string>();
-  for (const repo of (await listRepositories(env)).filter(
+  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const byKey = new Map<string, { fullName: string; installationId?: number }>();
+  for (const repo of [...repositoriesByKey.values()].filter(
     (r) => r.isRegistered,
   ))
-    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
-  for (const fullName of listConvergenceRepos(env))
-    byKey.set(fullName.toLowerCase(), fullName);
+    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
+  for (const fullName of listConvergenceRepos(env)) {
+    const repo = repositoriesByKey.get(fullName.toLowerCase());
+    byKey.set(fullName.toLowerCase(), {
+      fullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
+    });
+  }
   const candidates = [...byKey.values()];
   const ragActiveByRepo = await Promise.all(
-    candidates.map((fullName) => convergedFeatureActive(env, fullName, "rag")),
+    candidates.map((repo) => convergedFeatureActive(env, repo.fullName, "rag")),
   );
   const repositories = candidates.filter((_, index) => ragActiveByRepo[index]);
   await Promise.all(
-    repositories.map((fullName, index) => {
+    repositories.map((repo, index) => {
       const message: JobMessage = {
         type: "rag-index-repo",
         requestedBy,
-        repoFullName: fullName,
+        repoFullName: repo.fullName,
+        ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
       };
       const delaySeconds = Math.min(index * 30, 900);
       return delaySeconds > 0
@@ -1544,6 +1580,7 @@ async function maybeRunAgentMaintenance(
     () => undefined,
   );
   const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const baseRef = pr.baseRef ?? args.repo?.defaultBranch;
   const [
     changedFiles,
@@ -1566,15 +1603,16 @@ async function maybeRunAgentMaintenance(
       args.liveFacts,
       baseRef,
       token,
+      admissionKey,
     ),
     // Live mergeable_state after the gate's own publish/review/check mutations. Readiness may have seen the PR as
     // blocked before the bot approval/check landed, so this boundary must refresh instead of replaying the cache.
-    refreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token),
+    refreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token, admissionKey),
     // RC1: live reviewDecision so the approve/request-changes dedup is accurate. The STORED reviewDecision is
     // only written by the open-PR backfill and goes stale → the planner re-posted a review every cycle (the
     // re-review loop with 14-23 stacked reviews). With the live value, an already-approved/changes-requested PR
     // is not re-reviewed for the same state.
-    fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token),
+    fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
   const ciAggregate = await refreshLiveCiAggregate(
     env,
@@ -1583,6 +1621,7 @@ async function maybeRunAgentMaintenance(
     pr.headSha,
     baseRef,
     token,
+    admissionKey,
   );
   const changedPaths = changedPathsForGuardrail(changedFiles);
   const repoOwner = repoFullName.includes("/")
@@ -1611,6 +1650,7 @@ async function maybeRunAgentMaintenance(
     body: pr.body,
     linkedIssues: pr.linkedIssues,
     ciToken,
+    installationId,
   });
 
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
@@ -1761,11 +1801,13 @@ async function reReviewStoredPullRequest(
     (await createInstallationToken(env, installationId).catch(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
+  const resyncAdmissionKey = githubAdmissionKeyForToken(env, installationId, resyncToken);
   const live = await fetchLivePullRequest(
     env,
     repoFullName,
     prNumber,
     resyncToken,
+    resyncAdmissionKey,
   );
   primeLiveMergeState(liveFacts, repoFullName, prNumber, resyncToken, live?.mergeable_state);
   if (live?.head?.sha && live.head.sha !== pr.headSha) {
@@ -1920,10 +1962,11 @@ async function prReadyForReview(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return true;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. The
   // request-local facts may already be seeded from the sweep's resync payload, and the fallback live merge-state
   // fetch fails open internally (swallows its own fetch errors → undefined).
-  const liveMergeState = await cachedLiveMergeState(env, repoFullName, liveFacts, pr.number, token);
+  const liveMergeState = await cachedLiveMergeState(env, repoFullName, liveFacts, pr.number, token, admissionKey);
   if (liveMergeState === "behind") {
     const autonomyLevel = resolveAutonomy(settings.autonomy, "update_branch");
     const installation = await getInstallation(env, installationId);
@@ -1956,7 +1999,7 @@ async function prReadyForReview(
   }
   // 2) wait for CI to finish before running the Gittensory review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
-  const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token).catch(() => undefined);
+  const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token, admissionKey).catch(() => undefined);
   if (ci?.hasPending) {
     // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
     // transiently unreadable pages, fork check that never reports). Past STUCK_CI_DEFER_MS we stop deferring and
@@ -2145,11 +2188,13 @@ export async function resolveCiCompletionPrNumbers(
         () => undefined,
       )) ?? env.GITHUB_PUBLIC_TOKEN;
     if (token) {
+      const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
       const apiNumbers = await fetchOpenPullRequestNumbersForCommit(
         env,
         repoFullName,
         headSha,
         token,
+        admissionKey,
       ).catch(() => []);
       for (const number of apiNumbers) resolved.add(number);
     }
@@ -3582,11 +3627,12 @@ export async function resolveLinkedIssueAuthorLogins(
     () => undefined,
   );
   if (!token) return cached;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   return Promise.all(
     cached.map((login, index) =>
       login != null
         ? Promise.resolve(login)
-        : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token)
+        : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token, admissionKey)
             .then((facts) => facts?.authorLogin ?? null)
             .catch(() => null),
     ),
@@ -3732,11 +3778,15 @@ async function resolvePullRequestFilesForReview(
     const token = await createInstallationToken(env, args.installationId).catch(
       () => undefined,
     );
+    /* v8 ignore next -- installation-token failure fallback is covered by public-token fetch paths; this branch depends on token-cache timing. */
+    const reviewFilesToken = token ?? env.GITHUB_PUBLIC_TOKEN;
+    const admissionKey = githubAdmissionKeyForToken(env, args.installationId, reviewFilesToken);
     const fetched = await fetchAndStorePullRequestFilesForReview(
       env,
       args.repoFullName,
       args.pullNumber,
-      token ?? env.GITHUB_PUBLIC_TOKEN,
+      reviewFilesToken,
+      admissionKey,
     );
     if (fetched.length > 0) {
       console.log(
@@ -4444,6 +4494,7 @@ export async function reconcileLiveDuplicateSiblings(
           () => undefined,
         );
   const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const staleClosed = new Set<number>();
   await Promise.all(
     lowerOverlapping.map(async (sibling) => {
@@ -4452,6 +4503,7 @@ export async function reconcileLiveDuplicateSiblings(
         repoFullName,
         sibling.number,
         token,
+        admissionKey,
       ).catch(() => undefined);
       if (liveState !== undefined && liveState !== "open")
         staleClosed.add(sibling.number);
@@ -5158,11 +5210,13 @@ async function maybePublishPrPublicSurface(
         (await createInstallationToken(env, installationId).catch(
           () => undefined,
         )) ?? env.GITHUB_PUBLIC_TOKEN;
+      const reviewThreadAdmissionKey = githubAdmissionKeyForToken(env, installationId, reviewThreadToken);
       const reviewThreadBlockers = await fetchLiveReviewThreadBlockers(
         env,
         repoFullName,
         pr.number,
         reviewThreadToken,
+        reviewThreadAdmissionKey,
       ).catch(() => []);
       advisory.findings.push(...reviewThreadBlockers.map(reviewThreadBlockerFinding));
     }
@@ -5517,14 +5571,15 @@ async function maybePublishPrPublicSurface(
         () => undefined,
       );
       const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
+      const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
       const baseRef = pr.baseRef ?? repo?.defaultBranch;
       // Required contexts still detect missing/pending required CI, but every visible completed red check/status is
       // adverse and blocks the PR.
-      const liveCi = await refreshLiveCiAggregate(env, repoFullName, webhook.liveFacts, pr.headSha, baseRef, token);
+      const liveCi = await refreshLiveCiAggregate(env, repoFullName, webhook.liveFacts, pr.headSha, baseRef, token, admissionKey);
       // Live merge-state too — the SAME source the disposition uses (planAgentMaintenanceActions reads liveMergeState).
       // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
       // also advance mergeability after readiness ran, so refresh at this post-publish boundary.
-      const liveMergeState = await refreshLiveMergeState(env, repoFullName, webhook.liveFacts, pr.number, token).catch(() => undefined);
+      const liveMergeState = await refreshLiveMergeState(env, repoFullName, webhook.liveFacts, pr.number, token, admissionKey).catch(() => undefined);
       const mergeStateLabel = liveMergeState ?? pr.mergeableState; // fail-safe to the stored value
       const ciState: MergeReadiness["ciState"] =
         liveCi.ciState === "passed"
@@ -5960,11 +6015,13 @@ export async function resolveOverrideHeadSha(
     (await createInstallationToken(env, installationId).catch(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const liveHeadSha = await fetchLivePullRequestHeadSha(
     env,
     repoFullName,
     pr.number,
     token,
+    admissionKey,
   );
   return liveHeadSha ?? pr.headSha;
 }

@@ -16,7 +16,10 @@ type GittIssueListPayload = {
 };
 
 export function normalizeGittBountySnapshot(payload: unknown): BountyRecord[] {
-  const data = payload as GittIssueListPayload;
+  // Guard the root before dereferencing `.issues`: the caller feeds `c.req.json().catch(() => null)`,
+  // so an empty or non-JSON import body arrives as `null`. `?? []` only guards a MISSING `.issues` on an
+  // already-non-null object, so a bare `null`/non-object payload would throw instead of degrading to [].
+  const data = (payload && typeof payload === "object" ? payload : {}) as GittIssueListPayload;
   return (data.issues ?? []).flatMap((issue) => {
     if (issue.id === undefined || !issue.repository_full_name || !issue.issue_number || !issue.status) return [];
     const amountText = issue.bounty_alpha ?? (issue.bounty_amount === undefined ? undefined : String(issue.bounty_amount));

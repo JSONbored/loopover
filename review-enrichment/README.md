@@ -159,6 +159,33 @@ elapsed time, partial/analyzer status, history lookup counts, GitHub endpoint ca
 those fields to spot a broken analyzer without exposing request bodies, diffs, tokens, prompts, comments, or private
 config.
 
+### REES Sentry queries
+
+REES keeps its indexed Sentry tags intentionally small and stable:
+
+- `event`
+- `route`
+- `method`
+- `repo`
+- `pullNumber`
+- `analyzer`
+- `release`
+- `environment`
+- `railwayDeploymentId`
+
+Useful production queries:
+
+- Route exceptions on the enrichment endpoint:
+  - `event:rees_route_error route:/v1/enrich method:POST`
+- Analyzer failures grouped by analyzer:
+  - `event:rees_analyzer_degraded analyzer:history`
+  - `event:rees_analyzer_degraded analyzer:dependency repo:JSONbored/gittensory`
+- Source-map upload/startup failures on a Railway deploy:
+  - `event:rees_sourcemap_upload_failed railwayDeploymentId:<deploy-id>`
+- Process-level crashes:
+  - `event:rees_uncaught_exception`
+  - `event:rees_unhandled_rejection`
+
 If Sentry still shows frames such as `/app/dist/server.js`, check:
 
 1. The event's `release` is `gittensory-rees@<same Railway commit sha>` or your exact `SENTRY_RELEASE` override.

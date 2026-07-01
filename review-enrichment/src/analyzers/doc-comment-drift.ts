@@ -10,6 +10,7 @@ import type { EnrichRequest, DocCommentDriftFinding } from "../types.js";
 const MAX_FILES = 20;
 const MAX_FINDINGS = 50;
 const MAX_SIGNATURE_LINES = 40;
+const MAX_FETCH_BYTES = 1_000_000;
 const SOURCE_RE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const SKIP_RE = /(?:\.d\.ts$|\.min\.|\.test\.|\.spec\.|__tests__\/|(?:^|\/)tests?\/)/;
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
@@ -20,6 +21,34 @@ const FUNC_DECL_RE = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\
 
 interface ScanOptions {
   signal?: AbortSignal;
+}
+
+async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
+  const length = Number(resp.headers.get("content-length"));
+  if (Number.isFinite(length) && length > MAX_FETCH_BYTES) return null;
+  if (!resp.body) return null;
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
+  try {
+    while (true) {
+      if (signal?.aborted) return null;
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_FETCH_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /** Reconstruct the pre-PR content of a file by reverse-applying its unified `patch` to the post-PR `newContent`:
@@ -103,16 +132,66 @@ export function parseDocParams(jsdoc: string): string[] {
   return names;
 }
 
-/** Split a parameter-list source on top-level commas, tracking ()/{}/[] depth and string literals. Angle brackets
- *  are intentionally NOT tracked: `<`/`>` are ambiguous between generics and comparison/arrow operators, so a
- *  default like `n = max > 0 ? max : 1` would be mis-balanced. A comma inside a generic (`Map<K, V>`) therefore
- *  splits, but the resulting type-argument fragment is dropped by `parseFunctionParams`. Returns null only if the
- *  unambiguous brackets never balance. */
+/** If `src[open]` is `<` opening a balanced generic argument list, return the index of its matching `>`; otherwise
+ *  −1 (a comparison operator). Tracks nested `<…>` and skips string literals; it does NOT reject `{`/`=>`/etc.
+ *  because TS type arguments legitimately contain object types (`Result<string, { x: number }>`) and function
+ *  types (`Map<K, (v: V) => void>`). Generic vs comparison is decided by the char after the matching `>`: a
+ *  comparison's `>` is followed by an operand (digit/identifier/string — `removed>0`); a generic close is followed
+ *  by a type terminator (`,` `)` `(` `[` `>` `|` `&` whitespace or end). */
+function matchAngle(src: string, open: number, cache: Map<number, number>): number {
+  const cached = cache.get(open);
+  if (cached !== undefined) return cached;
+  const opens: number[] = [];
+  let angle = 0;
+  let quote: string | null = null;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]!;
+    if (quote) {
+      if (ch === quote && src[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "<") {
+      if (src[i + 1] === "=") i += 1; // `<=` is a comparison operator, not a generic open
+      else {
+        angle += 1;
+        opens.push(i);
+      }
+    } else if (ch === ">" && src[i - 1] !== "=") {
+      // (a `=>` arrow inside a function type — e.g. `Map<K, (v: V) => void>` — is not an angle close.)
+      if (src[i + 1] === "=") {
+        cache.set(open, -1);
+        return -1; // `>=` is a comparison operator, never a generic close
+      }
+      angle -= 1;
+      opens.pop();
+      if (angle === 0) {
+        let j = i + 1;
+        while (j < src.length && /\s/.test(src[j]!)) j += 1; // the next NON-whitespace token decides
+        const next = src[j];
+        const close = next !== undefined && /[\w$"'`]/.test(next) ? -1 : i;
+        cache.set(open, close);
+        return close;
+      }
+    }
+  }
+  // An unmatched generic-like opener cannot close when probed again from the same point. Remember every still-open
+  // candidate from this scan so repeated attacker-controlled `x<` tokens do not rescan the same suffixes.
+  for (const pending of opens) cache.set(pending, -1);
+  return -1;
+}
+
+/** Split a parameter-list source on top-level commas, tracking ()/{}/[] depth, balanced generic `<…>` regions, and
+ *  string literals. A `<` that abuts an identifier (`Map<`, `makeMap<`) is probed by `matchAngle`, which accepts it
+ *  as a generic only when the closing `>` is followed by a type terminator — covering type annotations
+ *  (`a: Map<K, V>`), generic calls/constructors (`makeMap<K, V>()`, `new Map<K, V>()`), and casts (`x as Map<K, V>`)
+ *  — and rejects comparison operators (`x < y`, `z > q`). Returns null only if the unambiguous brackets never balance. */
 function splitParams(src: string): string[] | null {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
   let quote: string | null = null;
+  const angleCache = new Map<number, number>();
   for (let i = 0; i < src.length; i++) {
     const ch = src[i]!;
     if (quote) {
@@ -124,6 +203,9 @@ function splitParams(src: string): string[] | null {
     else if (ch === ")" || ch === "}" || ch === "]") {
       depth -= 1;
       if (depth < 0) return null;
+    } else if (ch === "<" && i > 0 && /[A-Za-z0-9_$]/.test(src[i - 1]!)) {
+      const close = matchAngle(src, i, angleCache);
+      if (close !== -1) i = close; // skip the whole generic argument list, including its commas
     } else if (ch === "," && depth === 0) {
       parts.push(src.slice(start, i));
       start = i + 1;
@@ -134,12 +216,11 @@ function splitParams(src: string): string[] | null {
   return parts;
 }
 
-/** Parameter names of a function from its parenthesised source, or null when not confidently enumerable.
- *  Each comma-separated segment yields its leading identifier (after an optional rest marker). A destructured
- *  segment (`{…}`/`[…]`) makes the set ambiguous → null. A segment whose identifier is immediately followed by
- *  `<`/`>` is a generic type-argument fragment left over from splitting a generic (`Map<K, V>`), not a real
- *  parameter, and is dropped — so comparison defaults and callback params stay enumerable without ever inventing
- *  a name. Pure. */
+/** Parameter names of a function from its parenthesised source, or null when not confidently enumerable. Each
+ *  comma-separated segment (commas inside generics/brackets/strings don't split) yields its leading identifier
+ *  after an optional rest marker. A destructured segment (`{…}`/`[…]`) or a segment without a leading identifier
+ *  makes the set ambiguous → null. Generic-typed and defaulted params (`cache = new Map<K, V>()`) enumerate
+ *  cleanly because the generic's comma no longer splits the list. Pure. */
 export function parseFunctionParams(paramSrc: string): string[] | null {
   const trimmed = paramSrc.trim();
   if (!trimmed) return [];
@@ -154,9 +235,6 @@ export function parseFunctionParams(paramSrc: string): string[] | null {
     if (!name) return null; // not a plain identifier — ambiguous
     const id = name[1]!;
     // After the name a real parameter has only a type (`:`), an optional marker (`?`), a default (`=`), or nothing.
-    // Anything else means this segment is a generic type-argument fragment left over from splitting a generic
-    // (e.g. `readonly V[]>` from `Map<K, readonly V[]>`) — fail closed and skip the whole function rather than
-    // invent a parameter name.
     const rest = part.slice(id.length).trimStart();
     if (rest && !/^[:?=]/.test(rest)) return null;
     if (id === "this") continue; // a TS `this` pseudo-parameter is not a real argument
@@ -292,7 +370,7 @@ export async function scanDocCommentDrift(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}?ref=${encodeURIComponent(headSha)}`,
         { headers, signal: options.signal },
       );
-      if (resp.ok) content = await resp.text();
+      if (resp.ok) content = await readBoundedText(resp, options.signal);
     } catch {
       content = null;
     }

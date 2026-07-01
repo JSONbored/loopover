@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { retryableJobDelayMs } from "../queue/retryable";
 import {
   LOW_REST_RATE_LIMIT_REMAINING,
@@ -5,6 +7,7 @@ import {
 } from "../github/rate-limit";
 import {
   githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForPublicToken,
   latestGitHubRestRateLimitObservation,
   type GitHubRateLimitAdmissionKey,
 } from "../github/client";
@@ -15,10 +18,29 @@ import { extractPayloadType } from "./audit";
 const DEFAULT_RATE_LIMIT_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MS = 3 * 60_000;
 const DEFAULT_RECOVERY_JITTER_MS = 60_000;
+const DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MIN_JOBS = 8;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BACKGROUND_CONCURRENCY = 1;
 export const FOREGROUND_QUEUE_PRIORITY_FLOOR = 8;
+
+export type SelfHostQueueJobStatus = "pending" | "processing" | "dead";
+
+export type SelfHostQueueSnapshotRow = {
+  type: string;
+  status: SelfHostQueueJobStatus;
+  count: number;
+  due: number;
+};
+
+export type SelfHostQueueSnapshot = {
+  totals: Record<SelfHostQueueJobStatus, number> & { due: number };
+  byType: SelfHostQueueSnapshotRow[];
+};
+
+export interface SelfHostQueueIntrospection {
+  snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
+}
 
 // Webhook-driven work (a fresh PR -> its review) jumps ahead of heavy background jobs. Per-PR review refreshes
 // sit just below real webhooks, and sweep fan-out sits below those so stale surfaces are repaired during bursts.
@@ -95,6 +117,61 @@ export function isGitHubBudgetBackgroundJob(message: JobMessage): boolean {
   return GITHUB_BUDGET_BACKGROUND_TYPES.has(message.type);
 }
 
+export function buildSelfHostQueueSnapshot(
+  rows: Iterable<{ payload?: unknown; status?: unknown; run_after?: unknown; runAfter?: unknown }>,
+  nowMs = Date.now(),
+): SelfHostQueueSnapshot {
+  const totals = { pending: 0, processing: 0, dead: 0, due: 0 };
+  const byKey = new Map<string, SelfHostQueueSnapshotRow>();
+  for (const row of rows) {
+    const status = queueStatus(row.status);
+    if (!status) continue;
+    const type = typeof row.payload === "string" ? (extractPayloadType(row.payload) ?? "unknown") : "unknown";
+    const runAfter = queueRunAfterMs(row.run_after ?? row.runAfter);
+    const due = status === "pending" && (runAfter === null || runAfter <= nowMs) ? 1 : 0;
+    const key = `${type}\0${status}`;
+    const current = byKey.get(key) ?? { type, status, count: 0, due: 0 };
+    current.count += 1;
+    current.due += due;
+    byKey.set(key, current);
+    totals[status] += 1;
+    totals.due += due;
+  }
+  return {
+    totals,
+    byType: [...byKey.values()].sort((a, b) => a.type.localeCompare(b.type) || a.status.localeCompare(b.status)),
+  };
+}
+
+export function queueSnapshotBacklog(
+  snapshot: SelfHostQueueSnapshot | null | undefined,
+  types: readonly string[],
+  statuses: readonly SelfHostQueueJobStatus[] = ["pending", "processing"],
+): number {
+  if (!snapshot) return 0;
+  const typeSet = new Set(types);
+  const statusSet = new Set(statuses);
+  return snapshot.byType.reduce(
+    (sum, row) => sum + (typeSet.has(row.type) && statusSet.has(row.status) ? row.count : 0),
+    0,
+  );
+}
+
+export async function queueSnapshotFromBinding(binding: Queue): Promise<SelfHostQueueSnapshot | null> {
+  const snapshot = (binding as Queue & Partial<SelfHostQueueIntrospection>).snapshot;
+  if (typeof snapshot !== "function") return null;
+  return snapshot.call(binding);
+}
+
+function queueStatus(value: unknown): SelfHostQueueJobStatus | null {
+  return value === "pending" || value === "processing" || value === "dead" ? value : null;
+}
+
+function queueRunAfterMs(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : null;
+  return parsed !== null && Number.isFinite(parsed) ? parsed : null;
+}
+
 function githubObservedRateLimitDelayMs(
   observation:
     | { remaining?: unknown; reset_at?: unknown; resetAt?: unknown }
@@ -144,6 +221,8 @@ function observationMs(
 }
 
 type AdmissionObservation = {
+  admission_key?: unknown;
+  admissionKey?: unknown;
   remaining?: unknown;
   reset_at?: unknown;
   resetAt?: unknown;
@@ -152,18 +231,53 @@ type AdmissionObservation = {
   observedAtMs?: unknown;
 };
 
-function newestRateLimitObservation(
-  admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
-  persisted: AdmissionObservation | null | undefined,
-):
-  | AdmissionObservation
-  | null
-  | undefined {
-  const local = admissionKey ? latestGitHubRestRateLimitObservation(admissionKey) : null;
-  if (!local) return persisted;
-  if (!persisted) return local;
-  const persistedMs = observationMs(persisted);
-  return persistedMs !== null && persistedMs > local.observedAtMs ? persisted : local;
+function observationAdmissionKey(
+  observation: AdmissionObservation | null | undefined,
+): GitHubRateLimitAdmissionKey | null | undefined {
+  if (typeof observation?.admission_key === "string") {
+    return observation.admission_key as GitHubRateLimitAdmissionKey;
+  }
+  if (typeof observation?.admissionKey === "string") {
+    return observation.admissionKey as GitHubRateLimitAdmissionKey;
+  }
+  if (observation?.admission_key === null || observation?.admissionKey === null) {
+    return null;
+  }
+  return undefined;
+}
+
+function newerRateLimitObservation(
+  current: AdmissionObservation | null | undefined,
+  candidate: AdmissionObservation,
+): AdmissionObservation | null {
+  if (!current) return candidate;
+  const currentMs = observationMs(current);
+  const candidateMs = observationMs(candidate);
+  if (candidateMs === null) return currentMs === null ? candidate : current;
+  if (currentMs === null) return candidate;
+  return candidateMs > currentMs ? candidate : current;
+}
+
+function rateLimitAdmissionDelayForObservation(
+  kind: GitHubRateLimitAdmissionKind,
+  observation: AdmissionObservation | null | undefined,
+  nowMs: number,
+): number | null {
+  return kind === "webhook"
+    ? githubWebhookRateLimitDelayMs(observation, nowMs)
+    : githubBackgroundRateLimitDelayMs(observation, nowMs);
+}
+
+function fallbackObservationCanOverrideExact(
+  fallback: AdmissionObservation | null,
+  exact: AdmissionObservation | null,
+): boolean {
+  if (!fallback) return false;
+  if (!exact) return true;
+  const fallbackMs = observationMs(fallback);
+  const exactMs = observationMs(exact);
+  if (fallbackMs === null) return false;
+  return exactMs === null || fallbackMs > exactMs;
 }
 
 export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
@@ -178,23 +292,123 @@ export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRa
     : null;
 }
 
+export type GitHubRateLimitAdmissionKind = "background" | "webhook";
+
+export type GitHubRateLimitAdmissionTarget = {
+  kind: GitHubRateLimitAdmissionKind;
+  admissionKey: GitHubRateLimitAdmissionKey | null;
+};
+
+export type GitHubRateLimitKeyScope = "installation" | "public" | "global" | "unknown" | "other";
+export type GitHubRateLimitMetricLabels = {
+  job_type: string;
+  key_scope: GitHubRateLimitKeyScope;
+  kind: GitHubRateLimitAdmissionKind | "unknown";
+};
+export type GitHubRateLimitMetricContext = {
+  labels: GitHubRateLimitMetricLabels;
+  spanAttributes: {
+    "github.rate_limit.kind": GitHubRateLimitAdmissionKind | "unknown";
+    "github.rate_limit.key_scope": GitHubRateLimitKeyScope;
+  };
+  logFields: {
+    jobType: string;
+    key_scope: GitHubRateLimitKeyScope;
+    kind: GitHubRateLimitAdmissionKind | "unknown";
+  };
+};
+
+export function githubRateLimitAdmissionKeyScope(
+  admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
+): GitHubRateLimitKeyScope {
+  if (!admissionKey) return "unknown";
+  if (admissionKey.startsWith("installation:")) return "installation";
+  if (admissionKey === githubRateLimitAdmissionKeyForPublicToken()) return "public";
+  if (admissionKey.startsWith("global:")) return "global";
+  return "other";
+}
+
+export function githubRateLimitMetricLabels(
+  message: JobMessage,
+  target: GitHubRateLimitAdmissionTarget | null | undefined,
+): GitHubRateLimitMetricLabels {
+  return {
+    job_type: message.type,
+    key_scope: githubRateLimitAdmissionKeyScope(target?.admissionKey),
+    kind: target?.kind ?? "unknown",
+  };
+}
+
+export function githubRateLimitMetricContext(
+  message: JobMessage,
+  target: GitHubRateLimitAdmissionTarget | null | undefined,
+): GitHubRateLimitMetricContext {
+  const labels = githubRateLimitMetricLabels(message, target);
+  return {
+    labels,
+    spanAttributes: {
+      "github.rate_limit.kind": labels.kind,
+      "github.rate_limit.key_scope": labels.key_scope,
+    },
+    logFields: {
+      jobType: labels.job_type,
+      key_scope: labels.key_scope,
+      kind: labels.kind,
+    },
+  };
+}
+
+export function githubRateLimitAdmissionTargetForJob(
+  message: JobMessage,
+): GitHubRateLimitAdmissionTarget | null {
+  if (message.type === "github-webhook") {
+    return {
+      kind: "webhook",
+      admissionKey: githubRateLimitAdmissionKeyForJob(message),
+    };
+  }
+  if (!isGitHubBudgetBackgroundJob(message)) return null;
+  return {
+    kind: "background",
+    admissionKey: githubRateLimitAdmissionKeyForJob(message),
+  };
+}
+
+export function matchesGitHubRateLimitAdmissionTarget(
+  candidate: GitHubRateLimitAdmissionTarget | null,
+  blocked: GitHubRateLimitAdmissionTarget,
+): boolean {
+  if (candidate === null) return false;
+  // Null-key GitHub jobs are legacy/unknown actor work; park them with a depleted known bucket,
+  // and park all GitHub-budget work when the depleted bucket itself is unknown.
+  if (blocked.admissionKey === null) return true;
+  return candidate.admissionKey === blocked.admissionKey || candidate.admissionKey === null;
+}
+
 export function githubRateLimitAdmissionDelayMs(
-  kind: "background" | "webhook",
+  kind: GitHubRateLimitAdmissionKind,
   admissionKey: GitHubRateLimitAdmissionKey | null | undefined,
   persisted: AdmissionObservation | readonly AdmissionObservation[] | null | undefined,
   nowMs = Date.now(),
 ): number | null {
+  const local = admissionKey ? latestGitHubRestRateLimitObservation(admissionKey) : null;
   const candidates = Array.isArray(persisted) ? persisted : [persisted];
-  let maxDelay: number | null = null;
-  for (const candidate of candidates.length > 0 ? candidates : [undefined]) {
-    const observation = newestRateLimitObservation(admissionKey, candidate);
-    const delay =
-      kind === "webhook"
-        ? githubWebhookRateLimitDelayMs(observation, nowMs)
-        : githubBackgroundRateLimitDelayMs(observation, nowMs);
-    if (delay !== null) maxDelay = Math.max(maxDelay ?? 0, delay);
+  const keyedCandidateMayOmitKey = Boolean(admissionKey) && !Array.isArray(persisted);
+  let exact: AdmissionObservation | null = local;
+  let fallback: AdmissionObservation | null = null;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const candidateKey = observationAdmissionKey(candidate);
+    if (admissionKey && (candidateKey === admissionKey || (candidateKey === undefined && keyedCandidateMayOmitKey))) {
+      exact = newerRateLimitObservation(exact, candidate);
+    } else if (candidateKey === null || candidateKey === undefined) {
+      fallback = newerRateLimitObservation(fallback, candidate);
+    }
   }
-  return maxDelay;
+  const observation = fallbackObservationCanOverrideExact(fallback, exact)
+    ? fallback
+    : exact;
+  return rateLimitAdmissionDelayForObservation(kind, observation, nowMs);
 }
 
 export function githubBackgroundRateLimitDelayMs(
@@ -338,14 +552,56 @@ export function deterministicJitterMs(seed: string, maxJitterMs: number): number
   return Math.abs(h >>> 0) % (Math.floor(maxJitterMs) + 1);
 }
 
+export function scheduledEnqueueJitterMs(): number {
+  return envDurationMs(
+    "SCHEDULED_ENQUEUE_JITTER_MS",
+    DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS,
+  );
+}
+
+// The every-tick priority scheduled jobs enqueue immediately; the periodic maintenance jobs are deterministically
+// phase-spread across the jitter window so a top-of-hour cron tick does not flush every heavy per-repo fan-out
+// parent in the same instant (which drains the shared GitHub REST bucket and trips the secondary rate limit). The
+// re-gate sweep and its Orb-relay retry run every ~2-min tick and drive timely merges/closes, so they stay
+// immediate; everything else (the 30-min, hourly, and six-hourly maintenance set) is offset by a stable per-type
+// slot. Deterministic (hash of the job type), so a type always lands in the same slot and the enqueued SET is
+// unchanged — only the run_after timing is spread, and the per-repo children each parent fans out inherit that
+// offset (their own index stagger is relative to when the parent runs). (#1948)
+const IMMEDIATE_SCHEDULED_JOB_TYPES = new Set<string>([
+  "agent-regate-sweep",
+  "retry-orb-relay",
+]);
+
+export function scheduledEnqueueDelaySeconds(jobType: string): number {
+  if (IMMEDIATE_SCHEDULED_JOB_TYPES.has(jobType)) return 0;
+  return Math.floor(
+    deterministicJitterMs(jobType, scheduledEnqueueJitterMs()) / 1000,
+  );
+}
+
 export function jobCoalesceKey(payload: string): string | null {
   try {
     const message = JSON.parse(payload) as {
       type?: unknown;
       eventName?: unknown;
+      requestedBy?: unknown;
       repoFullName?: unknown;
       prNumber?: unknown;
       attempt?: unknown;
+      force?: unknown;
+      mode?: unknown;
+      segment?: unknown;
+      cursor?: unknown;
+      login?: unknown;
+      day?: unknown;
+      days?: unknown;
+      dryRun?: unknown;
+      variant?: unknown;
+      paths?: unknown;
+      runId?: unknown;
+      deliveryId?: unknown;
+      draftId?: unknown;
+      event?: { dedupKey?: unknown } | null;
       payload?: GitHubWebhookPayload | null;
     };
     const type = typeof message.type === "string" ? message.type : "";
@@ -365,6 +621,95 @@ export function jobCoalesceKey(payload: string): string | null {
       return repo && pr !== null && attempt !== null
         ? `recapture-preview:${repo}#${pr}:${attempt}`
         : null;
+    }
+    switch (type) {
+      case "refresh-registry":
+      case "refresh-installation-health":
+      case "refresh-scoring-model":
+      case "refresh-upstream-sources":
+      case "build-upstream-ruleset":
+      case "detect-upstream-drift":
+      case "refresh-upstream-drift":
+      case "file-upstream-drift-issues":
+      case "repair-data-fidelity":
+      case "ops-alerts":
+      case "selftune":
+      case "retry-orb-relay":
+        return type;
+      case "backfill-registered-repos":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "all",
+          normalizedEnum(message.mode) ?? "default",
+          boolFlag(message.force),
+        );
+      case "backfill-repo-segment":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "unknown",
+          normalizedEnum(message.segment) ?? "unknown",
+          normalizedEnum(message.mode) ?? "default",
+          boolFlag(message.force),
+          normalizedCursor(message.cursor) ?? "start",
+        );
+      case "backfill-pr-details":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "unknown",
+          normalizedEnum(message.mode) ?? "default",
+          normalizedCursor(message.cursor) ?? "start",
+        );
+      case "generate-signal-snapshots":
+      case "build-burden-forecasts":
+        return keyOf(type, normalizedRepo(message.repoFullName) ?? "all");
+      case "build-contributor-evidence":
+      case "build-contributor-decision-packs":
+        return keyOf(type, normalizedLogin(message.login) ?? "all");
+      case "refresh-contributor-activity":
+        return keyOf(
+          type,
+          normalizedLogin(message.login) ?? "unknown",
+          normalizedRepo(message.repoFullName) ?? "all",
+        );
+      case "rollup-product-usage":
+        return keyOf(
+          type,
+          normalizedDate(message.day) ?? "latest",
+          normalizedCursor(message.days) ?? "default",
+        );
+      case "prune-retention":
+        return keyOf(type, boolFlag(message.dryRun));
+      case "generate-weekly-value-report":
+        return keyOf(
+          type,
+          normalizedEnum(message.variant) ?? "operator",
+          normalizedCursor(message.days) ?? "default",
+        );
+      case "rag-index-repo":
+        return keyOf(
+          type,
+          normalizedRepo(message.repoFullName) ?? "all",
+          normalizedPathScope(message.paths) ?? "full",
+        );
+      // Event-driven jobs carry a stable per-invocation id, so coalescing only ever merges a DUPLICATE re-enqueue of
+      // the SAME job (e.g. a webhook redelivery / retry) — never two distinct invocations, which have distinct ids.
+      // No id (a malformed payload) → null (uncoalesced), never a shared key that could drop a distinct job. (#1942)
+      case "run-agent": {
+        const runId = normalizedId(message.runId);
+        return runId ? keyOf(type, runId) : null;
+      }
+      case "notify-deliver": {
+        const deliveryId = normalizedId(message.deliveryId);
+        return deliveryId ? keyOf(type, deliveryId) : null;
+      }
+      case "notify-evaluate": {
+        const dedupKey = normalizedId(message.event?.dedupKey);
+        return dedupKey ? keyOf(type, dedupKey) : null;
+      }
+      case "submit-draft": {
+        const draftId = normalizedId(message.draftId);
+        return draftId ? keyOf(type, draftId) : null;
+      }
     }
     if (type !== "github-webhook") return null;
     const eventName =
@@ -401,6 +746,55 @@ function normalizedNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.floor(value)
     : null;
+}
+
+function normalizedLogin(value: unknown): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function normalizedEnum(value: unknown): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function normalizedCursor(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.floor(value));
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// A stable, case-preserving opaque id (runId / deliveryId / draftId / dedupKey) for coalesce keys.
+function normalizedId(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizedDate(value: unknown): string | null {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+    ? value.trim()
+    : null;
+}
+
+function normalizedPathScope(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const paths = [
+    ...new Set(
+      value
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim()),
+    ),
+  ].sort();
+  if (paths.length === 0) return null;
+  return `sha256:${createHash("sha256").update(JSON.stringify(paths)).digest("hex")}`;
+}
+
+function boolFlag(value: unknown): string {
+  return value === true ? "1" : "0";
+}
+
+function keyOf(type: string, ...parts: string[]): string {
+  return `${type}:${parts.join(":")}`;
 }
 
 function numberHeader(

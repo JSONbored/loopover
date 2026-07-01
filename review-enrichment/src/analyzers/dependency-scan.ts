@@ -44,7 +44,11 @@ interface ScanOptions {
 const NPM_RE = /^"([^"]+)"\s*:\s*"([^"]+)"/;
 const NPM_ALIAS_RE = /^npm:(@[^/]+\/[^@]+|[^@]+)@(.+)$/;
 const NPM_VERSION_PREFIX_RE = /^[\^~>=<\s]+/;
-const PYPI_RE = /^([A-Za-z0-9._-]+)\s*==\s*([0-9][^\s;]*)/;
+// The optional `[extras]` group (PEP 508 — requests[security], uvicorn[standard], celery[redis,auth])
+// must be consumed but not captured: OSV.dev keys PyPI by the base project name, and a class that
+// stopped at `[` silently dropped every pinned-with-extras dependency from the CVE scan.
+const PYPI_RE =
+  /^([A-Za-z0-9._-]+)(?:\[[A-Za-z0-9._,\s-]+\])?\s*==\s*([0-9][^\s;]*)/;
 const GO_RE = /^([a-z0-9.\/-]+)\s+v([0-9][^\s]*)/;
 
 function parseLine(

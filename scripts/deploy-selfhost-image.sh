@@ -129,8 +129,8 @@ validate_inputs() {
     exit 1
   fi
   case "$image" in
-    *[[:space:]\"\'\\]*)
-      echo "error: image contains unsupported whitespace, quote, or backslash characters" >&2
+    *[[:space:]\"\'\\\$\{\}]*)
+      echo "error: image contains unsupported whitespace, quote, backslash, or compose interpolation characters" >&2
       exit 1
       ;;
   esac

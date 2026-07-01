@@ -17,6 +17,7 @@ import {
   type QueueHealth,
   type RepoOutcomePatterns,
 } from "../signals/engine";
+import { isFailingCheckSummary } from "../signals/local-branch";
 import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signals/reward-risk";
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [
@@ -1290,7 +1291,10 @@ function summarizeQueuePullRequest(
 ): MaintainerQueuePullRequestSummary {
   const ageDays = daysSince(pr.updatedAt ?? pr.createdAt);
   const confirmedMiner = Boolean(pr.authorLogin && confirmedMinerLogins.has(normalizeLogin(pr.authorLogin)));
-  const failedChecks = checks.filter((check) => ["failure", "timed_out", "cancelled"].includes(check.conclusion ?? "")).length;
+  // Share the readiness path's canonical classifier so the digest counts the SAME failing checks the gate sees:
+  // a failure carried on `status` (commit-status rows / runs that errored before concluding), startup_failure /
+  // failed / action_required, and any case variant — not just three lowercase `conclusion` values.
+  const failedChecks = checks.filter(isFailingCheckSummary).length;
   const signals: MaintainerQueuePullRequestSummary["signals"] = [
     ...(confirmedMiner ? ["confirmed_miner" as const] : []),
     ...(pr.linkedIssues.length === 0 ? ["missing_linked_issue" as const] : []),
@@ -1380,7 +1384,14 @@ function shortText(value: string, maxLength: number): string {
     .replace(/\s+/g, " ")
     .trim();
   const safeText = neutralizePublicMarkdownText(sanitized);
-  return safeText.length > maxLength ? `${safeText.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...` : safeText;
+  if (safeText.length <= maxLength) return safeText;
+  // `slice` counts UTF-16 code units, so the cut can fall between the surrogate halves of an astral
+  // character (an emoji) and leave a lone high surrogate — invalid UTF-16 that becomes a U+FFFD mojibake
+  // glyph when the digest comment is UTF-8 encoded for the public GitHub comment. Drop a dangling high
+  // surrogate before the ellipsis so truncation never splits a pair.
+  let truncated = safeText.slice(0, Math.max(0, maxLength - 3));
+  if (/[\uD800-\uDBFF]$/.test(truncated)) truncated = truncated.slice(0, -1);
+  return `${truncated.trimEnd()}...`;
 }
 
 function neutralizePublicMarkdownText(value: string): string {

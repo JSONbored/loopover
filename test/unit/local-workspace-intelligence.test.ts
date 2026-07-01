@@ -136,6 +136,40 @@ describe("local workspace intelligence v2", () => {
     expect(preflight.findings.map((finding) => finding.code)).not.toContain("local_diff_missing_tests");
   });
 
+  it("treats a focused validation run as test evidence, matching the PR-packet summary", () => {
+    const intelligence = buildLocalWorkspaceIntelligence({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "internal/entity/model.go", status: "modified" }],
+        validation: [{ command: "vitest run internal/entity/model.test.ts", status: "focused", summary: "focused subset passed" }],
+      },
+      analysis: {
+        baseFreshness: { status: "fresh", changedFileCount: 1, testFileCount: 0, passedValidationCount: 1, warnings: [] },
+        branchQualityBlockers: [],
+        accountStateBlockers: [],
+        recommendedRerunCondition: "Rerun after any branch, base, or PR state changes before opening/submitting.",
+        prPacket: {
+          titleSuggestion: "Entity model fix",
+          markdown: "# Entity model fix\n",
+          bodySections: [],
+          reviewerNotes: [],
+          validationSummary: {
+            passed: 1,
+            failed: 0,
+            notRun: 0,
+            commands: [{ command: "vitest run internal/entity/model.test.ts", status: "focused", summary: "focused subset passed" }],
+          },
+          publicSafeWarnings: [],
+        },
+      },
+      changedFiles: [{ path: "internal/entity/model.go", status: "modified" }],
+    });
+
+    expect(intelligence.testEvidence.passedValidationCount).toBe(1);
+    expect(intelligence.testEvidence.level).toBe("validation_commands");
+  });
+
   it("records metadata-only scorer diagnostics when no external scorer is configured", () => {
     const intelligence = buildLocalWorkspaceIntelligence({
       input: {

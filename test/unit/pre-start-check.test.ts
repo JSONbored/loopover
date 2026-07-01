@@ -146,6 +146,23 @@ describe("buildPreStartCheck", () => {
     assertPublicSafe(invalid);
   });
 
+  it("avoids duplicate targets beyond the 300-issue lifecycle cap (regression for pinned lifecycle lookup)", () => {
+    const manyIssues = Array.from({ length: 301 }, (_, index) =>
+      issue(index + 1, `Cached issue ${index + 1}`, {
+        updatedAt: new Date(Date.now() - index * 60_000).toISOString(),
+      }),
+    );
+    manyIssues[300] = issue(301, "Duplicate beyond lifecycle cap", {
+      labels: ["duplicate"],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+    const report = buildPreStartCheck(repo("owner/repo"), manyIssues, [], [], "owner/repo", { issueNumber: 301 });
+    expect(report.lifecycle).toBe("duplicate");
+    expect(report.recommendation).toBe("avoid");
+    expect(report.blockers.some((blocker) => /duplicate in cached metadata/i.test(blocker))).toBe(true);
+    assertPublicSafe(report);
+  });
+
   it("raises for a thin issue that needs more proof", () => {
     const r = repo("owner/repo");
     const issues = [issue(6, "Something is broken somewhere", { body: "broken" })];

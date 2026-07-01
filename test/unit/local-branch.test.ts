@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS } from "../../src/scenarios/input-model";
-import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../../src/signals/local-branch";
+import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, isPassingValidation } from "../../src/signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../../src/signals/local-scorer-diagnostics";
 import type { ContributorOutcomeHistory, ContributorProfile, ContributorScoringProfile, IssueQualityReport } from "../../src/signals/engine";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
@@ -1117,6 +1117,46 @@ describe("local branch analysis", () => {
     expect(analysis.recommendedRerunCondition).toMatch(/git fetch origin/i);
   });
 
+  it("treats a focused validation run as passing test evidence across every surface (regression)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        baseRef: "origin/main",
+        baseSha: "base",
+        headSha: "head",
+        remoteTrackingSha: "base",
+        body: "Fixes #7",
+        changedFiles: [{ path: "internal/entity/model.go", additions: 10, deletions: 2, status: "modified" }],
+        // A focused subset run (`vitest run path`) is green evidence; summarizeValidation/validationEvidence
+        // already count it, so the finding and the v2 workspace count must agree instead of dropping it.
+        validation: [{ command: "vitest run internal/entity/model.test.ts", status: "focused", summary: "focused subset passed" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Entity model edge case", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.validationSummary.passed).toBe(1);
+    expect(analysis.baseFreshness.passedValidationCount).toBe(1);
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "validation_as_test_evidence" })]));
+    expect(analysis.workspaceIntelligence.testEvidence.passedValidationCount).toBe(1);
+    expect(analysis.workspaceIntelligence.testEvidence.level).toBe("validation_commands");
+    expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("local_diff_missing_tests");
+  });
+
+  it("counts only green validation statuses (passed or focused) as passing evidence", () => {
+    expect(isPassingValidation({ command: "npm test", status: "passed" })).toBe(true);
+    expect(isPassingValidation({ command: "vitest run x", status: "focused" })).toBe(true);
+    for (const status of ["failed", "not_run", "skipped", "unknown"] as const) {
+      expect(isPassingValidation({ command: "npm test", status })).toBe(false);
+    }
+  });
+
   it("treats focused validation as evidence and failed validation as actionable", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
@@ -1697,11 +1737,29 @@ describe("local MCP git metadata collection", () => {
     );
   });
 
+  it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { extractLinkedIssues } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    // Standalone closing keywords (hash optional, as this client-side extractor allows) and bare #refs link.
+    expect(extractLinkedIssues("fixes #5")).toEqual([5]);
+    expect(extractLinkedIssues("Closes 12 and resolves #34")).toEqual([12, 34]);
+    expect(extractLinkedIssues("see #7")).toEqual([7]);
+    expect(extractLinkedIssues("closes#3")).toEqual([3]);
+    // Regression: a closing keyword embedded in a longer word must NOT capture a trailing number.
+    expect(extractLinkedIssues("hotfix 5")).toEqual([]);
+    expect(extractLinkedIssues("prefixes 12")).toEqual([]);
+    expect(extractLinkedIssues("unclosed 9")).toEqual([]);
+    expect(extractLinkedIssues("no references here")).toEqual([]);
+  });
+
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {
     // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, parseGitRemote } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
     expect(parseGitRemote("git@github.com:entrius/allways-ui.git")).toBe("entrius/allways-ui");
     expect(parseGitRemote("https://github.com/JSONbored/gittensory.git")).toBe("JSONbored/gittensory");
+    expect(parseGitRemote("https://github.com/JSONbored/gittensory/")).toBe("JSONbored/gittensory");
+    expect(parseGitRemote("https://github.com/JSONbored/gittensory////")).toBe("JSONbored/gittensory");
+    expect(parseGitRemote(`x${"/".repeat(32_000)}x`)).toBeUndefined();
 
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
     git(tempDir, "init");

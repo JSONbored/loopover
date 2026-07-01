@@ -178,3 +178,71 @@ test("registry analyzers skip when their relevant inputs are absent", async () =
   assert.equal(brief.telemetry.analyzers.secret.status, "ok");
   assert.ok(brief.telemetry.skippedWorkByCategory.analyzer_no_dependency_manifest >= 1);
 });
+
+test("added-line analyzers skip uncapped patches with no additions", async () => {
+  let secretRan = false;
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 1811,
+      analyzers: ["secret"],
+      files: [
+        {
+          path: "src/context-only.ts",
+          patch: "@@ -1,1 +1,1 @@\n const value = true;",
+        },
+      ],
+    },
+    {
+      secret: async () => {
+        secretRan = true;
+        return [];
+      },
+    },
+  );
+
+  assert.equal(secretRan, false);
+  assert.equal(brief.analyzerStatus.secret, "skipped");
+  assert.equal(brief.telemetry.analyzers.secret.skipReason, "no_added_lines");
+  assert.equal(brief.telemetry.skippedWorkByCategory.analyzer_no_added_lines, 1);
+});
+
+test("added-line analyzers run when patch scan is capped before additions", async () => {
+  const ran = new Set();
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 1811,
+      analyzers: ["redos", "secret", "secretLog"],
+      files: [
+        {
+          path: "src/late-addition.ts",
+          patch: `${" context\n".repeat(130000)}+console.log(process.env.TOKEN);`,
+        },
+      ],
+      budget: { timeoutMs: 2000 },
+    },
+    {
+      redos: async () => {
+        ran.add("redos");
+        return [];
+      },
+      secret: async () => {
+        ran.add("secret");
+        return [];
+      },
+      secretLog: async () => {
+        ran.add("secretLog");
+        return [];
+      },
+    },
+  );
+
+  assert.deepEqual([...ran].sort(), ["redos", "secret", "secretLog"]);
+  assert.equal(brief.analyzerStatus.redos, "ok");
+  assert.equal(brief.analyzerStatus.secret, "ok");
+  assert.equal(brief.analyzerStatus.secretLog, "ok");
+  assert.equal(brief.telemetry.analyzerCount.skipped, 0);
+  assert.equal(brief.telemetry.skippedWorkByCategory.analyzer_no_added_lines, undefined);
+  assert.ok(brief.telemetry.cappedWorkByCategory.has_added_lines_patch_bytes > 0);
+});

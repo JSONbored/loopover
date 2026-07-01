@@ -131,6 +131,31 @@ function mergedHistoryBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
   };
 }
 
+// Upstream time-decay (#703), env-gated by SCORING_TIME_DECAY_ENABLED (default OFF) and opted into per-preview
+// via input.applyTimeDecay. When the flag is off (the common case) or the PR is fresh, the multiplier is 1 and
+// the breakdown reads as "not enabled" / "fresh" — surfacing the value is a no-op for those previews but
+// surfaces the aged-PR decay lever cleanly when time-decay IS applied.
+function timeDecayBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { timeDecayMultiplier } = preview.scoreEstimate;
+  if (timeDecayMultiplier >= 0.99) {
+    return {
+      component: "timeDecayMultiplier",
+      band: "neutral",
+      summary: "Score is not time-decayed for this preview (the PR is within the fresh-PR grace period, or upstream time-decay is disabled — env SCORING_TIME_DECAY_ENABLED).",
+      lever: "No action needed; aged-PR projections automatically apply the upstream sigmoid decay when time-decay is enabled.",
+      leverageScore: 0,
+    };
+  }
+  const band = bandForMultiplier(timeDecayMultiplier, false);
+  return {
+    component: "timeDecayMultiplier",
+    band,
+    summary: `Score is time-decayed for this aged PR preview (multiplier ${timeDecayMultiplier.toFixed(2)} — upstream sigmoid curve; grace 12h, 50% loss at 10 days, 5% floor through the lookback window).`,
+    lever: "Land the work while it is fresh, or extend the upstream time-decay curve in the repo's master_repositories.json override for this repo to slow the decay.",
+    leverageScore: 20,
+  };
+}
+
 function credibilityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { credibilityMultiplier } = preview.scoreEstimate;
   const { credibilityObserved, credibilityFloor } = preview.gates;
@@ -190,6 +215,26 @@ function reviewPenaltyBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
   };
 }
 
+// Sibling of reviewPenaltyBreakdown: upstream models review churn twice — reviewPenaltyMultiplier shrinks the
+// current preview while reviewCollateralMultiplier raises the open-PR collateral fraction
+// (OPEN_PR_COLLATERAL_PERCENT × multiplier) reserved on concurrent PRs after CHANGES_REQUESTED reviews.
+function reviewCollateralBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { reviewCollateralMultiplier, collateralFraction } = preview.gates;
+  const elevated = reviewCollateralMultiplier > 1.01;
+  const band: ScoreMultiplierBand = elevated ? "reduced" : "neutral";
+  return {
+    component: "reviewCollateralMultiplier",
+    band,
+    summary: elevated
+      ? `Open-PR review collateral is elevated (effective fraction ${roundBand(collateralFraction)}) because prior CHANGES_REQUESTED reviews on open PRs raised the collateral multiplier above baseline.`
+      : `Open-PR review collateral is at the baseline fraction (${roundBand(collateralFraction)}); no CHANGES_REQUESTED review churn is inflating concurrent-PR collateral.`,
+    lever: elevated
+      ? "Resolve outstanding change requests on open PRs before opening more concurrent work, or expect tighter collateral on the open-PR allowance."
+      : "Keep open PRs review-clean to avoid collateral inflation on concurrent work.",
+    leverageScore: elevated ? Math.min(55, Math.round((reviewCollateralMultiplier - 1) * 40 + 20)) : 6,
+  };
+}
+
 function labelMultiplierBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { labelMultiplier } = preview.scoreEstimate;
   const band: ScoreMultiplierBand = labelMultiplier > 1 ? "full" : labelMultiplier < 1 ? "reduced" : "neutral";
@@ -227,6 +272,36 @@ function contributionBonusBreakdown(preview: ScorePreviewResult): ScoreMultiplie
         ? "Keep meaningful tests and docs aligned with the source change."
         : "Add substantive tests or supporting changes if they genuinely improve maintainability.",
     leverageScore: contributionBonus > 0 ? 6 : 30,
+  };
+}
+
+// Sibling of the history-floor breakdowns for the upstream non-code line cap (MAX_LINES_SCORED_FOR_NON_CODE_EXT):
+// non-code token score beyond the cap's worth of changed non-code lines is not scored, so a docs/config-heavy PR
+// can silently lose non-code contribution. Surfaced here so a miner sees the cap the same way the gate breakdowns
+// already surface the open-PR / open-issue / merged-history floors. The cap is a token-score reducer (not a stacked
+// multiplier), so it reads neutral unless the observed non-code line count actually exceeds the cap.
+function nonCodeCapBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { nonCodeLineCap, nonCodeLinesObserved } = preview.gates;
+  if (nonCodeLinesObserved === undefined) {
+    return {
+      component: "nonCodeLineCap",
+      band: "neutral",
+      summary: `No scored non-code line count is observed for this preview (upstream scores at most ${nonCodeLineCap} non-code lines).`,
+      lever: "No action needed; the non-code line cap only affects previews that add scored non-code lines.",
+      leverageScore: 0,
+    };
+  }
+  const capped = nonCodeLinesObserved > nonCodeLineCap;
+  return {
+    component: "nonCodeLineCap",
+    band: capped ? "reduced" : "neutral",
+    summary: capped
+      ? `Non-code lines (${nonCodeLinesObserved}) exceed the upstream scored cap (${nonCodeLineCap}); non-code token contribution beyond the cap is not scored.`
+      : `Non-code lines (${nonCodeLinesObserved}) are within the upstream scored cap (${nonCodeLineCap}).`,
+    lever: capped
+      ? "Non-code changes beyond the cap add no score; move substantive logic into source files or split the non-code bulk out of this PR."
+      : "Non-code contribution is within the scored cap; no action needed on this lever.",
+    leverageScore: capped ? 30 : 5,
   };
 }
 
@@ -269,9 +344,12 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     issueMultiplierBreakdown(preview),
     credibilityBreakdown(preview),
     reviewPenaltyBreakdown(preview),
+    reviewCollateralBreakdown(preview),
     openPrBreakdown(preview),
     openIssueBreakdown(preview),
     mergedHistoryBreakdown(preview),
+    timeDecayBreakdown(preview),
+    nonCodeCapBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

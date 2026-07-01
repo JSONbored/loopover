@@ -30,6 +30,7 @@ import {
   upsertPullRequestDetailSyncState,
   upsertPullRequestFromGitHub,
   upsertPullRequestReview,
+  listRecentMergedPullRequests,
   upsertRecentMergedPullRequest,
   upsertRepoLabel,
   upsertRepoSyncSegment,
@@ -67,9 +68,14 @@ import {
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
-import { isGitHubResponseCacheReplay, timeoutFetch } from "./client";
+import {
+  githubRateLimitAdmissionKeyForPublicToken,
+  githubRateLimitAdmissionKeyForToken,
+  isGitHubResponseCacheReplay,
+  timeoutFetch,
+  type GitHubRateLimitAdmissionKey,
+} from "./client";
 import { fetchCachedGitHubGraphQl } from "./graphql-cache";
-
 type GitHubLabelPayload = {
   name: string;
   color?: string;
@@ -116,6 +122,11 @@ type BackfillLimits = {
 
 type BackfillMode = "light" | "full" | "resume";
 type BackfillSegmentName = "labels" | "open_issues" | "open_pull_requests" | "recent_merged_pull_requests";
+type GitHubConditionalValidators = { etag?: string | null | undefined; lastModified?: string | null | undefined };
+type GitHubJsonResponse<T> = { data: T; link: string | null; etag: string | null; lastModified: string | null };
+type GitHubJsonNotModifiedResponse = { notModified: true; link: string | null; etag: string | null; lastModified: string | null };
+type GitHubJsonConditionalResponse<T> = GitHubJsonResponse<T> | GitHubJsonNotModifiedResponse;
+type GitHubSegmentConditionalRequest = { previous: RepoSyncSegmentRecord; validators: GitHubConditionalValidators };
 
 export type BackfillRegisteredReposResult = {
   ok: true;
@@ -310,6 +321,24 @@ const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
 const repoGithubTotalsRefreshes = new Map<string, Promise<RepoGithubTotalsSnapshotRecord | undefined>>();
 
+function repoInstallationPayload(repo: RepositoryRecord): { installationId?: number } {
+  return typeof repo.installationId === "number" ? { installationId: repo.installationId } : {};
+}
+
+function repoAdmissionKeyForToken(
+  env: Env,
+  repo: RepositoryRecord,
+  token: string | undefined,
+): GitHubRateLimitAdmissionKey | undefined {
+  return githubRateLimitAdmissionKeyForToken(env, token, repo.installationId);
+}
+
+type GitHubRateLimitOptions = { rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey };
+
+function githubRateLimitOptions(admissionKey: GitHubRateLimitAdmissionKey | undefined): GitHubRateLimitOptions {
+  return admissionKey ? { rateLimitAdmissionKey: admissionKey } : {};
+}
+
 export async function backfillRegisteredRepositories(
   env: Env,
   options: { repoFullName?: string; limits?: Partial<BackfillLimits>; requestedBy?: string; force?: boolean; mode?: BackfillMode } = {},
@@ -421,7 +450,7 @@ export async function enqueueRepositoryOpenDataBackfill(
   await Promise.all(
     segments.map((segment, index) =>
       env.JOBS.send(
-        { type: "backfill-repo-segment", requestedBy: options.requestedBy, repoFullName: repo.fullName, segment, mode, ...(options.force === undefined ? {} : { force: options.force }) },
+        { type: "backfill-repo-segment", requestedBy: options.requestedBy, repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment, mode, ...(options.force === undefined ? {} : { force: options.force }) },
         { delaySeconds: index * 15 },
       ),
     ),
@@ -459,7 +488,7 @@ export async function backfillRepositorySegment(
       errorSummary: `Waiting for GitHub rate limit reset at ${resetAt}.`,
     });
     await env.JOBS.send(
-      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, segment: options.segment, mode, force: true },
+      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment: options.segment, mode, force: true },
       { delaySeconds: delayUntil(resetAt) },
     );
     return segmentJobResult(repo.fullName, options.segment, segment);
@@ -476,12 +505,12 @@ export async function backfillRepositorySegment(
   if ((result.status === "running" || result.status === "waiting_rate_limit") && (options.segment === "labels" || options.segment === "open_issues" || options.segment === "open_pull_requests")) {
     const delaySeconds = result.status === "waiting_rate_limit" && result.segment.rateLimitResetAt ? delayUntil(result.segment.rateLimitResetAt) : 20;
     await env.JOBS.send(
-      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, segment: options.segment, mode: "resume", force: true },
+      { type: "backfill-repo-segment", requestedBy: options.requestedBy === "schedule" || options.requestedBy === "test" ? options.requestedBy : "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment: options.segment, mode: "resume", force: true },
       { delaySeconds },
     );
   }
-  if (options.segment === "open_pull_requests" && result.status === "complete") {
-    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, mode: "resume", cursor: 0 }, { delaySeconds: 10 });
+  if (options.segment === "open_pull_requests" && (result.status === "complete" || result.status === "not_modified")) {
+    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode: "resume", cursor: 0 }, { delaySeconds: 10 });
   }
   await refreshRepoSyncStateFromSegments(env, repo, sourceKind);
   return segmentJobResult(repo.fullName, options.segment, result.segment);
@@ -547,7 +576,7 @@ export async function backfillOpenPullRequestDetails(
   const resetAt = await shouldWaitForGitHubRateLimit(env);
   if (resetAt) {
     const previous = await getRepoSyncSegment(env, repo.fullName, "pull_request_files");
-    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, mode, cursor: options.cursor ?? 0 }, { delaySeconds: delayUntil(resetAt) });
+    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode, cursor: options.cursor ?? 0 }, { delaySeconds: delayUntil(resetAt) });
     await completeSegment(env, repo, "pull_request_files", sourceKind, mode, nowIso(), {
       status: "waiting_rate_limit",
       fetchedCount: previous?.fetchedCount ?? 0,
@@ -570,10 +599,11 @@ export async function backfillOpenPullRequestDetails(
   const cursor = 0;
   const batch = incompleteOpenPullRequests.slice(cursor, cursor + PR_DETAIL_BATCH_SIZE[mode]);
   const warnings: string[] = [];
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   await mapWithConcurrency(batch, 2, async (pr) => {
     await upsertPullRequestDetailSyncState(env, { repoFullName: repo.fullName, pullNumber: pr.number, status: "running" });
     const before = warnings.length;
-    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings);
+    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey);
     const syncedAt = nowIso();
     const newWarnings = warnings.slice(before);
     await upsertPullRequestDetailSyncState(env, {
@@ -612,7 +642,7 @@ export async function backfillOpenPullRequestDetails(
     ),
   );
   if (nextCursor !== undefined) {
-    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, mode: "resume", cursor: nextCursor }, { delaySeconds: 20 });
+    await env.JOBS.send({ type: "backfill-pr-details", requestedBy: "api", repoFullName: repo.fullName, ...repoInstallationPayload(repo), mode: "resume", cursor: nextCursor }, { delaySeconds: 20 });
   }
   await refreshRepoSyncStateFromSegments(env, repo, sourceKind);
   return {
@@ -635,9 +665,10 @@ export async function refreshPullRequestDetails(
     return { ok: true, repoFullName, pullNumber, status: "partial", warnings: ["Repository or pull request was not found."] };
   }
   const token = await tokenForRepo(env, repo);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const warnings: string[] = [];
   await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
-  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings);
+  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey);
   const syncedAt = nowIso();
   const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
   await upsertPullRequestDetailSyncState(env, {
@@ -678,7 +709,12 @@ export async function refreshContributorActivity(
     const query = buildContributorActivityQuery(aliases);
     let payload: GitHubGraphQlContributorSearchResponse;
     try {
-      payload = await githubGraphQl<GitHubGraphQlContributorSearchResponse>(env, query, token);
+      payload = await githubGraphQl<GitHubGraphQlContributorSearchResponse>(
+        env,
+        query,
+        token,
+        githubRateLimitAdmissionKeyForPublicToken(),
+      );
     } catch (error) {
       warnings.push(`Contributor activity refresh failed for ${chunk.map((repo) => repo.fullName).join(", ")}: ${errorMessage(error)}`);
       continue;
@@ -1085,7 +1121,12 @@ async function refreshRepoGithubTotals(
       labels { totalCount }
     }
   }`;
-  const response = await githubGraphQl<GitHubRepoTotalsResponse>(env, query, token);
+  const response = await githubGraphQl<GitHubRepoTotalsResponse>(
+    env,
+    query,
+    token,
+    repoAdmissionKeyForToken(env, repo, token),
+  );
   const repository = response.data?.repository;
   /* v8 ignore next -- GitHub GraphQL should return repository data for an existing repo; this is provider anomaly handling. */
   if (!repository) throw new Error(`GitHub totals query did not return repository data for ${repo.fullName}.`);
@@ -1234,14 +1275,58 @@ async function backfillRecentMergedSegment(
       // Hydrate each merged PR's changed files (like the monolithic backfill path) so
       // recent_merged_pull_requests.changedFiles is populated instead of always empty.
       const warnings: string[] = [];
-      await mapWithConcurrency(merged, 8, async (pr) => {
-        const changedFiles = await fetchPullRequestFiles(env, repo.fullName, pr.number, token, warnings).catch(() => []);
-        await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repo.fullName, pr, changedFiles));
-      });
+      const admissionKey = repoAdmissionKeyForToken(env, repo, token);
+      await hydrateMergedPullRequestFiles(env, repo.fullName, merged, token, warnings, 8, admissionKey);
       return merged.length;
     },
     { progressiveHistory: true, countPersisted: () => countRecentMergedPullRequests(env, repo.fullName) },
   );
+}
+
+// A merged PR is immutable, so its changed-file list never changes once stored. Skip the per-PR `/pulls/{n}/files`
+// fetch — the N+1 REST fan-out that dominated this segment's GitHub cost — for any merged PR ALREADY hydrated,
+// re-upserting only the cheap metadata (the upsert preserves the stored files when passed an empty list). One
+// `listRecentMergedPullRequests` read per batch replaces up to one `/files` fetch per merged PR. (#1941)
+async function hydrateMergedPullRequestFiles(
+  env: Env,
+  repoFullName: string,
+  merged: GitHubPullRequestPayload[],
+  token: string | undefined,
+  warnings: string[],
+  concurrency: number,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<void> {
+  const alreadyHydrated = new Set(
+    (await listRecentMergedPullRequests(env, repoFullName))
+      .filter((record) => record.changedFiles.length > 0)
+      .map((record) => record.number),
+  );
+  await mapWithConcurrency(merged, concurrency, async (pr) => {
+    // fetchPullRequestFiles never throws — it returns [] (and records a warning) on any fetch failure.
+    const changedFiles = alreadyHydrated.has(pr.number)
+      ? []
+      : await fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey);
+    await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repoFullName, pr, changedFiles));
+  });
+}
+
+function isNotModifiedResponse<T>(result: GitHubJsonConditionalResponse<T>): result is GitHubJsonNotModifiedResponse {
+  return "notModified" in result && result.notModified;
+}
+
+function conditionalRequestForSegment(
+  previous: RepoSyncSegmentRecord | null,
+  expectedCount: number | undefined,
+  options: { allowEtag: boolean },
+): GitHubSegmentConditionalRequest | undefined {
+  if (!previous) return undefined;
+  if (!isFreshSegmentStatus(previous.status)) return undefined;
+  if (previous.lastCursor !== "1") return undefined;
+  if (previous.nextCursor) return undefined;
+  if (expectedCount !== undefined && previous.expectedCount !== expectedCount) return undefined;
+  const etag = options.allowEtag && previous.etag !== CURRENT_OPEN_SCAN_MARKER ? previous.etag : undefined;
+  const lastModified = previous.lastModified;
+  return etag || lastModified ? { previous, validators: { etag, lastModified } } : undefined;
 }
 
 async function fetchPagedSegment<T>(
@@ -1263,7 +1348,12 @@ async function fetchPagedSegment<T>(
     supplementDescription?: string;
   } = {},
 ): Promise<{ status: RepoSyncSegmentRecord["status"]; segment: RepoSyncSegmentRecord }> {
-  const previous = mode === "resume" ? await getRepoSyncSegment(env, repo.fullName, segmentName) : null;
+  // Load the prior segment for EVERY mode, not just resume (#1942): a scheduled light/full crawl can then send the
+  // stored ETag/If-Modified-Since as a conditional request, so an unchanged single-page list returns a 0-body 304
+  // instead of a full re-list — the largest avoidable GitHub cost on the backfill cadence. Resume PAGINATION stays
+  // gated on `canResumePreviousScan` (mode === "resume") below, and the open-scan segments that must reconcile
+  // GitHub-side closes still force `allowEtag: false`, so this only enables the 304 fast-path where it is safe.
+  const previous = await getRepoSyncSegment(env, repo.fullName, segmentName);
   const requiresCurrentOpenScan = Boolean(options.reconcileOnComplete);
   const canResumePreviousScan =
     mode === "resume" &&
@@ -1287,13 +1377,43 @@ async function fetchPagedSegment<T>(
   let pageCount = 0;
   let hasMore = false;
   let rateLimitResetAt: string | undefined;
+  let etag: string | null | undefined;
+  let lastModified: string | null | undefined;
   const warnings: string[] = [];
   let status: RepoSyncSegmentRecord["status"] = "complete";
+  const conditionalRequest =
+    startPage === 1
+      ? conditionalRequestForSegment(previous, expectedCount, { allowEtag: !requiresCurrentOpenScan })
+      : undefined;
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   try {
     for (let page = startPage; page < startPage + SEGMENT_PAGE_BUDGET[mode]; page += 1) {
       const separator = path.includes("?") ? "&" : "?";
       const pagePath = `${path}${separator}per_page=100&page=${page}`;
-      const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token);
+      let result: GitHubJsonResponse<T[]>;
+      if (conditionalRequest && page === 1) {
+        const conditionalResult = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, {
+          validators: conditionalRequest.validators,
+          allowNotModified: true,
+          ...githubRateLimitOptions(admissionKey),
+        });
+        if (isNotModifiedResponse(conditionalResult)) {
+          const previousSegment = conditionalRequest.previous;
+          status = "not_modified";
+          lastCursor = "1";
+          pageCount = previousSegment.pageCount;
+          etag = requiresCurrentOpenScan ? CURRENT_OPEN_SCAN_MARKER : conditionalResult.etag ?? previousSegment.etag;
+          lastModified = conditionalResult.lastModified ?? previousSegment.lastModified;
+          hasMore = false;
+          nextCursor = undefined;
+          break;
+        }
+        result = conditionalResult;
+      } else {
+        result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, githubRateLimitOptions(admissionKey));
+      }
+      etag = result.etag ?? etag;
+      lastModified = result.lastModified ?? lastModified;
       lastCursor = String(page);
       pageCount += 1;
       fetchedThisRun += await persistPage(result.data, startedAt);
@@ -1351,7 +1471,8 @@ async function fetchPagedSegment<T>(
     pageCount,
     lastCursor,
     nextCursor,
-    etag: requiresCurrentOpenScan ? CURRENT_OPEN_SCAN_MARKER : undefined,
+    etag: requiresCurrentOpenScan ? CURRENT_OPEN_SCAN_MARKER : etag,
+    lastModified,
     warnings,
     errorSummary: status === "error" || status === "waiting_rate_limit" || status === "partial" ? warnings.at(-1) : undefined,
     rateLimitResetAt,
@@ -1386,6 +1507,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
   /* v8 ignore start -- Defensive GitHub GraphQL payload normalization is covered by sparse-payload backfill tests. */
   const existingNumbers = new Set(await listOpenIssueNumbers(env, repo.fullName));
   const { owner, name } = repoParts(repo.fullName);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   let after = "";
   let supplemented = 0;
   for (;;) {
@@ -1409,7 +1531,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
       }
       rateLimit { remaining resetAt }
     }`;
-    const response = await githubGraphQl<GitHubOpenIssuesResponse>(env, query, token);
+    const response = await githubGraphQl<GitHubOpenIssuesResponse>(env, query, token, admissionKey);
     const issues = response.data?.repository?.issues;
     for (const issue of issues?.nodes ?? []) {
       if (!issue?.number || existingNumbers.has(issue.number)) continue;
@@ -1440,6 +1562,7 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
   /* v8 ignore start -- Defensive GitHub GraphQL payload normalization is covered by sparse-payload backfill tests. */
   const existingNumbers = new Set((await listOpenPullRequests(env, repo.fullName)).map((pr) => pr.number));
   const { owner, name } = repoParts(repo.fullName);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   let after = "";
   let supplemented = 0;
   for (;;) {
@@ -1469,7 +1592,7 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
       }
       rateLimit { remaining resetAt }
     }`;
-    const response = await githubGraphQl<GitHubOpenPullRequestsResponse>(env, query, token);
+    const response = await githubGraphQl<GitHubOpenPullRequestsResponse>(env, query, token, admissionKey);
     const pullRequests = response.data?.repository?.pullRequests;
     for (const pr of pullRequests?.nodes ?? []) {
       if (!pr?.number || existingNumbers.has(pr.number)) continue;
@@ -1509,6 +1632,10 @@ function isTerminalSegmentStatus(status: RepoSyncSegmentRecord["status"]): boole
   return status === "complete" || status === "not_modified" || status === "sampled";
 }
 
+function isFreshSegmentStatus(status: RepoSyncSegmentRecord["status"]): boolean {
+  return status === "complete" || status === "not_modified";
+}
+
 async function refreshRepoSyncStateFromSegments(env: Env, repo: RepositoryRecord, sourceKind: RepoSyncSegmentRecord["sourceKind"]): Promise<void> {
   const [previous, totalsSnapshot, metadata, labels, openIssues, openPullRequests, recentMerged, files, reviews, checks] = await Promise.all([
     getRepoSyncState(env, repo.fullName),
@@ -1544,10 +1671,10 @@ async function refreshRepoSyncStateFromSegments(env: Env, repo: RepositoryRecord
     openIssuesCount: openIssues?.fetchedCount ?? previous?.openIssuesCount ?? totals?.openIssuesTotal ?? 0,
     openPullRequestsCount: openPullRequests?.fetchedCount ?? previous?.openPullRequestsCount ?? totals?.openPullRequestsTotal ?? 0,
     recentMergedPullRequestsCount: recentMerged?.fetchedCount ?? previous?.recentMergedPullRequestsCount ?? 0,
-    labelsSyncedAt: labels?.status === "complete" ? labels.completedAt : previous?.labelsSyncedAt,
-    issuesSyncedAt: openIssues?.status === "complete" ? openIssues.completedAt : previous?.issuesSyncedAt,
-    pullRequestsSyncedAt: openPullRequests?.status === "complete" ? openPullRequests.completedAt : previous?.pullRequestsSyncedAt,
-    mergedPullRequestsSyncedAt: recentMerged?.status === "complete" || recentMerged?.status === "sampled" ? recentMerged.completedAt : previous?.mergedPullRequestsSyncedAt,
+    labelsSyncedAt: labels && isFreshSegmentStatus(labels.status) ? labels.completedAt : previous?.labelsSyncedAt,
+    issuesSyncedAt: openIssues && isFreshSegmentStatus(openIssues.status) ? openIssues.completedAt : previous?.issuesSyncedAt,
+    pullRequestsSyncedAt: openPullRequests && isFreshSegmentStatus(openPullRequests.status) ? openPullRequests.completedAt : previous?.pullRequestsSyncedAt,
+    mergedPullRequestsSyncedAt: recentMerged && (isFreshSegmentStatus(recentMerged.status) || recentMerged.status === "sampled") ? recentMerged.completedAt : previous?.mergedPullRequestsSyncedAt,
     lastStartedAt: previous?.lastStartedAt,
     lastCompletedAt: completedAt,
     errorSummary: warnings.at(-1),
@@ -1595,8 +1722,15 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const installationToken = repo.installationId ? await createInstallationToken(env, repo.installationId).catch(() => undefined) : undefined;
     const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
     const sourceKind = installationToken ? "installation" : "github";
+    const admissionKey = repoAdmissionKeyForToken(env, repo, token);
     await markSegmentRunning(env, repo, "metadata", sourceKind, mode, startedAt);
-    const metadata = await githubJson<GitHubRepositoryPayload & { open_issues_count?: number; language?: string | null }>(env, repo.fullName, "", token);
+    const metadata = await githubJson<GitHubRepositoryPayload & { open_issues_count?: number; language?: string | null }>(
+      env,
+      repo.fullName,
+      "",
+      token,
+      admissionKey,
+    );
     segmentResults.push(
       await completeSegment(env, repo, "metadata", sourceKind, mode, startedAt, {
         status: "complete",
@@ -1633,15 +1767,12 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const normalizedPullRequests = await mapWithConcurrency(pullRequests, 16, async (pr) => upsertPullRequestFromGitHub(env, repo.fullName, pr, { seenOpenAt: startedAt }));
 
     const mergedFileWarningStart = warnings.length;
-    await mapWithConcurrency(recentMerged, limits.detailConcurrency, async (pr) => {
-      const changedFiles = await fetchPullRequestFiles(env, repo.fullName, pr.number, token, warnings).catch(() => []);
-      await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repo.fullName, pr, changedFiles));
-    });
+    await hydrateMergedPullRequestFiles(env, repo.fullName, recentMerged, token, warnings, limits.detailConcurrency, admissionKey);
 
     const detailTargets = normalizedPullRequests.slice(0, limits.pullRequestDetails);
     const detailWarningStart = warnings.length;
     await mapWithConcurrency(detailTargets, limits.detailConcurrency, async (pr) => {
-      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings);
+      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey);
     });
     const fileWarnings = warnings.slice(mergedFileWarningStart).filter((warning) => /File sync failed/i.test(warning));
     const reviewWarnings = warnings.slice(detailWarningStart).filter((warning) => /Review sync failed/i.test(warning));
@@ -1792,9 +1923,14 @@ async function fetchAndStorePullRequestDetails(
   pr: PullRequestRecord,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
   const warningStart = warnings.length;
-  const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
+  const [files, reviews, checks] = await Promise.all([
+    fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey),
+    fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings, admissionKey),
+    fetchPullRequestChecks(env, repoFullName, pr, token, warnings, admissionKey),
+  ]);
   const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
 
   if (!fileSyncFailed) {
@@ -1849,11 +1985,17 @@ async function fetchAndStorePullRequestDetails(
 // rather than dropping a successful first page.
 const PR_DETAIL_MAX_PAGES = 10;
 
-async function githubPaginatedList<T>(env: Env, repoFullName: string, path: string, token: string | undefined): Promise<T[] | undefined> {
+async function githubPaginatedList<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<T[] | undefined> {
   const items: T[] = [];
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
     // Callers pass query-less resource paths (/pulls/N/files, /pulls/N/reviews), so the page params start the query.
-    const result = await githubJsonWithHeaders<T[]>(env, repoFullName, `${path}?per_page=100&page=${page}`, token).catch(() => undefined);
+    const result = await githubJsonWithHeaders<T[]>(env, repoFullName, `${path}?per_page=100&page=${page}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
     if (!result) return page === 1 ? undefined : items;
     items.push(...result.data);
     if (!hasNextPage(result.link)) break;
@@ -1867,10 +2009,11 @@ async function fetchPullRequestFiles(
   pullNumber: number,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<GitHubFilePayload[]> {
-  const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token);
+  const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token, admissionKey);
   if (files) return files;
-  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
+  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token, admissionKey).catch(() => undefined) : undefined;
   if (fallback) return fallback.files;
   warnings.push(`File sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);
   return [];
@@ -1909,9 +2052,10 @@ export async function fetchAndStorePullRequestFilesForReview(
   repoFullName: string,
   pullNumber: number,
   token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<PullRequestFileRecord[]> {
   const warnings: string[] = [];
-  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings).catch(() => [] as GitHubFilePayload[]);
+  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey).catch(() => [] as GitHubFilePayload[]);
   if (files.length === 0) return [];
   const records = files.map((file) => toPullRequestFileRecordFromGitHub(repoFullName, pullNumber, file));
   // Persist so the AI review, grounding, gate, check-run, and unified-comment reads in THIS run (and any later
@@ -1929,10 +2073,11 @@ async function fetchPullRequestReviews(
   pullNumber: number,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<GitHubReviewPayload[]> {
-  const reviews = await githubPaginatedList<GitHubReviewPayload>(env, repoFullName, `/pulls/${pullNumber}/reviews`, token);
+  const reviews = await githubPaginatedList<GitHubReviewPayload>(env, repoFullName, `/pulls/${pullNumber}/reviews`, token, admissionKey);
   if (reviews) return reviews;
-  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
+  const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token, admissionKey).catch(() => undefined) : undefined;
   if (fallback) return fallback.reviews;
   warnings.push(`Review sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);
   return [];
@@ -1944,6 +2089,7 @@ async function fetchPullRequestChecks(
   pr: PullRequestRecord,
   token: string | undefined,
   warnings: string[],
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<{ check_runs?: GitHubCheckRunPayload[] }> {
   if (!pr.headSha) return { check_runs: [] };
   // Same pagination as files/reviews, but the check-runs endpoint wraps the list in { check_runs }.
@@ -1954,6 +2100,7 @@ async function fetchPullRequestChecks(
       repoFullName,
       `/commits/${pr.headSha}/check-runs?per_page=100&page=${page}`,
       token,
+      githubRateLimitOptions(admissionKey),
     ).catch(() => undefined);
     if (!result) {
       if (page === 1) {
@@ -1986,10 +2133,33 @@ const BOT_OWNED_CHECK_NAMES = new Set<string>([
   GITTENSORY_CONTEXT_CHECK_NAME,
 ]);
 
-function isOwnGitHubAppCheckRun(env: Env, run: GitHubCheckRunPayload): boolean {
+const GITHUB_ACTIONS_VALIDATE_AGGREGATE_CONTEXT = "validate";
+const GITHUB_ACTIONS_VALIDATE_AGGREGATE_PREREQUISITES = new Set([
+  "changes",
+  "security",
+  "validate-code",
+]);
+
+function isOwnGitHubAppCheckRun(env: Env, run: { name: string; app?: { slug?: string | null } | null }): boolean {
   const appSlug = typeof run.app?.slug === "string" ? run.app.slug.trim().toLowerCase() : "";
   const ownSlug = env.GITHUB_APP_SLUG.trim().toLowerCase();
   return ownSlug.length > 0 && appSlug === ownSlug && BOT_OWNED_CHECK_NAMES.has(run.name);
+}
+
+function normalizeCiContextName(name: string): string {
+  const trimmed = name.trim();
+  const slashIndex = trimmed.lastIndexOf("/");
+  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1).trim() : trimmed;
+}
+
+function missingConventionalValidateAggregate(contextNames: ReadonlySet<string>): boolean {
+  const normalized = new Set<string>();
+  for (const name of contextNames) normalized.add(normalizeCiContextName(name));
+  if (normalized.has(GITHUB_ACTIONS_VALIDATE_AGGREGATE_CONTEXT)) return false;
+  for (const prerequisite of GITHUB_ACTIONS_VALIDATE_AGGREGATE_PREREQUISITES) {
+    if (!normalized.has(prerequisite)) return false;
+  }
+  return true;
 }
 
 export type LiveCiAggregate = {
@@ -1998,6 +2168,9 @@ export type LiveCiAggregate = {
   // than ciState: a non-required pending check must not fail the gate, but review execution should still wait
   // until every visible CI signal has settled.
   hasPending: boolean;
+  // A currently visible check-run/status/suite is still queued, waiting, or in_progress. Unlike inferred missing
+  // contexts or unreadable pages, this is active CI and must not be overridden by the stale-CI surfacing cap.
+  hasVisiblePending: boolean;
   // Checks that FAIL the gate. Any completed red check/status is adverse, required or not; required contexts are
   // still used for absent/pending detection so missing required CI cannot silently pass.
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
@@ -2013,13 +2186,20 @@ export type LiveCiAggregate = {
  * fetchLiveCiAggregate fall back to folding ALL red checks into the gate, so a fetch failure can never silently
  * pass a required red check.
  */
-export async function fetchRequiredStatusContexts(env: Env, repoFullName: string, baseRef: string | null | undefined, token: string | undefined): Promise<Set<string> | null> {
+export async function fetchRequiredStatusContexts(
+  env: Env,
+  repoFullName: string,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<Set<string> | null> {
   if (!baseRef) return null;
   const result = await githubJsonWithHeaders<{ contexts?: Array<string | null> | null; checks?: Array<{ context?: string | null }> | null }>(
     env,
     repoFullName,
     `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`,
     token,
+    githubRateLimitOptions(admissionKey),
   ).catch(() => undefined);
   if (!result) return null; // 404 / 403 (no admin:read) / error → conservative fold-all.
   const names = new Set<string>();
@@ -2030,6 +2210,118 @@ export async function fetchRequiredStatusContexts(env: Env, repoFullName: string
     if (typeof check?.context === "string" && check.context.trim().length > 0) names.add(check.context);
   }
   return names;
+}
+
+// Minimal structural shape the CI reducer needs from a check-run — a superset of the REST GitHubCheckRunPayload
+// (so REST payloads assign directly) AND buildable from the GraphQL CheckRun node (which has no `id`).
+type LiveCiCheckRun = {
+  name: string;
+  status?: string | null;
+  conclusion?: string | null;
+  details_url?: string | null;
+  output?: { title?: unknown; summary?: unknown };
+  app?: { slug?: string | null } | null;
+};
+type LiveCiStatus = { context?: string | null; state?: string | null; description?: string | null; target_url?: string | null };
+type LiveCiSuite = { status?: string | null; app?: { slug?: string | null } | null };
+
+/**
+ * Pure reduction of a head SHA's check-runs + classic statuses (+ a lazily-fetched check-suite backstop) into the
+ * gate's LiveCiAggregate. Extracted so the REST fetch path (fetchLiveCiAggregate) and the GraphQL rollup path
+ * (fetchLiveCiAggregateViaGraphQl) produce BYTE-IDENTICAL verdicts from ONE set of rules — only the data source
+ * differs (#1941), which is what keeps the flag-gated GraphQL path semantically equivalent to the proven REST one.
+ * `fetchSuites` is invoked ONLY when the cheaper sources are fully settled (no failure, no pending, no incomplete
+ * read), mirroring the REST path's conditional suites read so neither path pays for it on an already-decided PR; it
+ * returns the suite list, or null when that read is unreadable (fail-closed).
+ */
+async function reduceLiveCiAggregate(
+  env: Env,
+  inputs: {
+    checkRuns: ReadonlyArray<LiveCiCheckRun>;
+    statuses: ReadonlyArray<LiveCiStatus>;
+    requiredContexts: ReadonlySet<string> | null | undefined;
+    checkRunsIncomplete: boolean;
+    statusIncomplete: boolean;
+    fetchSuites: () => Promise<ReadonlyArray<LiveCiSuite> | null>;
+  },
+): Promise<LiveCiAggregate> {
+  const { checkRuns, statuses, requiredContexts, checkRunsIncomplete, statusIncomplete, fetchSuites } = inputs;
+  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
+  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts!.has(name);
+  const failingDetails: LiveCiAggregate["failingDetails"] = [];
+  const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
+  let total = 0;
+  let anyPending = false;
+  let anyVisiblePending = false;
+  let sawFirstPartyCheckRun = false;
+  const seenContextNames = new Set<string>();
+
+  // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
+  for (const run of checkRuns) {
+    seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
+    if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
+    if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs
+    total += 1;
+    const conclusion = (run.conclusion ?? "").toLowerCase();
+    const status = (run.status ?? "").toLowerCase();
+    if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
+      const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
+      failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
+    } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
+      // concluded and not failing → passing
+    } else {
+      anyVisiblePending = true;
+      if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+    }
+  }
+
+  // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context).
+  for (const ctx of statuses) {
+    const name = ctx.context ?? "status";
+    total += 1;
+    seenContextNames.add(name);
+    const state = (ctx.state ?? "").toLowerCase();
+    if (state === "failure" || state === "error") {
+      const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
+      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
+    } else if (state === "success") {
+      // passing
+    } else {
+      anyVisiblePending = true;
+      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
+    }
+  }
+
+  // A required context that never appeared in any result is not safe to treat as passed — count it as pending.
+  if (enforceRequiredOnly) {
+    for (const ctx of requiredContexts!) {
+      if (!seenContextNames.has(ctx)) anyPending = true;
+    }
+  }
+
+  // Fold-all mode: a dependent aggregate check can briefly be absent after its prerequisites settled → pending.
+  if (!enforceRequiredOnly && missingConventionalValidateAggregate(seenContextNames)) {
+    anyPending = true;
+  }
+
+  // Check-suite hardening: read the check-SUITES too before certifying a commit settled (only when the cheaper
+  // sources found no failure, no pending, and no incomplete page, so it never adds a call to an already-decided PR).
+  if (failingDetails.length === 0 && !anyPending && !anyVisiblePending && !checkRunsIncomplete && !statusIncomplete) {
+    const suites = await fetchSuites();
+    if (!suites) {
+      // Unreadable suites: fail CLOSED (pending) only when we ALSO never saw a first-party run and checks exist.
+      if (!enforceRequiredOnly && !sawFirstPartyCheckRun && total > 0) anyPending = true;
+    } else if (suites.some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
+      anyPending = true; // a first-party GitHub Actions workflow has not completed
+      anyVisiblePending = true;
+    }
+  }
+
+  let ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
+  // Fail CLOSED on incomplete visibility: an OBSERVED failure is authoritative and preserved.
+  if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
+  const hasPending = anyVisiblePending || anyPending || checkRunsIncomplete || statusIncomplete || ciState === "pending";
+  return { ciState, hasPending, hasVisiblePending: anyVisiblePending, failingDetails, nonRequiredFailingDetails };
 }
 
 /**
@@ -2049,154 +2341,191 @@ export async function fetchLiveCiAggregate(
   // Branch-protection REQUIRED contexts are the trust boundary for required-context absence/pending detection.
   // Completed red checks/statuses still fail the aggregate even when they are not branch-protection-required.
   requiredContexts?: ReadonlySet<string> | null,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, failingDetails: [], nonRequiredFailingDetails: [] };
-  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
-  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
-  const failingDetails: LiveCiAggregate["failingDetails"] = [];
-  const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
-  let total = 0;
-  let anyPending = false;
-  let anyVisiblePending = false;
-  // CI visibility flags: a failed/short read of either source means we did NOT enumerate the commit's full check
-  // set, so we must not certify it "passed". They drive the fail-CLOSED degrade below. In enforce-required mode
-  // the absent-context guard already catches this; this additionally closes the fold-all (unknown-required) seam
-  // where a transient fetch failure plus one green check could otherwise read as "passed".
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] };
+  // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
+  // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
+  const checkRuns: LiveCiCheckRun[] = [];
   let checkRunsIncomplete = false;
-  let statusIncomplete = false;
-  // Whether a FIRST-PARTY (GitHub Actions) check-run was observed at all. Used by the fold-all suites backstop:
-  // if the suites read is unreadable AND we never saw a first-party run, we cannot confirm the workflow ran, so
-  // we must fail CLOSED rather than certify "passed" off only always-on third-party checks (#review-audit, #1799).
-  let sawFirstPartyCheckRun = false;
-  // Track which required context names actually appear in any API result. An absent required context
-  // (never queued, in-progress, or complete) has no entry to push anyPending — without this guard it
-  // would be silently ignored and ciState could become "passed" while it never ran.
-  const seenContextNames = enforceRequiredOnly ? new Set<string>() : null;
-
-  // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
-    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown }; app?: { slug?: string | null } | null }> }>(
+    const result = await githubJsonWithHeaders<{ check_runs?: Array<LiveCiCheckRun> }>(
       env,
       repoFullName,
       `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
       token,
+      githubRateLimitOptions(admissionKey),
     ).catch(() => undefined);
     // A failed check-runs fetch (page 1 or mid-pagination) leaves the check set partially read — fail closed.
     if (!result) {
       checkRunsIncomplete = true;
       break;
     }
-    for (const run of result.data.check_runs ?? []) {
-      seenContextNames?.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
-      if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
-      if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs (see above)
-      total += 1;
-      const conclusion = (run.conclusion ?? "").toLowerCase();
-      const status = (run.status ?? "").toLowerCase();
-      if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
-        const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
-        failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
-      } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
-        // concluded and not failing → passing
-      } else {
-        anyVisiblePending = true;
-        if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
-      }
-    }
+    checkRuns.push(...(result.data.check_runs ?? []));
     if (!hasNextPage(result.link)) break;
   }
-
-  // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context). The
-  // combined endpoint returns the LATEST status per context, so a context that flipped red→green is counted
-  // once at its current state. Paginated: the endpoint caps at 100 statuses/page, so a head with >100 contexts
-  // would silently drop the overflow (including a failing one) — accumulate every page before processing.
-  const commitStatuses: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> = [];
+  // The combined status endpoint caps at 100/page, so accumulate every page before the reducer processes them.
+  const statuses: LiveCiStatus[] = [];
+  let statusIncomplete = false;
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
-    const statusResult = await githubJsonWithHeaders<{ statuses?: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> }>(
+    const statusResult = await githubJsonWithHeaders<{ statuses?: Array<LiveCiStatus> }>(
       env,
       repoFullName,
       `/commits/${headSha}/status?per_page=100&page=${page}`,
       token,
+      githubRateLimitOptions(admissionKey),
     ).catch(() => undefined);
-    // A failed status fetch leaves the status set partially read — fail closed (see the degrade below).
     if (!statusResult) {
       statusIncomplete = true;
       break;
     }
-    commitStatuses.push(...(statusResult.data.statuses ?? []));
+    statuses.push(...(statusResult.data.statuses ?? []));
     if (!hasNextPage(statusResult.link)) break;
   }
-  for (const ctx of commitStatuses) {
-    const name = ctx.context ?? "status";
-    total += 1;
-    seenContextNames?.add(name);
-    const state = (ctx.state ?? "").toLowerCase();
-    if (state === "failure" || state === "error") {
-      const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
-      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
-    } else if (state === "success") {
-      // passing
-    } else {
-      anyVisiblePending = true;
-      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
+  return reduceLiveCiAggregate(env, {
+    checkRuns,
+    statuses,
+    requiredContexts,
+    checkRunsIncomplete,
+    statusIncomplete,
+    // Lazily read the check-SUITES backstop only when the reducer finds the cheaper sources fully settled; a fetch
+    // error returns null so the reducer fails closed exactly as the inline path did.
+    fetchSuites: async () => {
+      const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<LiveCiSuite> }>(
+        env,
+        repoFullName,
+        `/commits/${headSha}/check-suites?per_page=100`,
+        token,
+        githubRateLimitOptions(admissionKey),
+      ).catch(() => undefined);
+      return suitesResult ? (suitesResult.data.check_suites ?? []) : null;
+    },
+  });
+}
+
+/** #1941 flag: route the live CI aggregate through the GraphQL status rollup. OFF by default (byte-identical
+ *  deploy); a truthy value opts a deployment in, and the GraphQL path still falls back to REST on any uncertainty. */
+export function isStatusRollupGraphQlEnabled(env: { GITHUB_STATUS_ROLLUP_GRAPHQL?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITHUB_STATUS_ROLLUP_GRAPHQL ?? "");
+}
+
+/**
+ * GraphQL equivalent of {@link fetchLiveCiAggregate}: ONE bounded query returns the head commit's statusCheckRollup
+ * (check-runs AND classic statuses, unified) plus its check-suites — replacing the paginated /check-runs + /status
+ * + /check-suites REST reads with a single call against the SEPARATE GraphQL points bucket (#1941). It reuses the
+ * caller's REST-resolved `requiredContexts` (so required-context semantics are identical) and the SAME
+ * reduceLiveCiAggregate rules, so the verdict is byte-identical to the REST path. Returns null — so the caller
+ * falls back to the proven REST path — on ANY uncertainty: missing token/owner, a GraphQL error, an unexpected
+ * shape, or >100 rollup contexts (a single page cannot enumerate them; the REST path paginates).
+ */
+export async function fetchLiveCiAggregateViaGraphQl(
+  env: Env,
+  repoFullName: string,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  requiredContexts?: ReadonlySet<string> | null,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate | null> {
+  if (!headSha || !token) return null;
+  const [owner, name] = repoFullName.split("/");
+  if (!owner || !name) return null;
+  const query = `query GittensoryLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status detailsUrl title summary checkSuite { app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } } } } } }`;
+  const result = await githubGraphQl<{
+    data?: {
+      repository?: {
+        object?: {
+          statusCheckRollup?: {
+            contexts?: {
+              nodes?: Array<{
+                __typename?: string;
+                name?: string | null;
+                conclusion?: string | null;
+                status?: string | null;
+                detailsUrl?: string | null;
+                title?: string | null;
+                summary?: string | null;
+                checkSuite?: { app?: { slug?: string | null } | null } | null;
+                context?: string | null;
+                state?: string | null;
+                description?: string | null;
+                targetUrl?: string | null;
+              }>;
+              pageInfo?: { hasNextPage?: boolean };
+            } | null;
+          } | null;
+          checkSuites?: { nodes?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> };
+        } | null;
+      } | null;
+    };
+    errors?: unknown[];
+  }>(env, query, token, admissionKey).catch(() => null);
+  if (!result) return null; // GraphQL fetch/HTTP error → fall back to REST
+  // A 200 with a top-level `errors` array is a PARTIAL result (a field resolver failed): the data is half-populated
+  // and must NOT be read as a settled/empty rollup — fall back so a partial error can't mask a failing or pending
+  // check as "no checks" and let the gate merge on it.
+  if (Array.isArray(result.errors) && result.errors.length > 0) return null;
+  const commit = result.data?.repository?.object;
+  // A resolved Commit ALWAYS returns a `checkSuites` connection whose `nodes` is an array. If it is absent or not an
+  // array, the object is not a Commit (or the shape is unexpected) → fall back rather than normalize the gap to
+  // empty inputs (the exact failure the doc above promises to avoid).
+  const suiteNodes = commit?.checkSuites?.nodes;
+  if (!commit || !Array.isArray(suiteNodes)) return null;
+  const rollup = commit.statusCheckRollup;
+  const contexts = rollup?.contexts;
+  // statusCheckRollup is null for a check-less commit (legitimate → empty inputs → "unverified"). A NON-null rollup
+  // must carry a well-formed `contexts.nodes` array; a present-but-malformed connection → fall back to REST.
+  if (rollup && !Array.isArray(contexts?.nodes)) return null;
+  if (contexts?.pageInfo?.hasNextPage) return null; // >100 contexts: not fully enumerated → let REST paginate
+  const checkRuns: LiveCiCheckRun[] = [];
+  const statuses: LiveCiStatus[] = [];
+  for (const node of contexts?.nodes ?? []) {
+    if (node.__typename === "CheckRun") {
+      // Field-name mapping only (detailsUrl→details_url, title/summary→output.*, checkSuite.app→app); the reducer
+      // lowercases GraphQL's UPPERCASE conclusion/status enums, so no case handling is needed here.
+      checkRuns.push({
+        name: node.name ?? "",
+        conclusion: node.conclusion ?? null,
+        status: node.status ?? null,
+        details_url: node.detailsUrl ?? null,
+        output: { title: node.title ?? undefined, summary: node.summary ?? undefined },
+        app: { slug: node.checkSuite?.app?.slug ?? null },
+      });
+    } else if (node.__typename === "StatusContext") {
+      statuses.push({ context: node.context ?? null, state: node.state ?? null, description: node.description ?? null, target_url: node.targetUrl ?? null });
     }
   }
+  const suites: LiveCiSuite[] = suiteNodes.map((suite) => ({ status: suite.status ?? null, app: { slug: suite.app?.slug ?? null } }));
+  return reduceLiveCiAggregate(env, {
+    checkRuns,
+    statuses,
+    requiredContexts,
+    checkRunsIncomplete: false,
+    statusIncomplete: false,
+    fetchSuites: async () => suites, // already fetched in the same query — never a second round-trip
+  });
+}
 
-  // A required context that never appeared in any result is not safe to treat as passed — count it as pending
-  // so the gate waits rather than approving a PR whose required CI never ran (e.g. a workflow that doesn't
-  // trigger on forks, or a check that was skipped).
-  if (seenContextNames) {
-    for (const ctx of requiredContexts!) {
-      if (!seenContextNames.has(ctx)) {
-        anyPending = true;
-        anyVisiblePending = true;
-      }
-    }
+/**
+ * The gate's CI-aggregate entrypoint. When the #1941 flag is ON, try the GraphQL statusCheckRollup path and use it
+ * UNLESS it returns null (any uncertainty — see fetchLiveCiAggregateViaGraphQl), otherwise the proven REST
+ * aggregate; flag OFF → always REST (byte-identical). Kept as its own function (not inline at the call site) so the
+ * flag + fallback branches are unit-testable in isolation.
+ */
+export async function fetchLiveCiAggregatePreferGraphQl(
+  env: Env,
+  repoFullName: string,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  requiredContexts?: ReadonlySet<string> | null,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  if (isStatusRollupGraphQlEnabled(env)) {
+    // fetchLiveCiAggregateViaGraphQl handles all its own errors and returns null on any uncertainty (it never
+    // rejects), so a null result — not a throw — is the fall-back-to-REST signal.
+    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey);
+    if (rollup) return rollup;
   }
-
-  // Check-suite hardening (#ci-foldall-checksuites / #dependent-ci-materialization): the check-run/status scan can
-  // read "settled" before GitHub materializes downstream jobs whose `needs:` dependencies just completed
-  // (`coverage-upload` and then `validate` are the common shape). Read the check-SUITES too before certifying a
-  // commit settled: a GitHub-Actions suite still `queued`/`requested`/`waiting`/`in_progress` means first-party CI
-  // has not finished, even if every currently-visible check-run is completed. This runs only when the cheaper
-  // sources found no failure, no pending check, and no incomplete page, so it does not add a call to already-pending
-  // or already-failing PRs.
-  if (headSha && failingDetails.length === 0 && !anyPending && !anyVisiblePending && !checkRunsIncomplete && !statusIncomplete) {
-    const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> }>(
-      env,
-      repoFullName,
-      `/commits/${headSha}/check-suites?per_page=100`,
-      token,
-    ).catch(() => undefined);
-    // Downgrade on an AFFIRMATIVE incomplete suite. AND: if the suites read itself is UNREADABLE (it 403s under the
-    // very same missing administration:read that forced fold-all, or rate-limits) we can no longer rely on it — so
-    // fail CLOSED (pending) when we ALSO never saw a first-party GitHub Actions check-run, i.e. we cannot confirm the
-    // required workflow ran at all (the #1799 false-green: a fork PR awaiting approval with only an always-on
-    // third-party status). A readable, all-completed suites result still certifies "passed" (no mass false-pending).
-    if (!suitesResult) {
-      // total === 0 means the commit has NO checks at all → genuinely unverified (no CI), not a missing first-party
-      // run, so leave it; only pend when checks DO exist but none of them is a confirmed first-party run.
-      if (!enforceRequiredOnly && !sawFirstPartyCheckRun && total > 0) anyPending = true;
-    } else if ((suitesResult.data.check_suites ?? []).some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
-      anyPending = true; // a first-party GitHub Actions workflow has not completed (or downstream jobs are pending materialization)
-      anyVisiblePending = true;
-    }
-  }
-
-  // ciState reflects every completed red check/status. Required contexts additionally prevent absent or pending
-  // required checks from being treated as passed.
-  let ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
-  // Fail CLOSED on incomplete visibility: if either CI source could not be fully read, we cannot certify the
-  // commit as passed/clean — hold (pending) so the gate waits and re-evaluates on the next sweep instead of
-  // auto-merging on partial data. An OBSERVED failure ("failed") is authoritative and preserved.
-  if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
-  const hasPending =
-    anyVisiblePending ||
-    anyPending ||
-    checkRunsIncomplete ||
-    statusIncomplete ||
-    ciState === "pending";
-  return { ciState, hasPending, failingDetails, nonRequiredFailingDetails };
+  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts, admissionKey);
 }
 
 /**
@@ -2207,8 +2536,14 @@ export async function fetchLiveCiAggregate(
  * merge decision sees the CURRENT state. `unknown` (GitHub still computing) ⇒ caller treats as not-yet-clean and
  * a later trigger / the sweep retries. Best-effort: a fetch error returns undefined (caller falls back to stored).
  */
-export async function fetchLivePullRequestMergeState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequestMergeState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data.mergeable_state ?? undefined;
 }
 
@@ -2216,8 +2551,14 @@ export async function fetchLivePullRequestMergeState(env: Env, repoFullName: str
  *  sibling closed/merged on GitHub can still read `open` locally; the duplicate-winner election (#dup-winner /
  *  audit #15) confirms a lower sibling's live state before treating this PR as a cluster loser. Best-effort:
  *  returns undefined on any error so the caller fails open to the stored state. */
-export async function fetchLivePullRequestState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequestState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data.state ?? undefined;
 }
 
@@ -2225,8 +2566,14 @@ export async function fetchLivePullRequestState(env: Env, repoFullName: string, 
  *  lands between a webhook and its processing; the gate-override command (#16 / audit) re-fetches the live head
  *  so the neutral check-run targets the commit a maintainer is actually looking at, not a phantom old SHA.
  *  Best-effort: returns undefined on any error so the caller fails open to the stored head. */
-export async function fetchLivePullRequestHeadSha(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
-  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequestHeadSha(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data.head?.sha ?? undefined;
 }
 
@@ -2235,8 +2582,14 @@ export async function fetchLivePullRequestHeadSha(env: Env, repoFullName: string
  *  self-host relay was down), so the re-review runs on the current head + fresh files instead of a stale cached diff
  *  the AI fail-closes as INCOHERENT_DIFF (#sweep-resync). Best-effort: returns undefined on any error so the caller
  *  fails open to the stored PR (the sweep must never stall on a hiccup). */
-export async function fetchLivePullRequest(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<GitHubPullRequestPayload | undefined> {
-  const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+export async function fetchLivePullRequest(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<GitHubPullRequestPayload | undefined> {
+  const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data ?? undefined;
 }
 
@@ -2244,7 +2597,13 @@ export async function fetchLivePullRequest(env: Env, repoFullName: string, prNum
  *  endpoint. This is the only PR↔commit resolution that works for FORK (cross-repo) PRs, whose CI-completion
  *  webhooks (`check_suite`/`check_run`) carry an EMPTY `pull_requests[]`. Returns the de-duplicated open PR numbers.
  *  Best-effort: an empty/whitespace SHA or any API error yields `[]` (the caller must never stall a PR on a hiccup). */
-export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullName: string, commitSha: string, token: string | undefined): Promise<number[]> {
+export async function fetchOpenPullRequestNumbersForCommit(
+  env: Env,
+  repoFullName: string,
+  commitSha: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<number[]> {
   const sha = commitSha.trim();
   if (!sha) return [];
   // GET /commits/{sha}/pulls returns the PRs (incl. cross-repo forks) whose head is this commit, on the default
@@ -2254,6 +2613,7 @@ export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullNam
     repoFullName,
     `/commits/${encodeURIComponent(sha)}/pulls?per_page=100`,
     token,
+    githubRateLimitOptions(admissionKey),
   ).catch(() => undefined);
   if (!result) return [];
   const numbers = result.data
@@ -2268,12 +2628,23 @@ export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullNam
  *  planner's approve/request-changes dedup was blind and re-posted a review every cycle — the re-review loop.
  *  Refreshing it live makes the dedup accurate. Best-effort: returns undefined on any error (caller falls back
  *  to the stored value). */
-export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+export async function fetchLivePullRequestReviewDecision(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
   if (!token) return undefined;
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return undefined;
   const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
-  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(env, query, token).catch(() => undefined);
+  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(
+    env,
+    query,
+    token,
+    admissionKey,
+  ).catch(() => undefined);
   return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
 }
 
@@ -2314,7 +2685,13 @@ type GitHubReviewThreadResponse = {
  *  review comments do not expose thread resolution; if GraphQL is unavailable this fails open to [] rather than
  *  guessing. Only maintainer/collaborator comments or known scanner-bot comments can create blockers, so
  *  public review comments from untrusted actors cannot influence merge/close state. */
-export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<ReviewThreadBlocker[]> {
+export async function fetchLiveReviewThreadBlockers(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<ReviewThreadBlocker[]> {
   if (!token) return [];
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return [];
@@ -2349,7 +2726,12 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
         }
       }
     }`;
-    const result: GitHubReviewThreadResponse | undefined = await githubGraphQl<GitHubReviewThreadResponse>(env, query, token).catch(() => undefined);
+    const result: GitHubReviewThreadResponse | undefined = await githubGraphQl<GitHubReviewThreadResponse>(
+      env,
+      query,
+      token,
+      admissionKey,
+    ).catch(() => undefined);
     const connection: GitHubReviewThreadConnection | null | undefined = result?.data?.repository?.pullRequest?.reviewThreads;
     if (!connection?.nodes) {
       if (threads.length === 0) return [];
@@ -2387,6 +2769,7 @@ export async function fetchLiveReviewThreadBlockers(env: Env, repoFullName: stri
           repoFullName,
           token,
           memberPermissionCache,
+          admissionKey,
           comment.authorLogin,
           comment.authorAssociation,
         )
@@ -2409,13 +2792,14 @@ async function isAuthorizedReviewThreadAuthor(
   repoFullName: string,
   token: string,
   memberPermissionCache: Map<string, Promise<boolean>>,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
   login: string | null | undefined,
   association: string | null | undefined,
 ): Promise<boolean> {
   if (isOwnReviewThreadAuthor(login)) return false;
   if (isTrustedScannerReviewThreadAuthor(login)) return true;
   if (isMaintainerReviewThreadAuthor(association)) return true;
-  return isVerifiedMemberReviewThreadAuthor(env, repoFullName, token, memberPermissionCache, login, association);
+  return isVerifiedMemberReviewThreadAuthor(env, repoFullName, token, memberPermissionCache, admissionKey, login, association);
 }
 
 const MAINTAINER_REVIEW_THREAD_ASSOCIATIONS = new Set(["OWNER", "COLLABORATOR"]);
@@ -2430,6 +2814,7 @@ function isVerifiedMemberReviewThreadAuthor(
   repoFullName: string,
   token: string,
   memberPermissionCache: Map<string, Promise<boolean>>,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
   login: string | null | undefined,
   association: string | null | undefined,
 ): Promise<boolean> {
@@ -2444,6 +2829,7 @@ function isVerifiedMemberReviewThreadAuthor(
     repoFullName,
     `/collaborators/${encodeURIComponent(normalizedLogin)}/permission`,
     token,
+    githubRateLimitOptions(admissionKey),
   )
     .then((result) => {
       const permission = result.data.permission;
@@ -2460,8 +2846,12 @@ function isTrustedScannerReviewThreadAuthor(login: string | null | undefined): b
   return typeof login === "string" && TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS.has(login.toLowerCase());
 }
 
-function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
-  return /\bgittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
+// Match only OUR OWN app bot login (a `gittensory` / `gittensory-orb[bot]` PREFIX), never a third-party slug
+// that merely ENDS in `-gittensory[bot]`. Anchored to `^`: a `\b` boundary also fires after a hyphen, so the
+// prior `\bgittensory…` misclassified e.g. `evil-gittensory[bot]` as our own author and dropped its
+// review-thread comment as a self-authored non-blocker (fail-open) instead of evaluating it as external.
+export function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
+  return /^gittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
 }
 
 /** The deterministic linked-issue facts the hard-rule evaluator needs (labels / assignees / open-state). */
@@ -2474,14 +2864,20 @@ export type LinkedIssueFactsResult = { number: number; labels: string[]; assigne
  * live fetches. (Note: GitHub's issues endpoint also returns pull requests, which carry a `pull_request` field;
  * a PR number passed here would simply fail the rules — we only treat real issues' labels/assignees.)
  */
-export async function fetchLinkedIssueFacts(env: Env, repoFullName: string, issueNumber: number, token: string | undefined): Promise<LinkedIssueFactsResult | undefined> {
+export async function fetchLinkedIssueFacts(
+  env: Env,
+  repoFullName: string,
+  issueNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LinkedIssueFactsResult | undefined> {
   const result = await githubJsonWithHeaders<{
     number?: number;
     state?: string | null;
     labels?: Array<{ name?: string | null } | string | null> | null;
     assignees?: Array<{ login?: string | null } | null> | null;
     user?: { login?: string | null } | null;
-  }>(env, repoFullName, `/issues/${issueNumber}`, token).catch(() => undefined);
+  }>(env, repoFullName, `/issues/${issueNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   if (!result) return undefined;
   const data = result.data;
   const labels = (data.labels ?? []).flatMap((label) => {
@@ -2503,6 +2899,7 @@ async function fetchPullRequestDetailsFromGraphQl(
   repoFullName: string,
   pullNumber: number,
   token: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<{ files: GitHubFilePayload[]; reviews: GitHubReviewPayload[] }> {
   /* v8 ignore start -- GitHub detail GraphQL sparse-node fallbacks are exercised through PR detail hydration tests. */
   const { owner, name } = repoParts(repoFullName);
@@ -2519,7 +2916,7 @@ async function fetchPullRequestDetailsFromGraphQl(
     }
     rateLimit { remaining resetAt }
   }`;
-  const response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token);
+  const response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token, admissionKey);
   const pullRequest = response.data?.repository?.pullRequest;
   if (!pullRequest) throw new GitHubApiError(`GitHub GraphQL failed for ${repoFullName} pull request #${pullNumber}: pull request not found`, 404, null, null, null, "");
   const files: GitHubFilePayload[] = (pullRequest.files?.nodes ?? []).flatMap((file) => {
@@ -2631,9 +3028,10 @@ async function syncLabels(
   const startedAt = nowIso();
   await markSegmentRunning(env, repo, "labels", sourceKind, mode, startedAt);
   const items: GitHubLabelPayload[] = [];
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   try {
     for (let page = 1; ; page += 1) {
-      const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token);
+      const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token, githubRateLimitOptions(admissionKey));
       items.push(...result.data);
       if (!hasNextPage(result.link)) break;
     }
@@ -2670,6 +3068,7 @@ async function githubPaged<T>(
   const sourceKind: RepoSyncSegmentRecord["sourceKind"] = repo.installationId ? "installation" : "github";
   const previous = mode === "resume" ? await getRepoSyncSegment(env, repo.fullName, segmentName) : null;
   await markSegmentRunning(env, repo, segmentName, sourceKind, mode, startedAt);
+  const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const startPage = mode === "resume" && previous?.nextCursor && Number.isFinite(Number(previous.nextCursor)) ? Number(previous.nextCursor) : 1;
   const priorFetched = mode === "resume" ? (previous?.fetchedCount ?? 0) : 0;
   const items: T[] = [];
@@ -2687,7 +3086,7 @@ async function githubPaged<T>(
       const pageLimit = Math.min(100, limit - items.length);
       const separator = path.includes("?") ? "&" : "?";
       const pagePath = `${path}${separator}per_page=${pageLimit}&page=${page}`;
-      const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token);
+      const result = await githubJsonWithHeaders<T[]>(env, repo.fullName, pagePath, token, githubRateLimitOptions(admissionKey));
       etag = result.etag ?? etag;
       lastModified = result.lastModified ?? lastModified;
       lastCursor = String(page);
@@ -2729,28 +3128,67 @@ async function githubPaged<T>(
   return { items, warnings, segment, fetchedCount };
 }
 
-async function githubJson<T>(env: Env, repoFullName: string, path: string, token?: string): Promise<T> {
-  return (await githubJsonWithHeaders<T>(env, repoFullName, path, token)).data;
+async function githubJson<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token?: string,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<T> {
+  return (await githubJsonWithHeaders<T>(env, repoFullName, path, token, githubRateLimitOptions(admissionKey))).data;
 }
+
+type GitHubJsonRequestOptions = {
+  validators?: GitHubConditionalValidators;
+  rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey;
+};
+type GitHubJsonStandardOptions = GitHubJsonRequestOptions & { allowNotModified?: false };
+type GitHubJsonConditionalOptions = GitHubJsonRequestOptions & { allowNotModified: true };
 
 async function githubJsonWithHeaders<T>(
   env: Env,
   repoFullName: string,
   path: string,
   token?: string,
-): Promise<{ data: T; link: string | null; etag: string | null; lastModified: string | null }> {
+): Promise<GitHubJsonResponse<T>>;
+async function githubJsonWithHeaders<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token: string | undefined,
+  options: GitHubJsonConditionalOptions,
+): Promise<GitHubJsonConditionalResponse<T>>;
+async function githubJsonWithHeaders<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token: string | undefined,
+  options: GitHubJsonStandardOptions,
+): Promise<GitHubJsonResponse<T>>;
+async function githubJsonWithHeaders<T>(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  token?: string,
+  options?: GitHubJsonConditionalOptions | GitHubJsonStandardOptions,
+): Promise<GitHubJsonConditionalResponse<T> | GitHubJsonResponse<T>> {
   const { owner, name } = repoParts(repoFullName);
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}${path}`;
-  let response = await timeoutFetch(url, { headers: githubRestHeaders(token) });
+  let response = await timeoutFetch(url, {
+    headers: githubRestHeaders(token, options?.validators),
+    ...(options?.rateLimitAdmissionKey ? { githubRateLimitAdmission: true, githubRateLimitAdmissionKey: options.rateLimitAdmissionKey } : {}),
+  });
   if (!isGitHubResponseCacheReplay(response)) {
-    await recordGitHubResponse(env, repoFullName, path, response, "rest");
+    await recordGitHubResponse(env, repoFullName, path, response, "rest", options?.rateLimitAdmissionKey);
   }
+  if (response.status === 304 && options?.allowNotModified) return notModifiedResponse(response);
   if (response.status === 404 && token && token === env.GITHUB_PUBLIC_TOKEN) {
-    response = await timeoutFetch(url, { headers: githubRestHeaders() });
+    response = await timeoutFetch(url, { headers: githubRestHeaders(undefined, options?.validators) });
     // Do not persist unauthenticated fallback rate-limit headers into the shared REST backoff state.
     // GitHub's unauthenticated REST bucket is capped below LOW_REST_RATE_LIMIT_REMAINING, so recording
     // successful fallback responses can incorrectly stall later token-backed segment jobs.
   }
+  if (response.status === 304 && options?.allowNotModified) return notModifiedResponse(response);
   if (!response.ok) {
     const body = await response.text();
     throw new GitHubApiError(
@@ -2770,11 +3208,22 @@ async function githubJsonWithHeaders<T>(
   };
 }
 
-function githubRestHeaders(token?: string): HeadersInit {
+function notModifiedResponse(response: Response): GitHubJsonNotModifiedResponse {
+  return {
+    notModified: true,
+    link: response.headers.get("link"),
+    etag: response.headers.get("etag"),
+    lastModified: response.headers.get("last-modified"),
+  };
+}
+
+function githubRestHeaders(token?: string, validators?: GitHubConditionalValidators): HeadersInit {
   return {
     accept: "application/vnd.github+json",
     "user-agent": "gittensory/0.1",
     "x-github-api-version": "2022-11-28",
+    ...(validators?.etag ? { "if-none-match": validators.etag } : {}),
+    ...(validators?.lastModified ? { "if-modified-since": validators.lastModified } : {}),
     ...(token ? { authorization: `Bearer ${token}` } : {}),
   };
 }
@@ -2913,11 +3362,13 @@ async function recordGitHubResponse(
   path: string,
   response: Response,
   resource: "rest" | "graphql",
+  admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
   const resetHeader = response.headers.get("x-ratelimit-reset");
   const resetAt = resetHeader && Number.isFinite(Number(resetHeader)) ? new Date(Number(resetHeader) * 1000).toISOString() : undefined;
   await recordGitHubRateLimitObservation(env, {
     repoFullName,
+    admissionKey,
     resource,
     path,
     statusCode: response.status,

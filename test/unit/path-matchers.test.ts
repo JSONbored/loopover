@@ -67,6 +67,9 @@ describe("isLockfile", () => {
       "deno.lock",
       "pubspec.lock",
       "Podfile.lock",
+      "mix.lock",
+      "Package.resolved",
+      "gradle.lockfile",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }
@@ -219,6 +222,11 @@ describe("isConfigFile", () => {
       "netlify.toml",
       "vercel.json",
       "railway.json",
+      "render.yaml",
+      "fly.toml",
+      "skaffold.yaml",
+      "Earthfile",
+      "Procfile",
       ".gitlab-ci.yml",
       "Jenkinsfile",
       "azure-pipelines.yml",
@@ -307,6 +315,11 @@ describe("classifyChangedFile", () => {
       ["netlify.toml", "config"],
       ["vercel.json", "config"],
       ["railway.json", "config"],
+      ["render.yaml", "config"],
+      ["fly.toml", "config"],
+      ["skaffold.yaml", "config"],
+      ["Earthfile", "config"],
+      ["Procfile", "config"],
       [".codecov.yml", "config"],
       ["codecov.yml", "config"],
       ["codecov.yaml", "config"],

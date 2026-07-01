@@ -26,6 +26,7 @@ import {
   buildRegistryChangeReport,
   buildRepoFitRecommendation,
   buildRoleContext,
+  hasClearNoIssueRationale,
   type ContributorFit,
   type ContributorOutcomeHistory,
   type ContributorScoringProfile,
@@ -291,6 +292,38 @@ describe("v2 signal builders", () => {
     expect(packet.reviewPriority).toBe("needs_author");
     expect(packet.changeSummary.additions).toBe(20);
     expect(packet.reviewSignals.checkFailureCount).toBe(1);
+  });
+
+  it("counts status-carried and startup_failure checks in maintainer packet and reviewability", () => {
+    const baseArgs = {
+      repo,
+      pullRequest: pullRequests[0]!,
+      issues,
+      pullRequests,
+      files: [],
+      reviews: [],
+      recentMergedPullRequests,
+      repoFullName: repo.fullName,
+      pullNumber: 10,
+    };
+    const statusCarried = buildPullRequestMaintainerPacket({
+      ...baseArgs,
+      checks: [{ id: "check-status", repoFullName: repo.fullName, pullNumber: 10, name: "validate", status: "failure", conclusion: null, payload: {} }],
+    });
+    expect(statusCarried.reviewSignals.checkFailureCount).toBe(1);
+    expect(statusCarried.findings.map((finding) => finding.code)).toContain("checks_need_attention");
+
+    const startupFailure = buildPullRequestMaintainerPacket({
+      ...baseArgs,
+      checks: [{ id: "check-startup", repoFullName: repo.fullName, pullNumber: 10, name: "validate", status: "completed", conclusion: "startup_failure", payload: {} }],
+    });
+    expect(startupFailure.reviewSignals.checkFailureCount).toBe(1);
+
+    const reviewability = buildPullRequestReviewability({
+      ...baseArgs,
+      checks: [{ id: "check-status", repoFullName: repo.fullName, pullNumber: 10, name: "validate", status: "failure", conclusion: null, payload: {} }],
+    });
+    expect(reviewability.noiseSources).toContain("1 failing or cancelled check(s).");
   });
 
   it("reports registry changes between snapshots", () => {
@@ -1707,6 +1740,37 @@ describe("v2 signal builders", () => {
     expect(comment).toContain("Author: `unknown`");
     expect(comment).toContain("Public profile only");
     expect(comment).not.toMatch(/wallet|raw trust score|ranking/i);
+  });
+});
+
+describe("hasClearNoIssueRationale docs-only spelling", () => {
+  it("recognizes the hyphenated docs-only rationale, not only the space form", () => {
+    // The space form already worked; these hyphenated forms (the dominant GitHub / Conventional-Commits
+    // spelling, and the one this function's own docstring uses) were wrongly missed, hard-blocking a
+    // docs-only PR with no linked issue under linkedIssueGateMode === "block".
+    expect(hasClearNoIssueRationale({ title: "docs only: clarify README", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "docs-only: clarify README", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "doc-only update", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "Improve install steps", body: "This is a docs-only change." })).toBe(true);
+  });
+
+  it("still rejects PR text with no clear no-issue rationale", () => {
+    expect(hasClearNoIssueRationale({ title: "Improve install steps", body: "Adds a new option." })).toBe(false);
+    expect(hasClearNoIssueRationale({ title: "Add documentation site", body: "" })).toBe(false);
+  });
+});
+
+describe("hasClearNoIssueRationale test-only spelling", () => {
+  it("recognizes hyphenated and spaced test-only rationales", () => {
+    expect(hasClearNoIssueRationale({ title: "test only: lock regression", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "test-only: lock regression", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "tests-only coverage", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "Add branch classifier", body: "This is a tests only change." })).toBe(true);
+  });
+
+  it("still rejects unrelated PR text that mentions tests without a rationale", () => {
+    expect(hasClearNoIssueRationale({ title: "Add tests for classifier", body: "Adds coverage." })).toBe(false);
+    expect(hasClearNoIssueRationale({ title: "Improve test harness", body: "" })).toBe(false);
   });
 });
 

@@ -4069,6 +4069,7 @@ describe("api routes", () => {
       GITTENSORY_REVIEW_RAG: "true",
       JOBS: { async send(message: unknown) { sent.push(message); } } as unknown as Queue,
     });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 456);
     const headers = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
     // No body → re-index every configured repo (the operator's "index all my repos" button).
     const all = await app.request("/v1/internal/jobs/rag-index", { method: "POST", headers, body: "{}" }, env);
@@ -4079,7 +4080,7 @@ describe("api routes", () => {
     const one = await app.request("/v1/internal/jobs/rag-index", { method: "POST", headers, body: JSON.stringify({ repoFullName: " JSONbored/gittensory " }) }, env);
     expect(one.status).toBe(202);
     await expect(one.json()).resolves.toMatchObject({ scope: "JSONbored/gittensory" });
-    expect(sent.at(-1)).toEqual({ type: "rag-index-repo", requestedBy: "api", repoFullName: "JSONbored/gittensory" });
+    expect(sent.at(-1)).toEqual({ type: "rag-index-repo", requestedBy: "api", repoFullName: "JSONbored/gittensory", installationId: 456 });
     // RAG globally off → the endpoint does not exist.
     const offEnv = createTestEnv({ JOBS: { async send() {} } as unknown as Queue });
     const offHeaders = { authorization: `Bearer ${offEnv.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
@@ -4166,6 +4167,7 @@ describe("api routes", () => {
 
     expect((await app.request("/v1/internal/jobs/backfill-repo-segment", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/internal/jobs/backfill-repo-segment", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", segment: "metadata" }) }, env)).status).toBe(400);
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 654);
     const queuedSegment = await app.request(
       "/v1/internal/jobs/backfill-repo-segment",
       { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", segment: "labels", mode: "resume", force: true, cursor: "page-2" }) },
@@ -4176,7 +4178,7 @@ describe("api routes", () => {
     expect(sent).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          message: expect.objectContaining({ type: "backfill-repo-segment", repoFullName: "owner/repo", segment: "labels", cursor: "page-2", force: true }),
+          message: expect.objectContaining({ type: "backfill-repo-segment", repoFullName: "owner/repo", installationId: 654, segment: "labels", cursor: "page-2", force: true }),
         }),
       ]),
     );
@@ -4191,7 +4193,7 @@ describe("api routes", () => {
       env,
     );
     expect(queuedPrDetails.status).toBe(202);
-    expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ message: expect.objectContaining({ type: "backfill-pr-details", cursor: 5 }) })]));
+    expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ message: expect.objectContaining({ type: "backfill-pr-details", installationId: 654, cursor: 5 }) })]));
     expect((await app.request("/v1/internal/jobs/backfill-pr-details/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
 
     expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);

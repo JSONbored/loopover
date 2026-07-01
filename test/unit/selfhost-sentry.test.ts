@@ -1,18 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { hostname } from "node:os";
 
 // Mock @sentry/node so the dynamic import inside initSentry() resolves to spies. Hoisted so vi.mock can see it.
 const mocks = vi.hoisted(() => {
-  const scope = { setContext: vi.fn(), setLevel: vi.fn(), setTag: vi.fn(), setFingerprint: vi.fn() };
+  const scope = {
+    setContext: vi.fn(),
+    setLevel: vi.fn(),
+    setTag: vi.fn(),
+    setFingerprint: vi.fn(),
+    addEventProcessor: vi.fn(),
+  };
+  const client = { id: "sentry-client" };
   return {
+    client,
     scope,
-    init: vi.fn(),
+    init: vi.fn(() => client),
     withScope: vi.fn((cb: (s: typeof scope) => void) => cb(scope)),
     captureException: vi.fn(),
     captureMessage: vi.fn(),
     captureCheckIn: vi.fn((checkIn: { checkInId?: string }) => checkIn.checkInId ?? "check-in-id"),
     flush: vi.fn().mockResolvedValue(true),
+    SentryContextManager: vi.fn(function (this: { kind: string }) {
+      this.kind = "context-manager";
+    }),
+    validateOpenTelemetrySetup: vi.fn(),
   };
 });
+const sentryOtelMocks = vi.hoisted(() => ({
+  SentrySampler: vi.fn(function (this: { client: unknown }, client: unknown) {
+    this.client = client;
+  }),
+  SentryPropagator: vi.fn(function (this: { kind: string }) {
+    this.kind = "propagator";
+  }),
+  SentrySpanProcessor: vi.fn(function (this: { kind: string }) {
+    this.kind = "span-processor";
+  }),
+}));
 const otelMocks = vi.hoisted(() => ({
   currentOtelTraceIds: vi.fn(),
 }));
@@ -23,12 +47,22 @@ vi.mock("@sentry/node", () => ({
   captureMessage: mocks.captureMessage,
   captureCheckIn: mocks.captureCheckIn,
   flush: mocks.flush,
+  SentryContextManager: mocks.SentryContextManager,
+  validateOpenTelemetrySetup: mocks.validateOpenTelemetrySetup,
+}));
+vi.mock("@sentry/opentelemetry", () => ({
+  SentrySampler: sentryOtelMocks.SentrySampler,
+  SentryPropagator: sentryOtelMocks.SentryPropagator,
+  SentrySpanProcessor: sentryOtelMocks.SentrySpanProcessor,
 }));
 vi.mock("../../src/selfhost/otel", () => ({
   currentOtelTraceIds: otelMocks.currentOtelTraceIds,
+  openTelemetryTraceExportEnabled: (env: NodeJS.ProcessEnv) =>
+    Boolean(env.OTEL_TRACES_EXPORTER?.includes("otlp") && env.OTEL_EXPORTER_OTLP_ENDPOINT),
 }));
 
 import {
+  buildSentryOpenTelemetryBridge,
   initSentry,
   captureError,
   captureReviewFailure,
@@ -36,6 +70,7 @@ import {
   forwardStructuredLogToSentry,
   installStructuredLogForwarding,
   resolveSentryRelease,
+  resolveSentryTracesSampleRate,
   resolveSentryMonitorSlug,
   scrubEvent,
   resetSentryForTest,
@@ -52,10 +87,19 @@ beforeEach(() => {
 // value) so issues show a real "type: value", never "(No error message)". This reads back the last captured Error.
 const lastCapturedError = (): Error =>
   mocks.captureException.mock.calls.at(-1)?.[0] as Error;
+const scrubbedEvent = <T>(event: T): T => {
+  const scrubbed = scrubEvent(event);
+  expect(scrubbed).not.toBeNull();
+  return scrubbed as T;
+};
+const lastInitOptions = (): any =>
+  (mocks.init.mock.calls.at(-1) as unknown[] | undefined)?.[0] as any;
+const fakeClassicAccessToken = (): string => `${"github" + "_pat_"}${"a".repeat(24)}`;
+const fakeQueryTokenKey = (): string => "github" + "_token";
 
 describe("scrubEvent — redact secrets before an event leaves the box", () => {
   it("redacts secret-keyed fields in headers/contexts/extra, recurses, and leaves safe fields", () => {
-    const ev = scrubEvent({
+    const ev = scrubbedEvent({
       request: { headers: { authorization: "Bearer abc", "x-trace": "ok" } },
       contexts: {
         gittensory: {
@@ -76,13 +120,208 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
 
   it("is safe when headers/contexts/extra are absent (the !obj branch)", () => {
     expect(() => scrubEvent({})).not.toThrow();
+    expect(scrubEvent({})).toEqual({});
   });
 
   it("stops at the depth guard without infinite recursion, still redacting shallow secrets", () => {
     let deep: any = { secretToken: "x" };
     for (let i = 0; i < 8; i++) deep = { a: deep };
-    const ev = scrubEvent({ extra: { token: "shallow", deep } }) as any;
+    let deepArray: any = { secretToken: "x" };
+    for (let i = 0; i < 7; i++) deepArray = [deepArray];
+    const ev = scrubbedEvent({
+      extra: { token: "shallow", deep, deepArray },
+    }) as any;
+    let deepCursor = ev.extra.deep;
+    for (let i = 0; i < 5; i++) deepCursor = deepCursor.a;
+    let arrayCursor = ev.extra.deepArray;
+    for (let i = 0; i < 5; i++) arrayCursor = arrayCursor[0];
     expect(ev.extra.token).toBe("[redacted]");
+    expect(deepCursor.a).toBe("[redacted]");
+    expect(arrayCursor[0]).toBe("[redacted]");
+  });
+
+  it("drops request bodies, denies unknown contexts, and scrubs PR/private payload fields (#1000)", () => {
+    const fakeToken = fakeClassicAccessToken();
+    const ev = scrubbedEvent({
+      request: {
+        headers: { authorization: `Bearer ${"a".repeat(16)}`, "x-trace": "ok" },
+        data: { prompt: "review this diff" },
+        body: "raw request body",
+        cookies: { session: "abc" },
+      },
+      contexts: {
+        gittensory: {
+          safeReason: "provider unavailable",
+          pullRequestTitle: "PR title with private rubric",
+          reviewText: "raw review body",
+          repoConfig: "private repo config",
+          nested: { apiKey: "provider secret" },
+        },
+        mystery: { repoConfig: "should not leave" },
+        runtime: { name: "node" },
+      },
+      extra: {
+        diff: "@@ raw diff",
+        note: `wallet raw score /home/alice/project ${fakeToken}`,
+        attempts: 2,
+        nil: null,
+        values: ["hotkey", { apiKey: "nested" }, 3, null],
+      },
+      tags: { repo: "owner/repo", authToken: "token" },
+    }) as any;
+
+    expect(ev.request.data).toBeUndefined();
+    expect(ev.request.body).toBeUndefined();
+    expect(ev.request.cookies).toBeUndefined();
+    expect(ev.request.headers.authorization).toBe("[redacted]");
+    expect(ev.request.headers["x-trace"]).toBe("ok");
+    expect(ev.contexts.mystery).toBeUndefined();
+    expect(ev.contexts.runtime.name).toBe("node");
+    expect(ev.contexts.gittensory.pullRequestTitle).toBe("[redacted]");
+    expect(ev.contexts.gittensory.reviewText).toBe("[redacted]");
+    expect(ev.contexts.gittensory.repoConfig).toBe("[redacted]");
+    expect(ev.contexts.gittensory.nested.apiKey).toBe("[redacted]");
+    expect(ev.extra.diff).toBe("[redacted]");
+    expect(ev.extra.note).not.toContain(fakeToken);
+    expect(ev.extra.note).not.toMatch(/wallet|raw score|\/home\/alice/i);
+    expect(ev.extra.note).toContain("<redacted-path>");
+    expect(ev.extra.attempts).toBe(2);
+    expect(ev.extra.nil).toBeNull();
+    expect(ev.extra.values).toEqual([
+      "private context",
+      { apiKey: "[redacted]" },
+      3,
+      null,
+    ]);
+    expect(ev.tags.repo).toBe("owner/repo");
+    expect(ev.tags.authToken).toBe("[redacted]");
+  });
+
+  it("scrubs request URL/query fields and deletes top-level user data", () => {
+    const queryTokenKey = fakeQueryTokenKey();
+    const ev = scrubbedEvent({
+      request: {
+        url: `https://self.host/review?${queryTokenKey}=abc123&repo=owner%2Frepo`,
+        query_string: `${queryTokenKey}=abc123&path=/home/alice/project&safe=ok`,
+        query: { [queryTokenKey]: "abc123", safe: "ok" },
+      },
+      user: { id: "123", email: "person@example.com" },
+    }) as any;
+
+    const url = new URL(ev.request.url);
+    const query = new URLSearchParams(ev.request.query_string);
+    expect(url.searchParams.get(queryTokenKey)).toBe("[redacted]");
+    expect(url.searchParams.get("repo")).toBe("owner/repo");
+    expect(query.get(queryTokenKey)).toBe("[redacted]");
+    expect(query.get("path")).toBe("<redacted-path>");
+    expect(query.get("safe")).toBe("ok");
+    expect(ev.request.query[queryTokenKey]).toBe("[redacted]");
+    expect(ev.request.query.safe).toBe("ok");
+    expect(ev.user).toBeUndefined();
+  });
+
+  it("scrubs breadcrumbs, exception metadata, messages, and transaction names", () => {
+    const ev = scrubbedEvent({
+      message: "gate prompt leaked with Bearer abcdefghijklmnop",
+      transaction: "review /Users/alice/private",
+      breadcrumbs: [
+        {
+          message: "prompt mentions hotkey",
+          data: { responseBody: "raw provider body", safe: "kept" },
+        },
+      ],
+      exception: {
+        values: [
+          {
+            value: "codex failed with eyJaaaaaaaa.bbbbbbbb.cccccccc",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/tmp/repo/file.ts",
+                  vars: { token: "abc", safe: "value" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }) as any;
+
+    expect(ev.message).not.toMatch(/gate prompt|Bearer abc/i);
+    expect(ev.transaction).toContain("<redacted-path>");
+    expect(ev.breadcrumbs[0].message).not.toMatch(/hotkey/i);
+    expect(ev.breadcrumbs[0].data.responseBody).toBe("[redacted]");
+    expect(ev.breadcrumbs[0].data.safe).toBe("kept");
+    expect(ev.exception.values[0].value).not.toMatch(/eyJaaaaaaaa/i);
+    expect(ev.exception.values[0].stacktrace.frames[0].filename).toContain("<redacted-path>");
+    expect(ev.exception.values[0].stacktrace.frames[0].vars.token).toBe("[redacted]");
+    expect(ev.exception.values[0].stacktrace.frames[0].vars.safe).toBe("value");
+  });
+
+  it("scrubs transaction span descriptions and data before sending transaction events", () => {
+    const queryTokenKey = fakeQueryTokenKey();
+    const ev = scrubbedEvent({
+      spans: [
+        {
+          description: `GET /hooks?${queryTokenKey}=abc123&safe=ok`,
+          data: {
+            callbackUrl: `https://self.host/callback?${queryTokenKey}=abc123&safe=ok`,
+            relativeUrl: `/callback?${queryTokenKey}=abc123&safe=ok`,
+            noQueryUrl: "https://self.host/callback",
+            query_string: `${queryTokenKey}=abc123&path=/home/alice/project`,
+            prompt: "raw prompt",
+          },
+        },
+      ],
+    }) as any;
+
+    const callbackUrl = new URL(ev.spans[0].data.callbackUrl);
+    expect(ev.spans[0].description).not.toContain("abc123");
+    expect(callbackUrl.searchParams.get(queryTokenKey)).toBe("[redacted]");
+    expect(callbackUrl.searchParams.get("safe")).toBe("ok");
+    expect(ev.spans[0].data.relativeUrl).toContain(
+      `${queryTokenKey}=%5Bredacted%5D`,
+    );
+    expect(ev.spans[0].data.noQueryUrl).toBe("https://self.host/callback");
+    expect(new URLSearchParams(ev.spans[0].data.query_string).get("path")).toBe(
+      "<redacted-path>",
+    );
+    expect(ev.spans[0].data.prompt).toBe("[redacted]");
+  });
+
+  it("drops the event when scrubbing itself fails instead of sending it unscrubbed", () => {
+    const event = {
+      get request() {
+        throw new Error("getter failed");
+      },
+    };
+
+    expect(scrubEvent(event)).toBeNull();
+  });
+
+  it("drops raw installation ids before hashing is available and uses a stable hash after init", async () => {
+    const noHasherEvent = scrubbedEvent({
+      extra: { installationId: 143010787 },
+    }) as any;
+    expect(noHasherEvent.extra.installationId).toBeUndefined();
+    expect(noHasherEvent.extra.installation_id_hash).toBeUndefined();
+
+    const invalidEvent = scrubbedEvent({
+      extra: { installation_id: "not-an-installation" },
+    }) as any;
+    expect(invalidEvent.extra.installation_id).toBeUndefined();
+    expect(invalidEvent.extra.installation_id_hash).toBeUndefined();
+
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    const ev = scrubbedEvent({
+      tags: { installationId: 143010787, repo: "owner/repo" },
+      contexts: { log: { installation_id: "143010787" } },
+    }) as any;
+
+    expect(ev.tags.installationId).toBeUndefined();
+    expect(ev.tags.installation_id_hash).toBe("68b9c2136087c5ca");
+    expect(ev.contexts.log.installation_id).toBeUndefined();
+    expect(ev.contexts.log.installation_id_hash).toBe("68b9c2136087c5ca");
   });
 });
 
@@ -123,6 +362,16 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(resolveSentryRelease({} as unknown as NodeJS.ProcessEnv)).toBeUndefined();
   });
 
+  it("resolves a positive Sentry trace sample rate and treats unset/zero/invalid as disabled", () => {
+    expect(resolveSentryTracesSampleRate({} as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: " " } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "0" } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "-1" } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "nope" } as unknown as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "0.25" } as unknown as NodeJS.ProcessEnv)).toBe(0.25);
+    expect(resolveSentryTracesSampleRate({ SENTRY_TRACES_SAMPLE_RATE: "9" } as unknown as NodeJS.ProcessEnv)).toBe(1);
+  });
+
   it("returns true and wires init with defaults (?? right-hand branches) + the scrubber as beforeSend", async () => {
     expect(
       await initSentry({
@@ -130,13 +379,19 @@ describe("enabled when SENTRY_DSN is set", () => {
       } as unknown as NodeJS.ProcessEnv),
     ).toBe(true);
     expect(mocks.init).toHaveBeenCalledTimes(1);
-    const opts = mocks.init.mock.calls[0]![0];
+    const opts = lastInitOptions();
     expect(opts.environment).toBe("production");
     expect(opts.release).toBeUndefined();
-    expect(opts.tracesSampleRate).toBe(0);
+    expect(opts.tracesSampleRate).toBeUndefined();
+    expect(opts.skipOpenTelemetrySetup).toBeUndefined();
     expect(
       opts.beforeSend({ extra: { sessionToken: "s" } }).extra.sessionToken,
     ).toBe("[redacted]");
+    expect(
+      opts.beforeSendTransaction({
+        contexts: { unknown: { token: "s" }, trace: { op: "job" } },
+      }).contexts,
+    ).toEqual({ trace: { op: "job" } });
   });
 
   it("honors explicit env (?? left-hand branches)", async () => {
@@ -145,13 +400,53 @@ describe("enabled when SENTRY_DSN is set", () => {
       SENTRY_ENVIRONMENT: "staging",
       SENTRY_RELEASE: "v9",
       SENTRY_TRACES_SAMPLE_RATE: "0.5",
-      PUBLIC_API_ORIGIN: "https://self.host",
+      SENTRY_SERVER_NAME: "gittensory-us-east",
     } as unknown as NodeJS.ProcessEnv);
-    const opts = mocks.init.mock.calls[0]![0];
+    const opts = lastInitOptions();
     expect(opts.environment).toBe("staging");
     expect(opts.release).toBe("v9");
     expect(opts.tracesSampleRate).toBe(0.5);
-    expect(opts.serverName).toBe("https://self.host");
+    expect(opts.skipOpenTelemetrySetup).toBe(true);
+    expect(opts.serverName).toBe("gittensory-us-east");
+  });
+
+  it("defaults serverName to the OS hostname (not the API-origin URL) when SENTRY_SERVER_NAME is unset/blank", async () => {
+    await initSentry({ SENTRY_DSN: "d", SENTRY_SERVER_NAME: "  ", PUBLIC_API_ORIGIN: "https://self.host" } as unknown as NodeJS.ProcessEnv);
+    expect(lastInitOptions().serverName).toBe(hostname());
+  });
+
+  it("uses the custom OpenTelemetry setup when OTLP traces are enabled even if Sentry trace export is off", async () => {
+    await initSentry({
+      SENTRY_DSN: "d",
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318",
+    } as unknown as NodeJS.ProcessEnv);
+    const opts = lastInitOptions();
+    expect(opts.tracesSampleRate).toBeUndefined();
+    expect(opts.skipOpenTelemetrySetup).toBe(true);
+  });
+
+  it("builds the Sentry OpenTelemetry bridge, adding the span processor only when Sentry traces are sampled", async () => {
+    await expect(buildSentryOpenTelemetryBridge()).resolves.toBeUndefined();
+
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    let bridge = await buildSentryOpenTelemetryBridge();
+    expect(sentryOtelMocks.SentrySampler).not.toHaveBeenCalled();
+    expect(sentryOtelMocks.SentryPropagator).toHaveBeenCalledTimes(1);
+    expect(mocks.SentryContextManager).toHaveBeenCalledTimes(1);
+    expect(sentryOtelMocks.SentrySpanProcessor).not.toHaveBeenCalled();
+    bridge?.validate?.();
+    expect(mocks.validateOpenTelemetrySetup).toHaveBeenCalledTimes(1);
+
+    resetSentryForTest();
+    vi.clearAllMocks();
+    await initSentry({
+      SENTRY_DSN: "d",
+      SENTRY_TRACES_SAMPLE_RATE: "0.5",
+    } as unknown as NodeJS.ProcessEnv);
+    bridge = await buildSentryOpenTelemetryBridge();
+    expect(bridge?.sampler).toBeInstanceOf(sentryOtelMocks.SentrySampler);
+    expect(bridge?.spanProcessor).toBeInstanceOf(sentryOtelMocks.SentrySpanProcessor);
   });
 
   it("uses the image-baked version as the release fallback and ignores blank overrides", async () => {
@@ -167,7 +462,7 @@ describe("enabled when SENTRY_DSN is set", () => {
       SENTRY_RELEASE: "",
       GITTENSORY_VERSION: "gittensory-selfhost@0.1.0",
     } as unknown as NodeJS.ProcessEnv);
-    expect(mocks.init.mock.calls[0]![0].release).toBe(
+    expect(lastInitOptions().release).toBe(
       "gittensory-selfhost@0.1.0",
     );
   });
@@ -189,9 +484,17 @@ describe("enabled when SENTRY_DSN is set", () => {
     });
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
     mocks.scope.setContext.mockClear();
+    captureError(new Error("invalid install"), {
+      kind: "job_dead",
+      installation_id: "not-an-installation",
+    });
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("gittensory", {
+      kind: "job_dead",
+    });
+    mocks.scope.setContext.mockClear();
     captureError("plain string with no context");
     expect(mocks.scope.setContext).not.toHaveBeenCalled();
-    expect(mocks.captureException).toHaveBeenCalledTimes(2);
+    expect(mocks.captureException).toHaveBeenCalledTimes(3);
   });
 
   it("captureReviewFailure sets error level + repo/PR/SHA tags, skipping null/undefined, and works without context", async () => {
@@ -200,12 +503,24 @@ describe("enabled when SENTRY_DSN is set", () => {
       repo: "o/r",
       pr: 7,
       head_sha: "abc",
+      installationId: 1,
+      operation: "gate_decision",
+      decision_outcome: "failure",
       owner: null,
     });
     expect(mocks.scope.setLevel).toHaveBeenCalledWith("error");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "o/r");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("pr", "7");
     expect(mocks.scope.setTag).toHaveBeenCalledWith("head_sha", "abc");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installation_id_hash", "21ab41515eeee762");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("operation", "gate_decision");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("decision_outcome", "failure");
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("review", expect.objectContaining({
+      installation_id_hash: "21ab41515eeee762",
+    }));
+    expect(mocks.scope.setContext).not.toHaveBeenCalledWith("review", expect.objectContaining({
+      installationId: 1,
+    }));
     expect(mocks.scope.setTag).not.toHaveBeenCalledWith(
       "owner",
       expect.anything(),
@@ -432,7 +747,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(lastCapturedError().message).toBe("(JSONbored/awesome-claude#4240)");
   });
 
-  it("leads the title with the real error detail + indexes filterable tags + fingerprints by event (#observability)", async () => {
+  it("leads the title with the real error detail + indexes filterable hashed tenant tags + fingerprints by event (#observability)", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(
       JSON.stringify({
@@ -448,9 +763,43 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     expect(lastCapturedError().message).toBe("The operation was aborted due to timeout");
     // The present log dimensions become filterable tags.
     expect(mocks.scope.setTag).toHaveBeenCalledWith("repo", "JSONbored/gittensory");
-    expect(mocks.scope.setTag).toHaveBeenCalledWith("installationId", "143010787");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installation_id_hash", "68b9c2136087c5ca");
+    expect(mocks.scope.setTag).not.toHaveBeenCalledWith("installationId", expect.anything());
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("log", expect.objectContaining({
+      installation_id_hash: "68b9c2136087c5ca",
+    }));
+    expect(mocks.scope.setContext).not.toHaveBeenCalledWith("log", expect.objectContaining({
+      installationId: 143010787,
+    }));
     // Recurrences of one failure group into a single issue by event.
     expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-log", "orb_broker_unavailable"]);
+  });
+
+  it("strips the synthetic wrapper stack so the issue culprit is not forwardStructuredLogToSentry", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({ level: "error", event: "orb_broker_unavailable", message: "timeout" }),
+    );
+
+    const stack = lastCapturedError().stack ?? "";
+    expect(stack).not.toMatch(/\n\s+at /);
+    expect(stack).toBe("orb_broker_unavailable: timeout");
+  });
+
+  it("sets the issue culprit transaction to the event slug, and skips it when there is no event", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(
+      JSON.stringify({ level: "error", event: "orb_broker_unavailable", message: "timeout" }),
+    );
+
+    const processor = mocks.scope.addEventProcessor.mock.calls.at(-1)?.[0] as (
+      event: Record<string, unknown>,
+    ) => Record<string, unknown>;
+    expect(processor({})).toEqual({ transaction: "orb_broker_unavailable" });
+
+    vi.clearAllMocks();
+    forwardStructuredLogToSentry(JSON.stringify({ level: "error", message: "timeout" }));
+    expect(mocks.scope.addEventProcessor).not.toHaveBeenCalled();
   });
 
   it("indexes self-host AI provider dimensions as Sentry tags", async () => {
@@ -637,7 +986,8 @@ describe("installStructuredLogForwarding — central console sink instrumentatio
     );
 
     expect(lastCapturedError().name).toBe("orb_broker_unavailable");
-    expect(lastCapturedError().message).toBe("installationId=1");
+    expect(lastCapturedError().message).toBe("(no message — see the log context)");
+    expect(mocks.scope.setTag).toHaveBeenCalledWith("installation_id_hash", "21ab41515eeee762");
     expect(base.error).toHaveBeenCalledTimes(1);
   });
 

@@ -192,4 +192,23 @@ describe("self-host image deploy script", () => {
       harness.cleanup();
     }
   });
+
+  it.each([
+    "registry.example/gittensory:${GITHUB_OAUTH_CLIENT_SECRET}",
+    "registry.example/gittensory:$GITHUB_OAUTH_CLIENT_SECRET",
+    "registry.example/gittensory:{GITHUB_OAUTH_CLIENT_SECRET}",
+  ])("rejects compose interpolation characters in image %s", (image) => {
+    const { harness, result } = runHarness({ args: [image], envFile: "EXISTING=1\n" });
+    try {
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "image contains unsupported whitespace, quote, backslash, or compose interpolation characters",
+      );
+      expect(readFileSync(harness.envPath, "utf8")).toBe("EXISTING=1\n");
+      expect(harness.readImages()).toBe("");
+      expect(harness.readCalls()).not.toContain(" pull ");
+    } finally {
+      harness.cleanup();
+    }
+  });
 });

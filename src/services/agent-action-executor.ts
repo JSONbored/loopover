@@ -3,6 +3,7 @@ import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
+import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
@@ -83,24 +84,42 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("denied", `autonomy for ${action.actionClass} is ${autonomyLevel} — action not currently enabled`);
       continue;
     }
-    // 3) auto_with_approval stages the action in the approval queue (#779) for a one-tap maintainer decision
-    //    instead of executing it now.
+    // 3) dry-run records the intent without touching GitHub, so it does not need a live freshness read.
+    if (mode === "dry_run") {
+      await audit("dry_run", `dry-run: would ${action.actionClass} — ${action.reason}`);
+      continue;
+    }
+    // 4) auto_with_approval stages the action in the approval queue (#779) for a one-tap maintainer decision
+    //    instead of executing it now. Staging is not a GitHub mutation; execution/replay runs this guard later.
     if (action.requiresApproval) {
       await stageForApproval(env, ctx, action, autonomyLevel);
       await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
-    // 4) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
+    // 5) Freshness guard: every supported live action mutates PR state or PR-visible output, so it must still
+    //    target the reviewed, open head. This protects approval-queue replays and slow webhook jobs from
+    //    force-pushes or manual closes that happen after the review was planned.
+    const expectedHeadSha = action.expectedHeadSha ?? ctx.headSha ?? null;
+    if (!expectedHeadSha) {
+      await audit("denied", "live PR head guard unavailable — action not executed");
+      continue;
+    }
+    const freshness = await fetchPullRequestFreshness(env, {
+      installationId: ctx.installationId,
+      repoFullName: ctx.repoFullName,
+      pullNumber: ctx.pullNumber,
+      expectedHeadSha,
+    });
+    if (freshness.status !== "current") {
+      await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
+      continue;
+    }
+    // 6) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
       await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
       continue;
     }
-    // 5) dry-run records the intent without touching GitHub.
-    if (mode === "dry_run") {
-      await audit("dry_run", `dry-run: would ${action.actionClass} — ${action.reason}`);
-      continue;
-    }
-    // 6) live — perform the real mutation, recording success or the error.
+    // 7) live — perform the real mutation, recording success or the error.
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);

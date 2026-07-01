@@ -2,6 +2,12 @@ import type { ErrorEvent, EventHint } from "@sentry/node";
 
 type SentryNs = typeof import("@sentry/node");
 type SentryClient = Pick<SentryNs, "init" | "withScope" | "captureException" | "flush">;
+type SentryScope = {
+  setContext(name: string, context: Record<string, unknown>): unknown;
+  setFingerprint(fingerprint: string[]): unknown;
+  setLevel(level: "error" | "warning"): unknown;
+  setTag(key: string, value: string): unknown;
+};
 
 let Sentry: SentryClient | undefined;
 let active = false;
@@ -10,6 +16,27 @@ let activeEnvironment = "production";
 
 const SECRET_FIELD = /(?:authorization|cookie|token|secret|password|private[_-]?key|shared[_-]?secret)/i;
 const SECRET_VALUE = /\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|gts_[a-f0-9]{64}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g;
+const REES_SENTRY_TAG_KEYS = [
+  "event",
+  "route",
+  "method",
+  "repo",
+  "pullNumber",
+  "analyzer",
+  "release",
+  "environment",
+  "railwayDeploymentId",
+] as const;
+
+type ReesSentryTagKey = (typeof REES_SENTRY_TAG_KEYS)[number];
+type ReesSentryTags = Partial<Record<ReesSentryTagKey, string | number | undefined>>;
+type ReesCaptureOptions = {
+  contextName: string;
+  context: Record<string, unknown>;
+  fingerprint: string[];
+  level?: "error" | "warning";
+  tags: ReesSentryTags;
+};
 
 function nonBlank(value: string | undefined): string | undefined {
   const text = value?.trim();
@@ -65,6 +92,35 @@ function compactContext(value: Record<string, unknown>): Record<string, unknown>
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
+function setAllowedTags(scope: Pick<SentryScope, "setTag">, tags: ReesSentryTags): void {
+  for (const key of REES_SENTRY_TAG_KEYS) {
+    const value = sentryTagValue(tags[key]);
+    if (value) scope.setTag(key, value);
+  }
+}
+
+function setFingerprint(scope: Pick<SentryScope, "setFingerprint">, parts: string[]): void {
+  const safeParts = parts.map((part) => sentryTagValue(part) ?? "unknown");
+  scope.setFingerprint(safeParts);
+}
+
+function captureScopedError(error: unknown, options: ReesCaptureOptions): void {
+  if (!active || !Sentry) return;
+  const safeContext = scrubValue(compactContext(options.context)) as Record<string, unknown>;
+  Sentry.withScope((scope) => {
+    scope.setLevel(options.level ?? "error");
+    scope.setContext(options.contextName, safeContext);
+    setFingerprint(scope, options.fingerprint);
+    setAllowedTags(scope, {
+      ...options.tags,
+      event: options.tags.event,
+      release: options.tags.release ?? activeRelease,
+      environment: options.tags.environment ?? activeEnvironment,
+    });
+    Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
+  });
+}
+
 function scrubEvent(event: ErrorEvent): ErrorEvent {
   return scrubValue(event) as ErrorEvent;
 }
@@ -95,10 +151,85 @@ export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
 }
 
 export function captureError(error: unknown, context?: Record<string, unknown>): void {
-  if (!active || !Sentry) return;
-  Sentry.withScope((scope) => {
-    if (context) scope.setContext("rees", scrubValue(context) as Record<string, unknown>);
-    Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
+  captureScopedError(error, {
+    contextName: "rees",
+    context: {
+      ...context,
+      release: activeRelease,
+      environment: activeEnvironment,
+    },
+    fingerprint: ["rees-error"],
+    tags: {},
+  });
+}
+
+export function captureRouteError(
+  error: unknown,
+  context: { route: string; method: string },
+): void {
+  captureScopedError(error, {
+    contextName: "rees_route",
+    context: {
+      event: "rees_route_error",
+      route: context.route,
+      method: context.method,
+      release: activeRelease,
+      environment: activeEnvironment,
+    },
+    fingerprint: ["rees-route-error", context.route, context.method],
+    tags: {
+      event: "rees_route_error",
+      route: context.route,
+      method: context.method,
+    },
+  });
+}
+
+export function captureUnhandledError(
+  error: unknown,
+  context: { event: "rees_unhandled_rejection" | "rees_uncaught_exception" },
+): void {
+  captureScopedError(error, {
+    contextName: "rees_process",
+    context: {
+      event: context.event,
+      release: activeRelease,
+      environment: activeEnvironment,
+    },
+    fingerprint: ["rees-process-error", context.event],
+    tags: {
+      event: context.event,
+    },
+  });
+}
+
+export function captureSourcemapUploadFailure(
+  error: unknown,
+  context: {
+    release?: string;
+    railwayDeploymentId?: string;
+    strict?: boolean;
+    sha?: string;
+    stage?: string;
+  },
+): void {
+  captureScopedError(error, {
+    contextName: "rees_sourcemap_upload",
+    context: {
+      event: "rees_sourcemap_upload_failed",
+      release: context.release ?? activeRelease,
+      railwayDeploymentId: context.railwayDeploymentId,
+      strict: context.strict,
+      sha: context.sha,
+      stage: context.stage,
+      environment: activeEnvironment,
+    },
+    fingerprint: ["rees-sourcemap-upload-failed"],
+    tags: {
+      event: "rees_sourcemap_upload_failed",
+      release: context.release ?? activeRelease,
+      railwayDeploymentId: context.railwayDeploymentId,
+    },
   });
 }
 
@@ -138,9 +269,10 @@ export interface AnalyzerDegradationContext {
 }
 
 export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegradationContext): void {
-  if (!active || !Sentry) return;
   const headShaPrefix = nonBlank(context.headSha)?.slice(0, 12);
-  const safeContext = {
+  captureScopedError(error, {
+    contextName: "rees_analyzer",
+    context: {
     event: "rees_analyzer_degraded",
     analyzer: context.analyzer,
     requestedAnalyzers: context.requestedAnalyzers,
@@ -176,50 +308,14 @@ export function captureAnalyzerDegradation(error: unknown, context: AnalyzerDegr
     traceId: context.traceId,
     release: activeRelease,
     environment: activeEnvironment,
-  };
-  Sentry.withScope((scope) => {
-    const analyzerTag = sentryTagValue(context.analyzer) ?? "unknown";
-    const headShaTag = sentryTagValue(headShaPrefix);
-    const timeoutTag = sentryTagValue(context.timeoutMs);
-    const releaseTag = sentryTagValue(activeRelease);
-    scope.setLevel("error");
-    scope.setContext("rees_analyzer", scrubValue(compactContext(safeContext)) as Record<string, unknown>);
-    scope.setFingerprint(["rees-analyzer-degraded", analyzerTag]);
-    scope.setTag("event", "rees_analyzer_degraded");
-    scope.setTag("analyzer", analyzerTag);
-    scope.setTag("repo", sentryTagValue(context.repoFullName) ?? "unknown");
-    scope.setTag("pullNumber", sentryTagValue(context.prNumber) ?? "unknown");
-    if (headShaTag) scope.setTag("headShaPrefix", headShaTag);
-    if (timeoutTag) scope.setTag("timeoutMs", timeoutTag);
-    if (releaseTag) scope.setTag("release", releaseTag);
-    const analyzerStatusTag = sentryTagValue(context.analyzerStatus);
-    const profileTag = sentryTagValue(context.profile);
-    const costClassTag = sentryTagValue(context.costClass);
-    const responseReserveTag = sentryTagValue(context.responseReserveMs);
-    const partialStatusTag = sentryTagValue(context.partialStatus);
-    const phaseTag = sentryTagValue(context.phase);
-    const endpointCategoryTag = sentryTagValue(context.endpointCategory);
-    const externalFailureReasonTag = sentryTagValue(context.externalFailureReason);
-    const endpointTag = sentryTagValue(context.githubEndpointCategory);
-    const requestIdTag = sentryTagValue(context.requestId);
-    const traceIdTag = sentryTagValue(context.traceId);
-    const cacheHitsTag = sentryTagValue(context.cacheHits);
-    const cacheMissesTag = sentryTagValue(context.cacheMisses);
-    if (analyzerStatusTag) scope.setTag("analyzerStatus", analyzerStatusTag);
-    if (profileTag) scope.setTag("profile", profileTag);
-    if (costClassTag) scope.setTag("costClass", costClassTag);
-    if (responseReserveTag) scope.setTag("responseReserveMs", responseReserveTag);
-    if (partialStatusTag) scope.setTag("partialStatus", partialStatusTag);
-    if (phaseTag) scope.setTag("phase", phaseTag);
-    if (endpointCategoryTag) scope.setTag("endpointCategory", endpointCategoryTag);
-    if (externalFailureReasonTag) scope.setTag("externalFailureReason", externalFailureReasonTag);
-    if (endpointTag) scope.setTag("githubEndpointCategory", endpointTag);
-    if (requestIdTag) scope.setTag("requestId", requestIdTag);
-    if (traceIdTag) scope.setTag("traceId", traceIdTag);
-    if (cacheHitsTag) scope.setTag("cacheHits", cacheHitsTag);
-    if (cacheMissesTag) scope.setTag("cacheMisses", cacheMissesTag);
-    scope.setTag("environment", sentryTagValue(activeEnvironment) ?? "production");
-    Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
+    },
+    fingerprint: ["rees-analyzer-degraded", context.analyzer],
+    tags: {
+      event: "rees_analyzer_degraded",
+      analyzer: context.analyzer,
+      repo: context.repoFullName,
+      pullNumber: context.prNumber,
+    },
   });
 }
 

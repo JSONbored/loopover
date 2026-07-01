@@ -479,7 +479,10 @@ function stripHtmlComments(input: string): string {
     output += input.slice(cursor, commentStart);
     const commentEnd = input.indexOf("-->", commentStart + 4);
     if (commentEnd === -1) {
-      output += input.slice(commentStart);
+      // An unterminated "<!--" is rendered by GitHub/CommonMark as a comment running to end-of-body — the
+      // text is hidden — so it must NOT survive as substantive content. Dropping it (rather than appending
+      // it) closes an evasion where a placeholder-only body dodges the unfilled-template signal just by
+      // omitting the closing "-->". Real prose BEFORE the comment was already appended above and is kept.
       break;
     }
 

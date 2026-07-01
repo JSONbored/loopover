@@ -1280,6 +1280,13 @@ export async function getOpenUpstreamDriftReportByFingerprint(env: Env, fingerpr
   return row ? toUpstreamDriftReportRecord(row) : null;
 }
 
+/** Lookup a drift report by its stable fingerprint regardless of status (resolved reports included). */
+export async function getUpstreamDriftReportByFingerprint(env: Env, fingerprint: string): Promise<UpstreamDriftReportRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(upstreamDriftReports).where(eq(upstreamDriftReports.fingerprint, fingerprint)).limit(1);
+  return row ? toUpstreamDriftReportRecord(row) : null;
+}
+
 export async function persistScorePreview(env: Env, preview: ScorePreviewRecord): Promise<void> {
   const db = getDb(env.DB);
   await db.insert(scorePreviews).values({

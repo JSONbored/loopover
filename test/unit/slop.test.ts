@@ -493,6 +493,20 @@ describe("buildIssueSlopAssessment (#533 issue-side triage)", () => {
     expect(buildUnfilledIssueTemplateFinding({ body: maliciousBody })).toMatchObject({ code: "unfilled_issue_template" });
   }, 1_000);
 
+  it("an unterminated HTML comment hides its placeholder text, so the body is still flagged as unfilled", () => {
+    // GitHub/CommonMark renders an unterminated "<!--" as a comment running to end-of-body, so the
+    // placeholder text is invisible. Keeping it would let a placeholder-only body dodge the signal just by
+    // dropping the closing "-->".
+    expect(buildUnfilledIssueTemplateFinding({ body: "<!-- describe the problem here" })).toMatchObject({
+      code: "unfilled_issue_template",
+    });
+    expect(buildUnfilledIssueTemplateFinding({ body: "### Bug\n<!-- describe the bug, steps to reproduce, expected vs actual" })).toMatchObject({
+      code: "unfilled_issue_template",
+    });
+    // Real prose BEFORE an unterminated comment is genuine content and still clears the signal (no over-flag).
+    expect(buildUnfilledIssueTemplateFinding({ body: "The save button throws on click.\n<!-- internal triage note" })).toBeNull();
+  });
+
   it("a single padding character does NOT defeat the unfilled-template check (#audit-§4)", () => {
     // Template scaffolding + one stray char that survives the punctuation strip — must still be flagged.
     expect(buildUnfilledIssueTemplateFinding({ body: "### Description\n<!-- describe -->\n.\n" })).toMatchObject({ code: "unfilled_issue_template" });

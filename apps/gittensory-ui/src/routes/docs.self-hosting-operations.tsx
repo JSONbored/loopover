@@ -85,6 +85,13 @@ review_context_fetch_failed`}
       </p>
       <CodeBlock lang="bash" code={`docker compose --profile observability up -d`} />
 
+      <h2>Sentry tracing</h2>
+      <p>
+        Leave <code>SENTRY_TRACES_SAMPLE_RATE</code> unset or blank to disable trace export, or set
+        a positive sample rate such as <code>0.05</code> to send sampled review spans to Sentry. The
+        custom OpenTelemetry provider installs Sentry hooks for review-stage spans carrying repo,
+        PR, operation, outcome, and hashed installation tags.
+      </p>
       <h2>Sentry cron monitors</h2>
       <p>
         When <code>SENTRY_DSN</code> is set, the self-host runtime emits Sentry monitor check-ins

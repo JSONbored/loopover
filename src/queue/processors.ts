@@ -74,7 +74,8 @@ import {
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
-  fetchLiveCiAggregate,
+  fetchLiveCiAggregatePreferGraphQl,
+  type LiveCiAggregate,
   fetchLivePullRequest,
   fetchLivePullRequestHeadSha,
   fetchLivePullRequestMergeState,
@@ -134,7 +135,18 @@ import {
   ensurePullRequestLabel,
   removePullRequestLabel,
 } from "../github/labels";
-import { githubRateLimitAdmissionKeyForInstallation, resolveRepoActionMode } from "../github/client";
+import {
+  githubRateLimitAdmissionKeyForInstallation,
+  githubRateLimitAdmissionKeyForToken,
+  resolveRepoActionMode,
+  type GitHubRateLimitAdmissionKey,
+} from "../github/client";
+import {
+  fetchPullRequestFreshness,
+  pullRequestFreshnessDetail,
+  reviewedPullRequestHeadSha,
+  type PullRequestFreshness,
+} from "../github/pr-freshness";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
@@ -202,6 +214,10 @@ import {
   delayUntil,
   shouldWaitForGitHubRateLimit,
 } from "../github/rate-limit";
+import {
+  queueSnapshotBacklog,
+  queueSnapshotFromBinding,
+} from "../selfhost/queue-common";
 import {
   downgradeCloseToHold,
   downgradeMergeToHold,
@@ -339,6 +355,10 @@ import {
   resolveEnrichmentLinkedIssueNumbers,
 } from "../review/enrichment-wire";
 import { captureReviewFailure } from "../selfhost/sentry";
+import {
+  setReviewPipelineSpanOutcome,
+  withReviewPipelineSpan,
+} from "../selfhost/review-tracing";
 import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
 import { reviewThreadBlockerFinding } from "../review/review-thread-findings";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
@@ -401,6 +421,7 @@ import { errorMessage, nowIso } from "../utils/json";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
+const PER_PR_REGATE_BACKPRESSURE_TYPES = ["agent-regate-pr"] as const;
 const PR_PUBLIC_SURFACE_ACTIONS = new Set([
   "opened",
   "reopened",
@@ -410,6 +431,200 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
 ]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 const ISSUE_PLAN_COOLDOWN_MS = 10 * 60 * 1000;
+
+interface LiveGithubFacts {
+  requiredContexts: Map<string, Promise<Set<string> | null>>;
+  ciAggregates: Map<string, Promise<LiveCiAggregate>>;
+  mergeStates: Map<string, Promise<string | undefined>>;
+}
+
+function createLiveGithubFacts(): LiveGithubFacts {
+  return {
+    requiredContexts: new Map(),
+    ciAggregates: new Map(),
+    mergeStates: new Map(),
+  };
+}
+
+function liveFactKey(...parts: Array<string | number | null | undefined>): string {
+  return JSON.stringify(parts.map((part) => [typeof part, part]));
+}
+
+function liveFactTokenPart(token: string | undefined): string {
+  if (!token) return "token:none";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `token:${token.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function githubAdmissionKeyForToken(
+  env: Env,
+  installationId: number | null | undefined,
+  token: string | undefined,
+): GitHubRateLimitAdmissionKey | undefined {
+  return githubRateLimitAdmissionKeyForToken(env, token, installationId);
+}
+
+function primeLiveMergeState(
+  facts: LiveGithubFacts,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  mergeState: unknown,
+): void {
+  if (typeof mergeState !== "string") return;
+  facts.mergeStates.set(
+    liveFactKey(repoFullName, prNumber, liveFactTokenPart(token)),
+    Promise.resolve(mergeState),
+  );
+}
+
+function cachedRequiredStatusContexts(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<Set<string> | null> {
+  const key = liveFactKey(repoFullName, baseRef, liveFactTokenPart(token));
+  const cached = facts.requiredContexts.get(key);
+  if (cached) return cached;
+  const next = evictLiveFactOnReject(
+    facts.requiredContexts,
+    key,
+    fetchRequiredStatusContexts(env, repoFullName, baseRef, token, admissionKey),
+  );
+  facts.requiredContexts.set(key, next);
+  return next;
+}
+
+function evictLiveFactOnReject<T>(
+  cache: Map<string, Promise<T>>,
+  key: string,
+  promise: Promise<T>,
+): Promise<T> {
+  return promise.catch((error) => {
+    cache.delete(key);
+    throw error;
+  });
+}
+
+function fetchLiveCiAggregateWithRequiredContexts(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay
+  // request-cached. When the #1941 flag is on, fetchLiveCiAggregatePreferGraphQl collapses the check/status reads
+  // into one GraphQL rollup (reusing these requiredContexts), else it uses the proven REST aggregate.
+  return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token, admissionKey)
+    .catch(() => null)
+    .then((requiredContexts) =>
+      fetchLiveCiAggregatePreferGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey),
+    );
+}
+
+function cachedLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token));
+  const cached = facts.ciAggregates.get(key);
+  if (cached) return cached;
+  const next = evictLiveFactOnReject(
+    facts.ciAggregates,
+    key,
+    fetchLiveCiAggregateWithRequiredContexts(
+      env,
+      repoFullName,
+      facts,
+      headSha,
+      baseRef,
+      token,
+      admissionKey,
+    ),
+  );
+  facts.ciAggregates.set(key, next);
+  return next;
+}
+
+function refreshLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  headSha: string | null | undefined,
+  baseRef: string | null | undefined,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<LiveCiAggregate> {
+  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token));
+  const next = evictLiveFactOnReject(
+    facts.ciAggregates,
+    key,
+    fetchLiveCiAggregateWithRequiredContexts(
+      env,
+      repoFullName,
+      facts,
+      headSha,
+      baseRef,
+      token,
+      admissionKey,
+    ),
+  );
+  facts.ciAggregates.set(key, next);
+  return next;
+}
+
+function cachedLiveMergeState(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
+  const cached = facts.mergeStates.get(key);
+  if (cached) return cached;
+  const next = evictLiveFactOnReject(
+    facts.mergeStates,
+    key,
+    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
+  );
+  facts.mergeStates.set(key, next);
+  return next;
+}
+
+function refreshLiveMergeState(
+  env: Env,
+  repoFullName: string,
+  facts: LiveGithubFacts,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
+  const next = evictLiveFactOnReject(
+    facts.mergeStates,
+    key,
+    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
+  );
+  facts.mergeStates.set(key, next);
+  return next;
+}
 
 /**
  * Run (or dry-run) the data-retention prune across the configured log/snapshot tables and audit the
@@ -608,7 +823,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         await fanOutAgentRegateSweepJobs(env, message.requestedBy);
         return;
       }
-      await sweepRepoRegate(env, message.repoFullName);
+      await sweepRepoRegate(env, message.repoFullName, message.requestedBy);
       return;
     case "agent-regate-pr":
       // One bounded re-gate unit fanned out by the sweep (#audit-sweep-fanout): re-review + stamp a single PR.
@@ -789,14 +1004,21 @@ async function fanOutAgentRegateSweepJobs(
   // that can merge/close. The action layer (maybeRunAgentMaintenance) stays autonomy-gated, so an observe repo is
   // re-reviewed but never auto-actioned. This is what makes advisory reviews fire on existing open PRs without
   // depending on a fresh webhook per PR.
-  const byKey = new Map<string, string>();
-  for (const repo of await listRepositories(env))
-    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
-  for (const fullName of listConvergenceRepos(env))
-    byKey.set(fullName.toLowerCase(), fullName);
-  const configured: string[] = [];
+  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const byKey = new Map<string, { fullName: string; installationId?: number }>();
+  for (const repo of repositoriesByKey.values())
+    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
+  for (const fullName of listConvergenceRepos(env)) {
+    const repo = repositoriesByKey.get(fullName.toLowerCase());
+    byKey.set(fullName.toLowerCase(), {
+      fullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
+    });
+  }
+  const configured: Array<{ fullName: string; installationId?: number }> = [];
   let skippedDraining = 0;
-  for (const repoFullName of byKey.values()) {
+  for (const repo of byKey.values()) {
+    const repoFullName = repo.fullName;
     const settings = await resolveRepositorySettings(env, repoFullName);
     if (
       !(
@@ -815,14 +1037,15 @@ async function fanOutAgentRegateSweepJobs(
       skippedDraining += 1;
       continue;
     }
-    configured.push(repoFullName);
+    configured.push(repo);
   }
   await Promise.all(
-    configured.map((repoFullName, index) => {
+    configured.map((repo, index) => {
       const message: JobMessage = {
         type: "agent-regate-sweep",
         requestedBy,
-        repoFullName,
+        repoFullName: repo.fullName,
+        ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
       };
       const delaySeconds = Math.min(index * 10, 600);
       return delaySeconds > 0
@@ -835,6 +1058,11 @@ async function fanOutAgentRegateSweepJobs(
     outcome: "queued",
     metadata: { repoCount: configured.length, skippedDraining, requestedBy },
   });
+}
+
+async function currentRegateBacklog(env: Env): Promise<number> {
+  const snapshot = await queueSnapshotFromBinding(env.JOBS).catch(() => null);
+  return queueSnapshotBacklog(snapshot, PER_PR_REGATE_BACKPRESSURE_TYPES);
 }
 
 // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). The dispatch for the `rag-index-repo` job.
@@ -881,24 +1109,31 @@ async function fanOutRagIndexJobs(
   // registration webhook), so a registered-only fan-out never indexed them — leaving reviews without codebase context.
   // Deduped case-insensitively (a repo can be both registered AND configured). Each is then filtered by whether RAG is
   // active for it (`features.rag` override → GITTENSORY_REVIEW_REPOS allowlist default), so nothing extra is indexed.
-  const byKey = new Map<string, string>();
-  for (const repo of (await listRepositories(env)).filter(
+  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const byKey = new Map<string, { fullName: string; installationId?: number }>();
+  for (const repo of [...repositoriesByKey.values()].filter(
     (r) => r.isRegistered,
   ))
-    byKey.set(repo.fullName.toLowerCase(), repo.fullName);
-  for (const fullName of listConvergenceRepos(env))
-    byKey.set(fullName.toLowerCase(), fullName);
+    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
+  for (const fullName of listConvergenceRepos(env)) {
+    const repo = repositoriesByKey.get(fullName.toLowerCase());
+    byKey.set(fullName.toLowerCase(), {
+      fullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
+    });
+  }
   const candidates = [...byKey.values()];
   const ragActiveByRepo = await Promise.all(
-    candidates.map((fullName) => convergedFeatureActive(env, fullName, "rag")),
+    candidates.map((repo) => convergedFeatureActive(env, repo.fullName, "rag")),
   );
   const repositories = candidates.filter((_, index) => ragActiveByRepo[index]);
   await Promise.all(
-    repositories.map((fullName, index) => {
+    repositories.map((repo, index) => {
       const message: JobMessage = {
         type: "rag-index-repo",
         requestedBy,
-        repoFullName: fullName,
+        repoFullName: repo.fullName,
+        ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
       };
       const delaySeconds = Math.min(index * 30, 900);
       return delaySeconds > 0
@@ -959,6 +1194,7 @@ async function maybeEnqueueRagReindexForMergedPr(
 async function sweepRepoRegate(
   env: Env,
   repoFullName: string | undefined,
+  requestedBy: "schedule" | "api" | "test",
 ): Promise<void> {
   if (!repoFullName) return;
   const settings = await resolveRepositorySettings(env, repoFullName);
@@ -985,6 +1221,19 @@ async function sweepRepoRegate(
       outcome: "denied",
       detail: "agent actions paused — re-gate sweep skipped",
       metadata: { repoFullName, mode },
+    });
+    return;
+  }
+  const regateBacklog = requestedBy === "schedule" ? await currentRegateBacklog(env) : 0;
+  if (regateBacklog > 0) {
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.regate",
+      actor: "gittensory",
+      targetKey: repoFullName,
+      outcome: "queued",
+      detail:
+        "re-gate sweep deferred: prior scheduled re-gate work is still pending or processing",
+      metadata: { repoFullName, mode, deferred: true, regateBacklog },
     });
     return;
   }
@@ -1226,6 +1475,55 @@ export function agentMaintenanceHeadMatchesGate(reviewedHeadSha: string | null |
   return reviewedHeadSha == null || currentHeadSha == null || currentHeadSha === reviewedHeadSha;
 }
 
+type BlockingPullRequestFreshness = Extract<
+  PullRequestFreshness,
+  { status: "stale" }
+>;
+
+function freshnessBlocksReviewOutput(
+  freshness: PullRequestFreshness,
+): freshness is BlockingPullRequestFreshness {
+  return freshness.status === "stale";
+}
+
+async function reviewTargetFreshness(
+  env: Env,
+  args: {
+    installationId: number;
+    repoFullName: string;
+    pullNumber: number;
+    expectedHeadSha?: string | null | undefined;
+    deliveryId: string;
+    phase: string;
+    actor: string | null;
+  },
+): Promise<PullRequestFreshness> {
+  const freshness = await fetchPullRequestFreshness(env, {
+    installationId: args.installationId,
+    repoFullName: args.repoFullName,
+    pullNumber: args.pullNumber,
+    expectedHeadSha: args.expectedHeadSha,
+  });
+  if (!freshnessBlocksReviewOutput(freshness)) return freshness;
+  await recordAuditEvent(env, {
+    eventType: "github_app.pr_review_stale",
+    actor: args.actor,
+    targetKey: `${args.repoFullName}#${args.pullNumber}`,
+    outcome: "denied",
+    detail: `${pullRequestFreshnessDetail(freshness)} — stale review output suppressed`,
+    metadata: {
+      deliveryId: args.deliveryId,
+      repoFullName: args.repoFullName,
+      phase: args.phase,
+      reason: freshness.reason,
+      expectedHeadSha: freshness.expectedHeadSha,
+      liveHeadSha: freshness.liveHeadSha,
+      liveState: freshness.liveState,
+    },
+  }).catch(() => undefined);
+  return freshness;
+}
+
 /**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
@@ -1246,6 +1544,7 @@ async function maybeRunAgentMaintenance(
     otherOpenPullRequests: PullRequestRecord[];
     deliveryId: string;
     gate: ReturnType<typeof evaluateGateCheck> | undefined;
+    liveFacts: LiveGithubFacts;
   },
 ): Promise<void> {
   const {
@@ -1284,6 +1583,9 @@ async function maybeRunAgentMaintenance(
   const ciToken = await createInstallationToken(env, installationId).catch(
     () => undefined,
   );
+  const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
+  const baseRef = pr.baseRef ?? args.repo?.defaultBranch;
   const [
     changedFiles,
     hardGuardrailGlobs,
@@ -1299,37 +1601,31 @@ async function maybeRunAgentMaintenance(
     loadHardGuardrailGlobs(env, repoFullName),
     // RC2: branch-protection REQUIRED status contexts, so only a required red check gates the PR (a red
     // codecov/* is surfaced but never blocks merge/approve or forces request_changes). null ⇒ fold all red.
-    fetchRequiredStatusContexts(
+    cachedRequiredStatusContexts(
       env,
       repoFullName,
-      pr.baseRef ?? args.repo?.defaultBranch,
-      ciToken ?? env.GITHUB_PUBLIC_TOKEN,
+      args.liveFacts,
+      baseRef,
+      token,
+      admissionKey,
     ),
-    // Live mergeable_state — the stored one lags GitHub's async recompute after the bot's own approve, which
-    // otherwise leaves a green+approved PR stuck OPEN at mergeState=CLEAN (never auto-merged).
-    fetchLivePullRequestMergeState(
-      env,
-      repoFullName,
-      pr.number,
-      ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-    ),
+    // Live mergeable_state after the gate's own publish/review/check mutations. Readiness may have seen the PR as
+    // blocked before the bot approval/check landed, so this boundary must refresh instead of replaying the cache.
+    refreshLiveMergeState(env, repoFullName, args.liveFacts, pr.number, token, admissionKey),
     // RC1: live reviewDecision so the approve/request-changes dedup is accurate. The STORED reviewDecision is
     // only written by the open-PR backfill and goes stale → the planner re-posted a review every cycle (the
     // re-review loop with 14-23 stacked reviews). With the live value, an already-approved/changes-requested PR
     // is not re-reviewed for the same state.
-    fetchLivePullRequestReviewDecision(
-      env,
-      repoFullName,
-      pr.number,
-      ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-    ),
+    fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
-  const ciAggregate = await fetchLiveCiAggregate(
+  const ciAggregate = await refreshLiveCiAggregate(
     env,
     repoFullName,
+    args.liveFacts,
     pr.headSha,
-    ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-    requiredContexts,
+    baseRef,
+    token,
+    admissionKey,
   );
   const changedPaths = changedPathsForGuardrail(changedFiles);
   const repoOwner = repoFullName.includes("/")
@@ -1358,6 +1654,7 @@ async function maybeRunAgentMaintenance(
     body: pr.body,
     linkedIssues: pr.linkedIssues,
     ciToken,
+    installationId,
   });
 
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
@@ -1498,6 +1795,7 @@ async function reReviewStoredPullRequest(
   ]);
   let pr = await getPullRequest(env, repoFullName, prNumber);
   if (!pr || pr.state !== "open") return;
+  const liveFacts = createLiveGithubFacts();
   // #sweep-resync: RESYNC the stored PR to its LIVE head before reviewing. The self-host relay can drop the
   // `synchronize` webhook (relay down), so a push/rebase never refreshes the stored head SHA + cached files; the
   // sweep would then review a STALE diff and the AI fail-closes it as INCOHERENT_DIFF, stranding the PR in "held".
@@ -1507,12 +1805,24 @@ async function reReviewStoredPullRequest(
     (await createInstallationToken(env, installationId).catch(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
+  const resyncAdmissionKey = githubAdmissionKeyForToken(env, installationId, resyncToken);
   const live = await fetchLivePullRequest(
     env,
     repoFullName,
     prNumber,
     resyncToken,
+    resyncAdmissionKey,
   );
+  primeLiveMergeState(liveFacts, repoFullName, prNumber, resyncToken, live?.mergeable_state);
+  // Terminal early-exit (#1942): the PR is CLOSED/merged on GitHub even though the stored row still reads open — a
+  // dropped `closed` webhook (relay down). Reconcile the stored row from the live payload and RETURN before the
+  // expensive resync (files) + readiness + re-review reads. A stale sweep must never spend GitHub budget — or post
+  // visible output — re-reviewing a PR that can no longer produce a valid outcome. Fail-open: only a live NON-open
+  // state early-exits (a fetch hiccup leaves `live` undefined → proceed with the stored open PR).
+  if (live && live.state !== "open") {
+    await upsertPullRequestFromGitHub(env, repoFullName, live).catch(() => undefined);
+    return;
+  }
   if (live?.head?.sha && live.head.sha !== pr.headSha) {
     await upsertPullRequestFromGitHub(env, repoFullName, live).catch(
       () => undefined,
@@ -1526,17 +1836,27 @@ async function reReviewStoredPullRequest(
   // Operator review flow: rebase-if-behind → wait for ALL CI to finish → only THEN review. Defers (returns) when
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
   // once the head is current and CI has settled (the sweep backstops a missed event). REST-budget dedup
-  // (#audit-rate-headroom): thread the already-fetched live PR's `mergeable_state` so prReadyForReview reuses it
-  // instead of issuing a second `GET /pulls/{n}` for the behind-base check.
+  // (#audit-rate-headroom): seed the request-local facts from the resync payload, then share them with the
+  // readiness check, public surface, and auto-maintain planner.
   if (
-    !(await prReadyForReview(
-      env,
-      installationId,
-      repoFullName,
-      pr,
-      settings,
-      deliveryId,
-      { liveMergeState: live?.mergeable_state ?? undefined },
+    !(await withReviewPipelineSpan(
+      "selfhost.review.readiness",
+      {
+        installationId,
+        repoFullName,
+        pullNumber: pr.number,
+        operation: "readiness",
+      },
+      () =>
+        prReadyForReview(
+          env,
+          installationId,
+          repoFullName,
+          pr,
+          settings,
+          deliveryId,
+          liveFacts,
+        ),
     ))
   )
     return;
@@ -1576,20 +1896,31 @@ async function reReviewStoredPullRequest(
       () => undefined,
     );
   }
-  const gate = await maybePublishPrPublicSurface(
-    env,
-    installationId,
-    repoFullName,
-    pr,
-    repo,
-    settings,
-    advisory,
+  const gate = await withReviewPipelineSpan(
+    "selfhost.review.public_surface",
     {
-      deliveryId,
-      baseSha: live?.base?.sha ?? null,
-      ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
-      ...(options.skipAiReview ? { skipAiReview: true } : {}),
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      operation: "public_surface",
     },
+    () =>
+      maybePublishPrPublicSurface(
+        env,
+        installationId,
+        repoFullName,
+        pr,
+        repo,
+        settings,
+        advisory,
+        {
+          deliveryId,
+          baseSha: live?.base?.sha ?? null,
+          liveFacts,
+          ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
+          ...(options.skipAiReview ? { skipAiReview: true } : {}),
+        },
+      ),
   ).catch((error) => {
     /* v8 ignore next -- retryable/rate-limit propagation is exercised by queue retry tests; this catch only preserves that contract. */
     if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
@@ -1605,16 +1936,28 @@ async function reReviewStoredPullRequest(
     );
     return undefined;
   });
-  await maybeRunAgentMaintenance(env, {
-    installationId,
-    repoFullName,
-    repo,
-    pr,
-    settings,
-    otherOpenPullRequests,
-    deliveryId,
-    gate,
-  }).catch((error) => {
+  await withReviewPipelineSpan(
+    "selfhost.review.maintenance",
+    {
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      operation: "maintenance",
+      decisionOutcome: gate?.conclusion,
+    },
+    () =>
+      maybeRunAgentMaintenance(env, {
+        installationId,
+        repoFullName,
+        repo,
+        pr,
+        settings,
+        otherOpenPullRequests,
+        deliveryId,
+        gate,
+        liveFacts,
+      }),
+  ).catch((error) => {
     console.error(
       JSON.stringify({
         level: "warn",
@@ -1645,12 +1988,9 @@ async function prReadyForReview(
   pr: PullRequestRecord,
   settings: RepositorySettings,
   deliveryId: string,
-  // REST-budget dedup (#audit-rate-headroom): the re-gate sweep already fetched the FULL live PR once (the resync
-  // `GET /pulls/{n}`), whose `mergeable_state` is exactly what the behind-base check needs. When the caller passes
-  // it, REUSE it instead of issuing a second `GET /pulls/{n}` here. `undefined` ⇒ no payload (the webhook path,
-  // which has no pre-fetched live PR) ⇒ fall back to the live fetch. The shared installation REST bucket is one
-  // hourly budget across all repos, so removing the duplicate GET halves the per-regate `GET /pulls/{n}` cost.
-  options: { liveMergeState?: string | undefined } = {},
+  // REST-budget dedup (#audit-rate-headroom): callers thread a request-local live-facts bag through readiness,
+  // public rendering, and auto-maintain so one review/regate job only pays for each mutable GitHub read once.
+  liveFacts: LiveGithubFacts,
 ): Promise<boolean> {
   // Only gate an OPEN, non-draft, agent-configured PR. A closed PR (the live path also runs on `closed` to
   // finalize / record reputation) must NOT be rebased or CI-waited — proceed so finalization runs.
@@ -1666,14 +2006,11 @@ async function prReadyForReview(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return true;
-  // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. Reuse a
-  // caller-supplied mergeable_state (the sweep's resync payload) to skip a redundant `GET /pulls/{n}`; fall back to
-  // the live fetch only when no payload was threaded (the webhook path). fetchLivePullRequestMergeState fails open
-  // internally (swallows its own fetch errors → undefined), so the fallback needs no extra catch — mirroring the
-  // resync's fetchLivePullRequest call above.
-  const liveMergeState =
-    options.liveMergeState ??
-    (await fetchLivePullRequestMergeState(env, repoFullName, pr.number, token));
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
+  // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. The
+  // request-local facts may already be seeded from the sweep's resync payload, and the fallback live merge-state
+  // fetch fails open internally (swallows its own fetch errors → undefined).
+  const liveMergeState = await cachedLiveMergeState(env, repoFullName, liveFacts, pr.number, token, admissionKey);
   if (liveMergeState === "behind") {
     const autonomyLevel = resolveAutonomy(settings.autonomy, "update_branch");
     const installation = await getInstallation(env, installationId);
@@ -1706,28 +2043,15 @@ async function prReadyForReview(
   }
   // 2) wait for CI to finish before running the Gittensory review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.
-  const requiredContexts = await fetchRequiredStatusContexts(
-    env,
-    repoFullName,
-    pr.baseRef,
-    token,
-  ).catch(() => null);
-  const ci = await fetchLiveCiAggregate(
-    env,
-    repoFullName,
-    pr.headSha,
-    token,
-    requiredContexts,
-  ).catch(() => undefined);
+  const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token, admissionKey).catch(() => undefined);
   if (ci?.hasPending) {
-    // Staleness cap: genuinely-running CI settles in minutes. A required check that stays pending far longer
-    // (an orphaned / never-completing check — e.g. a fork check that never reports back) would otherwise make us
-    // defer FOREVER → the PR is silently stuck and never surfaces (the dominant metagraphed stall). Past
-    // STUCK_CI_DEFER_MS we stop deferring and let the gate FINALIZE, so the PR is surfaced (held / needs-human),
-    // or disposed if a verdict is reachable — never silently deferred. first-seen is tracked in the self-host
-    // Redis transient cache per PR+headSha (a new push = new SHA = fresh window); a cache miss degrades to the
-    // old defer (safe — never acts early). (#ci-stuck-finalize)
+    // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
+    // transiently unreadable pages, fork check that never reports). Past STUCK_CI_DEFER_MS we stop deferring and
+    // let the gate FINALIZE so the PR surfaces. A visibly queued/in_progress GitHub check/status is active CI,
+    // though, so never cut in front of it. first-seen is tracked in the self-host Redis transient cache per
+    // PR+headSha (a new push = a fresh window); a cache miss degrades to the old defer. (#ci-stuck-finalize)
     if (
+      ci.hasVisiblePending ||
       !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha))
     ) {
       await recordAuditEvent(env, {
@@ -1908,11 +2232,13 @@ export async function resolveCiCompletionPrNumbers(
         () => undefined,
       )) ?? env.GITHUB_PUBLIC_TOKEN;
     if (token) {
+      const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
       const apiNumbers = await fetchOpenPullRequestNumbersForCommit(
         env,
         repoFullName,
         headSha,
         token,
+        admissionKey,
       ).catch(() => []);
       for (const number of apiNumbers) resolved.add(number);
     }
@@ -2866,6 +3192,7 @@ async function processGitHubWebhook(
 
     if (payload.repository?.full_name && payload.pull_request) {
       const repoFullName = payload.repository.full_name;
+      const payloadPullRequest = payload.pull_request;
       // Accuracy/eval feedback loop (#self-improve / GAP-4). Independent of the review path + best-effort:
       //   • pr_outcome — on `closed`, record the REALIZED merge-vs-close ground truth so computeGateEval can
       //     score the gate's prediction against what the human actually did.
@@ -3069,30 +3396,53 @@ async function processGitHubWebhook(
         let gate:
           | Awaited<ReturnType<typeof maybePublishPrPublicSurface>>
           | undefined;
+        const liveFacts = createLiveGithubFacts();
         if (
-          await prReadyForReview(
-            env,
-            installationId,
-            repoFullName,
-            pr,
-            settings,
-            deliveryId,
+          await withReviewPipelineSpan(
+            "selfhost.review.readiness",
+            {
+              installationId,
+              repoFullName,
+              pullNumber: pr.number,
+              operation: "readiness",
+            },
+            () =>
+              prReadyForReview(
+                env,
+                installationId,
+                repoFullName,
+                pr,
+                settings,
+                deliveryId,
+                liveFacts,
+              ),
           )
         ) {
-          gate = await maybePublishPrPublicSurface(
-            env,
-            installationId,
-            repoFullName,
-            pr,
-            repo,
-            settings,
-            advisory,
+          gate = await withReviewPipelineSpan(
+            "selfhost.review.public_surface",
             {
-              deliveryId,
-              authorType: payload.pull_request.user?.type,
-              action: payload.action,
-              baseSha: payload.pull_request.base?.sha ?? null,
+              installationId,
+              repoFullName,
+              pullNumber: pr.number,
+              operation: "public_surface",
             },
+            () =>
+              maybePublishPrPublicSurface(
+                env,
+                installationId,
+                repoFullName,
+                pr,
+                repo,
+                settings,
+                advisory,
+                {
+                  deliveryId,
+                  authorType: payloadPullRequest.user?.type,
+                  action: payload.action,
+                  baseSha: payloadPullRequest.base?.sha ?? null,
+                  liveFacts,
+                },
+              ),
           ).catch((error) => {
             if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
             console.error(
@@ -3110,16 +3460,28 @@ async function processGitHubWebhook(
           // #778 maintainer auto-maintain: act on the PR's state (label/review/merge/close) per the repo's
           // autonomy config, after the gate has run. The function self-guards on agent config; best-effort here
           // so it never blocks the gate or public surface.
-          await maybeRunAgentMaintenance(env, {
-            installationId,
-            repoFullName,
-            repo,
-            pr,
-            settings,
-            otherOpenPullRequests,
-            deliveryId,
-            gate,
-          }).catch((error) => {
+          await withReviewPipelineSpan(
+            "selfhost.review.maintenance",
+            {
+              installationId,
+              repoFullName,
+              pullNumber: pr.number,
+              operation: "maintenance",
+              decisionOutcome: gate?.conclusion,
+            },
+            () =>
+              maybeRunAgentMaintenance(env, {
+                installationId,
+                repoFullName,
+                repo,
+                pr,
+                settings,
+                otherOpenPullRequests,
+                deliveryId,
+                gate,
+                liveFacts,
+              }),
+          ).catch((error) => {
             /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
             console.error(
               JSON.stringify({
@@ -3341,11 +3703,12 @@ export async function resolveLinkedIssueAuthorLogins(
     () => undefined,
   );
   if (!token) return cached;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   return Promise.all(
     cached.map((login, index) =>
       login != null
         ? Promise.resolve(login)
-        : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token)
+        : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token, admissionKey)
             .then((facts) => facts?.authorLogin ?? null)
             .catch(() => null),
     ),
@@ -3491,11 +3854,15 @@ async function resolvePullRequestFilesForReview(
     const token = await createInstallationToken(env, args.installationId).catch(
       () => undefined,
     );
+    /* v8 ignore next -- installation-token failure fallback is covered by public-token fetch paths; this branch depends on token-cache timing. */
+    const reviewFilesToken = token ?? env.GITHUB_PUBLIC_TOKEN;
+    const admissionKey = githubAdmissionKeyForToken(env, args.installationId, reviewFilesToken);
     const fetched = await fetchAndStorePullRequestFilesForReview(
       env,
       args.repoFullName,
       args.pullNumber,
-      token ?? env.GITHUB_PUBLIC_TOKEN,
+      reviewFilesToken,
+      admissionKey,
     );
     if (fetched.length > 0) {
       console.log(
@@ -3642,6 +4009,7 @@ export async function runAiReviewForAdvisory(
   args: {
     settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
+    installationId?: number | null | undefined;
     repoFullName: string;
     pr: {
       number: number;
@@ -3926,6 +4294,7 @@ export async function runAiReviewForAdvisory(
       captureReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), {
         kind: "review",
         reason: "ai_review_inconclusive",
+        installationId: args.installationId,
         owner: args.repoFullName.split("/")[0],
         repo: args.repoFullName,
         pr: args.pr.number,
@@ -3994,6 +4363,7 @@ export async function runAiReviewForAdvisory(
       {
         kind: "review",
         reason: "ai_review_public_summary_missing",
+        installationId: args.installationId,
         owner: args.repoFullName.split("/")[0],
         repo: args.repoFullName,
         pr: args.pr.number,
@@ -4029,6 +4399,7 @@ export async function runAiReviewForAdvisory(
     );
     captureReviewFailure(error, {
       kind: "review",
+      installationId: args.installationId,
       repo: args.repoFullName,
       pr: args.pr.number,
       head_sha: args.advisory.headSha,
@@ -4203,6 +4574,7 @@ export async function reconcileLiveDuplicateSiblings(
           () => undefined,
         );
   const token = installationToken ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const staleClosed = new Set<number>();
   await Promise.all(
     lowerOverlapping.map(async (sibling) => {
@@ -4211,6 +4583,7 @@ export async function reconcileLiveDuplicateSiblings(
         repoFullName,
         sibling.number,
         token,
+        admissionKey,
       ).catch(() => undefined);
       if (liveState !== undefined && liveState !== "open")
         staleClosed.add(sibling.number);
@@ -4306,6 +4679,7 @@ async function maybePublishPrPublicSurface(
     baseSha?: string | null | undefined;
     previewPollAttempt?: number | undefined;
     skipAiReview?: boolean | undefined;
+    liveFacts: LiveGithubFacts;
   },
 ): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
@@ -4504,6 +4878,32 @@ async function maybePublishPrPublicSurface(
   let inlineCommentsEnabledForReview = false;
   let aiReviewExpected = false;
   let gateFinalized = false;
+  const reviewedHeadSha = reviewedPullRequestHeadSha(pr.headSha, advisory.headSha);
+  const freshnessForReviewOutput = (phase: string): Promise<PullRequestFreshness> =>
+    reviewTargetFreshness(env, {
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      expectedHeadSha: reviewedHeadSha,
+      deliveryId: webhook.deliveryId,
+      phase,
+      actor: author,
+    });
+  const skipStaleReviewOutput = async (freshness: PullRequestFreshness): Promise<boolean> => {
+    if (!freshnessBlocksReviewOutput(freshness)) return false;
+    if (gateEnabled && pendingGateCheckRunId !== undefined && !gateFinalized) {
+      await createOrUpdateSkippedGateCheckRun(
+        env,
+        installationId,
+        repoFullName,
+        advisory,
+        pullRequestFreshnessDetail(freshness),
+        mode,
+        { checkRunId: pendingGateCheckRunId },
+      ).catch(() => undefined);
+    }
+    return true;
+  };
   // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
   // scan, the check-run, and the unified comment. Resolve them AT MOST ONCE per review and share across the
   // gate phase (inside the try) AND the publish phase (check-run + comment, after the try): memoize the first
@@ -4734,13 +5134,18 @@ async function maybePublishPrPublicSurface(
     // stale green/yellow/red verdict while the current head is being recomputed. In-place upsert: once the final
     // verdict is ready it overwrites this comment. GitHub rate-limits still abort so the queue can retry instead
     // of leaving a stale public surface visible.
-    if (
-      shouldPostReviewingPlaceholder({
-        reviewWillRun: true,
-        mode,
-        willComment: decision.willComment,
-      })
-    ) {
+    const shouldPostPlaceholder = shouldPostReviewingPlaceholder({
+      reviewWillRun: true,
+      mode,
+      willComment: decision.willComment,
+    });
+    if (shouldPostPlaceholder) {
+      if (
+        await skipStaleReviewOutput(
+          await freshnessForReviewOutput("pre_public_output"),
+        )
+      )
+        return undefined;
       const placeholderBody = `${PR_PANEL_COMMENT_MARKER}\n\n${renderReviewingPlaceholder()}`;
       try {
         await createOrUpdatePrIntelligenceComment(
@@ -4765,80 +5170,94 @@ async function maybePublishPrPublicSurface(
       }
     }
     if (aiReviewWillRun) {
-      // #1 self-host AI-review cache: the LLM output for a PR changes only when the code (head SHA) or the review
-      // mode changes, so reuse a prior review for this exact (repo, pr, head SHA, mode) — a re-delivered webhook or
-      // the block-mode ~2-min re-gate sweep (which re-runs the AI for every open PR) need not re-spend the call. On
-      // self-host there is no AI gateway, so this is the only AI cache. The deterministic gate below still runs.
-      const cachedReview = await getCachedAiReview(
-        env,
-        repoFullName,
-        pr.number,
-        advisory.headSha,
-        settings.aiReviewMode,
-      ).catch(() => null);
-      if (cachedReview && hasPublicReviewAssessment(cachedReview.notes)) {
-        advisory.findings.push(...cachedReview.findings);
-        aiReview = cachedReview;
-      } else {
-        // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
-        // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
-        // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
-        // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
-        // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
-        const {
-          profile: reviewProfile,
-          inlineComments: reviewInlineComments,
-          pathInstructions: reviewPathInstructions,
-          instructions: manifestReviewInstructions,
-          excludePaths: reviewExcludePaths,
-        } = resolveReviewPromptOverrides(
-          await loadRepoFocusManifest(env, repoFullName).catch(() => null),
-        );
-        inlineCommentsEnabledForReview = shouldRequestInlineFindings(
-          env,
+      await withReviewPipelineSpan(
+        "selfhost.review.ai",
+        {
+          installationId,
           repoFullName,
-          reviewInlineComments,
-        );
-        // Per-repo review CONTEXT (#review-skills): fold the container-private review/AGENTS.md (or legacy
-        // review/CLAUDE.md) guide + the matching review/skills/*.md modules into the SAME review-instructions slot,
-        // so reviews follow each repo's conventions.
-        // Glob-gated for cost (only skills matching the changed files are injected); absent config dir ⇒ empty ⇒
-        // byte-identical prompt. getReviewFiles() is memoized, so the second call reuses the loaded diff.
-        const reviewInstructions =
-          [
-            manifestReviewInstructions,
-            composeRepoReviewContext(
-              await loadRepoReviewContext(repoFullName),
-              (await getReviewFiles()).map((file) => file.path),
-            ),
-          ]
-            .map((part) => part?.trim())
-            .filter(Boolean)
-            .join("\n\n") || null;
-        aiReview = await runAiReviewForAdvisory(env, {
-          settings,
-          advisory,
-          repoFullName,
-          pr: { ...pr, baseSha: webhook.baseSha ?? null },
-          author,
-          confirmedContributor,
-          files: await getReviewFiles(),
-          reviewProfile,
-          reviewPathInstructions,
-          reviewInstructions,
-          reviewExcludePaths,
-          reviewInlineComments,
-        });
-        if (aiReview && aiReview.cacheable !== false)
-          await putCachedAiReview(
+          pullNumber: pr.number,
+          operation: "ai_review",
+          agent: "dual-ai",
+        },
+        async () => {
+          // #1 self-host AI-review cache: the LLM output for a PR changes only when the code (head SHA) or the review
+          // mode changes, so reuse a prior review for this exact (repo, pr, head SHA, mode) — a re-delivered webhook or
+          // the block-mode ~2-min re-gate sweep (which re-runs the AI for every open PR) need not re-spend the call. On
+          // self-host there is no AI gateway, so this is the only AI cache. The deterministic gate below still runs.
+          const cachedReview = await getCachedAiReview(
             env,
             repoFullName,
             pr.number,
             advisory.headSha,
             settings.aiReviewMode,
-            aiReview,
-          ).catch(() => undefined);
-      }
+          ).catch(() => null);
+          if (cachedReview && hasPublicReviewAssessment(cachedReview.notes)) {
+            advisory.findings.push(...cachedReview.findings);
+            aiReview = cachedReview;
+          } else {
+            // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
+            // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
+            // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
+            // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
+            // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
+            const {
+              profile: reviewProfile,
+              inlineComments: reviewInlineComments,
+              pathInstructions: reviewPathInstructions,
+              instructions: manifestReviewInstructions,
+              excludePaths: reviewExcludePaths,
+            } = resolveReviewPromptOverrides(
+              /* v8 ignore next -- fail-open manifest-read rejection is exercised in runAiReviewForAdvisory; this wrapper preserves the same fallback. */
+              await loadRepoFocusManifest(env, repoFullName).catch(() => null),
+            );
+            inlineCommentsEnabledForReview = shouldRequestInlineFindings(
+              env,
+              repoFullName,
+              reviewInlineComments,
+            );
+            // Per-repo review CONTEXT (#review-skills): fold the container-private review/AGENTS.md (or legacy
+            // review/CLAUDE.md) guide + the matching review/skills/*.md modules into the SAME review-instructions slot,
+            // so reviews follow each repo's conventions.
+            // Glob-gated for cost (only skills matching the changed files are injected); absent config dir ⇒ empty ⇒
+            // byte-identical prompt. getReviewFiles() is memoized, so the second call reuses the loaded diff.
+            const reviewInstructions =
+              [
+                manifestReviewInstructions,
+                composeRepoReviewContext(
+                  await loadRepoReviewContext(repoFullName),
+                  (await getReviewFiles()).map((file) => file.path),
+                ),
+              ]
+                .map((part) => part?.trim())
+                .filter(Boolean)
+                .join("\n\n") || null;
+            aiReview = await runAiReviewForAdvisory(env, {
+              settings,
+              advisory,
+              installationId,
+              repoFullName,
+              pr: { ...pr, baseSha: webhook.baseSha ?? null },
+              author,
+              confirmedContributor,
+              files: await getReviewFiles(),
+              reviewProfile,
+              reviewPathInstructions,
+              reviewInstructions,
+              reviewExcludePaths,
+              reviewInlineComments,
+            });
+            if (aiReview && aiReview.cacheable !== false)
+              await putCachedAiReview(
+                env,
+                repoFullName,
+                pr.number,
+                advisory.headSha,
+                settings.aiReviewMode,
+                aiReview,
+              ).catch(() => undefined);
+          }
+        },
+      );
     }
     if (aiReviewExpected && !hasPublicReviewAssessment(aiReview?.notes)) {
       const message =
@@ -4858,6 +5277,7 @@ async function maybePublishPrPublicSurface(
       captureReviewFailure(new Error(message), {
         kind: "review",
         reason: "ai_review_public_summary_missing",
+        installationId,
         repo: repoFullName,
         pr: pr.number,
         head_sha: advisory.headSha,
@@ -4885,11 +5305,13 @@ async function maybePublishPrPublicSurface(
         (await createInstallationToken(env, installationId).catch(
           () => undefined,
         )) ?? env.GITHUB_PUBLIC_TOKEN;
+      const reviewThreadAdmissionKey = githubAdmissionKeyForToken(env, installationId, reviewThreadToken);
       const reviewThreadBlockers = await fetchLiveReviewThreadBlockers(
         env,
         repoFullName,
         pr.number,
         reviewThreadToken,
+        reviewThreadAdmissionKey,
       ).catch(() => []);
       advisory.findings.push(...reviewThreadBlockers.map(reviewThreadBlockerFinding));
     }
@@ -4927,24 +5349,40 @@ async function maybePublishPrPublicSurface(
       authorHistory,
       gateSizeContext,
     );
-    gateEvaluation = gateEnabled
-      ? evaluateGateCheck(advisory, gatePolicy)
-      : undefined;
-    // Deterministic content/registry surface lane (#1255) — flag-gated + per-repo allowlist, byte-identical when
-    // off (evaluateWithSurfaceLane returns the generic evaluation unchanged and resolves no files). A metagraphed
-    // registry-submission PR's surface verdict OVERRIDES the generic gate; the helper preserves a generic HARD
-    // blocker (e.g. a committed secret) and an unreadable head defers. AI-free → independent of the AI reviewer.
-    gateEvaluation = await evaluateWithSurfaceLane(
-      env,
-      repoFullName,
-      gateEnabled,
-      gateEvaluation,
+    gateEvaluation = await withReviewPipelineSpan(
+      "selfhost.review.gate",
       {
         installationId,
-        pr,
-        repo,
-        advisory,
-        getChangedFiles: getReviewFiles,
+        repoFullName,
+        pullNumber: pr.number,
+        operation: "gate_decision",
+      },
+      async () => {
+        let evaluation = gateEnabled
+          ? evaluateGateCheck(advisory, gatePolicy)
+          : undefined;
+        // Deterministic content/registry surface lane (#1255) — flag-gated + per-repo allowlist, byte-identical when
+        // off (evaluateWithSurfaceLane returns the generic evaluation unchanged and resolves no files). A metagraphed
+        // registry-submission PR's surface verdict OVERRIDES the generic gate; the helper preserves a generic HARD
+        // blocker (e.g. a committed secret) and an unreadable head defers. AI-free → independent of the AI reviewer.
+        evaluation = await evaluateWithSurfaceLane(
+          env,
+          repoFullName,
+          gateEnabled,
+          evaluation,
+          {
+            installationId,
+            pr,
+            repo,
+            advisory,
+            getChangedFiles: getReviewFiles,
+          },
+        );
+        if (evaluation)
+          await setReviewPipelineSpanOutcome({
+            decisionOutcome: evaluation.conclusion,
+          });
+        return evaluation;
       },
     );
     // #554 gate false-positive telemetry: when the gate BLOCKS, record the block (one latest row per PR) so a
@@ -4987,22 +5425,37 @@ async function maybePublishPrPublicSurface(
         reasonCode,
       });
     }
+    const finalFreshness = await freshnessForReviewOutput("final_publish");
+    if (await skipStaleReviewOutput(finalFreshness)) {
+      return undefined;
+    }
     if (gateEnabled) {
       try {
-        const gateCheckResult = await createOrUpdateGateCheckRun(
-          env,
-          installationId,
-          repoFullName,
-          advisory,
-          gatePolicy,
+        const gateCheckResult = await withReviewPipelineSpan(
+          "selfhost.review.publish.check_run",
           {
-            checkRunId: pendingGateCheckRunId,
-            // #5 (audit): publish the AUTHORITATIVE surface-lane-merged verdict so the check-run conclusion matches
-            // the disposition; without this the check re-derives the generic verdict and shows green on a surface-
-            // lane reject/manual PR that is actually auto-closed/held. Undefined (gate off) ⇒ re-derive (identical).
-            gate: gateEvaluation,
+            installationId,
+            repoFullName,
+            pullNumber: pr.number,
+            operation: "publish_check_run",
+            decisionOutcome: gateEvaluation?.conclusion,
           },
-          mode,
+          () =>
+            createOrUpdateGateCheckRun(
+              env,
+              installationId,
+              repoFullName,
+              advisory,
+              gatePolicy,
+              {
+                checkRunId: pendingGateCheckRunId,
+                // #5 (audit): publish the AUTHORITATIVE surface-lane-merged verdict so the check-run conclusion matches
+                // the disposition; without this the check re-derives the generic verdict and shows green on a surface-
+                // lane reject/manual PR that is actually auto-closed/held. Undefined (gate off) ⇒ re-derive (identical).
+                gate: gateEvaluation,
+              },
+              mode,
+            ),
         );
         if (gateCheckResult?.kind === "published") gateFinalized = true;
         if (gateCheckResult?.kind === "permission_missing") {
@@ -5239,31 +5692,16 @@ async function maybePublishPrPublicSurface(
       const ciToken = await createInstallationToken(env, installationId).catch(
         () => undefined,
       );
+      const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
+      const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
+      const baseRef = pr.baseRef ?? repo?.defaultBranch;
       // Required contexts still detect missing/pending required CI, but every visible completed red check/status is
       // adverse and blocks the PR.
-      const requiredContexts = await fetchRequiredStatusContexts(
-        env,
-        repoFullName,
-        pr.baseRef ?? repo?.defaultBranch,
-        ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-      );
-      const liveCi = await fetchLiveCiAggregate(
-        env,
-        repoFullName,
-        pr.headSha,
-        ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-        requiredContexts,
-      );
+      const liveCi = await refreshLiveCiAggregate(env, repoFullName, webhook.liveFacts, pr.headSha, baseRef, token, admissionKey);
       // Live merge-state too — the SAME source the disposition uses (planAgentMaintenanceActions reads liveMergeState).
-      // The stored pr.mergeableState lags GitHub's async recompute, so a base-conflicting PR could read `clean` here
-      // ("✅ safe to merge") while the disposition reads the live `dirty` and auto-CLOSES it — the exact #4220
-      // contradiction. (#review-audit / #ready-needs-mergeable)
-      const liveMergeState = await fetchLivePullRequestMergeState(
-        env,
-        repoFullName,
-        pr.number,
-        ciToken ?? env.GITHUB_PUBLIC_TOKEN,
-      ).catch(() => undefined);
+      // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
+      // also advance mergeability after readiness ran, so refresh at this post-publish boundary.
+      const liveMergeState = await refreshLiveMergeState(env, repoFullName, webhook.liveFacts, pr.number, token, admissionKey).catch(() => undefined);
       const mergeStateLabel = liveMergeState ?? pr.mergeableState; // fail-safe to the stored value
       const ciState: MergeReadiness["ciState"] =
         liveCi.ciState === "passed"
@@ -5439,13 +5877,24 @@ async function maybePublishPrPublicSurface(
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);
     }
     try {
-      await createOrUpdatePrIntelligenceComment(
-        env,
-        installationId,
-        repoFullName,
-        pr.number,
-        deterministicBody,
-        { mode },
+      await withReviewPipelineSpan(
+        "selfhost.review.publish.comment",
+        {
+          installationId,
+          repoFullName,
+          pullNumber: pr.number,
+          operation: "publish_comment",
+          decisionOutcome: gateEvaluation?.conclusion,
+        },
+        () =>
+          createOrUpdatePrIntelligenceComment(
+            env,
+            installationId,
+            repoFullName,
+            pr.number,
+            deterministicBody,
+            { mode },
+          ),
       );
       publishedOutputs.push("comment");
       incr("gittensory_reviews_published_total", { repo: repoFullName });
@@ -5481,16 +5930,27 @@ async function maybePublishPrPublicSurface(
   }
   if (decision.willLabel) {
     try {
-      await ensurePullRequestLabel(
-        env,
-        installationId,
-        repoFullName,
-        pr.number,
-        settings.gittensorLabel,
+      await withReviewPipelineSpan(
+        "selfhost.review.publish.label",
         {
-          createMissingLabel: settings.createMissingLabel,
-          mode,
+          installationId,
+          repoFullName,
+          pullNumber: pr.number,
+          operation: "publish_label",
+          decisionOutcome: gateEvaluation?.conclusion,
         },
+        () =>
+          ensurePullRequestLabel(
+            env,
+            installationId,
+            repoFullName,
+            pr.number,
+            settings.gittensorLabel,
+            {
+              createMissingLabel: settings.createMissingLabel,
+              mode,
+            },
+          ),
       );
       publishedOutputs.push("label");
     } catch (error) {
@@ -5576,6 +6036,7 @@ async function maybePublishPrPublicSurface(
       // advisory-only bot this is the worst failure — escalate to Sentry at error level, not just the audit ledger.
       captureReviewFailure(new Error("PR public-surface publish failed — review produced output but nothing was posted to the PR"), {
         kind: "publish",
+        installationId,
         owner: repoFullName.split("/")[0],
         repo: repoFullName,
         pr: pr.number,
@@ -5699,11 +6160,13 @@ export async function resolveOverrideHeadSha(
     (await createInstallationToken(env, installationId).catch(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const liveHeadSha = await fetchLivePullRequestHeadSha(
     env,
     repoFullName,
     pr.number,
     token,
+    admissionKey,
   );
   return liveHeadSha ?? pr.headSha;
 }
@@ -6233,6 +6696,7 @@ async function maybeProcessPrPanelRetrigger(
   ) {
     await refreshPullRequestDetails(env, repoFullName, pr.number);
   }
+  const liveFacts = createLiveGithubFacts();
   if (
     !(await prReadyForReview(
       env,
@@ -6241,6 +6705,7 @@ async function maybeProcessPrPanelRetrigger(
       pr,
       settings,
       deliveryId,
+      liveFacts,
     ))
   ) {
     await recordAuditEvent(env, {
@@ -6264,6 +6729,7 @@ async function maybeProcessPrPanelRetrigger(
     {
       deliveryId,
       action: "manual_retrigger",
+      liveFacts,
     },
   );
   await recordGithubProductUsage(env, "pr_panel_retriggered", {

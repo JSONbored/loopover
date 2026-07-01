@@ -350,7 +350,7 @@ function inputSkipReason(
     case "redos":
     case "secret":
     case "secretLog":
-      return analysis.addedLines.length ? null : "no_added_lines";
+      return analysis.hasAddedLines ? null : "no_added_lines";
     case "provenance":
       return analysis.dependencyManifestPaths.length ||
         analysis.changedFiles.some((file) => file.status === "added" || file.status === "copied")

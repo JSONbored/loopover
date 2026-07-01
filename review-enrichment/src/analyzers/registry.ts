@@ -1,5 +1,6 @@
 import { scanActionPins } from "./actions-pin.js";
 import { scanAssetWeight } from "./asset-weight.js";
+import { scanChurnHotspot } from "./churn-hotspot.js";
 import { scanCodeowners } from "./codeowners.js";
 import { scanCommitSignature } from "./commit-signature.js";
 import { dependencyAnalyzer } from "./dependency/descriptor.js";
@@ -417,6 +418,27 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanDuplication(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "churnHotspot",
+    title: "Churn hotspots",
+    category: "history",
+    cost: "github-heavy",
+    defaultEnabled: true,
+    requires: ["files", "github-token"],
+    limits: { maxFilesProbed: 8, windowDays: 90, perPage: 100 },
+    docs: {
+      summary:
+        "Flags changed files that are statistical fragility hotspots — high commit frequency and a high fix/revert fraction.",
+      looksAt:
+        "Each changed file's recent commit history (a 90-day window), excluding lockfiles, generated output, and binaries.",
+      reports: "File, commit count, fix/revert count, and the window — counts only, never file contents.",
+      network: "Calls the GitHub commits API once per probed file. Requires GitHub token forwarding for private repos.",
+      notes:
+        "Distinct from the history analyzer's author track record; this scores the change AREA's defect density.",
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanChurnHotspot(req, fetch, { signal, analysis, diagnostics }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

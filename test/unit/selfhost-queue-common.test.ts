@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
+  buildSelfHostQueueSnapshot,
   consumingRetryDelayMs,
+  deterministicJitterMs,
   githubRateLimitAdmissionDelayMs,
+  githubRateLimitAdmissionKeyScope,
   githubRateLimitAdmissionKeyForJob,
+  githubRateLimitMetricContext,
+  githubRateLimitMetricLabels,
   githubBackgroundRateLimitDelayMs,
   githubRateLimitRetryDelayMs,
   githubWebhookRateLimitDelayMs,
@@ -15,10 +20,14 @@ import {
   queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
+  queueSnapshotBacklog,
+  queueSnapshotFromBinding,
   queueStartupJitterMinJobs,
   queueStartupJitterMs,
+  scheduledEnqueueDelaySeconds,
+  scheduledEnqueueJitterMs,
 } from "../../src/selfhost/queue-common";
-import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, timeoutFetch } from "../../src/github/client";
+import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, githubRateLimitAdmissionKeyForPublicToken, timeoutFetch } from "../../src/github/client";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
 
@@ -58,6 +67,49 @@ describe("self-host queue common helpers", () => {
     expect(queueBackgroundConcurrency(4, "")).toBe(1);
   });
 
+  it("builds queue snapshots by job type/status and only marks due pending jobs", () => {
+    const now = 1_000;
+    const snapshot = buildSelfHostQueueSnapshot(
+      [
+        { payload: payload({ type: "agent-regate-pr" }), status: "pending", run_after: 999 },
+        { payload: payload({ type: "agent-regate-pr" }), status: "pending", run_after: "1001" },
+        { payload: payload({ type: "agent-regate-pr" }), status: "processing", run_after: 1 },
+        { payload: payload({ type: "github-webhook" }), status: "processing", run_after: 1 },
+        { payload: "not-json", status: "dead", run_after: 1 },
+        { payload: payload({ type: "ignored" }), status: "done", run_after: 1 },
+        { payload: null, status: "pending", runAfter: "not-a-number" },
+      ],
+      now,
+    );
+
+    expect(snapshot.totals).toEqual({ pending: 3, processing: 2, dead: 1, due: 2 });
+    expect(snapshot.byType).toEqual([
+      { type: "agent-regate-pr", status: "pending", count: 2, due: 1 },
+      { type: "agent-regate-pr", status: "processing", count: 1, due: 0 },
+      { type: "github-webhook", status: "processing", count: 1, due: 0 },
+      { type: "unknown", status: "dead", count: 1, due: 0 },
+      { type: "unknown", status: "pending", count: 1, due: 1 },
+    ]);
+    expect(queueSnapshotBacklog(snapshot, ["agent-regate-pr"])).toBe(3);
+    expect(queueSnapshotBacklog(snapshot, ["agent-regate-pr"], ["processing"])).toBe(1);
+    expect(queueSnapshotBacklog(snapshot, ["agent-regate-pr"], ["dead"])).toBe(0);
+    expect(queueSnapshotBacklog(null, ["agent-regate-pr"])).toBe(0);
+  });
+
+  it("reads queue snapshots only from self-host bindings that expose introspection", async () => {
+    const snapshot = buildSelfHostQueueSnapshot([
+      { payload: payload({ type: "agent-regate-sweep" }), status: "pending", run_after: 0 },
+    ]);
+    const binding = {
+      async send() {},
+      async sendBatch() {},
+      snapshot: () => snapshot,
+    } as unknown as Queue;
+
+    await expect(queueSnapshotFromBinding(binding)).resolves.toBe(snapshot);
+    await expect(queueSnapshotFromBinding({ async send() {}, async sendBatch() {} } as unknown as Queue)).resolves.toBeNull();
+  });
+
   it("identifies GitHub-budget background jobs without pre-yielding fresh webhooks or manual re-gates", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "github-webhook", deliveryId: "d1", eventName: "pull_request", payload: {} })).toBe(false);
     expect(isGitHubBudgetBackgroundJob({ type: "recapture-preview", deliveryId: "r1", repoFullName: "owner/repo", prNumber: 1, installationId: 2, attempt: 1 })).toBe(false);
@@ -68,6 +120,53 @@ describe("self-host queue common helpers", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "backfill-repo-segment", requestedBy: "schedule", repoFullName: "owner/repo", segment: "open_pull_requests" })).toBe(true);
     expect(isGitHubBudgetBackgroundJob({ type: "rag-index-repo", requestedBy: "schedule" })).toBe(true);
     expect(isGitHubBudgetBackgroundJob({ type: "refresh-installation-health", requestedBy: "schedule" })).toBe(false);
+  });
+
+  it("normalizes GitHub rate-limit metric labels without leaking raw admission keys", () => {
+    const webhookJob = {
+      type: "github-webhook",
+      deliveryId: "d1",
+      eventName: "pull_request",
+      payload: {},
+    } as JobMessage;
+
+    expect(githubRateLimitAdmissionKeyScope("installation:123")).toBe("installation");
+    expect(githubRateLimitAdmissionKeyScope(githubRateLimitAdmissionKeyForPublicToken())).toBe("public");
+    expect(githubRateLimitAdmissionKeyScope("global:shared")).toBe("global");
+    expect(githubRateLimitAdmissionKeyScope(null)).toBe("unknown");
+    expect(githubRateLimitAdmissionKeyScope("pat:shared")).toBe("other");
+    expect(githubRateLimitMetricLabels(webhookJob, {
+      kind: "webhook",
+      admissionKey: "installation:123",
+    })).toEqual({
+      job_type: "github-webhook",
+      key_scope: "installation",
+      kind: "webhook",
+    });
+    expect(githubRateLimitMetricLabels({ type: "rag-index-repo", requestedBy: "schedule" } as JobMessage, null)).toEqual({
+      job_type: "rag-index-repo",
+      key_scope: "unknown",
+      kind: "unknown",
+    });
+    expect(githubRateLimitMetricContext(webhookJob, {
+      kind: "webhook",
+      admissionKey: "installation:456",
+    })).toEqual({
+      labels: {
+        job_type: "github-webhook",
+        key_scope: "installation",
+        kind: "webhook",
+      },
+      spanAttributes: {
+        "github.rate_limit.kind": "webhook",
+        "github.rate_limit.key_scope": "installation",
+      },
+      logFields: {
+        jobType: "github-webhook",
+        key_scope: "installation",
+        kind: "webhook",
+      },
+    });
   });
 
   it("derives admission keys from both installation-backed jobs and webhook payloads", () => {
@@ -98,7 +197,7 @@ describe("self-host queue common helpers", () => {
     expect(githubWebhookRateLimitDelayMs({ remaining: 50, reset_at: "2026-06-24T11:59:00.000Z" }, now)).toBeNull();
   });
 
-  it("computes admission delays from any unsafe persisted candidate", () => {
+  it("computes admission delays from the newest unkeyed persisted candidate", () => {
     const now = Date.parse("2026-06-24T12:00:00.000Z");
     expect(
       githubRateLimitAdmissionDelayMs(
@@ -110,8 +209,101 @@ describe("self-host queue common helpers", () => {
         ],
         now,
       ),
-    ).toBe(615_000);
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        null,
+        [
+          { remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { remaining: 75, reset_at: "2026-06-24T12:15:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(900_000);
     expect(githubRateLimitAdmissionDelayMs("background", null, [], now)).toBeNull();
+  });
+
+  it("uses the newest comparable exact or legacy admission observation", () => {
+    const now = Date.parse("2026-06-24T12:00:00.000Z");
+    const key = githubRateLimitAdmissionKeyForInstallation(123);
+    const unrelatedKey = githubRateLimitAdmissionKeyForInstallation(456);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admissionKey: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: key, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+          { admission_key: null, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          { admission_key: null, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        key,
+        [
+          { admission_key: unrelatedKey, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        null,
+        [
+          { remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z" },
+          { remaining: 0, reset_at: "2026-06-24T12:10:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
+    expect(
+      githubRateLimitAdmissionDelayMs(
+        "webhook",
+        null,
+        [
+          { remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z" },
+          { remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(615_000);
   });
 
   it("uses the newest local REST rate-limit observation for admission control", async () => {
@@ -150,7 +342,7 @@ describe("self-host queue common helpers", () => {
       githubRateLimitAdmissionDelayMs(
         "webhook",
         key,
-        { remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:01:00.000Z" },
+        { admission_key: key, remaining: 500, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:01:00.000Z" },
         now,
       ),
     ).toBeNull();
@@ -350,6 +542,140 @@ describe("self-host queue common helpers", () => {
     ).toBeNull();
   });
 
+  it("coalesces the event-driven jobs by their stable per-invocation id — and only true duplicates (#1942)", () => {
+    // A DUPLICATE re-enqueue of the SAME job (same id — e.g. a webhook redelivery) coalesces.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
+    expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
+    expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "webhook", event: { dedupKey: "review_requested:o/r#3:bob" } }))).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
+    // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", event: {} }))).toBeNull();
+  });
+
+  it("coalesces recurring maintenance jobs while preserving their semantic scope", () => {
+    expect(
+      jobCoalesceKey(
+        payload({ type: "backfill-registered-repos", requestedBy: "schedule" }),
+      ),
+    ).toBe("backfill-registered-repos:all:default:0");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "backfill-registered-repos",
+          requestedBy: "api",
+          repoFullName: "JSONbored/Gittensory",
+          mode: "resume",
+          force: true,
+        }),
+      ),
+    ).toBe("backfill-registered-repos:jsonbored/gittensory:resume:1");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "backfill-repo-segment",
+          requestedBy: "schedule",
+          repoFullName: "JSONbored/Gittensory",
+          segment: "labels",
+          mode: "resume",
+          force: true,
+          cursor: "  page-2  ",
+        }),
+      ),
+    ).toBe("backfill-repo-segment:jsonbored/gittensory:labels:resume:1:page-2");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "refresh-contributor-activity",
+          requestedBy: "schedule",
+          login: "OktoFeesh1",
+          repoFullName: "JSONbored/Gittensory",
+        }),
+      ),
+    ).toBe("refresh-contributor-activity:oktofeesh1:jsonbored/gittensory");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rollup-product-usage",
+          requestedBy: "schedule",
+          day: "2026-06-30",
+          days: 7,
+        }),
+      ),
+    ).toBe("rollup-product-usage:2026-06-30:7");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "generate-weekly-value-report",
+          requestedBy: "schedule",
+          variant: "public",
+          days: 31,
+        }),
+      ),
+    ).toBe("generate-weekly-value-report:public:31");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/Gittensory",
+          paths: ["README.md", "src/a.ts", "README.md"],
+        }),
+      ),
+    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:8812e979fc698c98d98665ad4ccd8630e396dabdce08ebf87b41600c94bb1df5");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/Gittensory",
+          paths: ["a,b", "c"],
+        }),
+      ),
+    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:569c363fb7e855f85eeae4e4dc032d1f8d262191b68ade7297566486982b5183");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "schedule",
+          repoFullName: "JSONbored/Gittensory",
+          paths: ["a", "b,c"],
+        }),
+      ),
+    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:472ecd0a16762a33c3090345032fcadcfe6b34ee43a5cce5385fef8e72169c92");
+    const longPathKey = jobCoalesceKey(
+      payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: Array.from({ length: 100 }, (_, index) => `src/${index}-${"a".repeat(220)}.ts`),
+      }),
+    );
+    expect(longPathKey).toMatch(/^rag-index-repo:jsonbored\/gittensory:sha256:[a-f0-9]{64}$/);
+    expect(longPathKey?.length).toBe("rag-index-repo:jsonbored/gittensory:sha256:".length + 64);
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/Gittensory",
+          paths: [" ", null],
+        }),
+      ),
+    ).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(jobCoalesceKey(payload({ type: "prune-retention", requestedBy: "schedule", dryRun: true }))).toBe(
+      "prune-retention:1",
+    );
+    expect(jobCoalesceKey(payload({ type: "ops-alerts", requestedBy: "schedule" }))).toBe(
+      "ops-alerts",
+    );
+  });
+
   it("returns no coalesce key for malformed payloads", () => {
     expect(jobCoalesceKey("not-json")).toBeNull();
   });
@@ -505,6 +831,72 @@ describe("self-host queue common helpers", () => {
     } finally {
       if (old === undefined) delete process.env.QUEUE_STARTUP_JITTER_MIN_JOBS;
       else process.env.QUEUE_STARTUP_JITTER_MIN_JOBS = old;
+    }
+  });
+
+  it("parses the scheduled-enqueue jitter window with defensive fallbacks", () => {
+    const old = process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+    try {
+      delete process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+      expect(scheduledEnqueueJitterMs()).toBe(5 * 60_000); // default
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "42000";
+      expect(scheduledEnqueueJitterMs()).toBe(42000);
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "-1"; // negative → fallback
+      expect(scheduledEnqueueJitterMs()).toBe(5 * 60_000);
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "not-a-number"; // NaN → fallback
+      expect(scheduledEnqueueJitterMs()).toBe(5 * 60_000);
+    } finally {
+      if (old === undefined) delete process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+      else process.env.SCHEDULED_ENQUEUE_JITTER_MS = old;
+    }
+  });
+
+  it("keeps the every-tick priority jobs immediate and phase-spreads the periodic maintenance jobs (#1948)", () => {
+    const old = process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+    try {
+      delete process.env.SCHEDULED_ENQUEUE_JITTER_MS; // default 5-min window
+      // The timely-merge sweep and its Orb-relay retry run every ~2-min tick → never deferred.
+      expect(scheduledEnqueueDelaySeconds("agent-regate-sweep")).toBe(0);
+      expect(scheduledEnqueueDelaySeconds("retry-orb-relay")).toBe(0);
+
+      // A periodic maintenance job gets a stable, in-window slot derived from the shared jitter helper.
+      const window = 5 * 60_000;
+      for (const type of [
+        "refresh-registry",
+        "refresh-scoring-model",
+        "generate-signal-snapshots",
+        "build-contributor-evidence",
+      ]) {
+        const delay = scheduledEnqueueDelaySeconds(type);
+        expect(delay).toBe(Math.floor(deterministicJitterMs(type, window) / 1000));
+        expect(delay).toBeGreaterThanOrEqual(0);
+        expect(delay).toBeLessThanOrEqual(window / 1000);
+        expect(scheduledEnqueueDelaySeconds(type)).toBe(delay); // deterministic
+      }
+
+      // Distinct job types land in distinct slots → the enqueue is actually spread, not synchronized.
+      const slots = [
+        "refresh-registry",
+        "refresh-scoring-model",
+        "refresh-upstream-drift",
+        "generate-signal-snapshots",
+        "build-burden-forecasts",
+        "build-contributor-evidence",
+        "build-contributor-decision-packs",
+        "file-upstream-drift-issues",
+        "rollup-product-usage",
+      ].map(scheduledEnqueueDelaySeconds);
+      expect(new Set(slots).size).toBeGreaterThan(1);
+
+      // A sub-second window collapses every slot to an immediate send (covers the floor → 0 path).
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "500";
+      expect(scheduledEnqueueDelaySeconds("refresh-registry")).toBe(0);
+      // A zero window disables jitter entirely.
+      process.env.SCHEDULED_ENQUEUE_JITTER_MS = "0";
+      expect(scheduledEnqueueDelaySeconds("generate-signal-snapshots")).toBe(0);
+    } finally {
+      if (old === undefined) delete process.env.SCHEDULED_ENQUEUE_JITTER_MS;
+      else process.env.SCHEDULED_ENQUEUE_JITTER_MS = old;
     }
   });
 });

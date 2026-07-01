@@ -20,6 +20,10 @@ import {
 
 type ChangedFile = NonNullable<EnrichRequest["files"]>[number];
 
+const MAX_CONTEXT_PATCH_BYTES = 1_000_000;
+const MAX_CONTEXT_ADDED_LINES = 5_000;
+const MAX_CONTEXT_PATCH_HUNKS = 2_000;
+
 export interface AddedLine {
   file: string;
   line: number;
@@ -68,6 +72,7 @@ export interface AnalysisContext {
   changedFilePaths: readonly string[];
   addedLines: readonly AddedLine[];
   patchHunks: readonly PatchHunk[];
+  hasAddedLines: boolean;
   fileCategories: readonly FileCategory[];
   dependencyManifestPaths: readonly string[];
   cache: RequestScopedCache;
@@ -198,6 +203,10 @@ export function createAnalysisContext(
   const metrics = new AnalysisMetrics(startedAtMs, now);
   const cache = new RequestScopedCache(metrics);
   const dependencyChangeCache = new Map<string, readonly DepChange[]>();
+  let changedFilePathsCache: readonly string[] | undefined;
+  let addedLinesCache: readonly AddedLine[] | undefined;
+  let patchHunksCache: readonly PatchHunk[] | undefined;
+  let hasAddedLinesCache: boolean | undefined;
   const fileCategories = changedFiles.map((file) => categorizeFile(file.path));
   const dependencyManifestPaths = fileCategories
     .filter((file) => file.category === "dependency-manifest")
@@ -206,9 +215,22 @@ export function createAnalysisContext(
   const context: AnalysisContext = {
     repo: parseRepoIdentity(req),
     changedFiles,
-    changedFilePaths: changedFiles.map((file) => file.path),
-    addedLines: collectAddedLines(changedFiles),
-    patchHunks: collectPatchHunks(changedFiles),
+    get changedFilePaths() {
+      changedFilePathsCache ??= changedFiles.map((file) => file.path);
+      return changedFilePathsCache;
+    },
+    get addedLines() {
+      addedLinesCache ??= collectAddedLines(changedFiles, { metrics });
+      return addedLinesCache;
+    },
+    get patchHunks() {
+      patchHunksCache ??= collectPatchHunks(changedFiles, { metrics });
+      return patchHunksCache;
+    },
+    get hasAddedLines() {
+      hasAddedLinesCache ??= filesHaveAddedLines(changedFiles, { metrics });
+      return hasAddedLinesCache;
+    },
     fileCategories,
     dependencyManifestPaths,
     cache,
@@ -278,12 +300,15 @@ export function createAnalysisContext(
   return context;
 }
 
-export function collectAddedLines(files: readonly ChangedFile[]): AddedLine[] {
+export function collectAddedLines(
+  files: readonly ChangedFile[],
+  options: { metrics?: AnalysisMetrics } = {},
+): AddedLine[] {
   const addedLines: AddedLine[] = [];
   for (const file of files) {
     if (!file.patch) continue;
     let newLine = 0;
-    for (const line of file.patch.split("\n")) {
+    for (const line of boundedPatchLines(file.patch, options.metrics, "added_lines_patch_bytes")) {
       if (line.startsWith("+++") || line.startsWith("---")) continue;
       if (line.startsWith("diff ") || line.startsWith("index ")) continue;
       const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
@@ -292,6 +317,10 @@ export function collectAddedLines(files: readonly ChangedFile[]): AddedLine[] {
         continue;
       }
       if (line.startsWith("+")) {
+        if (addedLines.length >= MAX_CONTEXT_ADDED_LINES) {
+          options.metrics?.recordCappedWork("added_lines", 1);
+          return addedLines;
+        }
         addedLines.push({ file: file.path, line: newLine, text: line.slice(1) });
         newLine += 1;
       } else if (!line.startsWith("-")) {
@@ -302,14 +331,21 @@ export function collectAddedLines(files: readonly ChangedFile[]): AddedLine[] {
   return addedLines;
 }
 
-export function collectPatchHunks(files: readonly ChangedFile[]): PatchHunk[] {
+export function collectPatchHunks(
+  files: readonly ChangedFile[],
+  options: { metrics?: AnalysisMetrics } = {},
+): PatchHunk[] {
   const hunks: PatchHunk[] = [];
   for (const file of files) {
     if (!file.patch) continue;
-    for (const line of file.patch.split("\n")) {
+    for (const line of boundedPatchLines(file.patch, options.metrics, "patch_hunk_bytes")) {
       const hunk =
         /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
       if (!hunk) continue;
+      if (hunks.length >= MAX_CONTEXT_PATCH_HUNKS) {
+        options.metrics?.recordCappedWork("patch_hunks", 1);
+        return hunks;
+      }
       hunks.push({
         file: file.path,
         oldStart: Number(hunk[1]),
@@ -320,6 +356,44 @@ export function collectPatchHunks(files: readonly ChangedFile[]): PatchHunk[] {
     }
   }
   return hunks;
+}
+
+export function filesHaveAddedLines(
+  files: readonly ChangedFile[],
+  options: { metrics?: AnalysisMetrics } = {},
+): boolean {
+  for (const file of files) {
+    if (!file.patch) continue;
+    for (const line of boundedPatchLines(
+      file.patch,
+      options.metrics,
+      "has_added_lines_patch_bytes",
+    )) {
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
+      if (line.startsWith("+")) return true;
+    }
+    if (file.patch.length > MAX_CONTEXT_PATCH_BYTES) return true;
+  }
+  return false;
+}
+
+function* boundedPatchLines(
+  patch: string,
+  metrics: AnalysisMetrics | undefined,
+  cappedCategory: string,
+): Generator<string> {
+  const maxLength = Math.min(patch.length, MAX_CONTEXT_PATCH_BYTES);
+  let lineStart = 0;
+  while (lineStart <= maxLength) {
+    const newline = patch.indexOf("\n", lineStart);
+    const lineEnd = newline === -1 || newline > maxLength ? maxLength : newline;
+    yield patch.slice(lineStart, lineEnd);
+    if (newline === -1 || newline >= maxLength) break;
+    lineStart = newline + 1;
+  }
+  if (patch.length > MAX_CONTEXT_PATCH_BYTES) {
+    metrics?.recordCappedWork(cappedCategory, patch.length - MAX_CONTEXT_PATCH_BYTES);
+  }
 }
 
 function parseRepoIdentity(req: EnrichRequest): RepoIdentity {

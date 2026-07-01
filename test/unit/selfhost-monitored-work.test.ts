@@ -17,9 +17,11 @@ import {
   runScheduledLoopWithMonitor,
   type OrbRelayDrainState,
 } from "../../src/selfhost/monitored-work";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetMetrics();
 });
 
 describe("self-host monitored recurring work", () => {
@@ -135,6 +137,11 @@ describe("self-host monitored recurring work", () => {
     expect(log).toHaveBeenCalledWith(
       JSON.stringify({ event: "orb_relay_drained", count: 3 }),
     );
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_orb_relay_drains_total{result="events"} 1');
+    expect(metrics).toContain('gittensory_orb_webhook_total{event="pull_request",result="queued"} 1');
+    expect(metrics).toContain('gittensory_orb_webhook_total{event="other",result="enqueue_failed"} 1');
+    expect(metrics).toContain('gittensory_orb_webhook_total{event="check_suite",result="duplicate"} 1');
   });
 
   it("clears previous Orb relay acks and stays quiet when the broker has no events", async () => {
@@ -155,6 +162,7 @@ describe("self-host monitored recurring work", () => {
     expect(state.pendingAck).toEqual([]);
     expect(enqueue).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
+    expect(await renderMetrics()).toContain('gittensory_orb_relay_drains_total{result="empty"} 1');
   });
 
   it("preserves pending Orb relay acks when the broker drain throws before delivery state is known", async () => {

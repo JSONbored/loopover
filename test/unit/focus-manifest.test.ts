@@ -1117,10 +1117,26 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(noOverride.commandAuthorization).toEqual(dbPolicy);
   });
 
-  it("falls back to the secure built-in default with a visible warning on an invalid commandAuthorization shape (#2268)", () => {
+  it("ignores an invalid top-level commandAuthorization shape with a visible warning, never overwriting the DB policy (#2268)", () => {
     const manifest = parseFocusManifest({ settings: { commandAuthorization: "nope" } });
-    expect(manifest.settings.commandAuthorization).toEqual(DEFAULT_COMMAND_AUTHORIZATION_POLICY);
-    expect(manifest.warnings.some((w) => /commandAuthorization must be an object/.test(w))).toBe(true);
+    expect(manifest.settings.commandAuthorization).toBeUndefined();
+    expect(manifest.warnings.some((w) => /commandAuthorization.*must be an object/.test(w))).toBe(true);
+
+    // A malformed shape must leave the DB-persisted policy intact via the resolver overlay — never reset to
+    // the built-in default, which could be less restrictive than what the DB has on record.
+    const dbPolicy = { default: ["maintainer"], commands: { "gate-override": ["maintainer"] } } as RepositorySettings["commandAuthorization"];
+    const eff = resolveEffectiveSettings({ commandAuthorization: dbPolicy } as unknown as RepositorySettings, manifest);
+    expect(eff.commandAuthorization).toEqual(dbPolicy);
+
+    // A null value is likewise rejected (typeof null === "object" but it is not a valid mapping).
+    const nullShape = parseFocusManifest({ settings: { commandAuthorization: null } });
+    expect(nullShape.settings.commandAuthorization).toBeUndefined();
+    expect(nullShape.warnings.some((w) => /commandAuthorization.*must be an object/.test(w))).toBe(true);
+
+    // An array is likewise rejected, not treated as a mapping.
+    const arrayShape = parseFocusManifest({ settings: { commandAuthorization: ["nope"] } });
+    expect(arrayShape.settings.commandAuthorization).toBeUndefined();
+    expect(arrayShape.warnings.some((w) => /commandAuthorization.*must be an object/.test(w))).toBe(true);
 
     // A spoofable role on a maintainer-only command is clamped back to the default for that command, not
     // dropped silently — the maintainer-only invariant holds even inside a partially-valid override.

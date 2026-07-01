@@ -17,9 +17,9 @@
 //   • 0074 — both 0074_ai_review_cache (#1462) and 0074_orb_self_enrollment_disabled (#1465, a bare ADD COLUMN)
 //     merged + deployed before the collision surfaced; the column already exists in prod, so a rename would
 //     re-run the ALTER and fail. Grandfathered for the same reason as 0015/0017.
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
-const DIR = "migrations";
+const DIR = process.env.CHECK_MIGRATIONS_DIR || "migrations";
 const NAME = /^(\d{4})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
 const KNOWN_DUPLICATES = new Map([
   [15, new Set(["0015_github_agent_command_feedback.sql", "0015_product_usage_events.sql"])],
@@ -31,6 +31,90 @@ const fail = (message) => {
   process.stderr.write(`check-migrations: ${message}\n`);
   process.exit(1);
 };
+
+// D1 remote-authorizer compatibility. These statements run fine on the LOCAL SQLite that CI/tests apply
+// migrations to, but the REMOTE D1 authorizer rejects them at `wrangler d1 migrations apply --remote` with
+// `not authorized: SQLITE_AUTH [code: 7500]` — which breaks the deploy AFTER merge, where pre-merge CI can't
+// see it (a `CREATE TEMP TABLE` in 0083 did exactly this). This scan is the only pre-merge gate for that class.
+// `CREATE TEMP` matches anywhere (it always starts a statement); the rest anchor to a statement boundary
+// (start-of-file or after a `;`) so a trigger body's own `BEGIN`/`END` and mid-statement words don't trip.
+// The anchored patterns use a variable-length lookbehind (`(?<=(?:^|;)\s*)`, supported by V8/Node) so the
+// match starts on the keyword itself — reported line numbers point at the statement, not the preceding `;`.
+const D1_FORBIDDEN = [
+  [/create\s+temp(?:orary)?\b/gi, "temporary object (CREATE TEMP/TEMPORARY) — D1 rejects temp tables/triggers/views/indexes; rewrite without one (e.g. DELETE the losers, then UPDATE the survivors)"],
+  [/(?<=(?:^|;)\s*)attach\b/gi, "ATTACH is not supported on D1"],
+  [/(?<=(?:^|;)\s*)detach\b/gi, "DETACH is not supported on D1"],
+  [/(?<=(?:^|;)\s*)vacuum\b/gi, "VACUUM is not supported on D1"],
+  [/(?<=(?:^|;)\s*)pragma\b/gi, "PRAGMA is not supported on D1"],
+  [/(?<=(?:^|;)\s*)(?:begin|commit|rollback|savepoint|release)\b/gi, "explicit transaction control — wrangler wraps each migration in its own transaction"],
+];
+
+// Blank out comments and string/identifier literals (preserving newlines for accurate line numbers) so a
+// forbidden keyword inside a comment or a quoted value can never trip a false positive.
+function cleanSql(sql) {
+  let out = "";
+  for (let i = 0; i < sql.length; ) {
+    const c = sql[i];
+    const c2 = sql[i + 1];
+    if (c === "-" && c2 === "-") {
+      out += "  ";
+      i += 2;
+      while (i < sql.length && sql[i] !== "\n") {
+        out += " ";
+        i += 1;
+      }
+      continue;
+    }
+    if (c === "/" && c2 === "*") {
+      out += "  ";
+      i += 2;
+      while (i < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) {
+        out += sql[i] === "\n" ? "\n" : " ";
+        i += 1;
+      }
+      if (i < sql.length) {
+        out += "  ";
+        i += 2;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") {
+      out += " ";
+      i += 1;
+      while (i < sql.length) {
+        if (sql[i] === c) {
+          if (sql[i + 1] === c) {
+            out += "  ";
+            i += 2;
+            continue;
+          }
+          out += " ";
+          i += 1;
+          break;
+        }
+        out += sql[i] === "\n" ? "\n" : " ";
+        i += 1;
+      }
+      continue;
+    }
+    if (c === "[") {
+      out += " ";
+      i += 1;
+      while (i < sql.length && sql[i] !== "]") {
+        out += sql[i] === "\n" ? "\n" : " ";
+        i += 1;
+      }
+      if (i < sql.length) {
+        out += " ";
+        i += 1;
+      }
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
 
 const files = readdirSync(DIR)
   .filter((f) => f.endsWith(".sql"))
@@ -72,6 +156,25 @@ for (let i = 1; i < numbers.length; i += 1) {
     const curr = String(numbers[i]).padStart(4, "0");
     fail(`migration number gap: ${prev} -> ${curr}. Migrations must be a contiguous sequence (no skipped numbers).`);
   }
+}
+
+const sqlViolations = [];
+for (const file of files) {
+  const cleaned = cleanSql(readFileSync(`${DIR}/${file}`, "utf8"));
+  for (const [re, why] of D1_FORBIDDEN) {
+    re.lastIndex = 0;
+    let match;
+    while ((match = re.exec(cleaned)) !== null) {
+      const line = cleaned.slice(0, match.index).split("\n").length;
+      sqlViolations.push(`${file}:${line} — ${why}`);
+      if (re.lastIndex === match.index) re.lastIndex += 1;
+    }
+  }
+}
+if (sqlViolations.length > 0) {
+  fail(
+    `D1-incompatible SQL — the remote D1 authorizer rejects these at deploy (SQLITE_AUTH [code: 7500]), even though the local SQLite used by CI accepts them:\n  ${sqlViolations.join("\n  ")}`,
+  );
 }
 
 const first = String(numbers[0]).padStart(4, "0");

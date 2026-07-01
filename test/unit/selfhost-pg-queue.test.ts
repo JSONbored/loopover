@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool, QueryResult } from "pg";
 import { createPgQueue } from "../../src/selfhost/pg-queue";
+import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import type { JobMessage } from "../../src/types";
@@ -1338,8 +1339,18 @@ describe("createPgQueue (durable #977)", () => {
       ],
       rowCount: 4,
     });
+    m.fn.mockResolvedValueOnce({
+      rows: [
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "pending", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("agent-regate-pr")), status: "processing", run_after: String(now - 1) },
+        { payload: JSON.stringify(msg("github-webhook")), status: "pending", run_after: String(now + 60_000) },
+        { payload: JSON.stringify(msg("rag-index-repo")), status: "dead", run_after: String(now - 1) },
+      ],
+      rowCount: 4,
+    });
 
     const snapshot = await q.snapshot();
+    const bindingSnapshot = await queueSnapshotFromBinding(q.binding);
 
     expect(snapshot.totals).toMatchObject({ pending: 2, processing: 1, dead: 1 });
     expect(snapshot.byType).toEqual(
@@ -1350,5 +1361,6 @@ describe("createPgQueue (durable #977)", () => {
         { type: "rag-index-repo", status: "dead", count: 1, due: 0 },
       ]),
     );
+    expect(bindingSnapshot).toEqual(snapshot);
   });
 });

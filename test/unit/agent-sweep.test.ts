@@ -92,6 +92,36 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
       const picked = selectRegateCandidates({ pulls, now: NOW, max: 2 });
       expect(picked.map((p) => p.number)).toEqual([2, 3]); // stalest re-gate (600m), then 300m; 120m dropped by cap
     });
+
+    it("REGRESSION (repair priority): missing public surfaces are selected before ordinary stale PRs", () => {
+      const pulls = [
+        pr({ number: 1, lastRegatedAt: minutesAgo(900) }),
+        pr({ number: 2, lastRegatedAt: minutesAgo(10) }),
+        pr({ number: 3, lastRegatedAt: minutesAgo(800) }),
+      ];
+      const picked = selectRegateCandidates({
+        pulls,
+        now: NOW,
+        max: 2,
+        priorityPullNumbers: new Set([2]),
+      });
+      expect(picked.map((p) => p.number)).toEqual([2, 1]);
+    });
+
+    it("REGRESSION (repair priority): priority repairs can bypass webhook freshness when the current Gate check is missing", () => {
+      const pulls = [
+        pr({ number: 1, updatedAt: minutesAgo(1), lastRegatedAt: minutesAgo(900) }),
+        pr({ number: 2, updatedAt: minutesAgo(120), lastRegatedAt: minutesAgo(800) }),
+      ];
+      const picked = selectRegateCandidates({
+        pulls,
+        now: NOW,
+        max: 2,
+        priorityPullNumbers: new Set([1]),
+        priorityBypassesFreshness: true,
+      });
+      expect(picked.map((p) => p.number)).toEqual([1, 2]);
+    });
   });
 
   it("excludes drafts and non-open PRs", () => {

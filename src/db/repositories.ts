@@ -3326,6 +3326,7 @@ export async function getCachedAiReview(
   pullNumber: number,
   headSha: string | null | undefined,
   mode: string,
+  expectedInputFingerprint?: string | undefined,
 ): Promise<{ notes: string; reviewerCount: number; findings: AdvisoryFinding[]; metadata?: Record<string, unknown> | undefined } | null> {
   if (!headSha) return null;
   const row = await env.DB
@@ -3334,6 +3335,11 @@ export async function getCachedAiReview(
     .first<{ notes: string; reviewerCount: number; mode: string; findingsJson: string | null; metadataJson: string | null }>();
   if (!row || row.mode !== mode) return null;
   const metadata = parseJson<Record<string, unknown>>(row.metadataJson, {});
+  if (
+    expectedInputFingerprint !== undefined &&
+    metadata.inputFingerprint !== expectedInputFingerprint
+  )
+    return null;
   return {
     notes: row.notes,
     reviewerCount: row.reviewerCount,

@@ -5605,6 +5605,7 @@ async function maybePublishPrPublicSurface(
                 {
                   ...aiReview,
                   metadata: {
+                    /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
                     ...(aiReview.metadata ?? {}),
                     inputFingerprint: reviewInputFingerprint,
                   },

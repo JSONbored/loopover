@@ -17,7 +17,9 @@ import {
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
+  jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceSupersededKeyPrefix,
   jobPriority,
   queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
@@ -229,6 +231,47 @@ export function createPgQueue(
     const priority = jobPriority(payload);
     const key = jobCoalesceKey(payload);
     const runAfter = now + delaySeconds * 1000;
+    const absorbedByKey = jobCoalesceAbsorbedByKey(payload);
+    if (absorbedByKey) {
+      const existingFull = (
+        await pool.query(
+          `SELECT id FROM ${TABLE} WHERE status='pending' AND job_key=$1 ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+          [absorbedByKey],
+        )
+      ).rows[0] as { id: string } | undefined;
+      if (existingFull) {
+        await recordQueueMetric("gittensory_jobs_coalesced_total");
+        kickOne();
+        return;
+      }
+    }
+    const supersededKeyPrefix = jobCoalesceSupersededKeyPrefix(payload);
+    if (key && supersededKeyPrefix) {
+      const existing = (
+        await pool.query(
+          `SELECT id FROM ${TABLE}
+           WHERE status='pending' AND job_key IS NOT NULL AND left(job_key, $1)=$2
+           ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+          [supersededKeyPrefix.length, supersededKeyPrefix],
+        )
+      ).rows[0] as { id: string } | undefined;
+      if (existing) {
+        await pool.query(
+          `UPDATE ${TABLE}
+             SET payload=$1, run_after=GREATEST(run_after, $2), created_at=$3, priority=GREATEST(priority, $4), job_key=$5, last_error=NULL
+           WHERE id=$6`,
+          [payload, runAfter, now, priority, key, existing.id],
+        );
+        await pool.query(
+          `DELETE FROM ${TABLE}
+           WHERE status='pending' AND id<>$1 AND job_key IS NOT NULL AND left(job_key, $2)=$3`,
+          [existing.id, supersededKeyPrefix.length, supersededKeyPrefix],
+        );
+        await recordQueueMetric("gittensory_jobs_coalesced_total");
+        kickOne();
+        return;
+      }
+    }
     if (key) {
       const existing = (
         await pool.query(

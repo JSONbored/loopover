@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -108,28 +109,52 @@ function shouldValidateRelease(): boolean {
   return !/^(0|false|no|off)$/i.test(process.env.REES_SENTRY_VALIDATE_RELEASE ?? "");
 }
 
-function runReleaseValidation(release: string, fields: { sha?: string; deployName: string; environment: string }): void {
+function numericEnv(name: string, fallback: number, max: number): number {
+  const raw = Number(nonBlank(process.env[name]));
+  return Number.isFinite(raw) && raw >= 0 ? Math.min(Math.floor(raw), max) : fallback;
+}
+
+async function runReleaseValidation(
+  release: string,
+  fields: { sha?: string; deployName: string; environment: string },
+): Promise<void> {
   if (!shouldValidateRelease()) return;
-  const result = spawnSync(process.execPath, ["scripts/validate-sentry-release.mjs"], {
-    cwd: appDir,
-    env: {
-      ...process.env,
-      SENTRY_RELEASE: release,
-      SENTRY_COMMIT_SHA: fields.sha ?? "",
-      SENTRY_DEPLOY_NAME: fields.deployName,
-      SENTRY_ENVIRONMENT: fields.environment,
-      SENTRY_REQUIRE_COMMITS: "true",
-      SENTRY_REQUIRE_DEPLOY: "true",
-      SENTRY_REQUIRE_FINALIZED: "true",
-    },
-    encoding: "utf8",
-  });
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-  if (result.status === 0) {
-    if (output) log("rees_sentry_release_validation", { output: output.slice(0, 500) });
-    return;
+  const attempts = Math.max(1, numericEnv("REES_SENTRY_VALIDATE_ATTEMPTS", 5, 20));
+  const retryDelayMs = numericEnv("REES_SENTRY_VALIDATE_RETRY_DELAY_MS", 1_000, 30_000);
+  let output = "";
+  let status: number | null = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = spawnSync(process.execPath, ["scripts/validate-sentry-release.mjs"], {
+      cwd: appDir,
+      env: {
+        ...process.env,
+        SENTRY_RELEASE: release,
+        SENTRY_COMMIT_SHA: fields.sha ?? "",
+        SENTRY_DEPLOY_NAME: fields.deployName,
+        SENTRY_ENVIRONMENT: fields.environment,
+        SENTRY_REQUIRE_COMMITS: "true",
+        SENTRY_REQUIRE_DEPLOY: "true",
+        SENTRY_REQUIRE_FINALIZED: "true",
+      },
+      encoding: "utf8",
+    });
+    status = result.status;
+    output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+    if (result.status === 0) {
+      if (output) log("rees_sentry_release_validation", { output: output.slice(0, 500), attempt });
+      return;
+    }
+    if (attempt < attempts) {
+      warn("rees_sentry_release_validation_retry", {
+        attempt,
+        attempts,
+        retryDelayMs,
+        message: output.slice(0, 500),
+      });
+      if (retryDelayMs > 0) await sleep(retryDelayMs);
+    }
   }
-  throw new Error(`Sentry release validation failed (${result.status}): ${output.slice(0, 500)}`);
+  throw new Error(`Sentry release validation failed (${status}): ${output.slice(0, 500)}`);
 }
 
 async function main(): Promise<number> {
@@ -191,7 +216,7 @@ async function main(): Promise<number> {
       nonBlank(process.env.RAILWAY_DEPLOYMENT_ID) ?? "railway",
     ]);
     runSentry(["releases", ...projectArgs, "finalize", release!]);
-    runReleaseValidation(release!, {
+    await runReleaseValidation(release!, {
       sha,
       deployName: nonBlank(process.env.RAILWAY_DEPLOYMENT_ID) ?? "railway",
       environment: resolveSentryEnvironment(process.env),

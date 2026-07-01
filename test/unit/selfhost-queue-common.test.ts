@@ -14,7 +14,9 @@ import {
   githubWebhookRateLimitDelayMs,
   isGitHubBudgetBackgroundJob,
   isForegroundJobPriority,
+  jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceSupersededKeyPrefix,
   jobPriority,
   nonConsumingRetryDelayMs,
   queueBackgroundConcurrency,
@@ -618,16 +620,17 @@ describe("self-host queue common helpers", () => {
         }),
       ),
     ).toBe("generate-weekly-value-report:public:31");
-    expect(
-      jobCoalesceKey(
-        payload({
-          type: "rag-index-repo",
-          requestedBy: "webhook",
-          repoFullName: "JSONbored/Gittensory",
-          paths: ["README.md", "src/a.ts", "README.md"],
-        }),
-      ),
-    ).toBe("rag-index-repo:jsonbored/gittensory:sha256:8812e979fc698c98d98665ad4ccd8630e396dabdce08ebf87b41600c94bb1df5");
+    const incrementalRagJob = payload({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/Gittensory",
+      paths: ["README.md", "src/a.ts", "README.md"],
+    });
+    expect(jobCoalesceKey(incrementalRagJob)).toBe(
+      "rag-index-repo:jsonbored/gittensory:sha256:8812e979fc698c98d98665ad4ccd8630e396dabdce08ebf87b41600c94bb1df5",
+    );
+    expect(jobCoalesceAbsorbedByKey(incrementalRagJob)).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(jobCoalesceSupersededKeyPrefix(incrementalRagJob)).toBeNull();
     expect(
       jobCoalesceKey(
         payload({
@@ -668,6 +671,14 @@ describe("self-host queue common helpers", () => {
         }),
       ),
     ).toBe("rag-index-repo:jsonbored/gittensory:full");
+    const fullRagJob = payload({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/Gittensory",
+    });
+    expect(jobCoalesceKey(fullRagJob)).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(jobCoalesceSupersededKeyPrefix(fullRagJob)).toBe("rag-index-repo:jsonbored/gittensory:");
+    expect(jobCoalesceAbsorbedByKey(fullRagJob)).toBeNull();
     expect(jobCoalesceKey(payload({ type: "prune-retention", requestedBy: "schedule", dryRun: true }))).toBe(
       "prune-retention:1",
     );

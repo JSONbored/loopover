@@ -579,32 +579,67 @@ export function scheduledEnqueueDelaySeconds(jobType: string): number {
   );
 }
 
+type CoalesceMessage = {
+  type?: unknown;
+  eventName?: unknown;
+  requestedBy?: unknown;
+  repoFullName?: unknown;
+  prNumber?: unknown;
+  attempt?: unknown;
+  force?: unknown;
+  mode?: unknown;
+  segment?: unknown;
+  cursor?: unknown;
+  login?: unknown;
+  day?: unknown;
+  days?: unknown;
+  dryRun?: unknown;
+  variant?: unknown;
+  paths?: unknown;
+  runId?: unknown;
+  deliveryId?: unknown;
+  draftId?: unknown;
+  event?: { dedupKey?: unknown } | null;
+  logins?: unknown;
+  payload?: GitHubWebhookPayload | null;
+};
+
+function parseCoalesceMessage(payload: string): CoalesceMessage | null {
+  try {
+    return JSON.parse(payload) as CoalesceMessage;
+  } catch {
+    return null;
+  }
+}
+
+function ragIndexFullKey(repo: string): string {
+  return keyOf("rag-index-repo", repo, "full");
+}
+
+function ragIndexRepoKeyPrefix(repo: string): string {
+  return keyOf("rag-index-repo", repo, "");
+}
+
+export function jobCoalesceSupersededKeyPrefix(payload: string): string | null {
+  const message = parseCoalesceMessage(payload);
+  if (message?.type !== "rag-index-repo") return null;
+  const repo = normalizedRepo(message.repoFullName);
+  if (!repo || normalizedPathScope(message.paths)) return null;
+  return ragIndexRepoKeyPrefix(repo);
+}
+
+export function jobCoalesceAbsorbedByKey(payload: string): string | null {
+  const message = parseCoalesceMessage(payload);
+  if (message?.type !== "rag-index-repo") return null;
+  const repo = normalizedRepo(message.repoFullName);
+  if (!repo || !normalizedPathScope(message.paths)) return null;
+  return ragIndexFullKey(repo);
+}
+
 export function jobCoalesceKey(payload: string): string | null {
   try {
-    const message = JSON.parse(payload) as {
-      type?: unknown;
-      eventName?: unknown;
-      requestedBy?: unknown;
-      repoFullName?: unknown;
-      prNumber?: unknown;
-      attempt?: unknown;
-      force?: unknown;
-      mode?: unknown;
-      segment?: unknown;
-      cursor?: unknown;
-      login?: unknown;
-      day?: unknown;
-      days?: unknown;
-      dryRun?: unknown;
-      variant?: unknown;
-      paths?: unknown;
-      runId?: unknown;
-      deliveryId?: unknown;
-      draftId?: unknown;
-      event?: { dedupKey?: unknown } | null;
-      logins?: unknown;
-      payload?: GitHubWebhookPayload | null;
-    };
+    const message = parseCoalesceMessage(payload);
+    if (!message) return null;
     const type = typeof message.type === "string" ? message.type : "";
     if (type === "agent-regate-pr") {
       const repo = normalizedRepo(message.repoFullName);

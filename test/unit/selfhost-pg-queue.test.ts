@@ -335,6 +335,62 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("lets a pending full RAG index absorb a later repo incremental", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-full" }], rowCount: 1 });
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE status='pending' AND job_key=$1"),
+      ["rag-index-repo:jsonbored/gittensory:full"],
+    );
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([expect.stringContaining('"paths":["src/a.ts"]')]),
+    );
+  });
+
+  it("lets a full RAG index supersede pending repo incrementals", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-incremental" }], rowCount: 1 });
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("left(job_key, $1)=$2"),
+      ["rag-index-repo:jsonbored/gittensory:".length, "rag-index-repo:jsonbored/gittensory:"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET payload=$1, run_after=GREATEST"),
+      expect.arrayContaining([
+        expect.stringContaining('"requestedBy":"schedule"'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        "rag-index-repo:jsonbored/gittensory:full",
+        "existing-incremental",
+      ]),
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM _selfhost_jobs"),
+      ["existing-incremental", "rag-index-repo:jsonbored/gittensory:".length, "rag-index-repo:jsonbored/gittensory:"],
+    );
+  });
+
   it("coalesces recurring maintenance jobs by semantic scope and preserves distinct scopes", async () => {
     const m = makePool();
     const q = createPgQueue(m.pool, async () => undefined);

@@ -18,7 +18,9 @@ import {
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
+  jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceSupersededKeyPrefix,
   jobPriority,
   queueBackgroundConcurrency,
   queueProcessingTimeoutMs,
@@ -172,6 +174,44 @@ export function createSqliteQueue(
     const priority = jobPriority(payload);
     const key = jobCoalesceKey(payload);
     const runAfter = now + delaySeconds * 1000;
+    const absorbedByKey = jobCoalesceAbsorbedByKey(payload);
+    if (absorbedByKey) {
+      const existingFull = driver.query(
+        `SELECT id FROM ${TABLE} WHERE status='pending' AND job_key=? ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+        [absorbedByKey],
+      ).rows[0] as { id: number } | undefined;
+      if (existingFull) {
+        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        kickOne();
+        return;
+      }
+    }
+    const supersededKeyPrefix = jobCoalesceSupersededKeyPrefix(payload);
+    if (key && supersededKeyPrefix) {
+      const prefixLength = supersededKeyPrefix.length;
+      const existing = driver.query(
+        `SELECT id FROM ${TABLE}
+         WHERE status='pending' AND job_key IS NOT NULL AND substr(job_key, 1, ?)=?
+         ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+        [prefixLength, supersededKeyPrefix],
+      ).rows[0] as { id: number } | undefined;
+      if (existing) {
+        driver.query(
+          `UPDATE ${TABLE}
+             SET payload=?, run_after=max(run_after, ?), created_at=?, priority=max(priority, ?), job_key=?, last_error=NULL
+           WHERE id=?`,
+          [payload, runAfter, now, priority, key, existing.id],
+        );
+        driver.query(
+          `DELETE FROM ${TABLE}
+           WHERE status='pending' AND id<>? AND job_key IS NOT NULL AND substr(job_key, 1, ?)=?`,
+          [existing.id, prefixLength, supersededKeyPrefix],
+        );
+        recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+        kickOne();
+        return;
+      }
+    }
     if (key) {
       const existing = driver.query(
         `SELECT id FROM ${TABLE} WHERE status='pending' AND job_key=? ORDER BY priority DESC, run_after DESC, id LIMIT 1`,

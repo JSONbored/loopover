@@ -110,6 +110,41 @@ npm run selfhost:postgres:migrate -- --sqlite /data/gittensory.sqlite --postgres
         <li>Confirm recent review rows and job state are present.</li>
       </ul>
 
+      <h2>Verify a backup is restorable</h2>
+      <p>
+        The <code>backup</code> profile ships <code>verify-backup.sh</code>, which checks the newest
+        backup without touching the live database: Postgres <code>.dump</code> archives with{" "}
+        <code>pg_restore --list</code>, and SQLite <code>.sqlite.gz</code> backups with a gzip and{" "}
+        <code>integrity_check</code> pass. Run it against the newest backup, or a specific file:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`docker compose --profile backup run --rm backup sh /verify-backup.sh
+docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/postgres/gittensory-<timestamp>.dump`}
+      />
+      <p>
+        A healthy run ends with <code>[verify] postgres archive OK: … (N TOC entries)</code> (or{" "}
+        <code>[verify] sqlite backup OK</code>), then <code>[verify] complete</code>, and exits 0.
+        Corruption, a missing backup, or an empty archive exits non-zero with a{" "}
+        <code>[verify]</code> reason.
+      </p>
+      <p>
+        To prove a dump actually restores, opt into a scratch restore into a <em>throwaway</em>{" "}
+        database — never the live one:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`docker compose --profile backup run --rm \\
+  -e VERIFY_RESTORE_SCRATCH=1 \\
+  -e GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/gittensory_verify \\
+  backup sh /verify-backup.sh`}
+      />
+      <Callout variant="warn">
+        The scratch restore runs <code>pg_restore --clean</code> against{" "}
+        <code>GITTENSORY_VERIFY_SCRATCH_DATABASE_URL</code>, so point it at a dedicated database you
+        can afford to drop. The script refuses to run when that URL equals the live backup source.
+      </Callout>
+
       <p>
         After scaling, revisit <Link to="/docs/self-hosting-operations">Operations</Link> and{" "}
         <Link to="/docs/self-hosting-security">Security</Link> because network and credential

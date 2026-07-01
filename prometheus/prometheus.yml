@@ -23,6 +23,20 @@ scrape_configs:
     scrape_interval: 15s
     scrape_timeout: 10s
 
+  # Postgres internals from prometheus-community/postgres_exporter. The exporter service starts only with
+  # the Postgres profiles; SQLite-only installs show this target as absent/down without firing alerts.
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+    scrape_interval: 30s
+
+  # Backup freshness from the read-only backup-exporter sidecar. The metrics exist only when the backup
+  # profile is active, which keeps backup alerts opt-in with the backup feature.
+  - job_name: gittensory-backup
+    static_configs:
+      - targets: ["backup-exporter:9101"]
+    scrape_interval: 60s
+
   # Claude Code usage telemetry, re-exposed by the OTEL collector's Prometheus exporter (--profile
   # observability + CLAUDE_CODE_ENABLE_TELEMETRY=1). An absent collector just shows the target as down.
   - job_name: claude-code-otel

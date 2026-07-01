@@ -820,6 +820,76 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  it("lets a pending full RAG index absorb later repo incrementals", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 1 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.job_key).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 1,
+      gittensory_jobs_coalesced_total: 1,
+    });
+  });
+
+  it("lets a full RAG index supersede pending repo incrementals without dropping to one path set", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    }, { delaySeconds: 1 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.job_key).toBe("rag-index-repo:jsonbored/gittensory:full");
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 2,
+      gittensory_jobs_coalesced_total: 1,
+    });
+  });
+
   it("snapshot() reports pending/processing/dead queue depth by job type", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);

@@ -1286,7 +1286,12 @@ async function fetchPagedSegment<T>(
     supplementDescription?: string;
   } = {},
 ): Promise<{ status: RepoSyncSegmentRecord["status"]; segment: RepoSyncSegmentRecord }> {
-  const previous = mode === "resume" ? await getRepoSyncSegment(env, repo.fullName, segmentName) : null;
+  // Load the prior segment for EVERY mode, not just resume (#1942): a scheduled light/full crawl can then send the
+  // stored ETag/If-Modified-Since as a conditional request, so an unchanged single-page list returns a 0-body 304
+  // instead of a full re-list — the largest avoidable GitHub cost on the backfill cadence. Resume PAGINATION stays
+  // gated on `canResumePreviousScan` (mode === "resume") below, and the open-scan segments that must reconcile
+  // GitHub-side closes still force `allowEtag: false`, so this only enables the 304 fast-path where it is safe.
+  const previous = await getRepoSyncSegment(env, repo.fullName, segmentName);
   const requiresCurrentOpenScan = Boolean(options.reconcileOnComplete);
   const canResumePreviousScan =
     mode === "resume" &&

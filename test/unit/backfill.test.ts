@@ -1283,6 +1283,41 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("validates unchanged single-page segments on the scheduled light cadence, not just resume (#1942)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const labelHeaders: Array<{ ifNoneMatch: string | null; ifModifiedSince: string | null }> = [];
+    let labelFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 1 });
+      if (url.includes("/labels?")) {
+        const headers = new Headers(init?.headers);
+        labelHeaders.push({ ifNoneMatch: headers.get("if-none-match"), ifModifiedSince: headers.get("if-modified-since") });
+        labelFetches += 1;
+        if (labelFetches === 1) {
+          return Response.json([{ name: "bug", color: "cc0000", description: "Bug" }], {
+            headers: { etag: '"labels-v1"', "last-modified": "Tue, 26 May 2026 00:00:00 GMT" },
+          });
+        }
+        return new Response(null, { status: 304, headers: { etag: '"labels-v1"', "last-modified": "Tue, 26 May 2026 00:00:00 GMT" } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const first = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+    const second = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+
+    expect(first).toMatchObject({ status: "complete", fetchedCount: 1, expectedCount: 1 });
+    // Before the fix, a light crawl loaded no prior segment, so the second pass sent no validators and re-listed in
+    // full ("complete"). The scheduled cadence now sends If-None-Match, and a 304 short-circuits to not_modified.
+    expect(second).toMatchObject({ status: "not_modified", fetchedCount: 1, expectedCount: 1 });
+    expect(labelHeaders).toEqual([
+      { ifNoneMatch: null, ifModifiedSince: null },
+      { ifNoneMatch: '"labels-v1"', ifModifiedSince: "Tue, 26 May 2026 00:00:00 GMT" },
+    ]);
+  });
+
   it("preserves stored validators when an unauthenticated fallback returns not modified without validators", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

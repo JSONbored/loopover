@@ -66,6 +66,10 @@ async function graphqlCacheKey(query: string, token: string): Promise<string> {
   return `gql:v1:${authHash}:${queryHash}`;
 }
 
+function graphqlSingleFlightKey(cacheKey: string, admissionKey?: GitHubRateLimitAdmissionKey): string {
+  return `${cacheKey}:${admissionKey ?? ""}`;
+}
+
 function recordGraphQlCacheMetric(result: "hit" | "miss" | "set" | "coalesced" | "bypassed" | "error", cls: string): void {
   incr(GITHUB_GRAPHQL_CACHE_METRIC, { result, class: cls });
 }
@@ -152,7 +156,8 @@ export async function fetchCachedGitHubGraphQl(
   }
   recordGraphQlCacheMetric("miss", cls);
 
-  const existing = inFlightGraphQlPosts.get(cacheKey);
+  const singleFlightKey = graphqlSingleFlightKey(cacheKey, admissionKey);
+  const existing = inFlightGraphQlPosts.get(singleFlightKey);
   if (existing) {
     recordGraphQlCacheMetric("coalesced", cls);
     const replay = await existing;
@@ -164,8 +169,8 @@ export async function fetchCachedGitHubGraphQl(
     (error: unknown) => ({ ok: false as const, error }),
   );
   const shared = request.then((settled) => (settled.ok ? settled.result.cached : null));
-  const sharedWithCleanup = shared.finally(() => inFlightGraphQlPosts.delete(cacheKey));
-  inFlightGraphQlPosts.set(cacheKey, sharedWithCleanup);
+  const sharedWithCleanup = shared.finally(() => inFlightGraphQlPosts.delete(singleFlightKey));
+  inFlightGraphQlPosts.set(singleFlightKey, sharedWithCleanup);
   const result = await request;
   if (!result.ok) throw result.error;
   return result.result.response;

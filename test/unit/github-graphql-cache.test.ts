@@ -194,6 +194,32 @@ describe("fetchCachedGitHubGraphQl", () => {
     expect(b.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("coalesced");
   });
 
+  it("does not coalesce concurrent cold misses when admission keys differ", async () => {
+    installMemoryResponseCache();
+    const keyA = githubRateLimitAdmissionKeyForInstallation(111);
+    const keyB = githubRateLimitAdmissionKeyForInstallation(222);
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetches += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return Response.json(
+        { data: { repository: { issues: { totalCount: 1 } } } },
+        { headers: { "x-ratelimit-remaining": String(5000 - fetches), "x-ratelimit-reset": "1782802800" } },
+      );
+    });
+
+    const [a, b] = await Promise.all([
+      fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a", keyA),
+      fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a", keyB),
+    ]);
+
+    expect(fetches).toBe(2);
+    expect(a.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(b.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(latestGitHubRestRateLimitObservation(keyA)).not.toBeNull();
+    expect(latestGitHubRestRateLimitObservation(keyB)).not.toBeNull();
+  });
+
   it("bypasses cache for mutable PR detail queries", async () => {
     installMemoryResponseCache();
     let fetches = 0;

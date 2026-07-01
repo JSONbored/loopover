@@ -327,6 +327,24 @@ describe("agent approval queue (#779)", () => {
     expect(audit?.detail).toContain("mergeable_state: dirty");
   });
 
+  it("accept still supersedes on a genuine mergeable-state hit when the CI live re-check ITSELF rejects — audits a null ciState, not the rejection's own value (#2126)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    vi.mocked(fetchLiveCiAggregate).mockRejectedValueOnce(new Error("GitHub API transient 502"));
+    vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce("dirty");
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toContain("mergeable_state: dirty");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ ciState: null });
+  });
+
   it("accept still supersedes on a genuine CI-failed hit when the mergeable-state live re-check rejects (#2126)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });

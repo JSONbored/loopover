@@ -55,14 +55,14 @@ export function githubGraphQlCacheTtlSeconds(cls: GitHubGraphQlCacheClass, env: 
   return positiveEnvSeconds(env, "GITHUB_GRAPHQL_CACHE_TTL_SECONDS", DEFAULT_GRAPHQL_TTL_SECONDS);
 }
 
-async function sha256Short(value: string): Promise<string> {
+async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function graphqlCacheKey(query: string, token: string): Promise<string> {
-  const authHash = await sha256Short(`Bearer ${token}`);
-  const queryHash = await sha256Short(query);
+  const authHash = await sha256Hex(`Bearer ${token}`);
+  const queryHash = (await sha256Hex(query)).slice(0, 16);
   return `gql:v1:${authHash}:${queryHash}`;
 }
 

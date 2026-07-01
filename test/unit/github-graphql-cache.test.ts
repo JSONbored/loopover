@@ -123,6 +123,9 @@ describe("fetchCachedGitHubGraphQl", () => {
     expect(fetches).toBe(1);
     expect(store.size).toBe(1);
     expect([...store.keys()].some((key) => key.startsWith("gql:v1:"))).toBe(true);
+    const cacheKey = [...store.keys()][0]!;
+    const authHash = cacheKey.split(":")[2];
+    expect(authHash).toMatch(/^[0-9a-f]{64}$/);
     expect([...store.keys()].some((key) => key.includes("token-a"))).toBe(false);
   });
 

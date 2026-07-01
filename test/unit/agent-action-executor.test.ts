@@ -120,6 +120,24 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(row?.approvedHeadSha).not.toBe("sha7");
   });
 
+  it("REGRESSION (#2361): a queued stale-approval dismissal pinned to an evaluated head is denied when the live head has since moved again", async () => {
+    const env = createTestEnv({});
+    vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({
+      status: "stale",
+      reason: "head_changed",
+      expectedHeadSha: "evaluated-sha",
+      liveHeadSha: "sha7",
+      liveState: "open",
+    });
+    // ctx().headSha ("sha7") is the CURRENT live head at accept/replay time; expectedHeadSha ("evaluated-sha")
+    // is the head this dismissal was actually staged against. Without the pin, the freshness guard would fall
+    // back to ctx.headSha and treat this as fresh, retracting whatever bot approval currently sits on "sha7".
+    const dismiss: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "stale approval retracted", dismissStaleApproval: true, expectedHeadSha: "evaluated-sha" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [dismiss]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(dismissLatestBotApproval).not.toHaveBeenCalled();
+  });
+
   it("LIVE request_changes/approve without a reviewBody falls back to an empty string", async () => {
     const env = createTestEnv({});
     const bareRequestChanges: PlannedAgentAction = { actionClass: "request_changes", requiresApproval: false, reason: "blocked" };

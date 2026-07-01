@@ -125,6 +125,17 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(approveAction).toMatchObject({ dismissStaleApproval: true });
     });
 
+    it("pins the retraction to the head that was actually evaluated as stale (#2361)", () => {
+      // Without expectedHeadSha, a queued (auto_with_approval) dismissal replays against whatever head is
+      // current at accept time — not the head that made the dismissal valid — so a delayed accept could retract
+      // a DIFFERENT, newer bot approval than the one this plan pass actually judged stale.
+      const plan = planAgentMaintenanceActions(
+        input({ conclusion: "failure", autonomy: { approve: "auto_with_approval" }, authorIsOwner: true, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } }),
+      );
+      const approveAction = plan.find((a) => a.actionClass === "approve");
+      expect(approveAction).toMatchObject({ dismissStaleApproval: true, expectedHeadSha: "newsha" });
+    });
+
     it("does NOT retract when the PR is closing instead — a close makes the stale approval moot", () => {
       const plan = classes(
         planAgentMaintenanceActions(

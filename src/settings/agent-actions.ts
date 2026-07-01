@@ -463,6 +463,10 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       requiresApproval: approval("approve"),
       reason: "stale approval retracted — a newer commit no longer qualifies for approval",
       dismissStaleApproval: true,
+      // Pin to the head that was actually evaluated as stale (mirrors the merge action's head pinning above) so
+      // a queued (auto_with_approval) dismissal replayed later can't retract a DIFFERENT, newer bot approval if
+      // the head moved again while this row waited for a maintainer (#2361).
+      ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
     });
   }
 

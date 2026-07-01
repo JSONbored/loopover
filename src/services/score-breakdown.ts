@@ -37,10 +37,12 @@ function bandForMultiplier(value: number, blockedAtZero = true): ScoreMultiplier
 // densityBreakdown surfaces the saturation ratio (densityMultiplier); this surfaces the
 // actual base_score the contributor has earned — the foundation that flows into estimatedMergedScore
 // before the multipliers apply — so a miner sees both the curve and the resulting cap contribution.
-const BASE_SCORE_SATURATION_DISPLAY_THRESHOLD = 29.5;
+// Uses preview.scoreEstimate.baseScoreCap (carried from the scoring core, which has the snapshot
+// constants) to compute a relative saturation ratio instead of a hardcoded threshold.
+const BASE_SCORE_SATURATION_RATIO = 0.95;
 
 function baseScoreBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
-  const { baseScore, contributionBonus } = preview.scoreEstimate;
+  const { baseScore, baseScoreCap, contributionBonus } = preview.scoreEstimate;
   const baseGatePassed = preview.gates.baseTokenGatePassed;
   if (!baseGatePassed) {
     return {
@@ -51,18 +53,18 @@ function baseScoreBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdo
       leverageScore: 75,
     };
   }
-  const cappedAtMax = baseScore >= BASE_SCORE_SATURATION_DISPLAY_THRESHOLD;
+  const saturated = baseScoreCap !== undefined && baseScore / baseScoreCap >= BASE_SCORE_SATURATION_RATIO;
   const hasBonus = contributionBonus > 0;
   const bonusClause = hasBonus ? `; contribution bonus contributing at ${roundBand(contributionBonus)}` : "; contribution bonus not contributing";
-  const summary = `Base score is ${cappedAtMax ? "saturated near the score cap" : "contributing toward the score cap"} (current base ${roundBand(baseScore)}${bonusClause}).`;
+  const summary = `Base score is ${saturated ? "saturated near the score cap" : "contributing toward the score cap"} (current base ${roundBand(baseScore)}${bonusClause}).`;
   return {
     component: "baseScore",
-    band: cappedAtMax ? "full" : "neutral",
+    band: saturated ? "full" : "neutral",
     summary,
-    lever: cappedAtMax
+    lever: saturated
       ? "Maintain source quality on subsequent contributions; the base-score pipeline is at saturation."
       : "Keep source changes substantive and proportional to supporting changes for the contribution bonus to continue earning.",
-    leverageScore: cappedAtMax ? 3 : hasBonus ? 7 : 12,
+    leverageScore: saturated ? 3 : hasBonus ? 7 : 12,
   };
 }
 

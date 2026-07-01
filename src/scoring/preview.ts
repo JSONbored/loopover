@@ -169,7 +169,12 @@ export type ScorePreviewResult = {
     issueDiscoveryShare: number;
   };
   scoreEstimate: {
+    /** Computed base score (the earned foundation before multipliers apply). */
     baseScore: number;
+    /** The maximum possible baseScore given the active model and snapshot constants; used by the score
+     *  breakdown to surface saturation vs sub-cap status. Undefined when a fixedBaseScore override is in
+     *  effect (the override is not bounded by the model cap). */
+    baseScoreCap?: number;
     densityMultiplier: number;
     contributionBonus: number;
     labelMultiplier: number;
@@ -362,6 +367,12 @@ function computeScoreCore(
       : snapshot.activeModel === "pending_saturation_model"
         ? saturationBaseScore
         : densityBaseScore;
+  const baseScoreCap =
+    fixedBaseScore !== undefined
+      ? undefined
+      : snapshot.activeModel === "pending_saturation_model"
+        ? constant(constants, "MERGED_PR_BASE_SCORE") + constant(constants, "MAX_CONTRIBUTION_BONUS")
+        : constant(constants, "MERGED_PR_BASE_SCORE") * constant(constants, "MAX_CODE_DENSITY_MULTIPLIER") + constant(constants, "MAX_CONTRIBUTION_BONUS");
   const activeContributionBonus = snapshot.activeModel === "pending_saturation_model" ? saturationContributionBonusValue : densityContributionBonus;
   const labelMultiplier = selectLabelMultiplier(input.labels ?? [], config?.labelMultipliers ?? {}, config?.defaultLabelMultiplier ?? 1);
   const branchEligibility = normalizeBranchEligibility(input);
@@ -443,6 +454,7 @@ function computeScoreCore(
     },
     scoreEstimate: {
       baseScore: roundScore(baseScore),
+      ...(baseScoreCap !== undefined ? { baseScoreCap: roundScore(baseScoreCap) } : {}),
       densityMultiplier: roundScore(densityMultiplier),
       contributionBonus: roundScore(activeContributionBonus),
       labelMultiplier,

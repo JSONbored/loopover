@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   computeAgentHealth,
   computeCalibration,
@@ -19,6 +19,34 @@ describe("defaultOpsHealthDeps.isFrozen — DB-backed global freeze (#audit-§5.
     expect(await defaultOpsHealthDeps.isFrozen(env, "owner/repo")).toBe(true);
     const broken = { ...env, DB: null } as unknown as Env;
     expect(await defaultOpsHealthDeps.isFrozen(broken, "owner/repo")).toBe(false); // fail-open on a read error
+  });
+
+  it("warns (but still fails open) on a read error and on an absent singleton row (#2125)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const env = createTestEnv();
+    const broken = { ...env, DB: null } as unknown as Env;
+    expect(await defaultOpsHealthDeps.isFrozen(broken, "owner/repo")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("global_kill_switch_read_error"));
+    warn.mockClear();
+
+    await env.DB.prepare("DELETE FROM global_agent_controls WHERE id = 'singleton'").run();
+    expect(await defaultOpsHealthDeps.isFrozen(env, "owner/repo")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("global_kill_switch_row_missing"));
+    warn.mockRestore();
+  });
+
+  it("formats a non-Error throw (e.g. a driver rejecting with a plain string) without crashing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const thrown: Env = {
+      DB: {
+        prepare: () => {
+          throw "driver exploded"; // eslint-disable-line no-throw-literal -- exercising the non-Error catch arm
+        },
+      } as unknown as Env["DB"],
+    } as unknown as Env;
+    expect(await defaultOpsHealthDeps.isFrozen(thrown, "owner/repo")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("driver exploded"));
+    warn.mockRestore();
   });
 });
 

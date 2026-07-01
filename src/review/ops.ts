@@ -156,12 +156,18 @@ export interface OpsHealthDeps {
 export const defaultOpsHealthDeps: OpsHealthDeps = {
   validateAgentConfig: () => [],
   // The DB-backed global kill-switch (#audit-§5.2): /status now reports the REAL freeze state instead of a
-  // hardcoded false. Raw SQL keeps this module self-contained; fail-open on a read error.
+  // hardcoded false. Raw SQL keeps this module self-contained; fail-open on a read error — but this is the
+  // operator-facing health surface used to CONFIRM a freeze took effect, so a swallowed read failure must be
+  // visible, not silently reported as an ordinary "unfrozen" (#2125).
   isFrozen: async (env) => {
     try {
       const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
+      if (!row) {
+        console.warn(JSON.stringify({ ev: "global_kill_switch_row_missing", message: "global_agent_controls has no singleton row — /status will report unfrozen" }));
+      }
       return row?.frozen === 1;
-    } catch {
+    } catch (error) {
+      console.warn(JSON.stringify({ ev: "global_kill_switch_read_error", message: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200) }));
       return false;
     }
   },

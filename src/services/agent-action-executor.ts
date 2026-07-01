@@ -268,6 +268,10 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
     ...(action.closeKind !== undefined ? { closeKind: action.closeKind } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
+    // Round-trip closeKind so a staged close's kind survives to accept-time — without it, the close-precision
+    // breaker's isHeuristicClose check (which matches on closeKind === "heuristic") could never fire for any
+    // staged close, silently defeating the breaker for the entire approval-queue accept path (#2127).
+    ...(action.closeKind !== undefined ? { closeKind: action.closeKind } : {}),
   };
 }
 

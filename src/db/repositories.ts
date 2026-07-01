@@ -163,7 +163,7 @@ import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPoli
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
-import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
+import { errorMessage, jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
 
 const MAX_STORED_BODY_CHARS = 4000;
@@ -2063,11 +2063,19 @@ export async function getProductUsageRollupStatus(
 // Global agent kill-switch (#audit-§5.2). A DB-backed emergency brake an operator flips with one row (no
 // redeploy), complementing the env-var AGENT_ACTIONS_PAUSED hard backstop. Fail-OPEN on a read error (return
 // false): a transient D1 hiccup must not by itself halt the whole fleet, and the env var is the hard backstop.
+// The fail-open VALUE is an intentional, tested tradeoff — but it must never be SILENT: an operator who flips
+// this during an incident concurrent with a D1 hiccup (or on a self-host instance that never ran migration
+// 0059, or whose singleton row was later lost to a backup restore / manual cleanup) needs a visible signal that
+// the kill-switch may not have actually engaged, not silent normal-looking operation. (#2125)
 export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
   try {
     const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
+    if (!row) {
+      console.warn(JSON.stringify({ ev: "global_kill_switch_row_missing", message: "global_agent_controls has no singleton row — treating as unfrozen; re-run migrations or re-seed the row" }));
+    }
     return row?.frozen === 1;
-  } catch {
+  } catch (error) {
+    console.warn(JSON.stringify({ ev: "global_kill_switch_read_error", message: errorMessage(error).slice(0, 200) }));
     return false;
   }
 }

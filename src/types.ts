@@ -687,6 +687,9 @@ export type AgentPendingActionParams = {
   // once the row is replayed through pendingActionToPlanned, not silently skipped for a lost discriminator.
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
+  // WHICH kind of close this is (see PlannedAgentAction.closeKind) — must round-trip through staging so the
+  // close-precision circuit-breaker can still scope itself correctly when a staged close is later accepted (#2127).
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
 };
 
 export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";

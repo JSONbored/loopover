@@ -1774,6 +1774,19 @@ describe("hasClearNoIssueRationale test-only spelling", () => {
   });
 });
 
+describe("hasClearNoIssueRationale ci-only spelling", () => {
+  it("recognizes hyphenated and spaced ci-only rationales", () => {
+    expect(hasClearNoIssueRationale({ title: "ci only: tighten workflow cache", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "ci-only: tighten workflow cache", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "Tune deploy gate", body: "This is a ci only workflow tweak." })).toBe(true);
+  });
+
+  it("still rejects unrelated PR text that mentions CI without a rationale", () => {
+    expect(hasClearNoIssueRationale({ title: "Fix CI flake in queue tests", body: "Stabilizes a failing job." })).toBe(false);
+    expect(hasClearNoIssueRationale({ title: "Improve GitHub Actions setup", body: "" })).toBe(false);
+  });
+});
+
 function snapshot(
   id: string,
   repositories: Array<{

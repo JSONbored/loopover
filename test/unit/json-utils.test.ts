@@ -21,4 +21,11 @@ describe("JSON and string utility helpers", () => {
     expect(strippedErrorMessage(new Error("Error: wrapped failure"), "fallback failure")).toBe("wrapped failure");
     expect(strippedErrorMessage("string failure", "fallback failure")).toBe("fallback failure");
   });
+
+  it("repoParts trims outer whitespace before splitting, matching normalizeRepoFullName", () => {
+    expect(repoParts(" JSONbored/gittensory ")).toEqual({ owner: "JSONbored", name: "gittensory" });
+    expect(repoParts("  owner/nested/name  ")).toEqual({ owner: "owner", name: "nested/name" });
+    expect(repoParts("   ")).toEqual({ owner: "", name: "" });
+    expect(repoParts("\towner/repo\n")).toEqual({ owner: "owner", name: "repo" });
+  });
 });

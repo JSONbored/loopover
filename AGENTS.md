@@ -18,7 +18,7 @@ process evolves — edits to those files improve both Claude Code and Codex.
    (including `codecov/patch`), a gate failure, a base conflict, or an ineligible linked issue is
    **auto-CLOSED, one-shot** (recovery = open a fresh PR). Green CI + passing gate + mergeable-clean +
    a valid linked issue is **auto-MERGED**. So make it perfect before you push.
-2. **97% patch coverage, branch-counted.** Aim for **100% of every changed line *and branch*** — test
+2. **99% patch coverage, branch-counted.** Aim for **100% of every changed line *and branch*** — test
    both sides of every `??` / ternary / `&&` (a `SUM()` can return `NULL`, so the nullish arm is real),
    plus invariant tests and a regression test for every fix. Only `src/**` is measured by Codecov.
 3. **The whole local gate must be green:** `npm run test:ci` (+ `npm audit --audit-level=moderate`).

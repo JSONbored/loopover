@@ -134,9 +134,30 @@ describe("fetchLiveCiAggregateViaGraphQl — verdicts", () => {
     expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).not.toBeNull();
   });
 
-  it("defaults absent context/suite node lists to empty", async () => {
-    stubGraphql({ data: { repository: { object: { statusCheckRollup: { contexts: {} }, checkSuites: {} } } } });
+  it("is unverified for a legitimate check-less commit (statusCheckRollup null)", async () => {
+    // Real GitHub shape for a commit with no CI: the whole rollup is null (not an empty connection). This is the
+    // ONLY empty-input case that must NOT fall back — it is genuinely "no checks".
+    stubGraphql({ data: { repository: { object: { statusCheckRollup: null, checkSuites: { nodes: [] } } } } });
     expect((await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN))?.ciState).toBe("unverified");
+  });
+
+  it("falls back to REST on a PARTIAL GraphQL response (top-level errors), never normalizing it to empty", async () => {
+    // A field resolver failed: statusCheckRollup came back null but the top-level `errors` array is populated. This
+    // must NOT be read as "no checks" (which could merge a PR whose CI is actually failing) — return null → REST.
+    stubGraphql({ data: { repository: { object: { statusCheckRollup: null, checkSuites: { nodes: [] } } } }, errors: [{ message: "timeout resolving statusCheckRollup" }] });
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();
+  });
+
+  it("falls back when the object is not a resolved Commit (checkSuites connection absent/malformed)", async () => {
+    stubGraphql({ data: { repository: { object: { statusCheckRollup: null } } } }); // no checkSuites key
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();
+    stubGraphql({ data: { repository: { object: { statusCheckRollup: null, checkSuites: {} } } } }); // checkSuites.nodes not an array
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();
+  });
+
+  it("falls back when a NON-null statusCheckRollup carries a malformed contexts connection", async () => {
+    stubGraphql({ data: { repository: { object: { statusCheckRollup: { contexts: {} }, checkSuites: { nodes: [] } } } } }); // contexts.nodes not an array
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN)).toBeNull();
   });
 
   it("(REST) defaults a check-runs/status response that omits its array", async () => {

@@ -2351,10 +2351,24 @@ export async function fetchLiveCiAggregateViaGraphQl(
         } | null;
       } | null;
     };
+    errors?: unknown[];
   }>(env, query, token).catch(() => null);
-  const commit = result?.data?.repository?.object;
-  if (!commit) return null; // GraphQL error / commit not found / unexpected shape → fall back to REST
-  const contexts = commit.statusCheckRollup?.contexts;
+  if (!result) return null; // GraphQL fetch/HTTP error → fall back to REST
+  // A 200 with a top-level `errors` array is a PARTIAL result (a field resolver failed): the data is half-populated
+  // and must NOT be read as a settled/empty rollup — fall back so a partial error can't mask a failing or pending
+  // check as "no checks" and let the gate merge on it.
+  if (Array.isArray(result.errors) && result.errors.length > 0) return null;
+  const commit = result.data?.repository?.object;
+  // A resolved Commit ALWAYS returns a `checkSuites` connection whose `nodes` is an array. If it is absent or not an
+  // array, the object is not a Commit (or the shape is unexpected) → fall back rather than normalize the gap to
+  // empty inputs (the exact failure the doc above promises to avoid).
+  const suiteNodes = commit?.checkSuites?.nodes;
+  if (!commit || !Array.isArray(suiteNodes)) return null;
+  const rollup = commit.statusCheckRollup;
+  const contexts = rollup?.contexts;
+  // statusCheckRollup is null for a check-less commit (legitimate → empty inputs → "unverified"). A NON-null rollup
+  // must carry a well-formed `contexts.nodes` array; a present-but-malformed connection → fall back to REST.
+  if (rollup && !Array.isArray(contexts?.nodes)) return null;
   if (contexts?.pageInfo?.hasNextPage) return null; // >100 contexts: not fully enumerated → let REST paginate
   const checkRuns: LiveCiCheckRun[] = [];
   const statuses: LiveCiStatus[] = [];
@@ -2374,7 +2388,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
       statuses.push({ context: node.context ?? null, state: node.state ?? null, description: node.description ?? null, target_url: node.targetUrl ?? null });
     }
   }
-  const suites: LiveCiSuite[] = (commit.checkSuites?.nodes ?? []).map((suite) => ({ status: suite.status ?? null, app: { slug: suite.app?.slug ?? null } }));
+  const suites: LiveCiSuite[] = suiteNodes.map((suite) => ({ status: suite.status ?? null, app: { slug: suite.app?.slug ?? null } }));
   return reduceLiveCiAggregate(env, {
     checkRuns,
     statuses,

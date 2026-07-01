@@ -49,7 +49,7 @@ pg_column_exists() {
 pg_copy_csv() {
   query="$1"
   out="$2"
-  psql "$PG_DB" -X -q -v ON_ERROR_STOP=1 -c "\\copy ($query) TO STDOUT WITH CSV" >"$out"
+  psql "$PG_DB" -X -q -v ON_ERROR_STOP=1 -c "COPY ($query) TO STDOUT WITH CSV" >"$out"
 }
 
 sqlite_import_csv() {

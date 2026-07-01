@@ -51,6 +51,10 @@ function fakePsql(root: string): string {
     `#!/bin/sh
 args="$*"
 case "$args" in
+  *\\\\copy*)
+    echo 'unexpected psql meta-command copy' >&2
+    exit 9
+    ;;
   *"information_schema.tables"*"pull_requests"*|*"information_schema.tables"*"advisories"*|*"information_schema.tables"*"review_targets"*|*"information_schema.tables"*"ai_usage_events"*)
     printf '1\\n'
     ;;

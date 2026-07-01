@@ -20,6 +20,8 @@ interface Options {
 interface CopyResult {
   table: string;
   rows: number;
+  targetRowsBefore: number;
+  keyColumns: string[];
 }
 
 interface SkipResult {
@@ -208,6 +210,41 @@ async function copyTable(db: DatabaseSync, client: PoolClient, table: string, co
   return total;
 }
 
+async function countTargetRowsMatchingSourceKeys(
+  db: DatabaseSync,
+  client: PoolClient,
+  table: string,
+  keyColumns: string[],
+  batchSize: number,
+): Promise<number> {
+  const total = sqliteCount(db, table);
+  let matched = 0;
+  for (let offset = 0; offset < total; offset += batchSize) {
+    const rows = sqliteRows(db, table, keyColumns, batchSize, offset);
+    if (rows.length === 0) continue;
+    const values: unknown[] = [];
+    for (const row of rows) {
+      for (const column of keyColumns) {
+        const value = row[column] ?? null;
+        if (value === null) throw new Error(`Validation failed for ${table}: source primary key ${column} is null`);
+        values.push(value);
+      }
+    }
+    const condition =
+      keyColumns.length === 1
+        ? `${quoteIdent(keyColumns[0] as string)} IN (${values.map((_, index) => `$${index + 1}`).join(", ")})`
+        : `(${keyColumns.map(quoteIdent).join(", ")}) IN (${rows
+            .map((_, rowIndex) => {
+              const base = rowIndex * keyColumns.length;
+              return `(${keyColumns.map((__, columnIndex) => `$${base + columnIndex + 1}`).join(", ")})`;
+            })
+            .join(", ")})`;
+    const res = await client.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM ${quoteIdent(table)} WHERE ${condition}`, values);
+    matched += Number(res.rows[0]?.count ?? 0);
+  }
+  return matched;
+}
+
 async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Promise<{ copied: CopyResult[]; skipped: SkipResult[] }> {
   const copied: CopyResult[] = [];
   const skipped: SkipResult[] = [];
@@ -220,9 +257,9 @@ async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Pro
       continue;
     }
     if (!targetTables.has(table)) throw new Error(`Target Postgres schema is missing source table: ${table}`);
-    const targetCount = await pgCount(client, table);
-    if (targetCount > 0 && !opts.allowNonEmpty && !TABLES_ALLOWED_AFTER_SCHEMA_INIT.has(table)) {
-      throw new Error(`Target table ${table} already contains ${targetCount} row(s); rerun with --allow-non-empty only if this is intentional`);
+    const targetRowsBefore = await pgCount(client, table);
+    if (targetRowsBefore > 0 && !opts.allowNonEmpty && !TABLES_ALLOWED_AFTER_SCHEMA_INIT.has(table)) {
+      throw new Error(`Target table ${table} already contains ${targetRowsBefore} row(s); rerun with --allow-non-empty only if this is intentional`);
     }
     const sourceColumns = sqliteColumns(db, table);
     const targetColumns = await pgColumns(client, table);
@@ -232,8 +269,9 @@ async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Pro
       continue;
     }
     const primaryKey = await pgPrimaryKey(client, table);
+    const keyColumns = primaryKey.filter((column) => commonColumns.includes(column));
     const rows = await copyTable(db, client, table, commonColumns, primaryKey, opts.batchSize);
-    copied.push({ table, rows });
+    copied.push({ table, rows, targetRowsBefore, keyColumns });
   }
 
   if (targetTables.has("_selfhost_jobs")) {
@@ -251,9 +289,20 @@ async function copyAll(opts: Options, db: DatabaseSync, client: PoolClient): Pro
   for (const result of copied) {
     if (!targetTables.has(result.table)) continue;
     const targetCount = await pgCount(client, result.table);
-    if (result.table === "_selfhost_job_stats") {
-      if (targetCount < result.rows) {
-        throw new Error(`Validation failed for ${result.table}: copied ${result.rows} row(s), target has ${targetCount}`);
+    if (result.table === "_selfhost_job_stats" || result.targetRowsBefore > 0) {
+      if (targetCount < result.targetRowsBefore) {
+        throw new Error(`Validation failed for ${result.table}: expected to preserve at least ${result.targetRowsBefore} existing row(s), target has ${targetCount}`);
+      }
+      if (result.rows > 0 && result.keyColumns.length > 0) {
+        const matched = await countTargetRowsMatchingSourceKeys(db, client, result.table, result.keyColumns, opts.batchSize);
+        if (matched !== result.rows) {
+          throw new Error(`Validation failed for ${result.table}: copied ${result.rows} source row(s), target has ${matched} matching source key(s)`);
+        }
+        continue;
+      }
+      const minimumExpectedRows = result.targetRowsBefore + result.rows;
+      if (targetCount < minimumExpectedRows) {
+        throw new Error(`Validation failed for ${result.table}: expected at least ${minimumExpectedRows} row(s), target has ${targetCount}`);
       }
       continue;
     }

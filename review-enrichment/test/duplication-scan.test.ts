@@ -468,6 +468,38 @@ test("scanDuplication: bounds matching work for highly repetitive added and cand
   assert.ok(elapsedMs < 1000, `repetitive scan took ${elapsedMs}ms`);
 });
 
+test("scanDuplication: finds the longest run after repeated earlier window decoys", async () => {
+  // Regression for PR #1946: every real MIN_RUN window can have more than eight earlier decoy starts. The scanner
+  // must still compare the true later start and report the full run, not the shorter first decoy.
+  const duplicate = Array.from(
+    { length: 12 },
+    (_, i) => `const duplicateScanLine${i} = computeSharedDuplicateValue(inputValue, ${i})`,
+  );
+  const decoys = [];
+  for (let repeat = 0; repeat < 9; repeat += 1) {
+    for (let start = 0; start + 8 <= duplicate.length; start += 1) {
+      decoys.push(...duplicate.slice(start, start + 8));
+      decoys.push(
+        `const decoyBreakLine${repeat}_${start} = computeDifferentDuplicateValue(inputValue, ${repeat}, ${start})`,
+      );
+    }
+  }
+  const fetchImpl = makeFetch({
+    tree: [{ path: "src/existing-with-decoys.ts", sha: "e".repeat(40) }],
+    blobs: { ["e".repeat(40)]: [...decoys, ...duplicate].join("\n") },
+  });
+  const req = baseReq({
+    files: [{ path: "src/new-with-decoys.ts", status: "added", patch: addedPatch(duplicate) }],
+  });
+
+  const findings = await scanDuplication(req, fetchImpl);
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].sourceFile, "src/existing-with-decoys.ts");
+  assert.equal(findings[0].sourceLine, decoys.length + 1);
+  assert.equal(findings[0].lines, duplicate.length);
+});
+
 test("scanDuplication: respects MAX_CANDIDATES (only the closest 40 candidates are considered)", async () => {
   // 100 candidates but MAX_CANDIDATES=40 caps the set; combined with MAX_FETCHES=30 only 30 blobs fetched, and the
   // proximity sort means the in-directory candidate (sharing src/) is preferred and the match is still found.

@@ -51,7 +51,13 @@ export function shouldDowngradeToDeterministic(stats: SubmitterStats): boolean {
   if (stats.signal === "low") return true;
   const burst = stats.submissions >= REPUTATION_BURST_SUBMISSION_FLOOR && stats.merged < REPUTATION_BURST_MAX_MERGED;
   if (burst) return true;
-  if (stats.submissions >= REPUTATION_BURST_SUBMISSION_FLOOR && stats.closeRate >= REPUTATION_CLOSE_RATE_FLOOR && stats.merged < REPUTATION_BURST_MAX_MERGED) return true;
+  // The all-time close-rate backstop is INDEPENDENT of the burst pattern (see closeRateFloor above): an
+  // established submitter whose close-rate is at/above the floor is low-reputation regardless of a few merges.
+  // The prior extra `&& merged < REPUTATION_BURST_MAX_MERGED` made this a strict subset of the burst check
+  // above (dead code), so an established submitter with a high close-rate but ≥1 merge was never downgraded.
+  // `closeRate = closed/(merged+closed)`, so `closeRate >= floor` already means the merge record is not
+  // healthy — consistent with "a healthy merge record is NEVER downgraded".
+  if (stats.submissions >= REPUTATION_BURST_SUBMISSION_FLOOR && stats.closeRate >= REPUTATION_CLOSE_RATE_FLOOR) return true;
   return false;
 }
 

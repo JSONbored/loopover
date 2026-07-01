@@ -75,6 +75,14 @@ describe("shouldDowngradeToDeterministic (pure)", () => {
     // trusted → never downgraded.
     expect(shouldDowngradeToDeterministic({ submissions: 10, merged: 10, closed: 0, manual: 0, closeRate: 0, signal: "trusted" })).toBe(false);
   });
+  it("downgrades an established submitter on a high all-time close-rate even with a few merges (the aggregate backstop)", () => {
+    // >= burstFloor submissions AND closeRate >= floor → low-reputation regardless of a couple of merges. The
+    // burst check above does NOT catch this (merged >= 1), so it is the independent close-rate backstop firing.
+    // closeRate = closed/(merged+closed), so 0.85+ already means the merge record is not healthy.
+    expect(shouldDowngradeToDeterministic({ submissions: 20, merged: 2, closed: 17, manual: 0, closeRate: 17 / 19, signal: "neutral" })).toBe(true);
+    // Just below the close-rate floor → not downgraded on the aggregate alone.
+    expect(shouldDowngradeToDeterministic({ submissions: 20, merged: 5, closed: 14, manual: 0, closeRate: 14 / 19, signal: "neutral" })).toBe(false);
+  });
 });
 
 describe("AI-spend gate: reputation downgrade", () => {

@@ -78,6 +78,42 @@ esac
   return bin;
 }
 
+function busyboxLikeMktemp(root: string): string {
+  const bin = join(root, "busybox-bin");
+  mkdirSync(bin);
+  const mktemp = join(bin, "mktemp");
+  writeFileSync(
+    mktemp,
+    `#!/bin/sh
+if [ "$1" = "-d" ]; then
+  base="\${TMPDIR:-/tmp}/tmp.$$"
+  n=0
+  while [ -e "$base-$n" ]; do n=$((n + 1)); done
+  mkdir "$base-$n"
+  printf '%s\\n' "$base-$n"
+  exit 0
+fi
+
+case "$1" in
+  *XXXXXX)
+    base="\${1%XXXXXX}"
+    n=0
+    out="$base$n"
+    while [ -e "$out" ]; do n=$((n + 1)); out="$base$n"; done
+    : > "$out"
+    printf '%s\\n' "$out"
+    ;;
+  *)
+    echo 'mktemp: Invalid argument' >&2
+    exit 1
+    ;;
+esac
+`,
+  );
+  chmodSync(mktemp, 0o755);
+  return bin;
+}
+
 function failingPsql(root: string): string {
   const bin = join(root, "broken-bin");
   mkdirSync(bin);
@@ -283,6 +319,22 @@ esac
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.repoFullName') FROM ai_usage_events;")).toBe("JSONbored/gittensory");
     expect(sqlite(outDb, "SELECT json_extract(metadata_json, '$.private') IS NULL FROM ai_usage_events;")).toBe("1");
     expect(readdirSync(csvTmp)).toEqual([]);
+  });
+
+  it("uses BusyBox-compatible mktemp templates for Postgres CSV exports", () => {
+    const root = tmpRoot();
+    const outDb = join(root, "reporting.sqlite");
+    const psqlBin = fakePsql(root);
+    const mktempBin = busyboxLikeMktemp(root);
+
+    runExporter(root, join(root, "unused.sqlite"), outDb, {
+      DATABASE_URL: "postgres://gittensory:pw@postgres:5432/gittensory",
+      PATH: `${mktempBin}:${psqlBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
+    expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("3");
+    expect(sqlite(outDb, "SELECT sum(estimated_neurons) FROM ai_usage_events;")).toBe("42");
   });
 
   it("fails closed when Postgres metadata cannot be inspected", () => {

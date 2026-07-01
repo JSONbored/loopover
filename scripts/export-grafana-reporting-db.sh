@@ -22,7 +22,7 @@ sqlite_dot_string() {
 }
 
 csv_temp_file() {
-  mktemp "$CSV_TMP_DIR/$1.XXXXXX.csv"
+  mktemp "$CSV_TMP_DIR/$1.XXXXXX"
 }
 
 source_column_exists() {

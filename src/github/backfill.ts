@@ -30,6 +30,7 @@ import {
   upsertPullRequestDetailSyncState,
   upsertPullRequestFromGitHub,
   upsertPullRequestReview,
+  listRecentMergedPullRequests,
   upsertRecentMergedPullRequest,
   upsertRepoLabel,
   upsertRepoSyncSegment,
@@ -1238,14 +1239,37 @@ async function backfillRecentMergedSegment(
       // Hydrate each merged PR's changed files (like the monolithic backfill path) so
       // recent_merged_pull_requests.changedFiles is populated instead of always empty.
       const warnings: string[] = [];
-      await mapWithConcurrency(merged, 8, async (pr) => {
-        const changedFiles = await fetchPullRequestFiles(env, repo.fullName, pr.number, token, warnings).catch(() => []);
-        await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repo.fullName, pr, changedFiles));
-      });
+      await hydrateMergedPullRequestFiles(env, repo.fullName, merged, token, warnings, 8);
       return merged.length;
     },
     { progressiveHistory: true, countPersisted: () => countRecentMergedPullRequests(env, repo.fullName) },
   );
+}
+
+// A merged PR is immutable, so its changed-file list never changes once stored. Skip the per-PR `/pulls/{n}/files`
+// fetch — the N+1 REST fan-out that dominated this segment's GitHub cost — for any merged PR ALREADY hydrated,
+// re-upserting only the cheap metadata (the upsert preserves the stored files when passed an empty list). One
+// `listRecentMergedPullRequests` read per batch replaces up to one `/files` fetch per merged PR. (#1941)
+async function hydrateMergedPullRequestFiles(
+  env: Env,
+  repoFullName: string,
+  merged: GitHubPullRequestPayload[],
+  token: string | undefined,
+  warnings: string[],
+  concurrency: number,
+): Promise<void> {
+  const alreadyHydrated = new Set(
+    (await listRecentMergedPullRequests(env, repoFullName))
+      .filter((record) => record.changedFiles.length > 0)
+      .map((record) => record.number),
+  );
+  await mapWithConcurrency(merged, concurrency, async (pr) => {
+    // fetchPullRequestFiles never throws — it returns [] (and records a warning) on any fetch failure.
+    const changedFiles = alreadyHydrated.has(pr.number)
+      ? []
+      : await fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings);
+    await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repoFullName, pr, changedFiles));
+  });
 }
 
 function isNotModifiedResponse<T>(result: GitHubJsonConditionalResponse<T>): result is GitHubJsonNotModifiedResponse {
@@ -1691,10 +1715,7 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const normalizedPullRequests = await mapWithConcurrency(pullRequests, 16, async (pr) => upsertPullRequestFromGitHub(env, repo.fullName, pr, { seenOpenAt: startedAt }));
 
     const mergedFileWarningStart = warnings.length;
-    await mapWithConcurrency(recentMerged, limits.detailConcurrency, async (pr) => {
-      const changedFiles = await fetchPullRequestFiles(env, repo.fullName, pr.number, token, warnings).catch(() => []);
-      await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repo.fullName, pr, changedFiles));
-    });
+    await hydrateMergedPullRequestFiles(env, repo.fullName, recentMerged, token, warnings, limits.detailConcurrency);
 
     const detailTargets = normalizedPullRequests.slice(0, limits.pullRequestDetails);
     const detailWarningStart = warnings.length;

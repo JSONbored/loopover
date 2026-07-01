@@ -187,7 +187,26 @@ describe("agent approval queue (#779)", () => {
     expect(mergePullRequest).not.toHaveBeenCalled();
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
     expect(audit?.outcome).toBe("denied");
-    expect(audit?.detail).toContain("live CI is now failing");
+    expect(audit?.detail).toContain("live CI is no longer passing (now: failed)");
+  });
+
+  it("accept supersedes a staged merge when live CI has since turned pending, not just failed (#2126)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+    // A FULFILLED "pending" read is a genuine non-passing signal — distinct from a REJECTED read (fail-open,
+    // covered by the "ITSELF rejects" test below), which must NOT supersede.
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "pending", hasPending: true, hasVisiblePending: true, failingDetails: [], nonRequiredFailingDetails: [] });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("stale_disposition");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("live CI is no longer passing (now: pending)");
   });
 
   it("accept supersedes a staged merge when the base now conflicts (mergeable_state: dirty) (#2126)", async () => {

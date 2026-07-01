@@ -78,12 +78,15 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
       fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
     ]);
-    const ciState = ciResult.status === "fulfilled" ? ciResult.value.ciState : "unverified";
+    // A REJECTED promise stays undefined (fail-open — the read itself failed, not a genuine CI signal); a
+    // FULFILLED promise reporting anything other than "passed" (failed, pending, or unverified) is a real,
+    // non-stale-tolerant signal that the staged merge's justification no longer holds (#2126).
+    const ciState = ciResult.status === "fulfilled" ? ciResult.value.ciState : undefined;
     const mergeableState = mergeableResult.status === "fulfilled" ? mergeableResult.value : undefined;
     const reviewDecision = reviewResult.status === "fulfilled" ? reviewResult.value : undefined;
     const staleReason =
-      ciState === "failed"
-        ? "live CI is now failing"
+      ciState !== undefined && ciState !== "passed"
+        ? `live CI is no longer passing (now: ${ciState})`
         : mergeableState === "dirty"
           ? "the base branch now conflicts (mergeable_state: dirty)"
           : reviewDecision === "CHANGES_REQUESTED"
@@ -97,7 +100,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
         targetKey,
         outcome: "denied",
         detail: `superseded ${pending.actionClass}: ${staleReason} since staging`,
-        metadata: { ...baseMetadata, ciState, mergeableState: mergeableState ?? null, reviewDecision: reviewDecision ?? null },
+        metadata: { ...baseMetadata, ciState: ciState ?? null, mergeableState: mergeableState ?? null, reviewDecision: reviewDecision ?? null },
       });
       return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "stale_disposition" };
     }

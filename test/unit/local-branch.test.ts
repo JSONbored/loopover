@@ -1737,6 +1737,21 @@ describe("local MCP git metadata collection", () => {
     );
   });
 
+  it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { extractLinkedIssues } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    // Standalone closing keywords (hash optional, as this client-side extractor allows) and bare #refs link.
+    expect(extractLinkedIssues("fixes #5")).toEqual([5]);
+    expect(extractLinkedIssues("Closes 12 and resolves #34")).toEqual([12, 34]);
+    expect(extractLinkedIssues("see #7")).toEqual([7]);
+    expect(extractLinkedIssues("closes#3")).toEqual([3]);
+    // Regression: a closing keyword embedded in a longer word must NOT capture a trailing number.
+    expect(extractLinkedIssues("hotfix 5")).toEqual([]);
+    expect(extractLinkedIssues("prefixes 12")).toEqual([]);
+    expect(extractLinkedIssues("unclosed 9")).toEqual([]);
+    expect(extractLinkedIssues("no references here")).toEqual([]);
+  });
+
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {
     // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, parseGitRemote } = await import("../../packages/gittensory-mcp/lib/local-branch.js");

@@ -52,6 +52,14 @@ LITESTREAM_REGION=us-east-1`}
       />
       <CodeBlock lang="bash" code={`docker compose --profile litestream up -d`} />
 
+      <h2>Scheduled backups</h2>
+      <p>
+        The bundled <code>backup</code> profile writes the active app database to the{" "}
+        <code>gittensory-backups</code> volume. SQLite installs use an online backup; Postgres
+        installs use <code>pg_dump</code>. The same run also snapshots Qdrant when it is enabled.
+      </p>
+      <CodeBlock lang="bash" code={`docker compose --profile backup up -d`} />
+
       <h2>Multi-instance: Postgres and Redis</h2>
       <FeatureRow
         items={[

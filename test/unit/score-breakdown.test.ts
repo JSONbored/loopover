@@ -86,6 +86,7 @@ describe("explainScoreBreakdown", () => {
         "openIssueMultiplier",
         "mergedHistoryMultiplier",
         "timeDecayMultiplier",
+        "nonCodeLineCap",
       ]),
     );
     for (const component of breakdown.components) {
@@ -120,6 +121,33 @@ describe("explainScoreBreakdown", () => {
     expect(blocked.components.find((entry) => entry.component === "mergedHistoryMultiplier")).toMatchObject({ band: "blocked", leverageScore: 100 });
     expect(blocked.highestLeverageLever.lever).toMatch(/merge/i);
     expect(JSON.stringify(blocked)).not.toMatch(FORBIDDEN);
+  });
+
+  it("explains the non-code line cap as neutral (unobserved / within cap) and reduced (over cap)", () => {
+    const base = {
+      repoFullName: repo.fullName,
+      contributorLogin: "miner",
+      sourceTokenScore: 40,
+      totalTokenScore: 60,
+      sourceLines: 80,
+      openPrCount: 1,
+      credibility: 0.9,
+      linkedIssueMode: "none" as const,
+    };
+    // No non-code line count supplied -> the cap is not counted for this preview -> neutral, zero leverage.
+    const unobserved = explainScoreBreakdown(buildScorePreview({ repo, snapshot, input: base }));
+    expect(unobserved.components.find((entry) => entry.component === "nonCodeLineCap")).toMatchObject({ band: "neutral", leverageScore: 0 });
+
+    // Observed within the upstream cap (MAX_LINES_SCORED_FOR_NON_CODE_EXT = 300) -> neutral.
+    const within = explainScoreBreakdown(buildScorePreview({ repo, snapshot, input: { ...base, nonCodeLines: 10 } }));
+    expect(within.components.find((entry) => entry.component === "nonCodeLineCap")).toMatchObject({ band: "neutral", leverageScore: 5 });
+
+    // Observed over the cap -> reduced, with an actionable move-to-source lever.
+    const over = explainScoreBreakdown(buildScorePreview({ repo, snapshot, input: { ...base, nonCodeLines: 5000 } }));
+    const cap = over.components.find((entry) => entry.component === "nonCodeLineCap")!;
+    expect(cap).toMatchObject({ band: "reduced", leverageScore: 30 });
+    expect(cap.summary).toMatch(/exceed/i);
+    expect(JSON.stringify(over)).not.toMatch(FORBIDDEN);
   });
 
   it("explains an over-threshold open-issue count as a blocked open-issue spam gate", () => {

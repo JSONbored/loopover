@@ -781,7 +781,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       await fileUpstreamDriftIssues(env);
       return;
     case "build-contributor-evidence":
-      await buildContributorEvidence(env, message.login);
+      await buildContributorEvidence(env, message.login, message.logins);
       return;
     case "build-contributor-decision-packs":
       await buildContributorDecisionPacks(env, message.login);
@@ -1814,6 +1814,15 @@ async function reReviewStoredPullRequest(
     resyncAdmissionKey,
   );
   primeLiveMergeState(liveFacts, repoFullName, prNumber, resyncToken, live?.mergeable_state);
+  // Terminal early-exit (#1942): the PR is CLOSED/merged on GitHub even though the stored row still reads open — a
+  // dropped `closed` webhook (relay down). Reconcile the stored row from the live payload and RETURN before the
+  // expensive resync (files) + readiness + re-review reads. A stale sweep must never spend GitHub budget — or post
+  // visible output — re-reviewing a PR that can no longer produce a valid outcome. Fail-open: only a live NON-open
+  // state early-exits (a fetch hiccup leaves `live` undefined → proceed with the stored open PR).
+  if (live && live.state !== "open") {
+    await upsertPullRequestFromGitHub(env, repoFullName, live).catch(() => undefined);
+    return;
+  }
   if (live?.head?.sha && live.head.sha !== pr.headSha) {
     await upsertPullRequestFromGitHub(env, repoFullName, live).catch(
       () => undefined,
@@ -2038,9 +2047,10 @@ async function prReadyForReview(
   if (ci?.hasPending) {
     // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
     // transiently unreadable pages, fork check that never reports). Past STUCK_CI_DEFER_MS we stop deferring and
-    // let the gate FINALIZE so the PR surfaces. A visibly queued/in_progress GitHub check/status is active CI,
-    // though, so never cut in front of it. first-seen is tracked in the self-host Redis transient cache per
-    // PR+headSha (a new push = a fresh window); a cache miss degrades to the old defer. (#ci-stuck-finalize)
+    // let the gate FINALIZE so the PR surfaces. A trusted required/base-repo visibly queued/in_progress CI
+    // signal is active CI, though, so never cut in front of it. first-seen is tracked in the self-host Redis
+    // transient cache per PR+headSha (a new push = a fresh window); a cache miss degrades to the old defer.
+    // (#ci-stuck-finalize)
     if (
       ci.hasVisiblePending ||
       !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha))
@@ -2531,10 +2541,70 @@ async function loadContributorPullRequestFilePaths(
   return files;
 }
 
+const CONTRIBUTOR_EVIDENCE_LOGIN_CAP = 500;
+const DEFAULT_CONTRIBUTOR_EVIDENCE_BATCH_SIZE = 150;
+
+// Max logins processed per build-contributor-evidence job before the scheduled trigger fans out into per-batch jobs.
+// 0 disables the fan-out (single job). Read from process.env so it works on cloud + self-host without a binding.
+export function contributorEvidenceBatchSize(): number {
+  const raw = Number(process.env.CONTRIBUTOR_EVIDENCE_BATCH_SIZE ?? String(DEFAULT_CONTRIBUTOR_EVIDENCE_BATCH_SIZE));
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_CONTRIBUTOR_EVIDENCE_BATCH_SIZE;
+}
+
 async function buildContributorEvidence(
   env: Env,
   login?: string,
+  batchLogins?: string[],
 ): Promise<void> {
+  // A single login or a fanned-out batch → process exactly those (no derivation).
+  const explicitLogins = batchLogins?.length ? batchLogins : login ? [login] : null;
+  if (explicitLogins) {
+    await processContributorEvidenceLogins(env, explicitLogins);
+    return;
+  }
+  // Scheduled trigger: derive the full contributor set from stored PRs + issues.
+  const [allPullRequests, allIssues] = await Promise.all([
+    listAllPullRequests(env),
+    listAllIssues(env),
+  ]);
+  const derivedLogins = [
+    ...new Set(
+      [...allPullRequests, ...allIssues].flatMap((record) =>
+        record.authorLogin ? [record.authorLogin] : [],
+      ),
+    ),
+  ].slice(0, CONTRIBUTOR_EVIDENCE_LOGIN_CAP);
+  const batchSize = contributorEvidenceBatchSize();
+  // Fan out into per-batch jobs so the per-login GitHub reads (/users/{login} + its repos pages) spread across the
+  // queue's paced execution + rate-limit admission instead of bursting for every contributor in one job. Stays one
+  // job when the set fits a batch or the fan-out is disabled (CONTRIBUTOR_EVIDENCE_BATCH_SIZE=0).
+  if (batchSize > 0 && derivedLogins.length > batchSize) {
+    const batches: string[][] = [];
+    for (let i = 0; i < derivedLogins.length; i += batchSize) {
+      batches.push(derivedLogins.slice(i, i + batchSize));
+    }
+    await Promise.all(
+      batches.map((batch, index) => {
+        const message: JobMessage = { type: "build-contributor-evidence", requestedBy: "schedule", logins: batch };
+        const delaySeconds = Math.min(index * 15, 600);
+        return delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+      }),
+    );
+    return;
+  }
+  // Small enough (or fan-out disabled): process inline, reusing the PRs + issues loaded above.
+  await processContributorEvidenceLogins(env, derivedLogins, { allPullRequests, allIssues });
+}
+
+async function processContributorEvidenceLogins(
+  env: Env,
+  logins: string[],
+  preloaded?: {
+    allPullRequests: Awaited<ReturnType<typeof listAllPullRequests>>;
+    allIssues: Awaited<ReturnType<typeof listAllIssues>>;
+  },
+): Promise<void> {
+  if (logins.length === 0) return;
   const [
     allPullRequests,
     allIssues,
@@ -2543,22 +2613,13 @@ async function buildContributorEvidence(
     allBounties,
     snapshot,
   ] = await Promise.all([
-    listAllPullRequests(env),
-    listAllIssues(env),
+    preloaded ? Promise.resolve(preloaded.allPullRequests) : listAllPullRequests(env),
+    preloaded ? Promise.resolve(preloaded.allIssues) : listAllIssues(env),
     listRepositories(env),
     listRepoSyncStates(env),
     listBounties(env),
     getOrCreateScoringModelSnapshot(env),
   ]);
-  const logins = login
-    ? [login]
-    : [
-        ...new Set(
-          [...allPullRequests, ...allIssues].flatMap((record) =>
-            record.authorLogin ? [record.authorLogin] : [],
-          ),
-        ),
-      ].slice(0, 500);
   const issueQualityByRepo = await loadIssueQualityReportMap(env, repositories);
   for (const contributorLogin of logins) {
     // Isolate each login so one failure (transient GitHub/D1 error) doesn't abort the whole
@@ -5841,6 +5902,9 @@ async function maybePublishPrPublicSurface(
         mergeReadiness,
         heldForReview,
         neverClosed,
+        // A preflight HOLD (e.g. the review lane is unavailable → the review is incomplete) must never render as
+        // "safe to merge"; the renderer downgrades an otherwise-ready status to a manual-review hold. (#2002)
+        preflightHeld: preflight.status === "hold",
         extraCollapsibles: buildPublicSafeCollapsibles({
           repo,
           pr,

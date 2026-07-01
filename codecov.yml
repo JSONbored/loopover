@@ -1,9 +1,9 @@
 # Codecov configuration.
 #
-# The real coverage gate is `patch`: every line a PR changes must be >=97%
-# covered. Patch coverage depends only on the PR's own diff, so merging one PR
-# can never push another below the bar -- this is what kills the cross-PR churn
-# the old global vitest threshold caused.
+# The real coverage gate is `patch`: changed lines and branches in a PR must be
+# >=99% covered. Patch coverage depends only on the PR's own diff, so merging
+# one PR can never push another below the bar -- this is what kills the cross-PR
+# churn the old global vitest threshold caused.
 #
 # `project` (whole-repo total) is informational only: it is reported as a trend
 # but never blocks a merge. vitest keeps a loose 90% local backstop separately.
@@ -15,10 +15,12 @@ coverage:
   status:
     patch:
       default:
-        target: 97%
+        target: 99%
         threshold: 0%
-        # Only fail if the PR actually changes coverable lines.
+        # Keep the patch status in error if the upstream CI run failed.
         if_ci_failed: error
+        # Suppress codecov/patch on main pushes; uploads still maintain history.
+        only_pulls: true
     project:
       default:
         informational: true

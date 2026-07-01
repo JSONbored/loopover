@@ -585,13 +585,25 @@ describe("timeoutFetch", () => {
   it("resolves per-class cache TTL env overrides with safe fallbacks", () => {
     expect(githubResponseCacheTtlSeconds("branch_protection", {})).toBe(20 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", {})).toBe(10 * 60);
+    expect(githubResponseCacheTtlSeconds("commit", {})).toBe(15 * 60);
     expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS: "3600" })).toBe(3600);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "90.8" })).toBe(90);
+    expect(githubResponseCacheTtlSeconds("commit", { GITHUB_COMMIT_CACHE_TTL_SECONDS: "300" })).toBe(300);
+    expect(githubResponseCacheTtlSeconds("commit", { GITHUB_COMMIT_CACHE_TTL_SECONDS: "0" })).toBe(15 * 60);
     expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS: "" })).toBe(20 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "0" })).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "0.5" })).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "not-a-number" })).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "Infinity" })).toBe(10 * 60);
+  });
+
+  it("caches a BARE /commits/{ref} resolve (the upstream ref→SHA read) but NOT its suffixed CI subresources", () => {
+    expect(isCacheableGithubUrl("https://api.github.com/repos/entrius/gittensor/commits/main")).toBe(true);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc123?foo=1")).toBe(true);
+    // The mutable CI/pulls subresources under /commits/{sha} must still always hit the live API.
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc/status")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc/check-runs?per_page=100")).toBe(false);
+    expect(isCacheableGithubUrl("https://api.github.com/repos/o/r/commits/abc/pulls")).toBe(false);
   });
 
   it("uses configured TTL overrides for stable GitHub metadata and branch-protection reads", async () => {

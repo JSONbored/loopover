@@ -1290,6 +1290,8 @@ const ScoreGatesSchema = z.object({
   validSolvedIssues: z.number().optional(),
   issueCredibilityFloor: z.number(),
   issueCredibility: z.number().optional(),
+  nonCodeLineCap: z.number(),
+  nonCodeLinesObserved: z.number().optional(),
 });
 
 const BranchEligibilitySchema = z.object({

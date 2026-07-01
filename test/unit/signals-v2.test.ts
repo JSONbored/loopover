@@ -1760,6 +1760,20 @@ describe("hasClearNoIssueRationale docs-only spelling", () => {
   });
 });
 
+describe("hasClearNoIssueRationale test-only spelling", () => {
+  it("recognizes hyphenated and spaced test-only rationales", () => {
+    expect(hasClearNoIssueRationale({ title: "test only: lock regression", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "test-only: lock regression", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "tests-only coverage", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "Add branch classifier", body: "This is a tests only change." })).toBe(true);
+  });
+
+  it("still rejects unrelated PR text that mentions tests without a rationale", () => {
+    expect(hasClearNoIssueRationale({ title: "Add tests for classifier", body: "Adds coverage." })).toBe(false);
+    expect(hasClearNoIssueRationale({ title: "Improve test harness", body: "" })).toBe(false);
+  });
+});
+
 function snapshot(
   id: string,
   repositories: Array<{

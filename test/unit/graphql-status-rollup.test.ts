@@ -109,7 +109,7 @@ describe("fetchLiveCiAggregateViaGraphQl — verdicts", () => {
     stubGraphql(graphqlBody({ runs: [{ name: "build", conclusion: null, status: "IN_PROGRESS" }] }));
     expect((await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN, new Set(["build"])))?.ciState).toBe("pending");
     stubGraphql(graphqlBody({ runs: [{ name: "flaky-optional", conclusion: null, status: "IN_PROGRESS" }, { name: "build", conclusion: "SUCCESS", status: "COMPLETED" }] }));
-    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN, new Set(["build"]))).toMatchObject({ ciState: "passed", hasPending: true, hasVisiblePending: true });
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN, new Set(["build"]))).toMatchObject({ ciState: "passed", hasPending: true, hasVisiblePending: false });
   });
 
   it("holds pending when a required context never appears", async () => {
@@ -125,6 +125,16 @@ describe("fetchLiveCiAggregateViaGraphQl — verdicts", () => {
   it("holds pending via the check-suite backstop when a first-party suite has not completed", async () => {
     stubGraphql(graphqlBody({ runs: [{ name: "build", conclusion: "SUCCESS", status: "COMPLETED" }], suites: [{ status: "IN_PROGRESS", appSlug: "github-actions" }] }));
     expect((await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN, new Set(["build"])))?.ciState).toBe("pending");
+  });
+
+  it("does not mark suite-only optional pending as required-visible when required contexts are known", async () => {
+    stubGraphql(graphqlBody({ runs: [{ name: "build", conclusion: "SUCCESS", status: "COMPLETED" }], suites: [{ status: "IN_PROGRESS", appSlug: "github-actions" }] }));
+
+    expect(await fetchLiveCiAggregateViaGraphQl(env, REPO, SHA, TOKEN, new Set(["build"]))).toMatchObject({
+      ciState: "pending",
+      hasPending: true,
+      hasVisiblePending: false,
+    });
   });
 
   it("defensively defaults every missing field on sparse rollup nodes and suites", async () => {

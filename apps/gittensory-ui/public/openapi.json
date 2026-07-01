@@ -4338,6 +4338,12 @@
                       },
                       "issueCredibility": {
                         "type": "number"
+                      },
+                      "nonCodeLineCap": {
+                        "type": "number"
+                      },
+                      "nonCodeLinesObserved": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4352,7 +4358,8 @@
                       "openIssueCount",
                       "mergedPrFloor",
                       "validSolvedIssuesFloor",
-                      "issueCredibilityFloor"
+                      "issueCredibilityFloor",
+                      "nonCodeLineCap"
                     ]
                   },
                   "effectiveEstimatedScore": {
@@ -4640,6 +4647,12 @@
                       },
                       "issueCredibility": {
                         "type": "number"
+                      },
+                      "nonCodeLineCap": {
+                        "type": "number"
+                      },
+                      "nonCodeLinesObserved": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4654,7 +4667,8 @@
                       "openIssueCount",
                       "mergedPrFloor",
                       "validSolvedIssuesFloor",
-                      "issueCredibilityFloor"
+                      "issueCredibilityFloor",
+                      "nonCodeLineCap"
                     ]
                   },
                   "effectiveEstimatedScore": {
@@ -4942,6 +4956,12 @@
                       },
                       "issueCredibility": {
                         "type": "number"
+                      },
+                      "nonCodeLineCap": {
+                        "type": "number"
+                      },
+                      "nonCodeLinesObserved": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4956,7 +4976,8 @@
                       "openIssueCount",
                       "mergedPrFloor",
                       "validSolvedIssuesFloor",
-                      "issueCredibilityFloor"
+                      "issueCredibilityFloor",
+                      "nonCodeLineCap"
                     ]
                   },
                   "effectiveEstimatedScore": {
@@ -5244,6 +5265,12 @@
                       },
                       "issueCredibility": {
                         "type": "number"
+                      },
+                      "nonCodeLineCap": {
+                        "type": "number"
+                      },
+                      "nonCodeLinesObserved": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -5258,7 +5285,8 @@
                       "openIssueCount",
                       "mergedPrFloor",
                       "validSolvedIssuesFloor",
-                      "issueCredibilityFloor"
+                      "issueCredibilityFloor",
+                      "nonCodeLineCap"
                     ]
                   },
                   "effectiveEstimatedScore": {
@@ -5546,6 +5574,12 @@
                       },
                       "issueCredibility": {
                         "type": "number"
+                      },
+                      "nonCodeLineCap": {
+                        "type": "number"
+                      },
+                      "nonCodeLinesObserved": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -5560,7 +5594,8 @@
                       "openIssueCount",
                       "mergedPrFloor",
                       "validSolvedIssuesFloor",
-                      "issueCredibilityFloor"
+                      "issueCredibilityFloor",
+                      "nonCodeLineCap"
                     ]
                   },
                   "effectiveEstimatedScore": {
@@ -6504,6 +6539,12 @@
               },
               "issueCredibility": {
                 "type": "number"
+              },
+              "nonCodeLineCap": {
+                "type": "number"
+              },
+              "nonCodeLinesObserved": {
+                "type": "number"
               }
             },
             "required": [
@@ -6518,7 +6559,8 @@
               "openIssueCount",
               "mergedPrFloor",
               "validSolvedIssuesFloor",
-              "issueCredibilityFloor"
+              "issueCredibilityFloor",
+              "nonCodeLineCap"
             ]
           },
           "branchEligibility": {
@@ -6805,6 +6847,12 @@
                     },
                     "issueCredibility": {
                       "type": "number"
+                    },
+                    "nonCodeLineCap": {
+                      "type": "number"
+                    },
+                    "nonCodeLinesObserved": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -6819,7 +6867,8 @@
                     "openIssueCount",
                     "mergedPrFloor",
                     "validSolvedIssuesFloor",
-                    "issueCredibilityFloor"
+                    "issueCredibilityFloor",
+                    "nonCodeLineCap"
                   ]
                 },
                 "effectiveEstimatedScore": {

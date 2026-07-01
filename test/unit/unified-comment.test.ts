@@ -48,6 +48,18 @@ describe("deriveUnifiedStatus", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } })).toBe("ready");
   });
 
+  it("never renders 'safe to merge' on an incomplete review — a preflight hold downgrades a gate merge verdict (#2002)", () => {
+    // A preflight HOLD means the review is incomplete (e.g. the review lane is unavailable). A gate `merge` decision
+    // sets `ready` and the hold otherwise only lands in the advisory readiness score — so this downgrade catches it,
+    // and an unfinished review can never read as approve/merge.
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { preflightHeld: true })).toBe("held");
+    // Regression: a clean merge with no hold STILL renders ready — the downgrade only ever downgrades, never approves.
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } })).toBe("ready");
+    // A gate `merge` WITH advisory blockers stays authoritative-ready by design (the gate already weighed them);
+    // tightening that lives in the gate's confidence/approval bars, not this renderer. See the authoritative-merge test.
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" }, blockers: ["minor"] })).toBe("ready");
+  });
+
   it("blocked for a close verdict or consensus blockers", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "close" })).toBe("blocked");
     expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "unverified" } })).toBe("blocked");

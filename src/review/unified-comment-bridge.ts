@@ -275,6 +275,9 @@ export type UnifiedCommentBridgeArgs = {
   /** The author is the repo owner or a protected automation bot — never auto-closed, so a gate "close" verdict
    *  renders as "held" rather than "Closed" (#8/#9). */
   neverClosed?: boolean | undefined;
+  /** Preflight is holding this PR (e.g. the review lane is unavailable) — an otherwise-ready comment then renders
+   *  "held", never "safe to merge". (#2002) */
+  preflightHeld?: boolean | undefined;
   /** Public freshness marker for the posted/updated review comment. Defaults to the current publish time. */
   reviewedAt?: string | number | Date | undefined;
 };
@@ -390,6 +393,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     ...(extraCollapsibles !== undefined ? { extraCollapsibles } : {}),
     ...(args.heldForReview ? { heldForReview: true } : {}),
     ...(args.neverClosed ? { neverClosed: true } : {}),
+    ...(args.preflightHeld ? { preflightHeld: true } : {}),
   });
 
   // Prepend the marker verbatim (matching the legacy body, which leads with the marker then a blank line)

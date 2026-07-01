@@ -1322,7 +1322,11 @@ export function detectGittensorContributor(
   repoStats: ContributorRepoStatRecord[] = [],
 ): ContributorDetection {
   const priorPullRequests = pullRequests.filter(
-    (pr) => sameLogin(pr.authorLogin, login) && !(pr.repoFullName === currentPr.repoFullName && pr.number === currentPr.number),
+    // Exclude the current PR case-insensitively on repo name, matching `sameRepo` used everywhere else in
+    // this module (and the `sameLogin` in this same predicate). A raw `===` let a cached copy of the current
+    // PR stored under different repo-name casing (GitHub full-names are case-insensitive) slip through and be
+    // miscounted as the contributor's own "prior activity".
+    (pr) => sameLogin(pr.authorLogin, login) && !(sameRepo(pr.repoFullName, currentPr.repoFullName) && pr.number === currentPr.number),
   );
   const priorIssues = issues.filter((issue) => sameLogin(issue.authorLogin, login));
   const priorMergedPullRequests = priorPullRequests.filter((pr) => pr.mergedAt || pr.state === "merged");
@@ -4742,7 +4746,7 @@ function validationComponent(pr: PullRequestRecord, preflight: PreflightResult):
   const missingTests = findingCodes.some((code) => /missing.*test|test.*missing|no_test/i.test(code));
   const explicitValidation = hasValidationNote(pr.body ?? "");
   if (preflight.status === "hold") {
-    return { score: 5, evidence: "Preflight is holding this PR; address the blocker before review.", action: "Fix the blocker." };
+    return { score: 5, evidence: "Preflight is holding this PR: the review lane is unavailable, so it is not ready for automated review.", action: "Await review-lane availability." };
   }
   if (missingTests) {
     // A body validation note is an UNBACKED claim when no test files accompany the change. Cap it just above the
@@ -4972,7 +4976,9 @@ export function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "
   // spelling this function's own docstring uses — the dominant GitHub/Conventional-Commits form. A bare
   // `docs? only` missed the hyphen, so a docs-only PR with no linked issue was wrongly denied a clear
   // no-issue rationale and hard-blocked under `linkedIssueGateMode === "block"`.
-  return /\b(?:no issue\s*(?:because\b|:)|no linked issue\s*(?:because\b|:)|no ticket\s*(?:because\b|:)|(?:maintenance|docs?[\s-]+only|typo|chore|cleanup)\b)/i.test([pr.title, pr.body ?? ""].join(" "));
+  // `tests?[\s-]+only` extends the same rule to test-only PRs (regression/coverage-only diffs) — parallel
+  // to the docs-only hyphenation fix merged in #1905.
+  return /\b(?:no issue\s*(?:because\b|:)|no linked issue\s*(?:because\b|:)|no ticket\s*(?:because\b|:)|(?:maintenance|docs?[\s-]+only|tests?[\s-]+only|typo|chore|cleanup)\b)/i.test([pr.title, pr.body ?? ""].join(" "));
 }
 
 function hasValidationNote(value: string): boolean {

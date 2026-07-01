@@ -542,6 +542,22 @@ describe("self-host queue common helpers", () => {
     ).toBeNull();
   });
 
+  it("coalesces the event-driven jobs by their stable per-invocation id — and only true duplicates (#1942)", () => {
+    // A DUPLICATE re-enqueue of the SAME job (same id — e.g. a webhook redelivery) coalesces.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
+    expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
+    expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "webhook", event: { dedupKey: "review_requested:o/r#3:bob" } }))).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
+    // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.
+    expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", event: {} }))).toBeNull();
+  });
+
   it("coalesces recurring maintenance jobs while preserving their semantic scope", () => {
     expect(
       jobCoalesceKey(
@@ -658,6 +674,23 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "ops-alerts", requestedBy: "schedule" }))).toBe(
       "ops-alerts",
     );
+  });
+
+  it("keys build-contributor-evidence by login/all, and fanned-out batches by their FIRST login (never one shared key) (#1941)", () => {
+    // A single-login (re-index) job coalesces by login; the scheduled trigger (no login/logins) → the "all" slot.
+    expect(jobCoalesceKey(payload({ type: "build-contributor-evidence", requestedBy: "schedule", login: "Alice" }))).toBe("build-contributor-evidence:alice");
+    expect(jobCoalesceKey(payload({ type: "build-contributor-evidence", requestedBy: "schedule" }))).toBe("build-contributor-evidence:all");
+    // Fanned-out batches key by their FIRST login → DISTINCT batches get DISTINCT keys (none is dropped by coalescing).
+    const batchA = jobCoalesceKey(payload({ type: "build-contributor-evidence", requestedBy: "schedule", logins: ["Bob", "Carol"] }));
+    const batchB = jobCoalesceKey(payload({ type: "build-contributor-evidence", requestedBy: "schedule", logins: ["Dave", "Erin"] }));
+    expect(batchA).toBe("build-contributor-evidence:batch:bob");
+    expect(batchB).toBe("build-contributor-evidence:batch:dave");
+    expect(batchA).not.toBe(batchB);
+    expect(batchA).not.toBe("build-contributor-evidence:all"); // the footgun: a batch must never collapse into "all"
+    // An EMPTY batch (no logins) is the scheduled-trigger shape → the "all" slot.
+    expect(jobCoalesceKey(payload({ type: "build-contributor-evidence", requestedBy: "schedule", logins: [] }))).toBe("build-contributor-evidence:all");
+    // A non-empty batch whose first login is unusable is left UNCOALESCED (null) — never collapsed into "all".
+    expect(jobCoalesceKey(payload({ type: "build-contributor-evidence", requestedBy: "schedule", logins: [""] }))).toBeNull();
   });
 
   it("returns no coalesce key for malformed payloads", () => {

@@ -2253,6 +2253,7 @@ async function reduceLiveCiAggregate(
   let total = 0;
   let anyPending = false;
   let anyVisiblePending = false;
+  let anyRequiredVisiblePending = false;
   let sawFirstPartyCheckRun = false;
   const seenContextNames = new Set<string>();
 
@@ -2271,7 +2272,10 @@ async function reduceLiveCiAggregate(
       // concluded and not failing → passing
     } else {
       anyVisiblePending = true;
-      if (isRequired(run.name)) anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+      if (isRequired(run.name)) {
+        anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+        anyRequiredVisiblePending = true;
+      }
     }
   }
 
@@ -2288,7 +2292,10 @@ async function reduceLiveCiAggregate(
       // passing
     } else {
       anyVisiblePending = true;
-      if (isRequired(name)) anyPending = true; // pending — only a REQUIRED context holds the gate
+      if (isRequired(name)) {
+        anyPending = true; // pending — only a REQUIRED context holds the gate
+        anyRequiredVisiblePending = true;
+      }
     }
   }
 
@@ -2314,6 +2321,9 @@ async function reduceLiveCiAggregate(
     } else if (suites.some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
       anyPending = true; // a first-party GitHub Actions workflow has not completed
       anyVisiblePending = true;
+      // Check suites do not expose required context names. With branch-protection contexts available, keep suite-only
+      // pending CI eligible for the stale cap instead of treating every optional first-party workflow as required.
+      if (!enforceRequiredOnly) anyRequiredVisiblePending = true;
     }
   }
 
@@ -2321,7 +2331,7 @@ async function reduceLiveCiAggregate(
   // Fail CLOSED on incomplete visibility: an OBSERVED failure is authoritative and preserved.
   if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
   const hasPending = anyVisiblePending || anyPending || checkRunsIncomplete || statusIncomplete || ciState === "pending";
-  return { ciState, hasPending, hasVisiblePending: anyVisiblePending, failingDetails, nonRequiredFailingDetails };
+  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, failingDetails, nonRequiredFailingDetails };
 }
 
 /**
@@ -2846,8 +2856,12 @@ function isTrustedScannerReviewThreadAuthor(login: string | null | undefined): b
   return typeof login === "string" && TRUSTED_SCANNER_REVIEW_THREAD_AUTHORS.has(login.toLowerCase());
 }
 
-function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
-  return /\bgittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
+// Match only OUR OWN app bot login (a `gittensory` / `gittensory-orb[bot]` PREFIX), never a third-party slug
+// that merely ENDS in `-gittensory[bot]`. Anchored to `^`: a `\b` boundary also fires after a hyphen, so the
+// prior `\bgittensory…` misclassified e.g. `evil-gittensory[bot]` as our own author and dropped its
+// review-thread comment as a self-authored non-blocker (fail-open) instead of evaluating it as external.
+export function isOwnReviewThreadAuthor(login: string | null | undefined): boolean {
+  return /^gittensory[-\w]*\[bot\]$/i.test(login ?? "") || /^(gittensory|gittensory-orb)$/i.test(login ?? "");
 }
 
 /** The deterministic linked-issue facts the hard-rule evaluator needs (labels / assignees / open-state). */

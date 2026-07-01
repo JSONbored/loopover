@@ -47,8 +47,8 @@ workflow in this repo. There is **no** root-level Prettier gate — Prettier is 
 
 ## 2. Codecov — the real coverage gate (`codecov.yml`)
 
-- **`codecov/patch`: `target: 97%`, `threshold: 0%`, `if_ci_failed: error`.** Every line your PR
-  changes must be ≥97% covered. With 0% threshold and small diffs, **one uncovered branch can fail it.**
+- **`codecov/patch`: `target: 99%`, `threshold: 0%`, `if_ci_failed: error`, `only_pulls: true`.**
+  Every line your PR changes must be ≥99% covered. With 0% threshold and small diffs, **one uncovered branch can fail it.**
 - **It counts BRANCH coverage** (v8 → lcov `BRDA`). A changed line whose branches are only partially
   exercised counts against you. "100% lines" ≠ "100% branches."
 - **`codecov/project`: `informational: true`** — a trend, never blocks.
@@ -168,7 +168,7 @@ Date("2026-05-28T00:00:00Z"))` then `vi.useRealTimers()`.
 or the `test:unit` / `test:integration` scripts. Verify before pushing with the full unsharded
 `npm run test:coverage`. **Find a partial branch:** read the v8 text report's **% Branch** column and
 the **Uncovered Line #s** for your changed file (or open `coverage/lcov-report/…` / `coverage/lcov.info`)
-— a line at 100% lines but <100% branch has an un-taken side. Aim ≥98% branch on the diff locally.
+— a line at 100% lines but <100% branch has an un-taken side. Aim for 100% branch on the diff locally.
 
 **Branch coverage — the rule that fails most PRs.** Each of `if/else`, `? :`, `&&`, `||`, and `??`
 is two branches; exercise **both**.

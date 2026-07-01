@@ -209,6 +209,9 @@ export interface UnifiedCommentContext {
   /** The PR's author is the repo owner or a protected automation bot — the disposition NEVER auto-closes them,
    *  so a gate "close" verdict renders as "held", not "Closed" (#8/#9). */
   neverClosed?: boolean;
+  /** Preflight is HOLDING this PR (e.g. the review lane is unavailable so the review is incomplete) — an
+   *  otherwise-ready status must then render as "held" (manual review), never "safe to merge". (#2002) */
+  preflightHeld?: boolean;
   /** Public freshness marker for the posted/updated review comment. Rendered as UTC when provided. */
   reviewedAt?: string | number | Date | undefined;
 }
@@ -277,6 +280,12 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // PR that won't actually merge). Applied LAST so it only ever downgrades an otherwise-ready status — a real
   // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
   if (status === "ready" && ctx.heldForReview) return "held";
+  // A PREFLIGHT HOLD means the review is INCOMPLETE (e.g. the review lane is unavailable) — it otherwise only lands
+  // in the advisory readiness score, so an otherwise-ready status would still read "safe to merge" on an
+  // unfinished review. Downgrade it to a manual-review hold. Applied only to an otherwise-`ready` status, so it can
+  // only ever DOWNGRADE, never approve. (#2002) — NOTE: a gate `merge` verdict WITH advisory blockers stays
+  // authoritative-ready by design (the gate already weighed those); tightening THAT is the gate's confidence/bar.
+  if (status === "ready" && ctx.preflightHeld) return "held";
   // Held-vs-closed disposition parity (#8/#9): owner/automation-bot authors may be exempt from auto-close, so a
   // close verdict on those authors is rendered as held. Guardrail holds are handled above only for otherwise-ready
   // PRs; they must not downgrade a blocker/close verdict to manual review.

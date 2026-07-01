@@ -5,7 +5,7 @@ description: >-
   JSONbored/gittensory repo — picking/validating an issue, implementing a change, writing tests
   that pass Codecov, running the local CI gate, predicting the gittensory gate, and formatting the
   commit + PR. gittensory reviews PRs ONE-SHOT via the gittensory gate (a GitHub App / CI) plus a
-  strict CI suite with Codecov (97% patch coverage, hard); there is no review back-and-forth, so a
+  strict CI suite with Codecov (99% patch coverage, hard); there is no review back-and-forth, so a
   PR must be correct, fully tested, house-style-compliant, and green before it is pushed. Invoke
   for any "contribute to / open a PR against / fix a bug in / add a feature to gittensory" task.
 ---
@@ -49,7 +49,7 @@ opening a **fresh** PR. This is the entire reason to get it right before you pus
 
 ## The non-negotiables (read once, hold throughout)
 
-1. **97%+ patch coverage is a HARD wall.** Codecov `codecov/patch` has `target: 97%, threshold: 0%`
+1. **99% patch coverage is a HARD wall.** Codecov `codecov/patch` has `target: 99%, threshold: 0%`
    — *zero slack* — and it counts **BRANCH** coverage, not just lines. **Aim for 100% on every line
    you change, including invariants and a regression test for any bug you fix.** Only `src/**` counts;
    `apps/**`, `test/**`, `scripts/**`, and `src/env.d.ts` are ignored by Codecov. (So a UI-only change
@@ -183,8 +183,8 @@ This is where most PRs fail Codecov. The bar is **every changed line AND every c
   so a single shard under-reports).
 - **Find the uncovered branch.** In the v8 text report, read the **% Branch** column and the
   **Uncovered Line #s** for your changed file — a line at 100% lines but <100% branch has an un-taken
-  `??`/ternary/`&&` side; add that case. Aim for **≥98% branch on your diff locally** so normal CI
-  variance never drops you under the 97% wall.
+  `??`/ternary/`&&` side; add that case. Aim for **100% branch on your diff locally** so normal CI
+  variance never drops you under the 99% wall.
 
 ---
 

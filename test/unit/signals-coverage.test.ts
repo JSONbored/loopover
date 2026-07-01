@@ -1431,7 +1431,7 @@ describe("signal coverage edge cases", () => {
 
     expect(comment).toContain("> | Linked issue | ✅ No-issue rationale | PR body explains why no issue is linked. | No action. |");
     expect(comment).toContain("> | Change scope | ❌ 8/20 | High review scope from cached public metadata (size label size:L; draft PR; no linked issue context). | Add a concise scope and risk note. |");
-    expect(comment).toContain("> | Validation posture | ❌ 5/25 | Preflight is holding this PR; address the blocker before review. | Fix the blocker. |");
+    expect(comment).toContain("> | Validation posture | ❌ 5/25 | Preflight is holding this PR: the review lane is unavailable, so it is not ready for automated review. | Await review-lane availability. |");
     expect(comment).toContain("> | Contributor workload | ✅ 10/10 | Author activity: 29 registered-repo PR(s), 20 merged, 6 issue(s). | No action. |");
     expect(comment).toContain("> | Gate result | ⚠️ Not blocking | Advisory; not blocking this PR. | No action. |");
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");

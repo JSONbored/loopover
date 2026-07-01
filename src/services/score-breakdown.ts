@@ -275,6 +275,36 @@ function contributionBonusBreakdown(preview: ScorePreviewResult): ScoreMultiplie
   };
 }
 
+// Sibling of the history-floor breakdowns for the upstream non-code line cap (MAX_LINES_SCORED_FOR_NON_CODE_EXT):
+// non-code token score beyond the cap's worth of changed non-code lines is not scored, so a docs/config-heavy PR
+// can silently lose non-code contribution. Surfaced here so a miner sees the cap the same way the gate breakdowns
+// already surface the open-PR / open-issue / merged-history floors. The cap is a token-score reducer (not a stacked
+// multiplier), so it reads neutral unless the observed non-code line count actually exceeds the cap.
+function nonCodeCapBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { nonCodeLineCap, nonCodeLinesObserved } = preview.gates;
+  if (nonCodeLinesObserved === undefined) {
+    return {
+      component: "nonCodeLineCap",
+      band: "neutral",
+      summary: `No scored non-code line count is observed for this preview (upstream scores at most ${nonCodeLineCap} non-code lines).`,
+      lever: "No action needed; the non-code line cap only affects previews that add scored non-code lines.",
+      leverageScore: 0,
+    };
+  }
+  const capped = nonCodeLinesObserved > nonCodeLineCap;
+  return {
+    component: "nonCodeLineCap",
+    band: capped ? "reduced" : "neutral",
+    summary: capped
+      ? `Non-code lines (${nonCodeLinesObserved}) exceed the upstream scored cap (${nonCodeLineCap}); non-code token contribution beyond the cap is not scored.`
+      : `Non-code lines (${nonCodeLinesObserved}) are within the upstream scored cap (${nonCodeLineCap}).`,
+    lever: capped
+      ? "Non-code changes beyond the cap add no score; move substantive logic into source files or split the non-code bulk out of this PR."
+      : "Non-code contribution is within the scored cap; no action needed on this lever.",
+    leverageScore: capped ? 30 : 5,
+  };
+}
+
 function roundBand(value: number): string {
   return value.toFixed(2).replace(/\.?0+$/, "");
 }
@@ -319,6 +349,7 @@ export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdo
     openIssueBreakdown(preview),
     mergedHistoryBreakdown(preview),
     timeDecayBreakdown(preview),
+    nonCodeCapBreakdown(preview),
   ].map((entry) => ({
     ...entry,
     summary: sanitizePublicComment(entry.summary),

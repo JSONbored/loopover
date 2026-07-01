@@ -598,6 +598,11 @@ export function jobCoalesceKey(payload: string): string | null {
       dryRun?: unknown;
       variant?: unknown;
       paths?: unknown;
+      runId?: unknown;
+      deliveryId?: unknown;
+      draftId?: unknown;
+      event?: { dedupKey?: unknown } | null;
+      logins?: unknown;
       payload?: GitHubWebhookPayload | null;
     };
     const type = typeof message.type === "string" ? message.type : "";
@@ -659,8 +664,20 @@ export function jobCoalesceKey(payload: string): string | null {
       case "build-burden-forecasts":
         return keyOf(type, normalizedRepo(message.repoFullName) ?? "all");
       case "build-contributor-evidence":
-      case "build-contributor-decision-packs":
-        return keyOf(type, normalizedLogin(message.login) ?? "all");
+      case "build-contributor-decision-packs": {
+        const login = normalizedLogin(message.login);
+        if (login) return keyOf(type, login);
+        // A fanned-out batch (a non-empty `logins` array) keys by its FIRST login: batches are disjoint slices of the
+        // derived set, so heads are unique and a duplicate re-enqueue of the same batch still coalesces. A batch must
+        // NEVER fall through to the "all" key below — that is the scheduled TRIGGER's slot, so collapsing a batch into
+        // it would drop the batch's work — so a batch with no usable head is left uncoalesced (null) instead.
+        if (Array.isArray(message.logins) && message.logins.length > 0) {
+          const batchHead = normalizedLogin(message.logins[0]);
+          return batchHead ? keyOf(type, "batch", batchHead) : null;
+        }
+        // The scheduled trigger (no login, no batch) coalesces to a single slot.
+        return keyOf(type, "all");
+      }
       case "refresh-contributor-activity":
         return keyOf(
           type,
@@ -687,6 +704,25 @@ export function jobCoalesceKey(payload: string): string | null {
           normalizedRepo(message.repoFullName) ?? "all",
           normalizedPathScope(message.paths) ?? "full",
         );
+      // Event-driven jobs carry a stable per-invocation id, so coalescing only ever merges a DUPLICATE re-enqueue of
+      // the SAME job (e.g. a webhook redelivery / retry) — never two distinct invocations, which have distinct ids.
+      // No id (a malformed payload) → null (uncoalesced), never a shared key that could drop a distinct job. (#1942)
+      case "run-agent": {
+        const runId = normalizedId(message.runId);
+        return runId ? keyOf(type, runId) : null;
+      }
+      case "notify-deliver": {
+        const deliveryId = normalizedId(message.deliveryId);
+        return deliveryId ? keyOf(type, deliveryId) : null;
+      }
+      case "notify-evaluate": {
+        const dedupKey = normalizedId(message.event?.dedupKey);
+        return dedupKey ? keyOf(type, dedupKey) : null;
+      }
+      case "submit-draft": {
+        const draftId = normalizedId(message.draftId);
+        return draftId ? keyOf(type, draftId) : null;
+      }
     }
     if (type !== "github-webhook") return null;
     const eventName =
@@ -739,6 +775,11 @@ function normalizedEnum(value: unknown): string | null {
 
 function normalizedCursor(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) return String(Math.floor(value));
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// A stable, case-preserving opaque id (runId / deliveryId / draftId / dedupKey) for coalesce keys.
+function normalizedId(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 

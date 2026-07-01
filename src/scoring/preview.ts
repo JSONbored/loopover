@@ -209,6 +209,11 @@ export type ScorePreviewResult = {
     issueCredibilityFloor: number;
     /** Observed issue-discovery credibility when supplied; absent when unknown. */
     issueCredibility?: number | undefined;
+    /** Upstream non-code line scoring cap (MAX_LINES_SCORED_FOR_NON_CODE_EXT); non-code token score beyond this
+     *  many changed non-code lines is not scored. */
+    nonCodeLineCap: number;
+    /** Observed raw non-code line count before the cap; absent when no non-code line count was supplied. */
+    nonCodeLinesObserved?: number | undefined;
   };
   branchEligibility: BranchEligibilityResult;
   effectiveEstimatedScore: number;
@@ -474,6 +479,8 @@ function computeScoreCore(
       ...(validSolvedIssuesObserved !== undefined ? { validSolvedIssues: validSolvedIssuesObserved } : {}),
       issueCredibilityFloor,
       ...(issueCredibilityObserved !== undefined ? { issueCredibility: issueCredibilityObserved } : {}),
+      nonCodeLineCap: constant(constants, "MAX_LINES_SCORED_FOR_NON_CODE_EXT"),
+      ...(input.nonCodeLines !== undefined ? { nonCodeLinesObserved: nonNegative(input.nonCodeLines) } : {}),
     },
   };
 }

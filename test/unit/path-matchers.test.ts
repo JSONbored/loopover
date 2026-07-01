@@ -70,6 +70,9 @@ describe("isLockfile", () => {
       "mix.lock",
       "Package.resolved",
       "gradle.lockfile",
+      "pdm.lock",
+      "conan.lock",
+      "pixi.lock",
     ]) {
       expect(isLockfile(path)).toBe(true);
     }

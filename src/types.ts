@@ -682,6 +682,10 @@ export type AgentPendingActionParams = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
+  // Which kind of close this is (linked-issue-hard-rule / blacklist / heuristic), persisted so a queued close's
+  // actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still fires correctly
+  // once the row is replayed through pendingActionToPlanned, not silently skipped for a lost discriminator.
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
 };
 

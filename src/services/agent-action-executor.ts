@@ -266,6 +266,7 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.reviewBody !== undefined ? { reviewBody: action.reviewBody } : {}),
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
+    ...(action.closeKind !== undefined ? { closeKind: action.closeKind } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
   };
 }

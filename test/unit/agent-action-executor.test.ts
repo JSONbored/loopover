@@ -38,7 +38,7 @@ import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate } from "../../src/github/backfill";
-import { actionParams, executeAgentMaintenanceActions, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
+import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { isGlobalAgentFrozen, setGlobalAgentFrozen } from "../../src/db/repositories";
@@ -127,6 +127,22 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [heuristicClose]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+  });
+
+  it("REGRESSION (#2364): a queued heuristic close still re-checks live CI after the approval-queue replay round trip", async () => {
+    const env = createTestEnv({});
+    const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "CI failed", closeComment: "closing", closeKind: "heuristic" };
+    // Simulate the persist/replay path: stageForApproval calls actionParams() to persist the row, and accept
+    // rebuilds it via pendingActionToPlanned(). Without persisting closeKind, the rebuilt action would lose the
+    // discriminator the live-CI re-check keys on, silently skipping it for every accepted queued heuristic close.
+    const persisted = actionParams(heuristicClose);
+    const replayed = pendingActionToPlanned({ actionClass: "close", params: persisted, reason: heuristicClose.reason });
+    expect(replayed.closeKind).toBe("heuristic");
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "passed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] });
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [replayed]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(outcomes[0]?.detail).toContain("CI state changed since planning (now: passed)");
+    expect(closePullRequest).not.toHaveBeenCalled();
   });
 
   it("LIVE non-heuristic close (linked-issue hard-rule) skips the live CI re-check entirely (#2128)", async () => {

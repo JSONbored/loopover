@@ -191,11 +191,34 @@ export async function closePullRequest(env: Env, installationId: number, repoFul
  *  the inspected window". The reopen guard uses this to fail CLOSED rather than allow a window-evasion bypass. */
 export type LastCloserResult = { login: string | null; coveredAllPages: boolean };
 
+/** Event-agnostic alias for {@link LastCloserResult} — the shape is identical for any single timeline-event-type
+ *  lookup (e.g. "closed" or "reopened"); kept as an alias rather than a rename so existing importers of
+ *  `LastCloserResult` are unaffected. */
+export type LastTimelineActorResult = LastCloserResult;
+
 /** Reopen-prevention (#one-shot-reopen): the login of whoever LAST closed this PR (most recent `closed` event in
  *  the issue-events timeline), or null if none / on error. Lets the reopen handler distinguish a maintainer/bot
  *  close (one-shot — a contributor may not reopen) from a contributor self-close (which they MAY reopen).
  *  `coveredAllPages` reports whether the bounded scan inspected the entire timeline (#audit-2.4). */
 export async function getLastCloserLogin(env: Env, installationId: number, repoFullName: string, issueNumber: number): Promise<LastCloserResult> {
+  return getLastActorForEvent(env, installationId, repoFullName, issueNumber, "closed");
+}
+
+/** Reopen-race guard (#2369): the login of whoever most recently REOPENED this PR (most recent `reopened` event in
+ *  the issue-events timeline), or null if none / on error. Lets `maybeRecloseDisallowedReopen` re-verify — right
+ *  before it re-closes a disallowed reopen — that the reopen it is reacting to is still the CURRENT reason the PR
+ *  is open, rather than blindly undoing a DIFFERENT, later, legitimately-authorized reopen (e.g. a maintainer
+ *  reopening again after the original disallowed reopen). Same pagination/fail-conservative semantics as
+ *  {@link getLastCloserLogin}. */
+export async function getLastReopenerLogin(env: Env, installationId: number, repoFullName: string, issueNumber: number): Promise<LastTimelineActorResult> {
+  return getLastActorForEvent(env, installationId, repoFullName, issueNumber, "reopened");
+}
+
+/** Shared timeline-scan engine behind {@link getLastCloserLogin} and {@link getLastReopenerLogin}: finds the actor
+ *  of the most recent issue-event matching `eventType`, scanning the newest bounded page window rather than the
+ *  oldest prefix (see the pagination comments below — identical for either event type). Factored out so the two
+ *  callers do not duplicate the pagination/fail-conservative logic. */
+async function getLastActorForEvent(env: Env, installationId: number, repoFullName: string, issueNumber: number, eventType: string): Promise<LastTimelineActorResult> {
   try {
     const { owner, repo } = splitRepo(repoFullName);
     const token = await createInstallationToken(env, installationId);
@@ -208,47 +231,47 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
     if (lastPage === null) {
       // No rel="last" in the Link header. A genuine single page has no rel="next" either — return page 1 directly.
       // But GitHub can paginate WITHOUT emitting rel="last" (only rel="next"); then trusting page 1 alone would let
-      // a later maintainer/bot close hide behind the un-enumerated tail and the reopen guard would fail OPEN. So
-      // follow rel="next" forward, tracking the latest close across pages (events are oldest-first → a later page's
-      // close supersedes), bounded by the same page budget. coveredAllPages holds ONLY if we reached the tail within
-      // budget; otherwise report not-covered so the caller fails closed. (#audit-rel-last)
+      // a later maintainer/bot event hide behind the un-enumerated tail and the reopen guard would fail OPEN. So
+      // follow rel="next" forward, tracking the latest matching event across pages (events are oldest-first → a
+      // later page's event supersedes), bounded by the same page budget. coveredAllPages holds ONLY if we reached
+      // the tail within budget; otherwise report not-covered so the caller fails closed. (#audit-rel-last)
       if (!issueEventsHasNextPage(firstResponse.headers.link)) {
-        return { login: latestCloserInPage(firstEvents) ?? null, coveredAllPages: true };
+        return { login: latestActorInPage(firstEvents, eventType) ?? null, coveredAllPages: true };
       }
-      let latestCloser = latestCloserInPage(firstEvents);
+      let latestActor = latestActorInPage(firstEvents, eventType);
       let hasNext = true;
       for (let page = 2; hasNext && page <= ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1; page += 1) {
         const response = await requestPage(page);
-        const closer = latestCloserInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>);
-        if (closer !== undefined) latestCloser = closer;
+        const actor = latestActorInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>, eventType);
+        if (actor !== undefined) latestActor = actor;
         hasNext = issueEventsHasNextPage(response.headers.link);
       }
       const coveredAllPages = !hasNext;
-      return { login: coveredAllPages ? (latestCloser ?? null) : null, coveredAllPages };
+      return { login: coveredAllPages ? (latestActor ?? null) : null, coveredAllPages };
     }
-    if (lastPage <= 1) return { login: latestCloserInPage(firstEvents) ?? null, coveredAllPages: true };
+    if (lastPage <= 1) return { login: latestActorInPage(firstEvents, eventType) ?? null, coveredAllPages: true };
 
     // GitHub returns issue-events oldest-first. Use the Link header to inspect the newest bounded window instead
-    // of the oldest prefix, so a long self-generated timeline cannot hide a later maintainer/bot close.
+    // of the oldest prefix, so a long self-generated timeline cannot hide a later maintainer/bot event.
     const firstPageToRead = Math.max(2, lastPage - ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1);
     // We inspected the entire timeline only when the window reached page 2 (page 1 is read separately above).
     const coveredAllPages = firstPageToRead === 2;
     for (let page = lastPage; page >= firstPageToRead; page -= 1) {
       const response = await requestPage(page);
-      const closer = latestCloserInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>);
-      if (closer !== undefined) return { login: closer, coveredAllPages };
+      const actor = latestActorInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>, eventType);
+      if (actor !== undefined) return { login: actor, coveredAllPages };
     }
-    return { login: coveredAllPages ? (latestCloserInPage(firstEvents) ?? null) : null, coveredAllPages };
+    return { login: coveredAllPages ? (latestActorInPage(firstEvents, eventType) ?? null) : null, coveredAllPages };
   } catch {
     // On error we cannot prove we read the whole timeline — report not-covered so the caller decides conservatively.
     return { login: null, coveredAllPages: false };
   }
 }
 
-function latestCloserInPage(events: Array<{ event?: string; actor?: { login?: string | null } | null }>): string | null | undefined {
+function latestActorInPage(events: Array<{ event?: string; actor?: { login?: string | null } | null }>, eventType: string): string | null | undefined {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const entry = events[i];
-    if (entry?.event === "closed") return entry.actor?.login ?? null;
+    if (entry?.event === eventType) return entry.actor?.login ?? null;
   }
   return undefined;
 }

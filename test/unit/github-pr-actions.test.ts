@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, dismissLatestBotApproval, getLastCloserLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, dismissLatestBotApproval, getLastCloserLogin, getLastReopenerLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { createTestEnv } from "../helpers/d1";
 
 function envWithKey() {
@@ -271,6 +271,72 @@ describe("GitHub PR action primitives (#778)", () => {
       return new Response("unexpected", { status: 500 });
     });
     await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 24)).resolves.toEqual({ login: null, coveredAllPages: true });
+  });
+
+  it("getLastReopenerLogin: walks paginated issue events to find the true most recent reopener (#2369)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      calls.push(url);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/117/events")) {
+        const page = new URL(url).searchParams.get("page");
+        if (page === "1") {
+          return Response.json([
+            ...Array.from({ length: 99 }, (_, index) => ({ event: "labeled", actor: { login: `labeler-${index}` } })),
+            { event: "reopened", actor: { login: "contributor" } },
+          ], { headers: { link: '<https://api.github.test/issues/117/events?per_page=100&page=2>; rel="last"' } });
+        }
+        if (page === "2") return Response.json([{ event: "reopened", actor: { login: "maintainer" } }]);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 117)).resolves.toEqual({ login: "maintainer", coveredAllPages: true });
+    expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=1"))).toBe(true);
+    expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=2"))).toBe(true);
+  });
+
+  it("getLastReopenerLogin: returns null when the events API throws (catch path, #2369)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      throw new Error("network failure");
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 118)).resolves.toEqual({ login: null, coveredAllPages: false });
+  });
+
+  it("getLastReopenerLogin: reads the newest bounded event pages instead of the oldest prefix (#2369)", async () => {
+    const fetchedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/119/events")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        fetchedPages.push(page);
+        if (page === 1) {
+          return Response.json([{ event: "reopened", actor: { login: "stale-contributor" } }], {
+            headers: { link: '<https://api.github.test/issues/119/events?per_page=100&page=12>; rel="last"' },
+          });
+        }
+        const events = Array.from({ length: 100 }, (_, i) =>
+          page === 11 && i === 40 ? { event: "reopened", actor: { login: "maintainer" } } : { event: "labeled" },
+        );
+        return Response.json(events);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 119)).resolves.toEqual({ login: "maintainer", coveredAllPages: false });
+    expect(fetchedPages).toEqual([1, 12, 11]);
+    expect(fetchedPages).not.toContain(2);
+  });
+
+  it("getLastReopenerLogin: records null when a reopened event has a null actor (#2369)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      if (input.toString().includes("/issues/120/events")) return Response.json([{ event: "reopened", actor: null }]);
+      return new Response("not found", { status: 404 });
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 120)).resolves.toEqual({ login: null, coveredAllPages: true });
   });
 
   it("dismisses the bot's own LATEST approve review, ignoring other reviewers and earlier bot reviews (#2254)", async () => {

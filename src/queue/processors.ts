@@ -389,6 +389,7 @@ import {
   closePullRequest,
   createIssueComment,
   getLastCloserLogin,
+  getLastReopenerLogin,
 } from "../github/pr-actions";
 import {
   loadLinkedIssueHardRules,
@@ -7655,6 +7656,39 @@ async function maybeRecloseDisallowedReopen(
       metadata: { deliveryId, repoFullName },
     }).catch(() => undefined);
     return true; // handled (decision made); a newly-authorized reopener still counts as handled
+  }
+  // Live re-check #3 (#2369): head/state freshness and the reopener's OWN permission are not the only things that
+  // can move in the window before this fires — a DIFFERENT person (e.g. an actual maintainer) can reopen the SAME
+  // PR again after the original disallowed reopen, which is a legitimate, authorized reopen. Since the PR was
+  // already open, that second reopen doesn't change head/state, so checks #1/#2 above cannot see it. Ask directly:
+  // is `reopener` STILL the most recent "reopened" actor on this PR's timeline? If someone else's reopen is now the
+  // live reason the PR is open, re-closing it would wrongly undo that person's authorized action.
+  const latestReopener = await getLastReopenerLogin(
+    env,
+    installationId,
+    repoFullName,
+    pr.number,
+  );
+  const latestReopenerLogin = latestReopener.login?.toLowerCase() ?? null;
+  // Ambiguous ("can't prove no later reopen exists beyond the inspected window") must fail CLOSED here — the
+  // opposite of the closer-lookup's fail-open bias above — because wrongly re-closing a maintainer-authorized PR
+  // is the worse failure mode than leaving a disallowed reopen unclosed for one more tick.
+  const reopenerWindowAmbiguous =
+    latestReopenerLogin == null && !latestReopener.coveredAllPages;
+  const reopenerSuperseded =
+    reopenerWindowAmbiguous || latestReopenerLogin !== reopener;
+  if (reopenerSuperseded) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: reopenerWindowAmbiguous
+        ? `could not confirm ${reopener} is still the most recent reopener (event window not fully covered) — reopen re-close not executed`
+        : `the current reopener is now ${latestReopenerLogin ?? "unknown"}, not ${reopener} — reopen re-close not executed`,
+      metadata: { deliveryId, repoFullName },
+    }).catch(() => undefined);
+    return true; // handled (decision made); a superseded/ambiguous reopener still counts as handled
   }
   await createIssueComment(
     env,

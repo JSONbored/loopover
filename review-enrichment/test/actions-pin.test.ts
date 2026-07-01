@@ -90,6 +90,10 @@ test("scanActionPins scans only changed workflow YAML files with patches", async
         patch: "@@ -1,0 +20,1 @@\n+    - uses: softprops/action-gh-release@v2",
       },
       {
+        path: ".github/workflows/ci.yml",
+        patch: "@@ -1,0 +30,1 @@\n+    - uses: pnpm/action-setup@v3",
+      },
+      {
         path: "docs/workflow.yml",
         patch: "@@ -1,0 +1,1 @@\n+    - uses: vendor/not-a-workflow@main",
       },
@@ -105,6 +109,12 @@ test("scanActionPins scans only changed workflow YAML files with patches", async
       line: 20,
       action: "softprops/action-gh-release",
       ref: "v2",
+    },
+    {
+      file: ".github/workflows/ci.yml",
+      line: 30,
+      action: "pnpm/action-setup",
+      ref: "v3",
     },
   ]);
 });

@@ -2949,6 +2949,59 @@ describe("queue processors", () => {
     await expect(releaseAgentMaintenanceLock(env, "owner/agent-repo", 7)).resolves.toBeUndefined();
   });
 
+  it("claimAgentMaintenanceLock fails OPEN when the atomic claim primitive itself throws (#2368)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => undefined,
+        claim: async () => { throw new Error("redis unavailable"); },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+  });
+
+  it("REGRESSION (#2368): claimAgentMaintenanceLock uses an atomic check-and-set, so two genuinely concurrent claims for the SAME PR can never both succeed", async () => {
+    // #2368: a get-then-set pair has a window between the read and the write where two concurrent callers can
+    // both observe an absent key and both claim it — exactly what the per-PR lock exists to prevent. This test
+    // races two claims for the same PR via Promise.all (both kick off before either resolves) against the
+    // default test cache's claim(), which mirrors createRedisCache's atomic SET NX: the check-and-set happens
+    // with no `await` boundary in between, so it is impossible for both callers to see "unclaimed".
+    const env = createTestEnv({});
+    const [first, second] = await Promise.all([
+      claimAgentMaintenanceLock(env, "owner/agent-repo", 7),
+      claimAgentMaintenanceLock(env, "owner/agent-repo", 7),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("REGRESSION (#2368): claimAgentMaintenanceLock calls the atomic claim primitive, not a separate get+set pair, when the cache supports it", async () => {
+    const calls: string[] = [];
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => { calls.push("get"); return null; },
+        set: async () => { calls.push("set"); },
+        claim: async () => { calls.push("claim"); return true; },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+    expect(calls).toEqual(["claim"]); // never falls through to the racy get/set pair when claim is available
+  });
+
+  it("claimAgentMaintenanceLock falls back to the get/set pair and still denies a held key when the cache has no claim() (#2368)", async () => {
+    // A cache adapter that hasn't implemented the atomic claim() primitive yet must still deny a second claim —
+    // just via the older, non-atomic get-then-set pair (documented as strictly no worse than this function's
+    // prior behavior), not by skipping the check entirely.
+    const values = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key: string) => values.get(key) ?? null,
+        set: async (key: string, value: string) => { values.set(key, value); },
+      },
+    });
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(true);
+    expect(await claimAgentMaintenanceLock(env, "owner/agent-repo", 7)).toBe(false);
+  });
+
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });

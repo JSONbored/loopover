@@ -2369,10 +2369,22 @@ export async function claimAgentMaintenanceLock(
   repoFullName: string,
   prNumber: number,
 ): Promise<boolean> {
+  const key = agentMaintenanceLockKey(repoFullName, prNumber);
+  // Atomic claim (#2129): a get-then-set pair has a window between the read and the write where two concurrent
+  // passes for the SAME PR can both observe an absent key and both claim it, defeating the serializer entirely.
+  // env.SELFHOST_TRANSIENT_CACHE.claim performs the check-and-set as one operation (Redis SET NX server-side),
+  // closing that window. Falls back to the non-atomic get/set pair only for a cache adapter that hasn't
+  // implemented claim yet — strictly no worse than this function's prior behavior.
+  if (env.SELFHOST_TRANSIENT_CACHE?.claim) {
+    try {
+      return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", AGENT_MAINTENANCE_LOCK_TTL_SECONDS);
+    } catch {
+      return true; // fail open — see the doc comment above.
+    }
+  }
   // getTransientKey/putTransientKey already fail open internally (a missing cache or a thrown read/write error
   // both resolve rather than throw), so this never needs its own try/catch — a cache fault surfaces here as
   // "no lock held", which correctly falls through to claiming it.
-  const key = agentMaintenanceLockKey(repoFullName, prNumber);
   if (await getTransientKey(env, key)) return false; // another pass is already in-flight for this PR
   await putTransientKey(env, key, "1", AGENT_MAINTENANCE_LOCK_TTL_SECONDS);
   return true;

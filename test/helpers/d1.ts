@@ -89,6 +89,15 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
       async del(key: string) {
         transientCache.delete(key);
       },
+      // Mirrors createRedisCache's atomic claim (#2129): the check-and-set below has no `await` between the
+      // `has` read and the `set` write, so it completes synchronously within one microtask — a concurrent
+      // caller can never observe the key as absent partway through another caller's claim, matching Redis's
+      // SET NX server-side atomicity.
+      async claim(key: string, value: string) {
+        if (transientCache.has(key)) return false;
+        transientCache.set(key, value);
+        return true;
+      },
     },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
     // gated review features. Override to "" to assert the dormant (no-repo) default.

@@ -326,8 +326,13 @@ function buildAskPublicAnswerCard(args: {
     .map((action) => (action.targetRepoFullName ? `${action.targetRepoFullName}: ${action.publicSafeSummary}` : action.publicSafeSummary))
     .filter((line) => line.trim().length > 0)
     .map((line) => publicBlockerDetail(line));
-  const questionText = sanitizePublicComment(
-    args.question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.",
+  // neutralizePublicMarkdownText (not just sanitizePublicComment) escapes markdown/HTML and zero-width-spaces
+  // @mentions and bare URLs — the question is free-form contributor text, so without it an authorized-but-
+  // untrusted actor (ask is not maintainer-gated; a confirmed-miner PR author qualifies) could post
+  // `@gittensory ask **APPROVED by @maintainer**` and have that bold, live-mentioning line render verbatim
+  // inside the bot's own trusted comment (#2457).
+  const questionText = neutralizePublicMarkdownText(
+    sanitizePublicComment(args.question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context."),
   );
   const findings = [
     `Question: ${questionText}`,
@@ -648,7 +653,8 @@ function askSections(bundle: AgentRunBundle | null | undefined, question?: strin
   return [
     "**Contribution context Q&A**",
     "",
-    `- Question: ${sanitizePublicComment(question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.")}`,
+    // Same escaping as buildAskPublicAnswerCard's questionText (#2457) — this is the sibling render path.
+    `- Question: ${neutralizePublicMarkdownText(sanitizePublicComment(question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context."))}`,
     "",
     "**Answer**",
     "",

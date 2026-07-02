@@ -2753,8 +2753,9 @@ async function maybeReReviewOnCiCompletion(
  * Wake linked PRs on an issue-side signal (#2259). Labeling/unlabeling (e.g. maintainer-only) or
  * assigning/unassigning on a linked ISSUE can flip a linked-issue hard-rule verdict, but that only gets
  * re-evaluated when the PR ITSELF receives a webhook or the staleness-ordered sweep eventually reaches it —
- * which can lag for many cycles on a repo with more than a few open PRs. Re-review every OPEN PR that links
- * this issue promptly instead of waiting. Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
+ * which can lag for many cycles on a repo with more than a few open PRs. Enqueue a bounded, staggered batch of
+ * per-PR re-gate jobs for OPEN PRs that link this issue instead of doing the expensive live re-review inline.
+ * Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
  * DISTINCT from CI-completion's — #2371): the two triggers are not interchangeable, so a shared window let an
  * unrelated CI re-review silently suppress a genuinely different issue-side signal. Within the issue-side
  * window itself, same-PR events are ALSO not interchangeable (an add-then-remove or assign-then-unassign
@@ -2783,8 +2784,9 @@ async function maybeReReviewOnLinkedIssueChange(
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
     const linkingPrNumbers = openPullRequests
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
-      .map((pr) => pr.number);
-    for (const prNumber of linkingPrNumbers) {
+      .map((pr) => pr.number)
+      .slice(0, SWEEP_MAX_PRS);
+    for (const [index, prNumber] of linkingPrNumbers.entries()) {
       if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
         await scheduleTrailingIssueLinkedReReview(
           env,
@@ -2795,13 +2797,17 @@ async function maybeReReviewOnLinkedIssueChange(
         );
         continue;
       }
-      await reReviewStoredPullRequest(
-        env,
+      const job: JobMessage = {
+        type: "agent-regate-pr",
         deliveryId,
-        installationId,
         repoFullName,
         prNumber,
-      );
+        installationId,
+      };
+      const delaySeconds = Math.min(index * 10, 600);
+      await (delaySeconds > 0
+        ? env.JOBS.send(job, { delaySeconds })
+        : env.JOBS.send(job));
     }
   }
   await recordWebhookEvent(env, {

@@ -44,9 +44,11 @@ test("every MinerGoalSpec field is documented with a JSDoc 'Default:' in the sou
   // runtime location resolves to the TypeScript source. readFileSync throws loudly if that layout ever changes, so
   // this test can't silently pass on a bad path.
   const source = readFileSync(new URL("../src/miner-goal-spec.ts", import.meta.url), "utf8");
+  const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   for (const field of Object.keys(DEFAULT_MINER_GOAL_SPEC)) {
-    // Grab the JSDoc block immediately preceding the field declaration inside the type.
-    const doc = source.match(new RegExp(`(/\\*\\*[\\s\\S]*?\\*/)\\s*\\n\\s*${field}:`));
+    // Grab the JSDoc block immediately preceding the field declaration inside the type. Field names are escaped
+    // before interpolation so the pattern stays safe if it is ever reused for a less controlled field surface.
+    const doc = source.match(new RegExp(`(/\\*\\*[\\s\\S]*?\\*/)\\s*\\n\\s*${escapeRe(field)}:`));
     const jsdoc = doc?.[1];
     assert.ok(jsdoc, `field '${field}' should have a JSDoc block`);
     assert.match(jsdoc, /Default:/, `field '${field}' JSDoc should state its Default:`);

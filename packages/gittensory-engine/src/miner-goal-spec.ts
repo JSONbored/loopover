@@ -56,7 +56,7 @@ export type MinerGoalSpec = {
  * Deep-frozen: this is a shared singleton, so runtime code can read it freely but must not mutate it — clone before
  * layering repo-specific overrides on top.
  */
-export const DEFAULT_MINER_GOAL_SPEC: MinerGoalSpec = Object.freeze({
+export const DEFAULT_MINER_GOAL_SPEC: Readonly<MinerGoalSpec> = Object.freeze({
   minerEnabled: true,
   wantedPaths: Object.freeze([]),
   blockedPaths: Object.freeze([]),

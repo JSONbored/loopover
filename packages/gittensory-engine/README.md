@@ -63,3 +63,9 @@ input order.
 `scanAiPolicyText` and `resolveAiPolicyVerdict` provide the deterministic policy gate used by miner discovery.
 They only deny on small, explicit AI-contribution ban phrases in `AI-USAGE.md` or `CONTRIBUTING.md`; ambiguous,
 missing, or empty policy text stays allowed so discovery does not invent a ban.
+
+## MinerGoalSpec
+
+`MinerGoalSpec` is the type surface for a repo's `.gittensory-miner.yml` (miner-side analogue of `.gittensory.yml`).
+`DEFAULT_MINER_GOAL_SPEC` is the safe default a repo with no file behaves as — minable (`minerEnabled: true`, an
+explicit opt-out), no path/label preferences, one concurrent claim, `neutral` discovery. Parsing is a separate module.

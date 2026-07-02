@@ -47,33 +47,65 @@ const RULES: Rule[] = [
   },
 ];
 
+/** Extract the inner text of every quoted string literal (single/double/backtick) on a line. Used to catch a
+ *  secret whose literal value is split across two adjacent added lines and joined at runtime (e.g.
+ *  `const a = "AKIA..."; const b = a + "REST";`) — pure per-line regex matching never sees the runtime-joined
+ *  value, only the two separate source literals either side of the `+`. */
+function extractStringLiteralContents(line: string): string[] {
+  const literals: string[] = [];
+  const re = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(line)) !== null) literals.push(match[0].slice(1, -1));
+  return literals;
+}
+
 /** Scan one file's unified-diff patch, tracking new-file line numbers via hunk headers. Pure. Value never captured. */
 export function scanPatch(path: string, patch: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
   let newLine = 0;
+  // Last added line's extracted string-literal contents, for the cross-line join check below. Reset whenever a
+  // non-added line breaks the run — a secret is only plausibly split across CONSECUTIVE added lines.
+  let previousLiterals: string[] = [];
   for (const line of patch.split("\n")) {
     if (line.startsWith("+++") || line.startsWith("---")) continue;
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
       newLine = Number(hunk[1]);
+      previousLiterals = [];
       continue;
     }
     if (line.startsWith("+")) {
       const content = line.slice(1);
+      let matched = false;
       for (const rule of RULES) {
         if (rule.re.test(content)) {
-          findings.push({
-            file: path,
-            line: newLine,
-            kind: rule.kind,
-            confidence: rule.confidence,
-          });
+          findings.push({ file: path, line: newLine, kind: rule.kind, confidence: rule.confidence });
+          matched = true;
           break; // one finding per line — first (most specific) rule wins
         }
       }
+      const currentLiterals = extractStringLiteralContents(content);
+      // Bounded: only the immediately-preceding line's LAST literal joined with this line's FIRST literal — the
+      // common "two sequential variable assignments" shape. Skipped once this line already matched on its own.
+      const lastPrevious = previousLiterals.at(-1);
+      const firstCurrent = currentLiterals[0];
+      if (!matched && lastPrevious !== undefined && firstCurrent !== undefined) {
+        const joined = lastPrevious + firstCurrent;
+        for (const rule of RULES) {
+          if (rule.re.test(joined)) {
+            // "medium" regardless of the rule's own confidence — a joined pair is a heuristic, not a direct match.
+            findings.push({ file: path, line: newLine, kind: rule.kind, confidence: "medium" });
+            break;
+          }
+        }
+      }
+      previousLiterals = currentLiterals;
       newLine++;
     } else if (!line.startsWith("-")) {
       newLine++; // context line advances the new-file counter; removed lines do not
+      previousLiterals = [];
+    } else {
+      previousLiterals = [];
     }
   }
   return findings;

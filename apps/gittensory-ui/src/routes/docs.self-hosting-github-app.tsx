@@ -48,18 +48,52 @@ function SelfHostingGithubApp() {
         ]}
       />
 
+      <h2>One-click App creation (recommended for a Direct App)</h2>
+      <p>
+        Before the App exists (no <code>GITHUB_APP_ID</code> set yet), the self-host serves a setup
+        wizard at <code>GET /setup</code>. It renders a form that POSTs a GitHub App{" "}
+        <em>manifest</em> — the exact permission and event set below, pre-filled — to GitHub's own
+        App-creation flow. GitHub creates the App with the correct configuration in one step and
+        redirects back to exchange credentials automatically; there is no manual permission
+        checklist to get right or wrong. The route is disabled once an App is configured, so it
+        can't rebind a live install.
+      </p>
+      <CodeBlock
+        filename=".env"
+        code={`PUBLIC_API_ORIGIN=https://reviews.example.com  # exact public URL, embedded in the manifest
+SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a freshly-booted instance`}
+      />
+      <CodeBlock
+        lang="bash"
+        code={`open "https://reviews.example.com/setup?token=<SELFHOST_SETUP_TOKEN>"`}
+      />
+      <Callout variant="note">
+        Manual App creation (below) is still fully supported — for an air-gapped instance, a
+        stricter change-review process, or simply a preference for reviewing every permission by
+        hand before it exists. Whichever path you take, the resulting App needs the SAME
+        permissions: this doc's manual list is kept in sync with the wizard's manifest and checked
+        in CI, so the two can't silently drift apart.
+      </Callout>
+
       <h2>Direct App permissions</h2>
       <ul>
-        <li>Pull requests: read/write.</li>
-        <li>Checks: read/write.</li>
-        <li>Issues: read/write.</li>
-        <li>Contents: read. Add write only if the self-host should merge.</li>
+        <li>Pull requests: write.</li>
+        <li>
+          Checks: write — the gate posts a check-run; <code>checks: read</code> alone 403s that
+          write (silently fails the first review with no obvious cause).
+        </li>
+        <li>Issues: write.</li>
+        <li>
+          Contents: write — required for BOTH merging and the auto-maintain{" "}
+          <code>update_branch</code> action. <code>contents: read</code> looks sufficient at
+          creation time but silently breaks auto-merge later with no error surfaced in the UI; there
+          is no lesser permission that keeps merge/update-branch working.
+        </li>
         <li>Commit statuses: read.</li>
         <li>Metadata: read.</li>
       </ul>
       <p>
-        Events should include pull request, pull request review, push, issues, check suite, check
-        run, and status.
+        Events: pull request, pull request review, push, issues, check suite, check run, and status.
       </p>
 
       <h2>Direct App env</h2>

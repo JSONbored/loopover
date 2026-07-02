@@ -1006,6 +1006,32 @@ describe("createPgQueue (durable #977)", () => {
       );
       expect(await renderMetrics()).toContain("gittensory_jobs_dead_letter_revived_total 1");
     });
+
+    // REGRESSION (#2581 review defect): the revive interval had no error handler of its own, so a thrown
+    // pool/metric failure on that tick would surface as an unhandled promise rejection and could terminate the
+    // process -- exactly the failure mode pump()'s own try/catch already guards against for the main poll loop.
+    it("survives a reviveDeadLetterJobs() pool failure on the interval tick instead of crashing the process", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      try {
+        const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+          if (String(sql).includes("WHERE status='dead' AND attempts<$1")) throw new Error("connection terminated unexpectedly");
+          return { rows: [], rowCount: 0 };
+        });
+        const pool = { query: fn } as unknown as Pool;
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const q = createPgQueue(pool, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000); // the revive interval fires once
+
+        const logged = errorSpy.mock.calls.map(([line]) => String(line));
+        expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
+        await q.stop();
+      } finally {
+        delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+      }
+    });
   });
 
   it("reschedules GitHub rate-limit failures without consuming the dead-letter budget", async () => {

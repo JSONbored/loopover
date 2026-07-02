@@ -53,6 +53,13 @@ export type FocusManifestGateConfig = {
    *  costs one extra, uncached GitHub Trees-API call for any PR that touches migrations/**, so it is opt-in
    *  rather than a new default. */
   premergeContentRecheck: boolean | null;
+  /** `gate.requireFreshRebaseWindow` (#2552, anti-race): minutes. When the base branch has advanced within
+   *  this window of the actual merge-decision moment, an agent-driven merge forces an `update_branch` +
+   *  fresh CI recheck cycle before merging, instead of trusting a `mergeableState: clean` read that may
+   *  already be stale relative to a sibling commit that just landed on the base. null (unset) ⇒ never force
+   *  (byte-identical to today) — a discrete positive-minutes count, not a score, so it is neither clamped
+   *  nor rounded; an invalid value (fractional, non-positive, non-finite) is dropped with a warning. */
+  requireFreshRebaseWindowMinutes: number | null;
 };
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
@@ -302,6 +309,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   dryRun: null,
   firstTimeContributorGrace: null,
   premergeContentRecheck: null,
+  requireFreshRebaseWindowMinutes: null,
 };
 
 const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
@@ -418,7 +426,10 @@ function normalizeSource(raw: FocusManifestSource | undefined, value: JsonValue 
 
 function normalizeOptionalGateMode(value: JsonValue | undefined, field: string, warnings: string[]): GateRuleMode | null {
   if (value === undefined || value === null) return null;
-  if (value === "off" || value === "advisory" || value === "block") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "off" || normalized === "advisory" || normalized === "block") return normalized;
+  }
   warnings.push(`Manifest gate field "${field}" must be one of off, advisory, block; ignoring "${String(value)}".`);
   return null;
 }
@@ -521,6 +532,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
     premergeContentRecheck: normalizeOptionalBoolean(record.premergeContentRecheck, "gate.premergeContentRecheck", warnings),
+    requireFreshRebaseWindowMinutes: normalizeOptionalPositiveInteger(record.requireFreshRebaseWindow, "gate.requireFreshRebaseWindow", warnings),
   };
   // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
   // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
@@ -551,7 +563,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.selfAuthoredLinkedIssue !== null ||
     gate.dryRun !== null ||
     gate.firstTimeContributorGrace !== null ||
-    gate.premergeContentRecheck !== null;
+    gate.premergeContentRecheck !== null ||
+    gate.requireFreshRebaseWindowMinutes !== null;
   return gate;
 }
 
@@ -596,6 +609,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   if (gate.premergeContentRecheck !== null) out.premergeContentRecheck = gate.premergeContentRecheck;
+  if (gate.requireFreshRebaseWindowMinutes !== null) out.requireFreshRebaseWindow = gate.requireFreshRebaseWindowMinutes;
   return out;
 }
 
@@ -1208,6 +1222,7 @@ export function resolveEffectiveSettings(
   if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   if (gate.premergeContentRecheck !== null) effective.premergeContentRecheck = gate.premergeContentRecheck;
+  if (gate.requireFreshRebaseWindowMinutes !== null) effective.requireFreshRebaseWindowMinutes = gate.requireFreshRebaseWindowMinutes;
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {

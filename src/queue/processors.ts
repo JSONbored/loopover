@@ -43,6 +43,7 @@ import {
   getCachedAiReview,
   putCachedAiReview,
   markPullRequestsRegated,
+  markPullRequestReviewsInvalidated,
   markPullRequestSurfacePublished,
   getLatestRegatedAt,
   claimRegateFanoutSlot,
@@ -75,9 +76,11 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
+  cachedFetchLivePullRequestMergeState,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
+  fetchLiveBaseBranchAdvancedAt,
   fetchLiveCiAggregatePreferGraphQl,
   type LiveCiAggregate,
   fetchLiveIssueState,
@@ -89,6 +92,8 @@ import {
   fetchLivePullRequestState,
   fetchOpenPullRequestNumbersForCommit,
   fetchRequiredStatusContexts,
+  invalidatePrStateCache,
+  primeDurablePrStateCache,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -613,15 +618,24 @@ function cachedLiveMergeState(
   const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
   const cached = facts.mergeStates.get(key);
   if (cached) return cached;
+  // #2537: on a request-local miss, check the DURABLE cross-webhook cache before hitting GitHub — this is the
+  // readiness/freshness-guard path, not the act-boundary disposition (that's refreshLiveMergeState below, which
+  // NEVER routes through the durable cache). A durable hit is itself memoized request-locally for the rest of
+  // this pass via facts.mergeStates, same as a live fetch would be.
   const next = evictLiveFactOnReject(
     facts.mergeStates,
     key,
-    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
+    cachedFetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
   return next;
 }
 
+// #4220 contradiction: the stored pr.mergeableState lags GitHub's async recompute, so a base-conflicting PR could
+// read clean here (safe to merge) while the disposition reads the live dirty and auto-CLOSES it. This ALWAYS
+// force-refetches live from GitHub and MUST NEVER be routed through the durable pull_request_detail_sync_state
+// cache added by #2537 — both act-boundary-adjacent callers (runAgentMaintenancePlanAndExecute's disposition
+// input, and the unified-comment mirror) depend on this staying live and uncached.
 function refreshLiveMergeState(
   env: Env,
   repoFullName: string,
@@ -2069,6 +2083,39 @@ async function runAgentMaintenancePlanAndExecute(
   );
   if (breakerOnPlan.length === 0) return;
 
+  // #2552 (gate review finding, round 2): force a fresh rebase + CI recheck when the base has advanced within
+  // the configured window, immediately before what would otherwise be an agent-driven merge — mergeable_state
+  // only detects git-level TEXTUAL conflicts, so a base that advanced with a new, non-conflicting sibling
+  // commit (e.g. a second PR's distinct-but-colliding migration file) still reads `clean`, on a decision that
+  // predates the base's latest commit. Deliberately placed AFTER the full plan (gate/CI/blockers/breakers) is
+  // resolved, not on the raw mergeableState alone: the original placement ran this unconditionally whenever
+  // mergeableState was clean, so a PR sitting on red CI or a gate blocker (still git-clean) could burn the
+  // bounded retry cap on rebases nobody was about to act on, exhausting it before the PR was ever actually
+  // merge-eligible. Only fires when the resolved plan contains a merge THAT WOULD EXECUTE NOW (requiresApproval
+  // stages for a human, not an immediate merge). A forced rebase's resulting `synchronize` webhook re-triggers
+  // a fresh evaluation on the new head, so this pass stops here rather than executing against stale inputs.
+  const requireFreshRebaseWindowMinutes = settings.requireFreshRebaseWindowMinutes;
+  const planHasImminentMerge = breakerOnPlan.some((action) => action.actionClass === "merge" && !action.requiresApproval);
+  if (
+    typeof requireFreshRebaseWindowMinutes === "number" &&
+    baseRef &&
+    planHasImminentMerge &&
+    (liveMergeState ?? pr.mergeableState) === "clean" &&
+    (await maybeForceFreshRebase(env, {
+      installationId,
+      repoFullName,
+      pr,
+      settings,
+      windowMinutes: requireFreshRebaseWindowMinutes,
+      baseRef,
+      token,
+      admissionKey,
+      deliveryId,
+    }))
+  ) {
+    return;
+  }
+
   const installation = await getInstallation(env, installationId);
   /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive. */
   const installationPermissions = installation?.permissions ?? null;
@@ -2154,6 +2201,10 @@ async function reReviewStoredPullRequest(
     resyncAdmissionKey,
   );
   primeLiveMergeState(liveFacts, repoFullName, prNumber, resyncToken, live?.mergeable_state);
+  // #2537: this resync ALREADY paid for a bare GET /pulls/{n} — persist it to the durable cross-webhook cache so
+  // the readiness/dup-winner readers below (and future webhook deliveries) don't re-fetch it. Best-effort, never
+  // blocks the sweep on a write hiccup.
+  await primeDurablePrStateCache(env, repoFullName, prNumber, live).catch(() => undefined);
   // Terminal early-exit (#1942): the PR is CLOSED/merged on GitHub even though the stored row still reads open — a
   // dropped `closed` webhook (relay down). Reconcile the stored row from the live payload and RETURN before the
   // expensive resync (files) + readiness + re-review reads. A stale sweep must never spend GitHub budget — or post
@@ -2543,6 +2594,115 @@ async function ciPendingDeferStuck(
   } catch {
     return false;
   }
+}
+
+// #2552: bounded-retry cap for the force-fresh-rebase gate — without this, a fast-moving base could keep the
+// freshness window perpetually "hot" and never let the PR clear to a real merge. Past the cap, the gate falls
+// through to a normal merge decision (with an audit trail) rather than holding the PR hostage to base
+// velocity. Deliberately keyed by PR NUMBER ONLY, NOT head SHA (gate review finding on the first version of
+// this PR): a SUCCESSFUL forced update_branch itself produces a NEW head SHA, so a headSha-keyed counter would
+// mint a fresh key — and reset to attempt 0 — on every single successful force, making the cap unreachable via
+// the exact path it exists to bound. A 24h TTL on the stored counter still gives an eventual fresh start.
+const MAX_FRESH_REBASE_FORCES = 3;
+function freshRebaseForceCountKey(repoFullName: string, prNumber: number): string {
+  return `fresh-rebase-forced:${repoFullName.toLowerCase()}#${prNumber}`;
+}
+
+/**
+ * #2552: when the repo has opted into `gate.requireFreshRebaseWindow` and the base branch's live tip commit
+ * landed within that window of NOW, force an `update_branch` (merges base into head, re-triggering CI on the
+ * rebased result — the SAME action class/write-permission/dry-run/kill-switch stack `prReadyForReview`'s
+ * BEHIND-branch path already uses, not a new one) immediately before what would otherwise be a merge, instead
+ * of trusting a `mergeable_state: clean` read that predates the base's latest commit. Returns true when it
+ * forced the rebase (the caller stops this pass — the resulting `synchronize` webhook re-triggers a fresh
+ * evaluation on the new head); false when the freshness check doesn't apply, the cap was already reached, or
+ * the forced action itself couldn't complete (not authorized / dry-run / transient failure) — in every false
+ * case the caller falls through to the normal merge decision, so this gate fails open to today's behavior.
+ */
+async function maybeForceFreshRebase(
+  env: Env,
+  args: {
+    installationId: number;
+    repoFullName: string;
+    pr: PullRequestRecord;
+    settings: RepositorySettings;
+    // Narrowed by the caller (typeof settings.requireFreshRebaseWindowMinutes === "number") -- re-deriving and
+    // re-checking the same nullable field here would just be an unreachable duplicate of that guard.
+    windowMinutes: number;
+    baseRef: string;
+    token: string | undefined;
+    admissionKey: GitHubRateLimitAdmissionKey | undefined;
+    deliveryId: string;
+  },
+): Promise<boolean> {
+  const { installationId, repoFullName, pr, settings, windowMinutes, baseRef, token, admissionKey, deliveryId } = args;
+  /* v8 ignore next -- structurally unreachable: the caller only invokes this after confirming
+   * (liveMergeState ?? pr.mergeableState) === "clean", which GitHub can never compute for a PR with no
+   * head commit; the null check is belt-and-suspenders against the field's optional TS type. */
+  if (!pr.headSha) return false;
+  const advancedAt = await fetchLiveBaseBranchAdvancedAt(env, repoFullName, baseRef, token, admissionKey);
+  if (!advancedAt) return false; // fail-open: unreadable base commit -> no forced rebase
+  const advancedAtMs = Date.parse(advancedAt);
+  if (!Number.isFinite(advancedAtMs) || Date.now() - advancedAtMs >= windowMinutes * 60_000) return false;
+
+  const countKey = freshRebaseForceCountKey(repoFullName, pr.number);
+  const storedCount = Number(await getTransientKey(env, countKey));
+  const attempt = Number.isFinite(storedCount) && storedCount > 0 ? storedCount : 0;
+  if (attempt >= MAX_FRESH_REBASE_FORCES) {
+    await recordAuditEvent(env, {
+      eventType: "agent.action.fresh_rebase_window_cap_exceeded",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "completed",
+      detail: `base advanced within the ${windowMinutes}m freshness window, but the ${MAX_FRESH_REBASE_FORCES}-attempt forced-rebase cap was already reached for this PR — falling through to a normal merge decision`,
+      metadata: { deliveryId, repoFullName, headSha: pr.headSha, windowMinutes },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the caller's fallthrough */
+      () => undefined,
+    );
+    return false;
+  }
+
+  const autonomyLevel = resolveAutonomy(settings.autonomy, "update_branch");
+  const installation = await getInstallation(env, installationId);
+  const [outcome] = await executeAgentMaintenanceActions(
+    env,
+    {
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      headSha: pr.headSha,
+      autonomy: settings.autonomy,
+      agentPaused: settings.agentPaused,
+      agentDryRun: settings.agentDryRun,
+      /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive (mirrors runAgentMaintenancePlanAndExecute's own identical merge-time read). */
+      installationPermissions: installation?.permissions ?? null,
+      authorLogin: pr.authorLogin,
+    },
+    [
+      {
+        actionClass: "update_branch",
+        requiresApproval: autonomyRequiresApproval(autonomyLevel),
+        reason: `base branch advanced within the ${windowMinutes}m freshness window; forcing a fresh rebase + CI recheck before merge`,
+        expectedHeadSha: pr.headSha,
+      },
+    ],
+  );
+  if (outcome?.outcome !== "completed") return false;
+  const nextAttempt = attempt + 1;
+  await putTransientKey(env, countKey, String(nextAttempt), 24 * 3600);
+  await recordAuditEvent(env, {
+    eventType: "agent.action.forced_rebase_freshness",
+    actor: "gittensory",
+    targetKey: `${repoFullName}#${pr.number}`,
+    outcome: "completed",
+    detail: `forced update_branch (attempt ${nextAttempt}/${MAX_FRESH_REBASE_FORCES}) — base advanced within the ${windowMinutes}m freshness window`,
+    metadata: { deliveryId, repoFullName, headSha: pr.headSha, windowMinutes, attempt: nextAttempt },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the caller */
+    () => undefined,
+  );
+  return true;
 }
 
 // One CI run fires MANY check_run (one per job) + check_suite completions. Re-reviewing on every one storms the
@@ -4077,11 +4237,42 @@ async function processGitHubWebhook(
           }),
         );
       });
+      // Reviews-cache invalidation (#2537): a `pull_request_review` webhook (submitted/dismissed/edited) is
+      // the ONLY event that can change the set of reviews GitHub reports for this PR, so it is the sole signal
+      // fetchAndStorePullRequestDetails's reviewsUpToDate check needs to know the cached reviews are stale.
+      // Independent of, and does not gate, any downstream processing below — best-effort like the outcome/
+      // reversal recording above, so a transient D1 failure here never blocks the webhook.
+      if (
+        eventName === "pull_request_review" &&
+        (payload.action === "submitted" || payload.action === "dismissed" || payload.action === "edited")
+      ) {
+        await markPullRequestReviewsInvalidated(env, repoFullName, payloadPullRequest.number).catch((error) => {
+          /* v8 ignore next -- best-effort: cache-invalidation stamping never blocks the webhook. */
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "pull_request_reviews_invalidate_failed",
+              deliveryId,
+              repository: repoFullName,
+              pullNumber: payloadPullRequest.number,
+              error: errorMessage(error),
+            }),
+          );
+        });
+      }
       const pr = await upsertPullRequestFromGitHub(
         env,
         repoFullName,
         payload.pull_request,
       );
+      // #2537: the durable PR-state cache (mergeable_state/state) goes stale exactly when GitHub recomputes them —
+      // synchronize (new head → new mergeable_state recompute), closed (state flips), reopened (state flips back).
+      // Clear explicitly (null, not omitted — PARTIAL-UPDATE CONTRACT) so the next cached read is a forced live
+      // miss; other pull_request actions (labeled, edited, etc.) don't change these fields and are left untouched
+      // to avoid spurious cache churn / extra writes on high-frequency low-signal actions.
+      if (eventName === "pull_request" && (payload.action === "synchronize" || payload.action === "closed" || payload.action === "reopened")) {
+        await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      }
       // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
       // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
       // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
@@ -5128,6 +5319,7 @@ export async function runAiReviewForAdvisory(
         files.map((file) => file.path),
       ),
       repoInstructions: args.reviewInstructions ?? null,
+      changedFiles: files,
     });
     if (result.status !== "ok") return undefined;
     const findings: AdvisoryFinding[] = [];
@@ -5472,6 +5664,12 @@ export async function reconcileLiveDuplicateSiblings(
   const staleClosed = new Set<number>();
   await Promise.all(
     lowerOverlapping.map(async (sibling) => {
+      // #2537: deliberately NOT durable-cached (flagged by the gate's own review) -- despite recomputing every
+      // delivery, this reconcile feeds duplicate-winner selection, which can auto-CLOSE the CURRENT PR when
+      // duplicateWinnerEnabled. A cached "open" read up to PR_STATE_CACHE_MAX_AGE_MS stale after a missed
+      // `closed` webhook would keep an already-closed sibling eligible as the winner, wrongly closing this PR
+      // as the loser. That is the same class of irreversible-actuation risk the merge/close decision and
+      // gate-override guard against, so this stays on the raw live fetch like they do.
       const liveState = await fetchLivePullRequestState(
         env,
         repoFullName,
@@ -7247,6 +7445,11 @@ async function recordGithubProductUsage(
  * THAT commit (the neutral check-run is per-commit by design). FAIL-OPEN: an unreadable live fetch returns the
  * cached head, so a transient GitHub hiccup never strands the override — it just targets the stored SHA as before.
  * Mirrors the rebase path's live re-fetch (prReadyForReview) and the dup-winner live reconcile.
+ * #2537: deliberately NOT routed through the durable head-SHA cache (cachedFetchLivePullRequestHeadSha,
+ * backfill.ts) -- this is the same class of security-sensitive, human-triggered re-check as the act-boundary
+ * merge/close decision, wanting the literal current commit rather than a value that can be up to
+ * PR_STATE_CACHE_MAX_AGE_MS stale. A commit landing inside that freshness window right after the override
+ * comment is exactly the race this function exists to close; a cache hit would silently reintroduce it.
  */
 export async function resolveOverrideHeadSha(
   env: Env,

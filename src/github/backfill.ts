@@ -326,6 +326,12 @@ const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40
 const MERGED_PR_FILE_HYDRATION_BATCH_SIZE: Record<BackfillMode, number> = { light: 10, full: 20, resume: 20 };
 const PULL_REQUEST_FILES_FETCH_METRIC = "gittensory_github_pull_request_files_fetch_total";
 type PullRequestFilesFetchCaller = "backfill_open_pr_details" | "backfill_merged_history" | "live_review";
+// #2537: durable-cache counter for the bare PR-state read, mirroring PULL_REQUEST_FILES_FETCH_METRIC's bounded-
+// label style (no per-PR-number labels — cardinality-safe).
+const PR_STATE_CACHE_METRIC = "gittensory_pr_state_cache_total";
+// Safety-net max age for a webhook-invalidated PR-state cache row (a dropped/missed webhook must not pin a stale
+// value forever). Short enough that a missed synchronize/closed/reopened event self-heals within one sweep tick.
+const PR_STATE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
 const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
@@ -613,7 +619,7 @@ export async function backfillOpenPullRequestDetails(
   await mapWithConcurrency(batch, 2, async (pr) => {
     await upsertPullRequestDetailSyncState(env, { repoFullName: repo.fullName, pullNumber: pr.number, status: "running" });
     const before = warnings.length;
-    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
+    const { reviewsSyncedAt } = await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
     const syncedAt = nowIso();
     const newWarnings = warnings.slice(before);
     await upsertPullRequestDetailSyncState(env, {
@@ -622,7 +628,7 @@ export async function backfillOpenPullRequestDetails(
       status: newWarnings.length > 0 ? "partial" : "complete",
       headSha: pr.headSha,
       filesSyncedAt: syncedAt,
-      reviewsSyncedAt: syncedAt,
+      reviewsSyncedAt,
       checksSyncedAt: syncedAt,
       lastSyncedAt: syncedAt,
       errorSummary: newWarnings.at(-1),
@@ -689,7 +695,7 @@ export async function refreshPullRequestDetails(
   const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const warnings: string[] = [];
   await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
-  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey, "live_review", { forceFiles: options.force });
+  const { reviewsSyncedAt } = await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey, "live_review", { forceFiles: options.force });
   const syncedAt = nowIso();
   const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
   await upsertPullRequestDetailSyncState(env, {
@@ -698,7 +704,7 @@ export async function refreshPullRequestDetails(
     status,
     headSha: pr.headSha,
     filesSyncedAt: syncedAt,
-    reviewsSyncedAt: syncedAt,
+    reviewsSyncedAt,
     checksSyncedAt: syncedAt,
     lastSyncedAt: syncedAt,
     errorSummary: warnings.at(-1),
@@ -1807,7 +1813,7 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const detailWarningStart = warnings.length;
     await mapWithConcurrency(detailTargets, limits.detailConcurrency, async (pr) => {
       const before = warnings.length;
-      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
+      const { reviewsSyncedAt } = await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
       // Persist the repo+PR+headSha snapshot marker (#audit-rate-headroom) so a later call through ANY
       // cache-aware path (open-PR convergence, live review) can skip refetching this PR's files while its
       // head is unchanged — without this write, fetchAndStorePullRequestDetails's cache check always misses
@@ -1820,7 +1826,7 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
         status: newWarnings.length > 0 ? "partial" : "complete",
         headSha: pr.headSha,
         filesSyncedAt: syncedAt,
-        reviewsSyncedAt: syncedAt,
+        reviewsSyncedAt,
         checksSyncedAt: syncedAt,
         lastSyncedAt: syncedAt,
         errorSummary: newWarnings.at(-1),
@@ -1978,20 +1984,54 @@ async function fetchAndStorePullRequestDetails(
   admissionKey: GitHubRateLimitAdmissionKey | undefined,
   caller: PullRequestFilesFetchCaller,
   options: { forceFiles?: boolean | undefined } = {},
-): Promise<void> {
+): Promise<{ reviewsSyncedAt: string | null | undefined }> {
   // Durable repo+PR+headSha file snapshot (#audit-rate-headroom): a bare URL cache is insufficient because
   // `/pulls/{n}/files` has the SAME url across different heads. Reuse the stored `pull_request_files` rows
   // instead of refetching when the last successful files sync already covered the PR's CURRENT head SHA —
-  // only files are cached here; reviews/checks are more volatile at a fixed head and still refresh every call.
-  const existingState = !options.forceFiles && pr.headSha ? await getPullRequestDetailSyncState(env, repoFullName, pr.number) : null;
-  const filesUpToDate = Boolean(existingState?.headSha) && existingState?.headSha === pr.headSha && Boolean(existingState?.filesSyncedAt);
+  // only files are cached here; checks are more volatile at a fixed head and still refresh every call.
+  //
+  // The row is now fetched UNCONDITIONALLY (the original files-only cache gated this on `!options.forceFiles`,
+  // skipping the read entirely on a forced refresh) because reviews caching (#2537) reuses this SAME row and
+  // does not depend on `headSha` or `forceFiles` at all -- `forceFiles` only ever forces a FILES re-fetch (see
+  // its name and its only caller, refreshPullRequestDetails's manual "force" option), so a caller asking to
+  // force-refresh files must not ALSO force an unrelated reviews refetch (gate review finding: the previous
+  // version skipped the row entirely on `forceFiles && headSha`, which zeroed out `reviewsUpToDate` too).
+  // `forceFiles` is applied ONLY to `filesUpToDate` below, never to `reviewsUpToDate`.
+  const existingState = await getPullRequestDetailSyncState(env, repoFullName, pr.number);
+  const filesUpToDate = !options.forceFiles && Boolean(existingState?.headSha) && existingState?.headSha === pr.headSha && Boolean(existingState?.filesSyncedAt);
+  // Reviews cache (#2537): independent of headSha — a new commit alone does not invalidate existing review
+  // state, only an actual `pull_request_review` webhook (submitted/dismissed/edited) does, via
+  // markPullRequestReviewsInvalidated. Up to date when a prior sync recorded reviewsSyncedAt and either no
+  // invalidation has been recorded since, or the invalidation predates that sync. STRICTLY greater-than (not
+  // >=): millisecond-resolution ISO timestamps can tie when a sync and a racing invalidation land in the same
+  // millisecond, and sub-millisecond ordering is unknowable from the stored strings — a tie must fail toward
+  // "still needs a refetch," never toward silently trusting a possibly-stale cache.
+  const reviewsSyncedAtBefore = existingState?.reviewsSyncedAt;
+  const reviewsUpToDate =
+    Boolean(reviewsSyncedAtBefore) &&
+    (!existingState?.reviewsInvalidatedAt || (reviewsSyncedAtBefore ?? "") > existingState.reviewsInvalidatedAt);
+  // Gate review finding (TOCTOU race): `existingState` above is a snapshot read at the TOP of this call. If a
+  // `pull_request_review` webhook races in AFTER that read but BEFORE this function returns, an unconditional
+  // "stamp reviewsSyncedAt to now" on the CALLER's side (the old design) would advance the timestamp PAST that
+  // webhook's invalidation without ever having fetched the reviews it invalidated -- the cache would then
+  // permanently believe it's fresh through an event it never actually observed. Captured HERE, before the
+  // fetch even starts, so it's safe: any invalidation racing in from this instant onward still leaves
+  // `reviewsInvalidatedAt` newer than whatever we return below, forcing a correct refetch on the NEXT pass.
+  const reviewFetchStartedAt = nowIso();
   const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([
     filesUpToDate ? Promise.resolve<GitHubFilePayload[]>([]) : fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey, caller),
-    fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings, admissionKey),
+    reviewsUpToDate ? Promise.resolve<GitHubReviewPayload[]>([]) : fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings, admissionKey),
     fetchPullRequestChecks(env, repoFullName, pr, token, warnings, admissionKey),
   ]);
   const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
+  // reviewsSyncedAt only ever ADVANCES on a genuine success in THIS call -- never on a cache-hit skip, and
+  // never on a failed fetch attempt. This is what makes a stored reviewsSyncedAt a trustworthy "last confirmed
+  // successful sync" marker on its own (no separate errorSummary string-matching needed: a failed or skipped
+  // pass simply preserves whatever was already known, which -- being unchanged -- correctly keeps comparing as
+  // stale against reviewsInvalidatedAt on the next pass until a real fetch actually succeeds).
+  const reviewSyncFailedThisCall = !reviewsUpToDate && warnings.slice(warningStart).some((warning) => warning.startsWith(`Review sync failed for #${pr.number}:`));
+  const reviewsSyncedAtResult = !reviewsUpToDate && !reviewSyncFailedThisCall ? reviewFetchStartedAt : reviewsSyncedAtBefore;
 
   if (!filesUpToDate && !fileSyncFailed) {
     await deletePullRequestFiles(env, repoFullName, pr.number);
@@ -2036,6 +2076,7 @@ async function fetchAndStorePullRequestDetails(
       payload: check as unknown as Record<string, JsonValue>,
     });
   }
+  return { reviewsSyncedAt: reviewsSyncedAtResult };
 }
 
 // GitHub caps list endpoints at 100 items/page, so a single `per_page=100` fetch silently truncates a
@@ -2637,6 +2678,32 @@ export async function fetchLivePullRequestMergeState(
   return result?.data.mergeable_state ?? undefined;
 }
 
+/**
+ * The base branch's LIVE tip-commit timestamp via REST `GET /commits/{ref}`, for the force-fresh-rebase gate
+ * (#2552): `mergeable_state` only detects git-level TEXTUAL conflicts, so a base that advanced with a new,
+ * non-conflicting sibling commit (e.g. a second PR's distinct-but-colliding migration file) still reads
+ * `clean`, letting a merge proceed on a decision that is stale relative to what just landed on the base.
+ * Comparing this timestamp against "now" lets the caller force a fresh rebase + CI recheck instead of
+ * trusting a `clean` read that predates the base's latest commit. Best-effort: a fetch error returns
+ * undefined (caller fails open — no forced rebase, same as today).
+ */
+export async function fetchLiveBaseBranchAdvancedAt(
+  env: Env,
+  repoFullName: string,
+  baseRef: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ commit?: { committer?: { date?: string | null } | null } | null }>(
+    env,
+    repoFullName,
+    `/commits/${encodeURIComponent(baseRef)}`,
+    token,
+    githubRateLimitOptions(admissionKey),
+  ).catch(() => undefined);
+  return result?.data.commit?.committer?.date ?? undefined;
+}
+
 /** The PR's LIVE state ("open" / "closed") via REST `GET /pulls/{n}`. The stored open-PR cache lags GitHub, so a
  *  sibling closed/merged on GitHub can still read `open` locally; the duplicate-winner election (#dup-winner /
  *  audit #15) confirms a lower sibling's live state before treating this PR as a cluster loser. Best-effort:
@@ -2698,6 +2765,183 @@ export async function fetchLivePullRequest(
 ): Promise<GitHubPullRequestPayload | undefined> {
   const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data ?? undefined;
+}
+
+// #2537: durable, webhook-invalidated cache for the bare PR-state read (GET /pulls/{n}). Unlike the request-local
+// LiveGithubFacts memo (queue/processors.ts), this survives ACROSS webhook deliveries / sweep ticks, cutting
+// repeat /pulls/{n} calls for an unchanged PR at the freshness-guard/readiness/dup-winner call sites. NEVER used
+// by the act-boundary merge/close decision (planAgentMaintenanceActions's liveMergeState read, or its
+// unified-comment mirror) or by resolveOverrideHeadSha (gate-override, queue/processors.ts) -- those force-
+// refetch by design (the #4220 fix; the gate-override race respectively) and must keep doing so; this cache
+// exists purely for the OTHER, non-authoritative reads.
+function isPrStateCacheFresh(fetchedAt: string | null | undefined): boolean {
+  if (!fetchedAt) return false;
+  const fetchedAtMs = Date.parse(fetchedAt);
+  if (!Number.isFinite(fetchedAtMs)) return false;
+  return Date.now() - fetchedAtMs < PR_STATE_CACHE_MAX_AGE_MS;
+}
+
+/** Best-effort write-through for the PR-state cache fields. Always stamps prStateFetchedAt = now on a successful
+ *  live read (even when the live value itself is undefined/null — a confirmed-empty read is still a fresh read,
+ *  distinct from "never fetched"), so a run of undefined reads doesn't force every caller back to GitHub. Preserves
+ *  the row's own `status` (defaulting to "never_synced" only when no row exists yet) — this write must NEVER force
+ *  `status: "complete"`, since `status` is shared with the FILES-cache staleness machinery
+ *  (backfillOpenPullRequestDetails / refreshPullRequestDetails treat `status !== "complete"` as "needs a files
+ *  resync"); a PR-state-only write claiming `complete` would falsely mark a files sync that never happened. A
+ *  write failure is swallowed (#2537 fail-open: the cache is an optimization, never a correctness dependency —
+ *  every caller already tolerates a live-fetch fallback). */
+async function writeThroughPrStateCache(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  previousStatus: PullRequestDetailSyncStateRecord["status"] | undefined,
+  fields: { prMergeableState?: string | null; prState?: string | null; headSha?: string | null },
+): Promise<void> {
+  incr(PR_STATE_CACHE_METRIC, { field: "write", result: "set" });
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber: prNumber,
+    status: previousStatus ?? "never_synced",
+    prStateFetchedAt: nowIso(),
+    ...fields,
+  }).catch(() => undefined);
+}
+
+/**
+ * Shared live-fetch for the three cached PR-state readers below (#2537 review fix). A SINGLE `GET /pulls/{n}`
+ * already returns `mergeable_state`, `state`, AND `head.sha` together, so a cache miss on any ONE field now
+ * fetches and write-throughs ALL THREE at once under the one shared `prStateFetchedAt` stamp they share --
+ * instead of writing only the field the caller happened to ask for. Without this, a fresh write for field A
+ * would make an UN-fetched field B look "fresh" to the NEXT reader (they share one timestamp), so that reader
+ * would silently return `undefined` for a field that was simply never populated, mistaking it for a
+ * confirmed-empty GitHub value. Reusing the full-payload fetch costs nothing extra: all three narrow fetchers
+ * (`fetchLivePullRequestMergeState` / `fetchLivePullRequestState` / `fetchLivePullRequestHeadSha`) already hit
+ * this exact same endpoint, just extracting one field each -- this only changes what the CACHED wrappers fetch
+ * internally; those narrow fetchers stay untouched for their other, uncached, act-boundary callers.
+ * Returns the full payload, or `undefined` on a failed fetch -- in which case the cache is left untouched
+ * entirely (a failed live read must not poison it with a false "confirmed fresh" stamp).
+ */
+async function fetchAndCachePrStateFields(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  previousStatus: PullRequestDetailSyncStateRecord["status"] | undefined,
+): Promise<GitHubPullRequestPayload | undefined> {
+  const live = await fetchLivePullRequest(env, repoFullName, prNumber, token, admissionKey);
+  if (!live) return undefined;
+  const liveHeadSha = live.head?.sha;
+  await writeThroughPrStateCache(env, repoFullName, prNumber, previousStatus, {
+    prMergeableState: live.mergeable_state ?? null,
+    prState: live.state ?? null,
+    // Omit (not null) when the live payload carries no head SHA -- mirrors primeDurablePrStateCache's own
+    // PARTIAL-UPDATE CONTRACT guard below: a PR-state write must never CLEAR the headSha the files cache
+    // (#audit-rate-headroom) relies on.
+    ...(liveHeadSha ? { headSha: liveHeadSha } : {}),
+  });
+  return live;
+}
+
+/** Prime the durable PR-state cache (#2537) from an ALREADY-FETCHED live payload (e.g. the sweep-resync's
+ *  `fetchLivePullRequest` read), so OTHER readers (readiness, dup-winner) benefit from this already-paid-for
+ *  fetch instead of re-fetching moments later. Best-effort, mirrors writeThroughPrStateCache's own "preserve
+ *  prior status" contract. */
+export async function primeDurablePrStateCache(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  live: { mergeable_state?: string | null; state?: string | null; head?: { sha?: string | null } | null } | undefined,
+): Promise<void> {
+  if (!live) return;
+  const existing = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  const liveHeadSha = live.head?.sha;
+  await writeThroughPrStateCache(env, repoFullName, prNumber, existing?.status, {
+    prMergeableState: live.mergeable_state ?? null,
+    prState: live.state ?? null,
+    // Omit (not null) when the live payload carries no head SHA — a PR-state-only write must never CLEAR the
+    // headSha the files cache (#audit-rate-headroom) relies on (PARTIAL-UPDATE CONTRACT: omitted = unchanged).
+    ...(liveHeadSha ? { headSha: liveHeadSha } : {}),
+  });
+}
+
+/** Cached read of the PR's live mergeable_state, backed by pull_request_detail_sync_state (#2537). A fresh cache
+ *  row (webhook-invalidated, capped at PR_STATE_CACHE_MAX_AGE_MS) is served without a GitHub call; otherwise
+ *  fetches live via fetchAndCachePrStateFields (which write-throughs ALL THREE cached fields together, not just
+ *  this one, since they share one fetchedAt stamp) and returns this field from that shared response.
+ *  Fail-open throughout: any cache read/write hiccup falls back to / degrades to a live fetch, never blocks it. */
+export async function cachedFetchLivePullRequestMergeState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (cached && isPrStateCacheFresh(cached.prStateFetchedAt)) {
+    incr(PR_STATE_CACHE_METRIC, { field: "mergeable_state", result: "hit" });
+    return cached.prMergeableState ?? undefined;
+  }
+  incr(PR_STATE_CACHE_METRIC, { field: "mergeable_state", result: "miss" });
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  return live?.mergeable_state ?? undefined;
+}
+
+/** Cached read of the PR's live state (open/closed), backed by pull_request_detail_sync_state (#2537). Same
+ *  freshness/fail-open/shared-fetch contract as cachedFetchLivePullRequestMergeState. */
+export async function cachedFetchLivePullRequestState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (cached && isPrStateCacheFresh(cached.prStateFetchedAt)) {
+    incr(PR_STATE_CACHE_METRIC, { field: "state", result: "hit" });
+    return cached.prState ?? undefined;
+  }
+  incr(PR_STATE_CACHE_METRIC, { field: "state", result: "miss" });
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  return live?.state ?? undefined;
+}
+
+/** Cached read of the PR's live head SHA, backed by pull_request_detail_sync_state (#2537). Reuses the EXISTING
+ *  headSha column (written by the files-cache path too) as the cached value; a cache hit still respects the same
+ *  PR_STATE_CACHE_MAX_AGE_MS freshness window as the other two fields (headSha alone predates this issue and
+ *  carries no fetchedAt guarantee, so gate it on prStateFetchedAt like its siblings). NOT used by
+ *  resolveOverrideHeadSha (gate-override) -- that call site is security-sensitive and intentionally stays on
+ *  the raw live fetchLivePullRequestHeadSha instead (see queue/processors.ts). */
+export async function cachedFetchLivePullRequestHeadSha(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (cached && isPrStateCacheFresh(cached.prStateFetchedAt) && cached.headSha) {
+    incr(PR_STATE_CACHE_METRIC, { field: "head_sha", result: "hit" });
+    return cached.headSha;
+  }
+  incr(PR_STATE_CACHE_METRIC, { field: "head_sha", result: "miss" });
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  return live?.head?.sha ?? undefined;
+}
+
+/** Invalidate the durable PR-state cache fields (#2537) — called on synchronize/closed/reopened. Explicit null
+ *  (not omitted) so the PARTIAL-UPDATE CONTRACT actually clears the stale value rather than leaving it. Best-
+ *  effort by design at the call site (never blocks webhook processing on a cache-invalidation write). */
+export async function invalidatePrStateCache(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+  const existing = await getPullRequestDetailSyncState(env, repoFullName, pullNumber).catch(() => null);
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber,
+    status: existing?.status ?? "never_synced",
+    prMergeableState: null,
+    prState: null,
+    prStateFetchedAt: null,
+  });
 }
 
 /** Resolve the OPEN PRs associated with a commit SHA via the REST `GET /repos/{owner}/{repo}/commits/{sha}/pulls`
@@ -3190,6 +3434,12 @@ async function syncLabels(
   }
 }
 
+/**
+ * `limit` is a page-boundary threshold, not a strict maximum: page consumption is atomic (see the loop body),
+ * so the crawl always finishes the page it's on once `items.length` reaches `limit`, which can return up to
+ * `perPage - 1` more items than requested. Callers that need an exact cap must trim the returned `items`
+ * themselves; `fetchedCount`/`items.length` always reflect the true (possibly over-`limit`) count.
+ */
 async function githubPaged<T>(
   env: Env,
   repo: RepositoryRecord,
@@ -3232,18 +3482,17 @@ async function githubPaged<T>(
       lastModified = result.lastModified ?? lastModified;
       lastCursor = String(page);
       pageCount += 1;
-      const remaining = limit - items.length;
-      // A page can only overrun `remaining` once we have already consumed at least one full page (so `page`
-      // has advanced past the crawl's start): resume from THIS page to pick up its unconsumed tail. On the
-      // first page `remaining >= perPage >= result.data.length`, so this is false and the cursor advances,
-      // which is why a small-`limit` (per_page = limit) crawl can never stall on its own start page.
-      const truncatedPage = result.data.length > remaining;
-      items.push(...result.data.slice(0, remaining));
+      // Resume cursors only have page precision, so keep page consumption atomic: once we request a
+      // page, process the whole response before advancing the cursor. Slicing a mid-page cap would make a
+      // later resume replay the already-consumed prefix of that same page and inflate fetched counts.
+      items.push(...result.data);
       const hasNext = hasNextPage(result.link);
-      if (items.length >= limit && (hasNext || truncatedPage)) {
-        nextCursor = String(truncatedPage ? page : page + 1);
+      if (items.length >= limit && hasNext) {
+        nextCursor = String(page + 1);
         status = "capped";
-        warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path}; next page cursor is ${nextCursor}.`);
+        // `items.length` (not `limit`) is the actual count: page consumption is atomic, so a whole final page
+        // can overrun the requested `limit` — `limit` is a page-boundary threshold, not a strict maximum.
+        warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path} (fetched ${items.length} after completing page ${page}); next page cursor is ${nextCursor}.`);
         break;
       }
       if (result.data.length < perPage || !hasNext) break;
@@ -3510,6 +3759,20 @@ function summarizeSegments(
   };
 }
 
+// #2543: this is the ONLY call site of recordGitHubRateLimitObservation -- one row per outbound GitHub REST/
+// GraphQL response. DELIBERATELY left un-batched (documented decision, not an oversight): the write rate is
+// bounded by GitHub's own REST budget for a single App installation (~5000/hour ≈ 1.4/s sustained, further
+// capped in practice by QUEUE_CONCURRENCY's small worker-pool size), nowhere near a volume where single-row
+// Postgres INSERTs meaningfully pressure the connection pool. shouldWaitForGitHubRateLimit (rate-limit.ts)
+// reads the LATEST row from this exact table for admission control across every self-host queue worker
+// (including in a multi-instance/shared-Postgres deployment, where a buffering instance would make its own
+// writes stale to every OTHER instance's reads, not just its own) -- a batching window here trades a real,
+// bounded-scale write-volume concern for a genuine risk to the admission-control freshness the #1936 rate-
+// limit-reliability campaign was built around: a stale "remaining: 500" observation would let a queue worker
+// admit a job it should have deferred, right when conserving the budget matters most. Revisit ONLY if this
+// table's write volume is ever independently measured to actually pressure the pool -- the table-level
+// autovacuum tuning (tuneGithubRateLimitObservationsAutovacuum, src/selfhost/pg-adapter.ts) already addresses
+// the dead-tuple-bloat half of this issue, which is the part that was actually observable/anticipated.
 async function recordGitHubResponse(
   env: Env,
   repoFullName: string | null,

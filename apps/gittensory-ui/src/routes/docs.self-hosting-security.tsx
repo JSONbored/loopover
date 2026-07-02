@@ -70,6 +70,25 @@ function SelfHostingSecurity() {
         </li>
       </ul>
 
+      <h2>Control-panel access</h2>
+      <p>
+        GitHub sign-in to the control panel (the maintainer/owner dashboard) is gated by{" "}
+        <code>ADMIN_GITHUB_LOGINS</code> — a comma- or whitespace-separated, case-insensitive
+        allowlist of GitHub logins.
+      </p>
+      <CodeBlock
+        filename=".env"
+        code={`ADMIN_GITHUB_LOGINS=your-github-login,a-second-maintainer`}
+      />
+      <Callout variant="warn" title="Fail-closed by design">
+        Unset or empty means NOBODY gets control-panel access — not even the person who just
+        finished setup. This is intentional, not a bug: add your own GitHub login here right after
+        first-run setup, or you will sign in successfully and see zero privileges with no
+        explanation. The same allowlist also exempts these logins from the agent's own-PR auto-close
+        rules and lets them bypass per-repo MCP scope (<code>MCP_READ_REPO_ALLOWLIST</code> /{" "}
+        <code>MCP_ACTUATION_REPO_ALLOWLIST</code>).
+      </Callout>
+
       <h2>AI credential boundaries</h2>
       <Callout variant="warn" title="Subscription CLI credentials">
         CLI auth files can be readable by the runtime. Do not mount a prompt-readable Claude Code or

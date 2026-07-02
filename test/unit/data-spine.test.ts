@@ -324,6 +324,16 @@ describe("data spine repositories", () => {
     expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("spam-cap");
     await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorCapLabel: "renamed-cap" });
     expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("renamed-cap"); // update persists
+    // #2552 force-rebase-before-merge window: no row and no override both default to null (never force).
+    expect((await getRepositorySettings(env, "missing/repo")).requireFreshRebaseWindowMinutes).toBeNull();
+    expect((await getRepositorySettings(env, "owner/defaultpack")).requireFreshRebaseWindowMinutes).toBeNull();
+    // Round-trips on insert and persists on update; a fractional/non-positive value drops to null.
+    await upsertRepositorySettings(env, { repoFullName: "owner/rebasewindowrepo", requireFreshRebaseWindowMinutes: 15 });
+    expect((await getRepositorySettings(env, "owner/rebasewindowrepo")).requireFreshRebaseWindowMinutes).toBe(15);
+    await upsertRepositorySettings(env, { repoFullName: "owner/rebasewindowrepo", requireFreshRebaseWindowMinutes: 30 });
+    expect((await getRepositorySettings(env, "owner/rebasewindowrepo")).requireFreshRebaseWindowMinutes).toBe(30); // update persists
+    await upsertRepositorySettings(env, { repoFullName: "owner/rebasewindowrepo", requireFreshRebaseWindowMinutes: 2.5 as never });
+    expect((await getRepositorySettings(env, "owner/rebasewindowrepo")).requireFreshRebaseWindowMinutes).toBeNull();
     // #2463 review-nag cooldown + shared exemption list: no row and no override both default to off/3/5/the
     // default label/empty exemption list.
     expect(await getRepositorySettings(env, "missing/repo")).toMatchObject({

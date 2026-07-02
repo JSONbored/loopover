@@ -10,6 +10,7 @@ import type {
 import type { AnalysisContext } from "../analysis-context.js";
 import { extractDependencyChanges } from "./dependency-scan.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { isParseableLockfile, lockfileBasename } from "../lockfile-path.js";
 
 interface LockfileChange {
   file: string;
@@ -51,7 +52,6 @@ interface OsvVuln {
 const MAX_LOCKFILE_FILES = 12;
 const MAX_PATCH_LINES_PER_FILE = 1200;
 const MAX_OSV_QUERIES = 40;
-const SUPPORTED_LOCKFILES = new Set(["package-lock.json", "yarn.lock", "poetry.lock"]);
 const VERSION_SAFE_RE = /^[0-9][0-9A-Za-z._+-]*$/;
 const MAX_PACKAGE_LEN = 200;
 const MAX_VERSION_LEN = 100;
@@ -79,15 +79,21 @@ function severityOf(vuln: OsvVuln): Cve["severity"] {
         : "low";
 }
 
-function fixedOf(vuln: OsvVuln): string | null {
+export function fixedOf(vuln: OsvVuln): string | null {
+  const fixes = new Set<string>();
   for (const affected of vuln.affected ?? []) {
     for (const range of affected.ranges ?? []) {
       for (const event of range.events ?? []) {
-        if (event.fixed) return event.fixed;
+        if (event.fixed) fixes.add(event.fixed);
       }
     }
   }
-  return null;
+  // Report a fixed version only when it is UNAMBIGUOUS. A CVE with multiple version-lines patched separately
+  // (e.g. fixed in `1.5.0` for the 1.x line AND `2.3.0` for the 2.x line) exposes more than one `fixed` version;
+  // returning the first would tell a 2.x user to "upgrade" to `1.5.0`, which does not fix their line. Without
+  // per-range version matching we cannot pick the right one, so report none rather than a wrong remediation.
+  const list = [...fixes];
+  return list.length === 1 ? list[0]! : null;
 }
 
 function toCves(vulns: OsvVuln[] | undefined): Cve[] {
@@ -330,7 +336,7 @@ function parsePoetryLock(path: string, patch: string, maxLines: number): Lockfil
 }
 
 function parseLockfile(path: string, patch: string, maxLines: number): LockfileChange[] {
-  const name = path.split("/").pop() ?? path;
+  const name = lockfileBasename(path).toLowerCase();
   if (name === "package-lock.json") return parsePackageLock(path, patch, maxLines);
   if (name === "yarn.lock") return parseYarnLock(path, patch, maxLines);
   if (name === "poetry.lock") return parsePoetryLock(path, patch, maxLines);
@@ -350,8 +356,7 @@ export function extractLockfileChanges(
   const changes: LockfileChange[] = [];
   let scannedFiles = 0;
   for (const file of files) {
-    const name = file.path.split("/").pop() ?? file.path;
-    if (!file.patch || !SUPPORTED_LOCKFILES.has(name)) continue;
+    if (!file.patch || !isParseableLockfile(file.path)) continue;
     scannedFiles += 1;
     if (scannedFiles > maxFiles) break;
     for (const change of parseLockfile(file.path, file.patch, maxLines)) {

@@ -8682,6 +8682,12 @@
           },
           "badgeEnabled": {
             "type": "boolean"
+          },
+          "requireFreshRebaseWindowMinutes": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true
           }
         },
         "required": [

@@ -19,6 +19,10 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$OUT/postgres" "$OUT/sqlite" "$OUT/qdrant"
 
+# Set to 1 if the SQLite online backup fails verification, so we skip its retention prune
+# (never delete the last good backup) and still exit non-zero at the end (fail loudly).
+SQLITE_BACKUP_FAILED=0
+
 # Percent-decodes a URI userinfo component (RFC 3986). Deliberately does NOT treat '+' as a space -- that
 # convention is specific to application/x-www-form-urlencoded query values, not URI userinfo, where '+' is
 # an ordinary sub-delims character allowed unencoded; the only caller of this function decodes a password
@@ -191,9 +195,20 @@ case "$PG_DB" in
     ;;
   *)
     if [ -f "$DB" ]; then
-      sqlite3 "$DB" ".backup '$OUT/sqlite/gittensory-$TS.sqlite'"
-      gzip -f "$OUT/sqlite/gittensory-$TS.sqlite"
-      echo "[backup] sqlite -> $OUT/sqlite/gittensory-$TS.sqlite.gz"
+      SQLITE_OUT="$OUT/sqlite/gittensory-$TS.sqlite"
+      # `.backup` can exit 0 while writing a partial/corrupt file, so verify the result
+      # (non-empty AND `PRAGMA integrity_check` == ok) before we gzip it or let retention
+      # prune older, good backups. A failed backup must be loud, not silently "successful".
+      if sqlite3 "$DB" ".backup '$SQLITE_OUT'" \
+        && [ -s "$SQLITE_OUT" ] \
+        && [ "$(sqlite3 "$SQLITE_OUT" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
+        gzip -f "$SQLITE_OUT"
+        echo "[backup] sqlite -> $SQLITE_OUT.gz"
+      else
+        rm -f "$SQLITE_OUT"
+        echo "[backup] ERROR: sqlite online backup failed verification; keeping previous backups" >&2
+        SQLITE_BACKUP_FAILED=1
+      fi
     else
       echo "[backup] sqlite db not found at $DB (skipping)"
     fi
@@ -216,10 +231,22 @@ fi
 
 # 3) Retention — keep only the newest $RETAIN in each directory.
 for d in postgres sqlite qdrant; do
+  # After a failed SQLite backup, skip its prune so the newest surviving (older) backups are kept.
+  if [ "$d" = sqlite ] && [ "$SQLITE_BACKUP_FAILED" = 1 ]; then
+    echo "[backup] skipping sqlite retention after a failed backup (preserving existing backups)"
+    continue
+  fi
+  # ls is safe here: backup filenames are controlled timestamps with no spaces or newlines.
+  # shellcheck disable=SC2012
   ls -1t "$OUT/$d" 2>/dev/null | tail -n +"$((RETAIN + 1))" | while IFS= read -r f; do
     rm -f "$OUT/$d/$f"
     echo "[backup] pruned old backup $d/$f"
   done
 done
+
+if [ "$SQLITE_BACKUP_FAILED" = 1 ]; then
+  echo "[backup] FAILED ($TS): sqlite online backup did not verify; see errors above" >&2
+  exit 1
+fi
 
 echo "[backup] complete ($TS); retaining newest $RETAIN per target"

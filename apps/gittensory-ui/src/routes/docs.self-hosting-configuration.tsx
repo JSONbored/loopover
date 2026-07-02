@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { Callout, CodeBlock, FeatureRow } from "@/components/site/primitives";
+import { SELFHOST_ENV_REFERENCE_MARKDOWN } from "@/lib/selfhost-env-reference";
 
 export const Route = createFileRoute("/docs/self-hosting-configuration")({
   head: () => ({
@@ -117,6 +118,14 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
         Prometheus exports <code>gittensory_github_response_cache_total</code>, and the bundled
         self-host Grafana dashboard includes the hit/miss/coalesced/error breakdown.
       </Callout>
+
+      <h2>Generated env reference</h2>
+      <p>
+        This table is generated from <code>process.env.NAME</code> reads in{" "}
+        <code>src/selfhost/**</code> and <code>src/server.ts</code>. It intentionally includes names
+        and first source references only, never example values.
+      </p>
+      <CodeBlock filename="self-host env vars" code={SELFHOST_ENV_REFERENCE_MARKDOWN} />
 
       <h2>Per-PR feature flags</h2>
       <p>

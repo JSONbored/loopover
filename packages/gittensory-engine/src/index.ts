@@ -10,6 +10,7 @@ export {
   type OpportunityRankInput,
 } from "./opportunity-ranker.js";
 export * from "./governor/rate-limit.js";
+export * from "./plan-export.js";
 export * from "./portfolio/queue.js";
 export {
   resolveAiPolicyVerdict,
@@ -17,3 +18,8 @@ export {
   type AiPolicySource,
   type AiPolicyVerdict,
 } from "./ai-policy-map.js";
+export {
+  DEFAULT_MINER_GOAL_SPEC,
+  type MinerGoalSpec,
+  type MinerIssueDiscoveryPolicy,
+} from "./miner-goal-spec.js";

@@ -7,7 +7,8 @@ export type BoundedFetchFailureReason =
   | "http_error"
   | "response_too_large"
   | "invalid_json"
-  | "call_cap";
+  | "call_cap"
+  | "circuit_open";
 
 export interface BoundedFetchOk<T> {
   ok: true;
@@ -52,6 +53,73 @@ export function safeEndpointCategory(category: string): string {
   return safe || "unknown";
 }
 
+// Circuit breaker: once an endpointCategory racks up enough consecutive
+// remote-health failures, short-circuit further calls for a cooldown window
+// instead of re-attempting a currently-unhealthy endpoint from a cold state.
+const CIRCUIT_FAILURE_THRESHOLD = 3;
+const CIRCUIT_COOLDOWN_MS = 30_000;
+const circuits = new Map<string, { failures: number; cooldownUntil: number }>();
+
+export function resetExternalFetchCircuitBreakerForTest(): void {
+  circuits.clear();
+}
+
+function isCircuitOpen(endpointCategory: string): boolean {
+  const circuit = circuits.get(endpointCategory);
+  return circuit !== undefined && circuit.cooldownUntil > Date.now();
+}
+
+function recordCircuitFailure(endpointCategory: string): void {
+  // Always read the map fresh at call time (never accept a pre-captured
+  // circuit object or close over a variable read earlier in the caller
+  // before an await) so concurrent calls for the same endpointCategory
+  // can't race on a stale read. The read+set here has no await between
+  // them, so this function's own write is race-free by construction.
+  const circuit = circuits.get(endpointCategory) ?? {
+    failures: 0,
+    cooldownUntil: 0,
+  };
+  const failures = circuit.failures + 1;
+  const cooldownUntil =
+    failures >= CIRCUIT_FAILURE_THRESHOLD
+      ? Date.now() + CIRCUIT_COOLDOWN_MS
+      : circuit.cooldownUntil;
+  circuits.set(endpointCategory, { failures, cooldownUntil });
+}
+
+function recordCircuitSuccess(endpointCategory: string): void {
+  circuits.delete(endpointCategory);
+}
+
+// Not every failure reason should trip the breaker. A plain 404 (or any
+// other non-{403,429,5xx} http_error) is often a LEGITIMATE negative
+// business result, not a sign the remote service is unhealthy — e.g.
+// typosquat.ts calls boundedFetchStatus for many candidate package names
+// where a 404 just means "this typo-squat candidate doesn't exist," which
+// is the analyzer working correctly, not a failure worth circuit-breaking
+// on. Similarly "aborted" is always CALLER-driven (either the caller's
+// signal was already aborted before the call started, or a parent signal
+// cancelled mid-flight) — never a signal about the remote service's own
+// health — so it must never count. "response_too_large" and "invalid_json"
+// mean the remote DID respond, just unexpectedly, so they don't count
+// either. Only "timeout", "network_error", and http_error with status
+// 403/429/5xx (auth/rate-limit/server-error — genuinely indicates the
+// remote is unhealthy or blocking us) should trip the breaker. This
+// mirrors shouldMarkDegraded's distinction below but is intentionally MORE
+// NARROW — shouldMarkDegraded answers "should the caller's diagnostics be
+// marked partial" (broader, includes aborted/response_too_large), this
+// answers "does this failure indicate the REMOTE SERVICE is unhealthy"
+// (narrower); do not conflate the two or reuse shouldMarkDegraded here.
+function isRemoteHealthFailure(result: BoundedFetchFailure): boolean {
+  if (result.reason === "timeout" || result.reason === "network_error")
+    return true;
+  if (result.reason === "http_error") {
+    const status = result.status ?? 0;
+    return status === 403 || status === 429 || status >= 500;
+  }
+  return false;
+}
+
 export function externalFetchCacheKey(
   url: string,
   options: Pick<BoundedFetchOptions, "method" | "body"> = {},
@@ -90,6 +158,17 @@ export async function boundedFetchStatus(
 ): Promise<BoundedFetchResult<null>> {
   const endpointCategory = safeEndpointCategory(options.endpointCategory);
   const startedAtMs = Date.now();
+  if (isCircuitOpen(endpointCategory)) {
+    const result: BoundedFetchFailure = {
+      ok: false,
+      reason: "circuit_open",
+      bytes: null,
+      elapsedMs: 0,
+      endpointCategory,
+    };
+    attachDiagnostics(result, options);
+    return result;
+  }
   const signal = options.signal;
   if (signal?.aborted) {
     const result = failure(endpointCategory, "aborted", startedAtMs, null);
@@ -119,11 +198,19 @@ export async function boundedFetchStatus(
     });
     const status = response.status;
     if (!response.ok) {
-      const result = failure(endpointCategory, "http_error", startedAtMs, null, status);
+      const result = failure(
+        endpointCategory,
+        "http_error",
+        startedAtMs,
+        null,
+        status,
+      );
       attachDiagnostics(result, options);
+      if (isRemoteHealthFailure(result)) recordCircuitFailure(endpointCategory);
       return result;
     }
 
+    recordCircuitSuccess(endpointCategory);
     return {
       ok: true,
       status,
@@ -134,9 +221,14 @@ export async function boundedFetchStatus(
     };
   } catch {
     const reason =
-      timedOut || controller.signal.aborted ? (timedOut ? "timeout" : "aborted") : "network_error";
+      timedOut || controller.signal.aborted
+        ? timedOut
+          ? "timeout"
+          : "aborted"
+        : "network_error";
     const result = failure(endpointCategory, reason, startedAtMs, null);
     attachDiagnostics(result, options);
+    if (isRemoteHealthFailure(result)) recordCircuitFailure(endpointCategory);
     return result;
   } finally {
     clearTimeout(timer);
@@ -150,6 +242,17 @@ export async function boundedFetchText(
 ): Promise<BoundedFetchResult<string>> {
   const endpointCategory = safeEndpointCategory(options.endpointCategory);
   const startedAtMs = Date.now();
+  if (isCircuitOpen(endpointCategory)) {
+    const result: BoundedFetchFailure = {
+      ok: false,
+      reason: "circuit_open",
+      bytes: null,
+      elapsedMs: 0,
+      endpointCategory,
+    };
+    attachDiagnostics(result, options);
+    return result;
+  }
   const signal = options.signal;
   if (signal?.aborted) {
     const result = failure(endpointCategory, "aborted", startedAtMs, null);
@@ -179,12 +282,22 @@ export async function boundedFetchText(
     });
     const status = response.status;
     if (!response.ok) {
-      const result = failure(endpointCategory, "http_error", startedAtMs, null, status);
+      const result = failure(
+        endpointCategory,
+        "http_error",
+        startedAtMs,
+        null,
+        status,
+      );
       attachDiagnostics(result, options);
+      if (isRemoteHealthFailure(result)) recordCircuitFailure(endpointCategory);
       return result;
     }
 
-    const maxBytes = Math.max(1, Math.floor(options.maxBytes ?? DEFAULT_MAX_JSON_BYTES));
+    const maxBytes = Math.max(
+      1,
+      Math.floor(options.maxBytes ?? DEFAULT_MAX_JSON_BYTES),
+    );
     const text = await readResponseText(response, maxBytes);
     if (text === null) {
       const result = failure(
@@ -196,9 +309,11 @@ export async function boundedFetchText(
         true,
       );
       attachDiagnostics(result, options);
+      if (isRemoteHealthFailure(result)) recordCircuitFailure(endpointCategory);
       return result;
     }
 
+    recordCircuitSuccess(endpointCategory);
     return {
       ok: true,
       status,
@@ -209,9 +324,14 @@ export async function boundedFetchText(
     };
   } catch {
     const reason =
-      timedOut || controller.signal.aborted ? (timedOut ? "timeout" : "aborted") : "network_error";
+      timedOut || controller.signal.aborted
+        ? timedOut
+          ? "timeout"
+          : "aborted"
+        : "network_error";
     const result = failure(endpointCategory, reason, startedAtMs, null);
     attachDiagnostics(result, options);
+    if (isRemoteHealthFailure(result)) recordCircuitFailure(endpointCategory);
     return result;
   } finally {
     clearTimeout(timer);

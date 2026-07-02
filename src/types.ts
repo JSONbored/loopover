@@ -659,6 +659,13 @@ export type RepositorySettings = {
    *  on top of the standing owner/admin/automation-bot exemption. Always populated by the DB layer (default
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
+  /** Force-rebase-before-merge window in minutes (#2552, anti-race). When a base branch has advanced within
+   *  this many minutes of the actual merge-decision moment, an agent-driven merge forces an `update_branch` +
+   *  fresh CI recheck cycle first, rather than trusting a `mergeableState: clean` read that may already be
+   *  stale relative to a sibling commit that just landed on the base. `null`/undefined (default) = never
+   *  force -- a `mergeable_state: clean` read is trusted exactly as it is today. Layered like every other
+   *  settings field (`.gittensory.yml` `gate.requireFreshRebaseWindow` > DB > `null`). */
+  requireFreshRebaseWindowMinutes?: number | null | undefined;
   /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
    *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
    *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */
@@ -863,9 +870,14 @@ export type PullRequestDetailSyncStateRecord = {
   headSha?: string | null | undefined;
   filesSyncedAt?: string | null | undefined;
   reviewsSyncedAt?: string | null | undefined;
+  reviewsInvalidatedAt?: string | null | undefined;
   checksSyncedAt?: string | null | undefined;
   lastSyncedAt?: string | null | undefined;
   errorSummary?: string | null | undefined;
+  // #2537: durable bare-PR-state cache fields (mergeable_state/state from GET /pulls/{n}).
+  prMergeableState?: string | null | undefined;
+  prState?: string | null | undefined;
+  prStateFetchedAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };
 

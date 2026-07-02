@@ -472,3 +472,20 @@ test("createAnalysisContext classifies workflow paths case-insensitively", () =>
     ],
   );
 });
+
+test("createAnalysisContext classifies lockfile paths case-insensitively", () => {
+  const context = createAnalysisContext({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 2611,
+    files: [
+      {
+        path: "frontend/Package-Lock.JSON",
+        patch: "@@ -1,0 +1,1 @@\n+{}",
+      },
+    ],
+  });
+
+  assert.deepEqual(context.fileCategories.map((file) => [file.path, file.category]), [
+    ["frontend/Package-Lock.JSON", "lockfile"],
+  ]);
+});

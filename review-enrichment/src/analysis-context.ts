@@ -18,6 +18,7 @@ import {
   type BoundedFetchResult,
 } from "./external-fetch.js";
 import { isWorkflowPath } from "./workflow-path.js";
+import { isSupportedLockfile } from "./lockfile-path.js";
 
 type ChangedFile = NonNullable<EnrichRequest["files"]>[number];
 
@@ -425,11 +426,7 @@ function categorizeFile(path: string): FileCategory {
   if (["package.json", "requirements.txt", "go.mod"].includes(basename)) {
     return { path, extension, category: "dependency-manifest" };
   }
-  if (
-    ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "go.sum"].includes(
-      basename,
-    )
-  ) {
+  if (isSupportedLockfile(path)) {
     return { path, extension, category: "lockfile" };
   }
   if (isWorkflowPath(path)) {

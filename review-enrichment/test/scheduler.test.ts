@@ -273,3 +273,30 @@ test("actionPin runs for mixed-case workflow paths", async () => {
   assert.equal(brief.analyzerStatus.actionPin, "ok");
   assert.notEqual(brief.telemetry.analyzers.actionPin.skipReason, "no_workflow");
 });
+
+test("lockfileDrift runs for mixed-case lockfile paths", async () => {
+  let lockfileDriftRan = false;
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 2611,
+      analyzers: ["lockfileDrift"],
+      files: [
+        {
+          path: "frontend/Package-Lock.JSON",
+          patch: "@@ -1,0 +1,1 @@\n+{}",
+        },
+      ],
+    },
+    {
+      lockfileDrift: async () => {
+        lockfileDriftRan = true;
+        return [];
+      },
+    },
+  );
+
+  assert.equal(lockfileDriftRan, true);
+  assert.equal(brief.analyzerStatus.lockfileDrift, "ok");
+  assert.notEqual(brief.telemetry.analyzers.lockfileDrift.skipReason, "no_lockfile");
+});

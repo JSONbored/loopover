@@ -105,6 +105,15 @@ describe("maintainer AI-review config route", () => {
     expect(settings.gateCheckMode).toBe("enabled");
   });
 
+  it("round-trips requireFreshRebaseWindowMinutes through the maintainer settings PUT route (#2552 gate finding)", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const res = await app.request(`/v1/repos/${REPO}/settings`, { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ requireFreshRebaseWindowMinutes: 15 }) }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ requireFreshRebaseWindowMinutes: 15 });
+    expect((await getRepositorySettings(env, REPO)).requireFreshRebaseWindowMinutes).toBe(15);
+  });
+
   it("lets the internal full settings route persist closeOwnerAuthors", async () => {
     const app = createApp();
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });

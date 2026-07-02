@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   __aiReviewInternals,
   BEST_REVIEW_MODELS,
+  buildTestEvidencePromptSection,
   runGittensoryAiReview,
   type GittensoryAiReviewInput,
 } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 const {
   parseModelReview,
@@ -87,6 +89,7 @@ const baseInput: GittensoryAiReviewInput = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  resetMetrics();
 });
 
 describe("runGittensoryAiReview gating", () => {
@@ -474,6 +477,8 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     expect(result.consensusDefect).toBeNull();
     expect(result.inconclusive).toBe(true); // FAIL-CLOSED: a missing second opinion holds the PR, never passes it
     expect(result.advisoryNotes).not.toBeNull(); // notes still come from the one parseable opinion
+    // Observability (#2540): the single canonical increment fires once for this inconclusive review.
+    expect(await renderMetrics()).toContain('gittensory_ai_review_inconclusive_total{mode="block"} 1');
   });
 
   it("a clean dual review is NOT inconclusive (both models parsed, neither blocks → passes)", async () => {
@@ -486,6 +491,8 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     });
     expect(result.status === "ok" && result.consensusDefect).toBeNull();
     expect(result.status === "ok" && result.inconclusive).toBe(false);
+    // A non-inconclusive review must NOT increment the inconclusive counter.
+    expect(await renderMetrics()).not.toContain("gittensory_ai_review_inconclusive_total");
   });
 
   it("block mode with BYOK: provider writes the advisory, the free Workers-AI pair drives consensus", async () => {
@@ -1777,5 +1784,150 @@ describe("pure helpers", () => {
       String(opts.messages[0]?.content);
     expect(user).toContain("## EXTERNAL REVIEW BRIEF");
     expect(system).toContain("untrusted advisory context");
+  });
+
+  it("splices the test-evidence classifier section into the user prompt when changed code files have zero test-path evidence (#2558)", async () => {
+    const run = vi.fn(
+      async (
+        _model: string,
+        _options: { messages: Array<{ content: string }> },
+      ) => ({ response: reviewJson() }),
+    );
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      changedFiles: [{ path: "src/a.ts" }, { path: "src/b.ts" }],
+    });
+    expect(result.status).toBe("ok");
+    const opts = run.mock.calls[0]?.[1] as {
+      messages: Array<{ role?: string; content: string }>;
+    };
+    const user =
+      opts.messages.find((m) => m.role === "user")?.content ??
+      String(opts.messages[1]?.content);
+    expect(user).toContain("Test evidence (engine classifier)");
+    expect(user).toContain("src/a.ts");
+    expect(user).toContain("src/b.ts");
+  });
+
+  it("does NOT splice a test-evidence section when the PR includes a test-path change (#2558)", async () => {
+    const run = vi.fn(
+      async (
+        _model: string,
+        _options: { messages: Array<{ content: string }> },
+      ) => ({ response: reviewJson() }),
+    );
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      changedFiles: [{ path: "src/a.ts" }, { path: "test/unit/a.test.ts" }],
+    });
+    expect(result.status).toBe("ok");
+    const opts = run.mock.calls[0]?.[1] as {
+      messages: Array<{ role?: string; content: string }>;
+    };
+    const user =
+      opts.messages.find((m) => m.role === "user")?.content ??
+      String(opts.messages[1]?.content);
+    expect(user).not.toContain("Test evidence (engine classifier)");
+  });
+
+  it("does NOT splice a test-evidence section when changedFiles is absent (byte-identical to today)", async () => {
+    const run = vi.fn(
+      async (
+        _model: string,
+        _options: { messages: Array<{ content: string }> },
+      ) => ({ response: reviewJson() }),
+    );
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, baseInput);
+    expect(result.status).toBe("ok");
+    const opts = run.mock.calls[0]?.[1] as {
+      messages: Array<{ role?: string; content: string }>;
+    };
+    const user =
+      opts.messages.find((m) => m.role === "user")?.content ??
+      String(opts.messages[1]?.content);
+    expect(user).not.toContain("Test evidence (engine classifier)");
+  });
+});
+
+describe("buildTestEvidencePromptSection (#2558)", () => {
+  it("returns undefined when there are no changed code files", () => {
+    expect(buildTestEvidencePromptSection([])).toBeUndefined();
+    expect(buildTestEvidencePromptSection([{ path: "README.md" }])).toBeUndefined();
+  });
+
+  it("lists changed code files with zero test-path evidence", () => {
+    const section = buildTestEvidencePromptSection([
+      { path: "src/a.ts" },
+      { path: "src/b.ts" },
+      { path: "README.md" },
+    ]);
+    expect(section).toContain("src/a.ts");
+    expect(section).toContain("src/b.ts");
+    expect(section).not.toContain("README.md");
+  });
+
+  it("returns undefined when ANY changed path already looks like a test file", () => {
+    expect(
+      buildTestEvidencePromptSection([
+        { path: "src/a.ts" },
+        { path: "test/unit/a.test.ts" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("de-duplicates a repeated file path so the section doesn't get noisier than the actual changed-file set", () => {
+    const section = buildTestEvidencePromptSection([
+      { path: "src/a.ts" },
+      { path: "src/a.ts" },
+    ]);
+    expect(section?.match(/src\/a\.ts/g)).toHaveLength(1);
+  });
+});
+
+describe("REVIEW_SYSTEM_PROMPT performance-regression instruction (#2559)", () => {
+  it("instructs the model to treat a genuine algorithmic/performance regression as a blocker category", async () => {
+    const run = vi.fn(
+      async (
+        _model: string,
+        _options: { messages: Array<{ content: string }> },
+      ) => ({ response: reviewJson() }),
+    );
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, baseInput);
+    expect(result.status).toBe("ok");
+    const opts = run.mock.calls[0]?.[1] as {
+      messages: Array<{ role?: string; content: string }>;
+    };
+    const system =
+      opts.messages.find((m) => m.role === "system")?.content ??
+      String(opts.messages[0]?.content);
+    expect(system).toContain("N+1");
+    expect(system).toContain("unbounded loop/fanout");
+    expect(system).toContain("PERFORMANCE SEVERITY");
+    // Severity discipline: a micro-optimization/style preference must still be steered toward a nit, not a blocker.
+    expect(system).toContain("micro-optimization preference");
   });
 });

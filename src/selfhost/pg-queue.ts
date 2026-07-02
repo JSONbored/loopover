@@ -253,6 +253,27 @@ export function createPgQueue(
     return revived;
   }
 
+  /** Wraps reviveDeadLetterJobs() for the setInterval callback below, which has no rejection handler of its
+   *  own -- a transient pool/driver/metric failure here would otherwise surface as an unhandled promise
+   *  rejection and can terminate the process (fatal when SENTRY_DSN is unset, since server.ts only installs
+   *  the handler when Sentry is configured), exactly the failure mode pump()'s own try/catch above guards
+   *  against for the main poll loop. A failed revive tick just waits for the next interval, same as a failed
+   *  poll tick waits for the next poll. */
+  async function reviveDeadLetterJobsSafely(): Promise<void> {
+    try {
+      await reviveDeadLetterJobs();
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_queue_dead_letter_revive_crashed",
+          error: errorMessageWithCause(error),
+        }),
+      );
+      captureError(error, { kind: "queue_dead_letter_revive_crashed" });
+    }
+  }
+
   async function spreadDueJobsOnStartup(): Promise<number> {
     const now = Date.now();
     const res = await pool.query(
@@ -666,7 +687,7 @@ export function createPgQueue(
       // Separate, much slower interval than the poll tick above -- reviving a dead job every second would
       // recreate the retry storm this feature exists to bound. The interval itself is the cooldown between
       // auto-retry rounds for any one job.
-      deadLetterReviveTimer = setInterval(() => void reviveDeadLetterJobs(), queueDeadLetterReviveIntervalMs());
+      deadLetterReviveTimer = setInterval(() => void reviveDeadLetterJobsSafely(), queueDeadLetterReviveIntervalMs());
     },
     async stop() {
       running = false;

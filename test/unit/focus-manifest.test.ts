@@ -180,6 +180,8 @@ describe("parseFocusManifestContent", () => {
     expect(manifest.gate.dryRun).toBe(false);
     expect(manifest.gate.selfAuthoredLinkedIssue).toBe("advisory");
     expect(manifest.gate.aiReviewCloseConfidence).toBeNull();
+    // #2552: requireFreshRebaseWindow also round-trips through the real parser.
+    expect(manifest.gate.requireFreshRebaseWindowMinutes).toBe(10);
   });
 });
 
@@ -492,7 +494,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
@@ -800,7 +802,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1543,6 +1545,18 @@ describe("parseFocusManifest review config", () => {
     expect(parseFocusManifest({ review: reviewConfigToJson(chill.review) }).review).toEqual(chill.review);
   });
 
+  it("parses gate tri-state modes case-insensitively like review.profile", () => {
+    const manifest = parseFocusManifest({
+      gate: { linkedIssue: "BLOCK", duplicates: "Advisory", size: { mode: "OFF" } },
+      settings: { linkedIssueGateMode: "Block" },
+    });
+    expect(manifest.gate.linkedIssue).toBe("block");
+    expect(manifest.gate.duplicates).toBe("advisory");
+    expect(manifest.gate.sizeMode).toBe("off");
+    expect(manifest.settings.linkedIssueGateMode).toBe("block");
+    expect(resolveEffectiveSettings({ linkedIssueGateMode: "off" } as RepositorySettings, manifest).linkedIssueGateMode).toBe("block");
+  });
+
   it("ignores an invalid review.profile with a warning", () => {
     const m = parseFocusManifest({ review: { profile: "spicy" } });
     expect(m.review.profile).toBeNull();
@@ -1830,5 +1844,39 @@ describe("gate.premergeContentRecheck live migration-collision recheck config (#
     const m = parseFocusManifest({ gate: { premergeContentRecheck: "yes" as never } });
     expect(m.gate.premergeContentRecheck).toBeNull();
     expect(m.warnings.some((w) => /gate\.premergeContentRecheck/i.test(w))).toBe(true);
+  });
+});
+
+describe("gate.requireFreshRebaseWindow force-rebase-before-merge config (#2552)", () => {
+  it("parses gate.requireFreshRebaseWindow, sets present, round-trips, and resolves into effective settings", () => {
+    const m = parseFocusManifest({ gate: { requireFreshRebaseWindow: 10 } });
+    expect(m.gate.requireFreshRebaseWindowMinutes).toBe(10);
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ requireFreshRebaseWindow: 10 });
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.requireFreshRebaseWindowMinutes).toBe(10);
+  });
+
+  it("defaults to unset/undefined when omitted — byte-identical to today", () => {
+    const m = parseFocusManifest({});
+    expect(m.gate.requireFreshRebaseWindowMinutes).toBeNull();
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.requireFreshRebaseWindowMinutes).toBeUndefined();
+  });
+
+  it("warns and drops a fractional/non-positive value rather than silently coercing it", () => {
+    const fractional = parseFocusManifest({ gate: { requireFreshRebaseWindow: 2.5 } });
+    expect(fractional.gate.requireFreshRebaseWindowMinutes).toBeNull();
+    expect(fractional.warnings.some((w) => /gate\.requireFreshRebaseWindow/i.test(w))).toBe(true);
+
+    const nonPositive = parseFocusManifest({ gate: { requireFreshRebaseWindow: 0 } });
+    expect(nonPositive.gate.requireFreshRebaseWindowMinutes).toBeNull();
+    expect(nonPositive.warnings.some((w) => /gate\.requireFreshRebaseWindow/i.test(w))).toBe(true);
+  });
+
+  it("lets the DB value pass through when the manifest doesn't override it", () => {
+    const db = { requireFreshRebaseWindowMinutes: 15 } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest(null));
+    expect(eff.requireFreshRebaseWindowMinutes).toBe(15);
   });
 });

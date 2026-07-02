@@ -18,6 +18,8 @@ import {
   getInstallation,
   getLatestUpstreamRulesetSnapshot,
   getPullRequest,
+  getPullRequestDetailSyncState,
+  upsertPullRequestDetailSyncState,
   getRepository,
   listUpstreamDriftReports,
   listInstallationHealth,
@@ -45,7 +47,7 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, processJob, releaseAiReviewLock, releasePrActuationLock } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock } from "../../src/queue/processors";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -6121,6 +6123,198 @@ describe("queue processors", () => {
       expect(seen.treeCalls).toBe(0);
       expect(seen.merged).toBe(true);
       expect(seen.labels).not.toContain("gittensory:migration-collision");
+    });
+  });
+
+  describe("force-fresh-rebase-before-merge gate (#2552)", () => {
+    // Full merge-eligible stub set (clean + green + approved), reused across scenarios — mirrors the #2550
+    // migration-recheck fixture above. `baseAdvancedAt` stubs the NEW /commits/{baseRef} freshness read;
+    // `null` simulates an unreadable base commit (404).
+    function stubFreshRebaseFetch(prNumber: number, opts: { baseAdvancedAt: string | null; mergeableState?: string; headSha?: string }, seen: { merged: boolean; updateBranchCalls: number; baseCommitCalls: number }) {
+      const headSha = opts.headSha ?? "sha1";
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/check-runs/") && method === "PATCH") return Response.json({ id: 901 });
+        if (url.includes(`/pulls/${prNumber}/update-branch`) && method === "PUT") {
+          seen.updateBranchCalls += 1;
+          return Response.json({ message: "Updating pull request branch." }, { status: 202 });
+        }
+        if (url.endsWith("/commits/main")) {
+          seen.baseCommitCalls += 1;
+          if (opts.baseAdvancedAt === null) return new Response("not found", { status: 404 });
+          return Response.json({ commit: { committer: { date: opts.baseAdvancedAt } } });
+        }
+        if (/\/pulls\/\d+(?:\?|$)/.test(url) && method === "GET" && !url.includes(`/pulls/${prNumber}/`)) {
+          return Response.json({ number: prNumber, state: "open", user: { login: "contributor" }, head: { sha: headSha }, base: { ref: "main", sha: "base" }, mergeable_state: opts.mergeableState ?? "clean", labels: [] });
+        }
+        if (url.includes(`/pulls/${prNumber}/files`)) return Response.json([{ filename: "src/index.ts", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+export const x = 1;" }]);
+        if (url.includes(`/commits/${headSha}/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes(`/commits/${headSha}/status`)) return Response.json({ state: "success", statuses: [{ context: "ci/build", state: "success", description: "ok" }] });
+        if (url.includes(`/commits/${headSha}/check-suites`)) return Response.json({ check_suites: [] });
+        if (url.includes("/branches/")) return Response.json({ contexts: [] });
+        if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+        if (url.includes(`/pulls/${prNumber}/merge`) && method === "PUT") {
+          seen.merged = true;
+          return Response.json({ merged: true, sha: "merged-sha1" });
+        }
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "POST") return Response.json([]);
+        if (url.endsWith("/labels") && method === "POST") return Response.json({ name: "x" }, { status: 201 });
+        if (url.includes(`/issues/${prNumber}/comments`)) return Response.json([]);
+        if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 901 }, { status: 201 });
+        return Response.json({});
+      });
+    }
+
+    async function seedFreshRebaseRepo(env: Env, prNumber: number, opts: { requireFreshRebaseWindowMinutes?: number | null; autonomy?: Record<string, string> } = {}) {
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", issues: "write" }, events: [] },
+      });
+      await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "owner/repo",
+        autonomy: opts.autonomy ?? { merge: "auto", update_branch: "auto", label: "auto" },
+        autoMaintain: { requireApprovals: 0, mergeMethod: "squash" },
+        aiReviewMode: "off",
+        gatePack: "oss-anti-slop",
+        gateCheckMode: "enabled",
+        checkRunMode: "off",
+        commentMode: "off",
+        publicSurface: "off",
+        ...(opts.requireFreshRebaseWindowMinutes !== undefined ? { requireFreshRebaseWindowMinutes: opts.requireFreshRebaseWindowMinutes } : {}),
+      });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: prNumber, title: "Fresh rebase PR", state: "open", user: { login: "contributor" }, head: { sha: "sha1" }, base: { ref: "main" }, labels: [], body: "" });
+    }
+
+    it("merges normally when the base has not advanced recently", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 90, { requireFreshRebaseWindowMinutes: 10 });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+      stubFreshRebaseFetch(90, { baseAdvancedAt: new Date(Date.now() - 60 * 60_000).toISOString() }, seen); // 1h ago, outside a 10m window
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "fresh-rebase-old-base", repoFullName: "owner/repo", prNumber: 90, installationId: 123 });
+
+      expect(seen.baseCommitCalls).toBe(1);
+      expect(seen.updateBranchCalls).toBe(0);
+      expect(seen.merged).toBe(true);
+      const merge = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.merge").first<{ outcome: string }>();
+      expect(merge?.outcome).toBe("completed");
+    });
+
+    it("forces update_branch instead of merging when the base advanced within the freshness window", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 91, { requireFreshRebaseWindowMinutes: 10 });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+      stubFreshRebaseFetch(91, { baseAdvancedAt: new Date(Date.now() - 60_000).toISOString() }, seen); // 1 minute ago, within a 10m window
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "fresh-rebase-forced", repoFullName: "owner/repo", prNumber: 91, installationId: 123 });
+
+      expect(seen.updateBranchCalls).toBe(1);
+      expect(seen.merged).toBe(false);
+      const ub = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.update_branch").first<{ outcome: string }>();
+      expect(ub?.outcome).toBe("completed");
+      const forced = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.forced_rebase_freshness").first<{ outcome: string }>();
+      expect(forced?.outcome).toBe("completed");
+      const merge = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge").first<{ n: number }>();
+      expect(merge?.n).toBe(0);
+    });
+
+    it("never fetches the base commit or forces a rebase when the setting is unset (off by default)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 92); // requireFreshRebaseWindowMinutes left unset
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+      stubFreshRebaseFetch(92, { baseAdvancedAt: new Date().toISOString() }, seen); // "now" — would force if the setting were on
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "fresh-rebase-off", repoFullName: "owner/repo", prNumber: 92, installationId: 123 });
+
+      expect(seen.baseCommitCalls).toBe(0);
+      expect(seen.updateBranchCalls).toBe(0);
+      expect(seen.merged).toBe(true);
+    });
+
+    it("falls through to a normal merge once the bounded-retry cap is reached, with a cap-exceeded audit event", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 93, { requireFreshRebaseWindowMinutes: 10 });
+      // Seed the bounded-retry counter at the cap (3) for this repo+PR, matching what 3 prior forced
+      // attempts would have left behind.
+      await env.SELFHOST_TRANSIENT_CACHE?.set("fresh-rebase-forced:owner/repo#93", "3", 24 * 3600);
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+      stubFreshRebaseFetch(93, { baseAdvancedAt: new Date(Date.now() - 60_000).toISOString() }, seen); // still within window
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "fresh-rebase-capped", repoFullName: "owner/repo", prNumber: 93, installationId: 123 });
+
+      expect(seen.updateBranchCalls).toBe(0); // capped — never forces a 4th attempt
+      expect(seen.merged).toBe(true); // falls through to a normal merge instead
+      const capped = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.fresh_rebase_window_cap_exceeded").first<{ outcome: string }>();
+      expect(capped?.outcome).toBe("completed");
+    });
+
+    it("fails open (merges normally) when the base commit is unreadable", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 94, { requireFreshRebaseWindowMinutes: 10 });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+      stubFreshRebaseFetch(94, { baseAdvancedAt: null }, seen); // 404 on the base commit fetch
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "fresh-rebase-unreadable", repoFullName: "owner/repo", prNumber: 94, installationId: 123 });
+
+      expect(seen.baseCommitCalls).toBe(1);
+      expect(seen.updateBranchCalls).toBe(0);
+      expect(seen.merged).toBe(true);
+    });
+
+    it("falls through to a normal merge when the forced update_branch action itself is not authorized", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      // update_branch is deliberately absent from autonomy (resolves to the deny-by-default "observe" level),
+      // while merge stays "auto" — proving the freshness gate fails open independently of the eventual merge
+      // action's own authorization.
+      await seedFreshRebaseRepo(env, 95, { requireFreshRebaseWindowMinutes: 10, autonomy: { merge: "auto", label: "auto" } });
+      const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+      stubFreshRebaseFetch(95, { baseAdvancedAt: new Date(Date.now() - 60_000).toISOString() }, seen); // within window
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "fresh-rebase-not-authorized", repoFullName: "owner/repo", prNumber: 95, installationId: 123 });
+
+      expect(seen.baseCommitCalls).toBe(1);
+      expect(seen.updateBranchCalls).toBe(0); // denied by autonomy before any GitHub mutation is attempted
+      expect(seen.merged).toBe(true); // falls through to the normal merge decision
+      const denied = await env.DB.prepare("select outcome from audit_events where event_type = ? order by created_at desc limit 1").bind("agent.action.update_branch").first<{ outcome: string }>();
+      expect(denied?.outcome).toBe("denied");
+    });
+
+    it("REGRESSION (gate finding): the bounded-retry counter accumulates across successful forces even though each one changes the head SHA", async () => {
+      // A successful update_branch itself produces a NEW head SHA (the merge-base-into-head commit). The
+      // counter must NOT reset just because ITS OWN action changed the head -- otherwise the cap could never
+      // be reached via the exact path it exists to bound, and a fast-moving base would force a rebase on
+      // EVERY pass forever. Simulates 3 rounds, each with a genuinely different head SHA (mirroring the
+      // synchronize webhook a real update_branch triggers), then a 4th round proving the cap holds.
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedFreshRebaseRepo(env, 96, { requireFreshRebaseWindowMinutes: 10 });
+      const shas = ["sha-r1", "sha-r2", "sha-r3", "sha-r4"];
+
+      for (const [round, sha] of shas.entries()) {
+        await upsertPullRequestFromGitHub(env, "owner/repo", { number: 96, title: "Fresh rebase PR", state: "open", user: { login: "contributor" }, head: { sha }, base: { ref: "main" }, labels: [], body: "" });
+        const seen = { merged: false, updateBranchCalls: 0, baseCommitCalls: 0 };
+        stubFreshRebaseFetch(96, { baseAdvancedAt: new Date(Date.now() - 60_000).toISOString(), headSha: sha }, seen); // always within window
+
+        await processJob(env, { type: "agent-regate-pr", deliveryId: `fresh-rebase-multi-round-${round}`, repoFullName: "owner/repo", prNumber: 96, installationId: 123 });
+
+        if (round < 3) {
+          // Rounds 0-2 (attempts 1-3): still under/at the cap -- forces update_branch, never merges.
+          expect(seen.updateBranchCalls).toBe(1);
+          expect(seen.merged).toBe(false);
+        } else {
+          // Round 3 (the 4th evaluation): the cap (3) was already reached by round 2 -- falls through to merge.
+          expect(seen.updateBranchCalls).toBe(0);
+          expect(seen.merged).toBe(true);
+        }
+      }
+
+      const forcedCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.forced_rebase_freshness").first<{ n: number }>();
+      expect(forcedCount?.n).toBe(3); // exactly 3 successful forces, not 4
+      const capped = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.fresh_rebase_window_cap_exceeded").first<{ outcome: string }>();
+      expect(capped?.outcome).toBe("completed");
     });
   });
 
@@ -12221,6 +12415,100 @@ describe("queue processors", () => {
     expect(permissionCalls).toEqual([]);
   });
 
+  it.each(["submitted", "dismissed", "edited"] as const)(
+    "bumps reviewsInvalidatedAt for the right repo+PR on a pull_request_review '%s' webhook (#2537)",
+    async (action) => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        JOBS: { async send() {} } as unknown as Queue,
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        return new Response("not found", { status: 404 });
+      });
+      // Seed an existing sync-state row so the assertion can confirm ONLY reviewsInvalidatedAt moved.
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 42,
+        title: "Add feature",
+        state: "open",
+        user: { login: "contributor" },
+        head: { sha: "sha-42" },
+        labels: [],
+        body: "",
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: `review-invalidate-${action}`,
+        eventName: "pull_request_review",
+        payload: {
+          action,
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 42,
+            title: "Add feature",
+            state: "open",
+            user: { login: "contributor", type: "User" },
+            html_url: "https://github.com/JSONbored/gittensory/pull/42",
+          },
+          review: {
+            state: action === "dismissed" ? "DISMISSED" : "APPROVED",
+            user: { login: "maintainer", type: "User" },
+            submitted_at: "2026-05-28T12:00:00.000Z",
+            html_url: "https://github.com/JSONbored/gittensory/pull/42#pullrequestreview-1",
+          },
+          sender: { login: "maintainer", type: "User" },
+        },
+      });
+
+      const state = await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 42);
+      expect(state?.reviewsInvalidatedAt).toBeTruthy();
+    },
+  );
+
+  it("does not bump reviewsInvalidatedAt for a pull_request_review action outside submitted/dismissed/edited", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      JOBS: { async send() {} } as unknown as Queue,
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "review-invalidate-unsupported-action",
+      eventName: "pull_request_review",
+      payload: {
+        // "submitted" | "dismissed" | "edited" are the only invalidating actions; GitHub also emits others
+        // (e.g. review comments carry their own event) that must NOT stamp the cache marker.
+        action: "unrecognized_action" as unknown as "submitted",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 43,
+          title: "Add feature",
+          state: "open",
+          user: { login: "contributor", type: "User" },
+          html_url: "https://github.com/JSONbored/gittensory/pull/43",
+        },
+        review: {
+          state: "APPROVED",
+          user: { login: "maintainer", type: "User" },
+          submitted_at: "2026-05-28T12:00:00.000Z",
+          html_url: "https://github.com/JSONbored/gittensory/pull/43#pullrequestreview-1",
+        },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 43)).toBeNull();
+  });
+
   it("notifies issue-watchers when a new grabbable maintainer-created issue opens (#699 path B)", async () => {
     const enqueued: Array<{ type: string; event?: { eventType: string; recipientLogin: string; pullNumber: number } }> = [];
     const env = createTestEnv({ JOBS: { async send(message: { type: string }) { enqueued.push(message); } } as unknown as Queue });
@@ -14705,5 +14993,135 @@ describe("installation app_id capture + dual-app webhook filter (#selfhost-app-i
     expect(pr?.n).toBe(1);
     const evt = await env.DB.prepare("select payload_hash from webhook_events where delivery_id = ?").bind("own-app-pr").first<{ payload_hash: string }>();
     expect(evt?.payload_hash).not.toBe("foreign_app");
+  });
+
+  // #2537: durable PR-state cache — webhook invalidation + the act-boundary regression.
+  describe("durable PR-state cache (#2537)", () => {
+    function seedWarmPrStateCache(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+      return upsertPullRequestDetailSyncState(env, {
+        repoFullName,
+        pullNumber,
+        status: "complete",
+        prMergeableState: "clean",
+        prState: "open",
+        prStateFetchedAt: new Date().toISOString(),
+      });
+    }
+
+    it.each(["synchronize", "closed", "reopened"] as const)(
+      "pull_request %s action invalidates the durable PR-state cache",
+      async (action) => {
+        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+        await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+        await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+        await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+        await seedWarmPrStateCache(env, "JSONbored/gittensory", 200);
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/access_tokens")) return Response.json({ token: "tok" });
+          return Response.json({});
+        });
+
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `invalidate-pr-state-${action}`,
+          eventName: "pull_request",
+          payload: {
+            action,
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: { number: 200, title: "PR", state: action === "closed" ? "closed" : "open", user: { login: "contributor" }, head: { sha: "a200" }, labels: [], body: "" },
+          },
+        });
+
+        expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 200)).toMatchObject({
+          prMergeableState: null,
+          prState: null,
+          prStateFetchedAt: null,
+        });
+      },
+    );
+
+    it("a non-invalidating pull_request action (labeled) leaves the durable PR-state cache UNCHANGED", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      await seedWarmPrStateCache(env, "JSONbored/gittensory", 201);
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "tok" });
+        return Response.json({});
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "invalidate-pr-state-labeled",
+        eventName: "pull_request",
+        payload: {
+          action: "labeled",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 201, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "a201" }, labels: [], body: "" },
+        },
+      });
+
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 201)).toMatchObject({
+        prMergeableState: "clean",
+        prState: "open",
+      });
+    });
+
+    it("REGRESSION (#2537, gate-flagged): reconcileLiveDuplicateSiblings must NOT serve a warm durable PR-state cache row — a cached 'open' read up to PR_STATE_CACHE_MAX_AGE_MS stale after a missed closed webhook would keep an already-closed sibling eligible as the duplicate-cluster winner, wrongly closing the CURRENT PR as the loser", async () => {
+      const env = createTestEnv({ GITTENSORY_DUPLICATE_WINNER: "true" });
+      // Seed a WARM cache row claiming the sibling is still open, but the live GitHub state below says CLOSED —
+      // proving the cache is never consulted: only a genuine live read can discover this and correctly reconcile it.
+      await seedWarmPrStateCache(env, "owner/repo", 5);
+      let liveStateFetches = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "tok" });
+        if (/\/pulls\/5(?:\?|$)/.test(url)) {
+          liveStateFetches += 1;
+          return Response.json({ number: 5, state: "closed" });
+        }
+        return Response.json({});
+      });
+
+      const winner: Parameters<typeof reconcileLiveDuplicateSiblings>[3] = { repoFullName: "owner/repo", number: 10, title: "Winner", state: "open", labels: [], linkedIssues: [1] };
+      const sibling: Parameters<typeof reconcileLiveDuplicateSiblings>[3] = { repoFullName: "owner/repo", number: 5, title: "Sibling", state: "open", labels: [], linkedIssues: [1] };
+      const result = await reconcileLiveDuplicateSiblings(env, null, "owner/repo", winner, [sibling]);
+
+      // The sibling is correctly dropped as stale-closed, proving a genuine live fetch happened rather than
+      // trusting the warm-but-wrong cached "open" value.
+      expect(result).toEqual([]);
+      expect(liveStateFetches).toBe(1);
+    });
+
+    it("REGRESSION (#2537): the per-PR sweep unit's live resync primes the durable PR-state cache for later readers", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write" }, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+      await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 6, title: "Sweep target", state: "open", user: { login: "contributor" }, head: { sha: "a6" }, base: { ref: "main" }, labels: [], body: "" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "tok" });
+        if (/\/pulls\/6(?:\?|$)/.test(url)) return Response.json({ number: 6, state: "open", mergeable_state: "clean", head: { sha: "a6" } });
+        if (url.includes("/pulls/6/files")) return Response.json([]);
+        if (url.includes("/pulls/6/reviews")) return Response.json([]);
+        if (url.includes("/commits/a6/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a6/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "prime-pr-state-cache", repoFullName: "owner/agent-repo", prNumber: 6, installationId: 9001 });
+
+      expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 6)).toMatchObject({
+        prMergeableState: "clean",
+        prState: "open",
+      });
+    });
   });
 });

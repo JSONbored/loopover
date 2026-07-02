@@ -510,6 +510,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       reviewNagCooldownDays: 5,
       reviewNagLabel: "review-nag-cooldown",
       autoCloseExemptLogins: [],
+      requireFreshRebaseWindowMinutes: null,
     };
   }
   return {
@@ -562,6 +563,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     reviewNagCooldownDays: normalizePositiveIntWithDefault(row.reviewNagCooldownDays, 5),
     reviewNagLabel: row.reviewNagLabel,
     autoCloseExemptLogins: parseAutoCloseExemptLogins(row.autoCloseExemptLoginsJson),
+    requireFreshRebaseWindowMinutes: normalizeOpenItemCap(row.requireFreshRebaseWindowMinutes),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -646,6 +648,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     reviewNagCooldownDays: normalizePositiveIntWithDefault(settings.reviewNagCooldownDays, 5),
     reviewNagLabel: settings.reviewNagLabel ?? "review-nag-cooldown",
     autoCloseExemptLogins: normalizeAutoCloseExemptLogins(settings.autoCloseExemptLogins).logins,
+    requireFreshRebaseWindowMinutes: normalizeOpenItemCap(settings.requireFreshRebaseWindowMinutes),
   };
   const db = getDb(env.DB);
   await db
@@ -700,6 +703,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       reviewNagCooldownDays: resolved.reviewNagCooldownDays,
       reviewNagLabel: resolved.reviewNagLabel,
       autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
+      requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -755,6 +759,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         reviewNagCooldownDays: resolved.reviewNagCooldownDays,
         reviewNagLabel: resolved.reviewNagLabel,
         autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
+        requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
         updatedAt: nowIso(),
       },
     });
@@ -1133,8 +1138,10 @@ export async function getRepoQueueTrendSnapshot(env: Env, repoFullName: string):
 // drizzle's `onConflictDoUpdate` strips `undefined` entries from the generated SQL `SET` clause rather than
 // writing NULL. Every "running" pre-fetch stamp (backfill.ts) relies on this to touch only `status` without
 // clearing the PREVIOUS `headSha`/`*SyncedAt` row — including the repo+PR+headSha file cache
-// (#audit-rate-headroom), which would silently stop hitting if a future edit here coalesced an omitted field to
-// `null` (e.g. `headSha: state.headSha ?? null`). Pass `null` explicitly to actually clear a column.
+// (#audit-rate-headroom) and the durable bare-PR-state cache (#2537), which would silently stop hitting if a
+// future edit here coalesced an omitted field to `null` (e.g. `headSha: state.headSha ?? null`). Pass `null`
+// explicitly to actually clear a column (this is exactly how webhook invalidation clears prMergeableState/prState
+// below).
 export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequestDetailSyncStateRecord): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -1147,9 +1154,13 @@ export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequ
       headSha: state.headSha,
       filesSyncedAt: state.filesSyncedAt,
       reviewsSyncedAt: state.reviewsSyncedAt,
+      reviewsInvalidatedAt: state.reviewsInvalidatedAt,
       checksSyncedAt: state.checksSyncedAt,
       lastSyncedAt: state.lastSyncedAt,
       errorSummary: state.errorSummary,
+      prMergeableState: state.prMergeableState,
+      prState: state.prState,
+      prStateFetchedAt: state.prStateFetchedAt,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -1159,12 +1170,60 @@ export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequ
         headSha: state.headSha,
         filesSyncedAt: state.filesSyncedAt,
         reviewsSyncedAt: state.reviewsSyncedAt,
+        reviewsInvalidatedAt: state.reviewsInvalidatedAt,
         checksSyncedAt: state.checksSyncedAt,
         lastSyncedAt: state.lastSyncedAt,
         errorSummary: state.errorSummary,
+        prMergeableState: state.prMergeableState,
+        prState: state.prState,
+        prStateFetchedAt: state.prStateFetchedAt,
         updatedAt: nowIso(),
       },
     });
+}
+
+/** Reviews-cache invalidation stamp (#2537): a pure single-field bump of `reviewsInvalidatedAt`, leaving
+ *  every other column (`headSha`/`filesSyncedAt`/`reviewsSyncedAt`/`checksSyncedAt`/...) untouched when the
+ *  row already exists — mirrors the narrow single-field touches on `pull_requests` (markPullRequestApproved,
+ *  markPullRequestRegated). Creates the row (all other columns default/NULL) if this repo+PR has never been
+ *  synced yet, so an early review webhook is not silently dropped.
+ *
+ *  Unlike its siblings above (advisory/reporting markers with other fallback signals), this write is the SOLE
+ *  source of the reviews-cache invalidation signal (#2537 gate finding) — a single failed attempt loses that
+ *  PR's specific "reviews changed" event permanently, with nothing to naturally re-trigger it until some LATER
+ *  invalidation happens to succeed. The caller already treats this as best-effort (never blocks the webhook),
+ *  so a short bounded retry absorbs a transient D1 blip in-process rather than needing a durable retry queue
+ *  for what is still, even after this, a best-effort write. */
+export async function markPullRequestReviewsInvalidated(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+  const db = getDb(env.DB);
+  const now = nowIso();
+  const MAX_ATTEMPTS = 3;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await db
+        .insert(pullRequestDetailSyncState)
+        .values({
+          id: `${repoFullName}#${pullNumber}`,
+          repoFullName,
+          pullNumber,
+          status: "never_synced",
+          reviewsInvalidatedAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [pullRequestDetailSyncState.repoFullName, pullRequestDetailSyncState.pullNumber],
+          set: {
+            reviewsInvalidatedAt: now,
+            updatedAt: now,
+          },
+        });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 export async function getPullRequestDetailSyncState(env: Env, fullName: string, pullNumber: number): Promise<PullRequestDetailSyncStateRecord | null> {
@@ -2238,6 +2297,25 @@ export async function countRecentDeadLetters(env: Env, sinceIso: string): Promis
   return row.count;
 }
 
+/** Observability for the DLQ dashboard (#1208): recent dead letters grouped by job type, using the jobType stored
+ *  in each `github_app.dlq_dead_lettered` audit event's metadata. Missing/blank jobType falls back to `unknown`,
+ *  and the returned object's keys are sorted deterministically for stable consumers/tests. */
+export async function countRecentDeadLettersByType(env: Env, sinceIso: string): Promise<Record<string, number>> {
+  const db = getDb(env.DB);
+  const jobTypeExpr =
+    sql<string>`coalesce(nullif(trim(cast(json_extract(${auditEvents.metadataJson}, '$.jobType') as text)), ''), 'unknown')`;
+  const rows = await db
+    .select({
+      jobType: jobTypeExpr,
+      count: sql<number>`count(*)`,
+    })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.eventType, "github_app.dlq_dead_lettered"), gte(auditEvents.createdAt, sinceIso)))
+    .groupBy(jobTypeExpr)
+    .orderBy(asc(jobTypeExpr));
+  return Object.fromEntries(rows.map((row) => [row.jobType, Number(row.count)]));
+}
+
 export type PrVisibilitySkipAuditEvent = {
   repoFullName: string;
   pullNumber: number;
@@ -3066,8 +3144,15 @@ export async function upsertPullRequestFile(env: Env, file: PullRequestFileRecor
       payloadJson: jsonString(file.payload),
       updatedAt: nowIso(),
     })
+    // Target the PRIMARY KEY, not the (repoFullName, pullNumber, path) unique index it's derived from. `id`
+    // is a pure function of those same 3 fields, so under a single execution the two are always in lockstep —
+    // but on the self-host Postgres backend, ON CONFLICT only protects against a race on the SPECIFIED arbiter
+    // index; a genuinely concurrent second writer (e.g. two overlapping detail-sync passes for the same PR,
+    // both racing past the "no existing row yet" check) can still hit a raw duplicate-key error on `id` because
+    // that constraint isn't the one Postgres is arbitrating. Targeting `id` directly makes Postgres's upsert
+    // machinery cover the constraint that's actually racing.
     .onConflictDoUpdate({
-      target: [pullRequestFiles.repoFullName, pullRequestFiles.pullNumber, pullRequestFiles.path],
+      target: pullRequestFiles.id,
       set: {
         status: file.status,
         additions: file.additions,
@@ -4214,9 +4299,13 @@ function toPullRequestDetailSyncStateRecord(row: typeof pullRequestDetailSyncSta
     headSha: row.headSha,
     filesSyncedAt: row.filesSyncedAt,
     reviewsSyncedAt: row.reviewsSyncedAt,
+    reviewsInvalidatedAt: row.reviewsInvalidatedAt,
     checksSyncedAt: row.checksSyncedAt,
     lastSyncedAt: row.lastSyncedAt,
     errorSummary: row.errorSummary,
+    prMergeableState: row.prMergeableState,
+    prState: row.prState,
+    prStateFetchedAt: row.prStateFetchedAt,
     updatedAt: row.updatedAt,
   };
 }

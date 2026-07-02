@@ -1310,6 +1310,29 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(calls).toBe(1); // the auto-revived job was actually re-attempted
       await q.stop();
     });
+
+    // REGRESSION (#2581 review defect): the revive interval had no error handler of its own, so a thrown
+    // driver/metric failure on that tick would surface as an uncaught exception and could terminate the
+    // process -- exactly the failure mode pump()'s own try/catch already guards against for the main poll loop.
+    it("survives a reviveDeadLetterJobs() driver failure on the interval tick instead of crashing the process", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const driver = makeDriver();
+      const realQuery = driver.query.bind(driver);
+      vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+        if (sql.includes("WHERE status='dead' AND attempts<?")) throw new Error("disk I/O error");
+        return realQuery(sql, params);
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const q = createSqliteQueue(driver, async () => undefined, { maxRetries: 1 });
+
+      q.start();
+      await vi.advanceTimersByTimeAsync(1000); // the revive interval fires once -- would throw here if uncaught
+
+      const logged = errorSpy.mock.calls.map(([line]) => String(line));
+      expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("disk I/O error"))).toBe(true);
+      await q.stop();
+    });
   });
 
   it("reschedules GitHub rate-limit failures without consuming the dead-letter budget", async () => {

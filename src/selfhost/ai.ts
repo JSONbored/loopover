@@ -604,6 +604,20 @@ export function resetAiProviderHealthForTest(): void {
   aiConsecutiveFailures = 0;
 }
 
+// Per-provider circuit breaker (#2540): a provider that is failing hard (bad credential, sustained outage)
+// otherwise pays the FULL cost of a fresh attempt (a real HTTP call, or a real CLI subprocess spawn) on
+// every single review during the outage. This is independent of `aiConsecutiveFailures` above -- that streak
+// tracks whole-CHAIN exhaustion for /ready; this tracks one PROVIDER's own reliability so a known-broken
+// provider can be skipped fast without affecting readiness semantics.
+const AI_PROVIDER_FAILURE_THRESHOLD = 3;
+const AI_PROVIDER_COOLDOWN_MS = 60_000;
+const aiProviderCircuits = new Map<string, { failures: number; cooldownUntil: number }>();
+
+/** Test-only reset so circuit state from one test can't leak into the next (module-level map). */
+export function resetAiProviderCircuitBreakerForTest(): void {
+  aiProviderCircuits.clear();
+}
+
 /** Whether a missing-CLI boot check should force /ready unhealthy: only when EVERY configured provider is
  *  among the missing-CLI set, i.e. the whole AI_PROVIDER chain has zero chance of working -- not just one
  *  provider within a chain that has a working fallback (another present CLI, or an HTTP-based provider,
@@ -674,16 +688,39 @@ function requestKind(options: AiRunOptions): "embedding" | "review" {
   return Array.isArray(options.text) ? "embedding" : "review";
 }
 
-function runProviderWithOtel(
+async function runProviderWithOtel(
   provider: { name: string; ai: SelfHostAi },
   model: string,
   options: AiRunOptions,
 ): Promise<AiResult> {
-  return withReviewSpan(
-    "selfhost.ai.provider",
-    { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKind(options) },
-    () => provider.ai.run(model, options),
-  );
+  const circuit = aiProviderCircuits.get(provider.name);
+  if (circuit && circuit.cooldownUntil > Date.now()) {
+    incr("gittensory_ai_provider_circuit_open_total", { provider: provider.name });
+    throw new Error(
+      `circuit_open: provider "${provider.name}" is in cooldown after ${AI_PROVIDER_FAILURE_THRESHOLD} consecutive failures — skipping this attempt`,
+    );
+  }
+  try {
+    const result = await withReviewSpan(
+      "selfhost.ai.provider",
+      { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKind(options) },
+      () => provider.ai.run(model, options),
+    );
+    aiProviderCircuits.delete(provider.name);
+    return result;
+  } catch (error) {
+    incr("gittensory_ai_provider_failures_total", { provider: provider.name });
+    // Re-read the map here rather than reusing the `circuit` captured above: that read happened BEFORE the
+    // `await` on the real provider call, so under concurrent same-provider calls it can be stale by the time
+    // this catch runs, and computing `failures` from it would clobber a sibling call's write (lost-update race)
+    // instead of accumulating. No `await` between this read and the `.set()` below, so it's race-free.
+    const failures = (aiProviderCircuits.get(provider.name)?.failures ?? 0) + 1;
+    aiProviderCircuits.set(provider.name, {
+      failures,
+      cooldownUntil: failures >= AI_PROVIDER_FAILURE_THRESHOLD ? Date.now() + AI_PROVIDER_COOLDOWN_MS : 0,
+    });
+    throw error;
+  }
 }
 
 /** Build one provider adapter by name. Provider config stays explicit so dual-provider setups cannot accidentally
@@ -798,6 +835,16 @@ export function resolveAiReviewerPlan(
   const names = resolveProviderNames(env);
   if (names.length === 0) return undefined;
   if (names.length === 1) return { reviewers: [{ model: names[0] as string }], combine: "single", onMerge: undefined };
+  // Fail loud when the two SLOTS the dual-review plan actually uses (the first two names) are the same
+  // provider: routeProviders' `byName` map collapses duplicate provider names to one runtime instance, so
+  // "dual review" would silently become "one provider called twice" -- no independent second opinion, and
+  // that provider's outage takes down both slots. A THIRD+ duplicate further down the list is fine; only
+  // the first two matter because resolveAiReviewerPlan below caps reviewers at names.slice(0, 2).
+  if (names[0] === names[1]) {
+    throw new Error(
+      `ai_reviewer_providers_not_distinct: AI_PROVIDER lists "${names[0]}" for both dual-review reviewer slots — configure two distinct providers (e.g. AI_PROVIDER=claude-code,codex) for independent dual review, or a single provider (AI_PROVIDER=codex) for single-reviewer mode.`,
+    );
+  }
   const rawCombine = (env.AI_COMBINE ?? "").trim().toLowerCase() as CombineStrategy;
   const combine: CombineStrategy = COMBINE_STRATEGIES.has(rawCombine) ? rawCombine : "synthesis";
   const rawOnMerge = (env.AI_ON_MERGE ?? "").trim().toLowerCase() as OnMerge;

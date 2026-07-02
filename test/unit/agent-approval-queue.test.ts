@@ -535,6 +535,20 @@ describe("agent approval queue (#779)", () => {
     expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "merge", sha: "h7" });
   });
 
+  it("REGRESSION (#2539 evaluated, reverted): a successful staged-merge accept still fetches live CI TWICE — once for the #2126 accept-time re-check, once for the executor's own #2128 pre-mutation re-check. These must NOT be coalesced: real async work (isHoldOnly/isCloseHoldOnly DB reads, the linked-issue hard-rule resolution, and the executor's own fetchPullRequestFreshness call) runs between the two reads, so reusing the earlier one would let CI flip from passed to failed/pending in that window without the pre-mutation guard ever seeing it — exactly the staleness #2128 exists to catch.", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+    expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(2);
+  });
+
   it("accept downgrades a staged merge to a needs-human-review label when the precision breaker engaged after staging (#2127)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", label: "auto" } });

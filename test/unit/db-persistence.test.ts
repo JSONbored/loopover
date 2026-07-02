@@ -193,6 +193,35 @@ describe("database persistence helpers", () => {
     const cappedPathSet = new Set(cappedPaths.map((entry) => entry.path));
     expect(graph.paths.every((entry) => cappedPathSet.has(entry.path))).toBe(true);
   });
+
+  it("REGRESSION: upsertPullRequestFile targets the id PRIMARY KEY in its ON CONFLICT clause, not the secondary unique index", async () => {
+    // `id` is a pure function of (repoFullName, pullNumber, path) — the exact same fields the secondary
+    // unique index covers — so targeting that index instead of `id` leaves the primary key unprotected by
+    // Postgres's upsert machinery on the self-host Postgres backend (see #977's pg-adapter): a genuinely
+    // concurrent second writer can still raise a raw duplicate-key error on `pull_request_files_pkey` even
+    // though the composite fields "agree." Asserting the generated SQL's conflict target pins the fix so a
+    // future revert back to the composite target doesn't silently reopen the race.
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const conflictClauses: string[] = [];
+    env.DB.prepare = ((sql: string) => {
+      if (/insert\s+into\s+["'`]?pull_request_files/i.test(sql)) {
+        const match = /on\s+conflict\s*\(([^)]*)\)/i.exec(sql);
+        if (match) conflictClauses.push(match[1]!.trim());
+      }
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+
+    await upsertPullRequestFile(env, pullRequestFile("owner/repo", 1, "src/a.ts"));
+
+    expect(conflictClauses).toHaveLength(1);
+    expect(conflictClauses[0]).toMatch(/^["'`]?(pull_request_files["'`]?\.["'`]?)?id["'`]?$/i);
+
+    // Functional guard: a same-key upsert still updates the existing row in place rather than duplicating it.
+    await upsertPullRequestFile(env, { ...pullRequestFile("owner/repo", 1, "src/a.ts"), additions: 99 });
+    const rows = await listRepoPullRequestFilePaths(env, "owner/repo", { pullNumbers: [1] });
+    expect(rows).toHaveLength(1);
+  });
 });
 
 function pullRequestFile(repoFullName: string, pullNumber: number, path: string): PullRequestFileRecord {

@@ -369,3 +369,36 @@ groups:
           summary: "gittensory p95 request latency above 1s"
           description: "p95 HTTP request latency is {{ $value | printf \"%.2f\" }}s over the last 5m (sustained 10m), breaching the 1s SLO."
           runbook: "Check whether slowness is queue/DB/AI-bound: correlate with gittensory_queue_pending and Qdrant/AI latency. A rising p95 with flat error rate usually means a saturated dependency, not a bug."
+
+  # ── AI review reliability (dual-AI combiner + per-provider circuit breaker, #2540) ─
+  - name: gittensory-ai-review
+    rules:
+      - alert: GittensoryAiReviewInconclusiveSpike
+        # `inconclusive` means the AI review pipeline could not produce a usable verdict (every reviewer
+        # opinion missing/unparseable, or a required opinion never came back) -- the review still runs
+        # deterministically, but dual-AI review is repeatedly failing to add value. Absolute-increase
+        # threshold (matching GittensoryDeadLetterJobsGrowing above): there's no clean matching-cardinality
+        # denominator (total review attempts aren't broken out per-mode the same way), so a ratio query
+        # would need an unrelated series. > 5 in 30m tolerates the occasional one-off degrade.
+        expr: increase(gittensory_ai_review_inconclusive_total[30m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory AI review is repeatedly inconclusive"
+          description: "{{ $value | printf \"%.0f\" }} AI review(s) came back inconclusive over the last 30m (sustained 10m). Dual-AI review is repeatedly failing to produce a usable verdict."
+          runbook: "Check provider health and circuit-breaker state (gittensory_ai_provider_failures_total / gittensory_ai_provider_circuit_open_total) and verify AI_PROVIDER credentials are still valid for every configured reviewer."
+
+      - alert: GittensoryAiProviderCircuitOpen
+        # A provider's circuit breaker opens after AI_PROVIDER_FAILURE_THRESHOLD consecutive failures and
+        # short-circuits further attempts for a cooldown window -- ANY circuit-open event in 15m means that
+        # provider has been failing repeatedly and calls are being skipped fast rather than retried at full
+        # cost. Same absolute-increase style as GittensoryDeadLetterJobsGrowing: any occurrence is worth a look.
+        expr: increase(gittensory_ai_provider_circuit_open_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory AI provider {{ $labels.provider }} circuit breaker is open"
+          description: "Provider {{ $labels.provider }} has failed repeatedly and its circuit breaker is skipping calls fast during its cooldown (sustained 5m)."
+          runbook: "Check that provider's credentials/reachability (CLI auth for claude-code/codex, or the configured API key/base URL for HTTP providers) via gittensory_ai_provider_failures_total{provider=\"...\"} and recent selfhost_ai_provider_failed logs."

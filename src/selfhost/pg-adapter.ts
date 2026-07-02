@@ -83,3 +83,34 @@ export function createPgAdapter(pool: Pool): D1Database {
   };
   return adapter as unknown as D1Database;
 }
+
+// #2543: github_rate_limit_observations receives one INSERT per outbound GitHub API response and is pruned in
+// daily bulk deletes by the retention job (pruneExpiredRecords) -- an insert-then-bulk-delete pattern that is
+// exactly the shape that causes dead-tuple bloat under Postgres's stock autovacuum settings (scale_factor 0.2,
+// i.e. autovacuum waits for 20% of the table to be dead before vacuuming -- fine for a slowly-growing table,
+// too lax for one that gets emptied in one daily burst). Lowering the scale factor makes autovacuum reclaim
+// space promptly after each day's bulk delete instead of letting dead tuples accumulate across cycles. A
+// storage-parameter ALTER is idempotent (re-applying the same value is a no-op), so this runs unconditionally
+// on every Postgres boot rather than needing its own migration-ledger tracking. SQLite has no autovacuum
+// concept at all, so this must never run there -- callers gate it behind the Postgres backend check, matching
+// PGPOOL_MAX/resolvePostgresPoolMax's own "server.ts wiring, tested logic elsewhere" split (src/selfhost/
+// queue-common.ts), since server.ts itself has no test harness (top-level main(), Codecov-ignored).
+export const GITHUB_RATE_LIMIT_OBSERVATIONS_AUTOVACUUM_SQL =
+  "ALTER TABLE github_rate_limit_observations SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_vacuum_threshold = 50)";
+
+/** Apply the autovacuum tuning above via the SAME D1Database.exec() surface runSelfHostMigrations already uses
+ *  for migrations -- so this reuses translateDdl's existing SQL path rather than a second raw-pool query
+ *  mechanism. Must be called AFTER migrations (the table has to exist first); best-effort by design (a
+ *  storage-parameter tweak is an optimization, never a correctness dependency -- a failure here must not stop
+ *  the self-host from booting). */
+export async function tuneGithubRateLimitObservationsAutovacuum(db: D1Database): Promise<void> {
+  await db.exec(GITHUB_RATE_LIMIT_OBSERVATIONS_AUTOVACUUM_SQL).catch((error: unknown) => {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "selfhost_autovacuum_tune_failed",
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  });
+}

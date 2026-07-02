@@ -183,6 +183,15 @@ gate:
   # PR, so it is opt-in rather than a new default.
   premergeContentRecheck: false
 
+  # Force-rebase-before-merge window in minutes (#2552, anti-race). When the base branch has advanced within
+  # this many minutes of the actual merge-decision moment, an agent-driven merge forces an update_branch +
+  # fresh CI recheck cycle before merging, instead of trusting a mergeable_state: clean read that may already
+  # be stale relative to a sibling commit that just landed on the base. A bounded retry cap prevents a
+  # fast-moving base from live-locking the PR — after a few forced attempts it falls through to a normal
+  # merge with an audit note. Positive integer (minutes), or omit/null. Default: null (never force).
+  # DB-backed (dashboard-settable too); this overrides the stored value.
+  requireFreshRebaseWindow: 10
+
   # AI maintainer review. Opt-in; the AI capabilities are switched on at the
   # deployment level.
   aiReview:

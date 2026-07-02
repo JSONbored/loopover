@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -67,6 +67,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   resetMetrics();
   resetAiProviderHealthForTest();
+  resetAiProviderCircuitBreakerForTest();
 });
 
 type SpawnResult = { stdout: string; code: number | null; stderr?: string };
@@ -195,6 +196,120 @@ describe("createChainAi (fallback)", () => {
   });
 });
 
+describe("per-provider circuit breaker (#2540 — skip fast during a sustained outage)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("opens the circuit after 3 consecutive failures; a call within the cooldown skips the real provider entirely", async () => {
+    const calls = vi.fn(async () => {
+      throw new Error("down");
+    });
+    const flaky = { name: "flaky-provider", ai: { run: calls } };
+    // 3 consecutive failures via createChainAi (the shared chokepoint) opens the circuit.
+    for (let i = 0; i < 3; i += 1) {
+      await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow();
+    }
+    expect(calls).toHaveBeenCalledTimes(3);
+    // A subsequent call within the cooldown window throws circuit_open WITHOUT invoking provider.ai.run again.
+    await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow(/circuit_open: provider "flaky-provider"/);
+    expect(calls).toHaveBeenCalledTimes(3); // unchanged — the real provider was never reached
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('gittensory_ai_provider_circuit_open_total{provider="flaky-provider"} 1');
+    expect(metrics).toContain('gittensory_ai_provider_failures_total{provider="flaky-provider"} 3');
+  });
+
+  it("REGRESSION (gate finding): concurrent same-provider failures accumulate correctly (no lost-update race)", async () => {
+    // Each call previously captured the circuit's failure count BEFORE its own `await` on the real provider
+    // call, then wrote `(that stale count) + 1` back on failure. Firing several failing calls for the SAME
+    // provider concurrently (not sequentially) means every call reads the map before any of them have written —
+    // each one computes failures=1 from the same stale pre-await snapshot, and the last writer clobbers the
+    // rest, so the count never reaches the threshold no matter how many concurrent failures occur. Fixed by
+    // re-reading the map fresh inside the (synchronous, no-await) catch block right before the write.
+    const calls = vi.fn(async () => {
+      throw new Error("down");
+    });
+    const flaky = { name: "concurrent-flaky-provider", ai: { run: calls } };
+    const results = await Promise.allSettled([
+      createChainAi([flaky]).run("m", { prompt: "x" }),
+      createChainAi([flaky]).run("m", { prompt: "x" }),
+      createChainAi([flaky]).run("m", { prompt: "x" }),
+    ]);
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+    expect(calls).toHaveBeenCalledTimes(3); // all 3 concurrent calls reached the real (failing) provider
+    // The circuit must now be OPEN (3 accumulated failures met the threshold) — a 4th call is skipped fast.
+    await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow(/circuit_open: provider "concurrent-flaky-provider"/);
+    expect(calls).toHaveBeenCalledTimes(3); // unchanged — the 4th call never reached the real provider
+  });
+
+  it("lets a call through to the real provider again after the cooldown elapses", async () => {
+    vi.useFakeTimers();
+    const calls = vi.fn(async () => {
+      throw new Error("down");
+    });
+    const flaky = { name: "flaky-provider-2", ai: { run: calls } };
+    for (let i = 0; i < 3; i += 1) {
+      await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow();
+    }
+    expect(calls).toHaveBeenCalledTimes(3);
+    // Still within cooldown: skipped.
+    await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow(/circuit_open/);
+    expect(calls).toHaveBeenCalledTimes(3);
+    // Advance past the 60s cooldown — the next call reaches the real provider again.
+    await vi.advanceTimersByTimeAsync(60_001);
+    await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow(/down/);
+    expect(calls).toHaveBeenCalledTimes(4); // the real provider WAS invoked this time
+  });
+
+  it("a success resets the failure count so one subsequent isolated failure does not reopen the circuit", async () => {
+    let shouldFail = true;
+    const calls = vi.fn(async () => {
+      if (shouldFail) throw new Error("down");
+      return { response: "ok" };
+    });
+    const provider = { name: "recovering-provider", ai: { run: calls } };
+    // Two failures (below the threshold of 3).
+    await expect(createChainAi([provider]).run("m", { prompt: "x" })).rejects.toThrow();
+    await expect(createChainAi([provider]).run("m", { prompt: "x" })).rejects.toThrow();
+    // A success resets the failure count to 0.
+    shouldFail = false;
+    await expect(createChainAi([provider]).run("m", { prompt: "x" })).resolves.toEqual({ response: "ok" });
+    // One more isolated failure afterward must NOT immediately reopen the circuit (count was reset, not just decremented).
+    shouldFail = true;
+    await expect(createChainAi([provider]).run("m", { prompt: "x" })).rejects.toThrow(/down/); // real failure, not circuit_open
+    // A second call right after must still reach the real provider (only 1 failure since the reset, below threshold 3).
+    await expect(createChainAi([provider]).run("m", { prompt: "x" })).rejects.toThrow(/down/);
+    expect(calls).toHaveBeenCalledTimes(5); // every call above reached the real provider.ai.run
+  });
+
+  it("routeProviders' direct-address path (dual-review) shares the same circuit breaker as the fallback chain", async () => {
+    const calls = vi.fn(async () => {
+      throw new Error("down");
+    });
+    const cc = { name: "claude-code", ai: { run: calls } };
+    const cx = { name: "codex", ai: { run: vi.fn(async () => ({ response: "ok" })) } };
+    const route = routeProviders([cc, cx]);
+    for (let i = 0; i < 3; i += 1) {
+      await expect(route.run("claude-code", { prompt: "x" })).rejects.toThrow();
+    }
+    expect(calls).toHaveBeenCalledTimes(3);
+    await expect(route.run("claude-code", { prompt: "x" })).rejects.toThrow(/circuit_open: provider "claude-code"/);
+    expect(calls).toHaveBeenCalledTimes(3); // unaffected by the circuit-open skip
+    // The OTHER provider (codex) is completely unaffected — no cross-provider bleed.
+    await expect(route.run("codex", { prompt: "x" })).resolves.toEqual({ response: "ok" });
+  });
+
+  it("does not affect isAiProviderHealthy / aiConsecutiveFailures — independent whole-chain streak", async () => {
+    const flaky = { name: "flaky-provider-3", ai: { run: async () => { throw new Error("down"); } } };
+    for (let i = 0; i < 3; i += 1) {
+      await expect(createChainAi([flaky]).run("m", { prompt: "x" })).rejects.toThrow();
+    }
+    // The whole-chain exhaustion streak (a SEPARATE counter) also reaches its own threshold here since every
+    // call exhausted the (single-provider) chain — a circuit-open throw still counts as a chain exhaustion.
+    expect(isAiProviderHealthy()).toBe(false);
+  });
+});
+
 describe("isAiProviderHealthy (readiness streak, #2497)", () => {
   const failing = { name: "a", ai: { run: async () => { throw new Error("down"); } } };
   const working = { name: "a", ai: { run: async () => ({ response: "ok" }) } };
@@ -217,13 +332,18 @@ describe("isAiProviderHealthy (readiness streak, #2497)", () => {
   });
 
   it("a success resets the streak back to healthy", async () => {
+    vi.useFakeTimers();
     for (let i = 0; i < 3; i += 1) {
       await expect(createChainAi([failing]).run("m", { prompt: "x" })).rejects.toThrow();
     }
     expect(isAiProviderHealthy()).toBe(false);
 
+    // Provider "a" tripped its own circuit breaker (#2540) after those 3 failures; advance past its cooldown so
+    // the success below reaches the real (working) provider instead of a fast circuit_open rejection.
+    await vi.advanceTimersByTimeAsync(60_001);
     await expect(createChainAi([working]).run("m", { prompt: "x" })).resolves.toEqual({ response: "ok" });
     expect(isAiProviderHealthy()).toBe(true);
+    vi.useRealTimers();
   });
 
   it("regression: markAiProviderUnhealthyAtBoot reports unhealthy immediately, before any AI call (#2497 follow-up)", () => {
@@ -376,6 +496,24 @@ describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () 
     expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toMatchObject({ combine: "consensus", onMerge: "both" });
     expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_COMBINE: "garbage", AI_ON_MERGE: "nonsense" })).toMatchObject({ combine: "synthesis", onMerge: undefined }); // invalid → defaults
     expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex,ollama" })?.reviewers).toEqual([{ model: "claude-code" }, { model: "codex" }]); // first two
+  });
+
+  it("resolveAiReviewerPlan: throws when the two dual-review slots resolve to the SAME provider (#2540)", () => {
+    // "codex,codex" → both dual-review slots are the literal same provider. routeProviders' byName map
+    // collapses duplicate names to one runtime instance, so this would silently degrade "dual review" into
+    // "one provider called twice" with no independent second opinion. Fail loud at plan-resolution time
+    // instead of degrading silently.
+    expect(() => resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex" })).toThrow(/ai_reviewer_providers_not_distinct/);
+    expect(() => resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex" })).toThrow(/"codex"/);
+  });
+
+  it("resolveAiReviewerPlan: a THIRD-slot duplicate does not throw (only the first two slots are actually used)", () => {
+    // "codex,ollama,codex" — the first two names (codex, ollama) are distinct, so the plan resolves normally;
+    // the trailing repeat of codex is never addressed because reviewers are capped at the first two.
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,ollama,codex" })).toMatchObject({
+      reviewers: [{ model: "codex" }, { model: "ollama" }],
+      combine: "synthesis",
+    });
   });
 
   it("labels explicit provider:model reviewer ids without consulting env defaults", () => {

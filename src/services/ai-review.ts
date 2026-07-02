@@ -25,8 +25,11 @@ import { sanitizePublicComment } from "../queue-intelligence";
 import { defangReviewInput } from "../review/safety";
 import { convergedFeatureActive } from "../review/feature-activation";
 import { labelSelfHostReviewerModels, labelSelfHostReviewerNames, resolveConfiguredProviderNames } from "../selfhost/ai-config";
+import { incr } from "../selfhost/metrics";
 import { errorMessage } from "../utils/json";
 import type { ReviewProfile } from "../signals/focus-manifest";
+import { isCodeFile } from "../signals/local-branch";
+import { isTestPath } from "../signals/test-evidence";
 
 /**
  * The best free Workers-AI model pair for review accuracy — two different families for independence,
@@ -53,13 +56,14 @@ const REVIEW_SYSTEM_PROMPT = [
   '{"assessment": string, "blockers": string[], "nits": string[], "suggestions": string[], "confidence": number}',
   "- assessment: a substantive but CONCISE summary (2-4 sentences) — what the change does, whether it is correct, and the most notable detail. Specific to THIS diff; never a generic one-liner and never hedging ('appears to', 'seems to').",
   "The assessment field is REQUIRED and must never be empty; if blockers is [] then the assessment still summarizes why the visible diff is safe enough to proceed.",
-  "- blockers: each ONE sentence naming a defect that WILL break the code as written — a missing import/symbol (ReferenceError), a logic error that produces wrong output, a security hole, data loss, a build/test breakage, or an API/contract break. Reference the file (and function/line). Empty [] if there are genuinely none.",
+  "- blockers: each ONE sentence naming a defect that WILL break the code as written — a missing import/symbol (ReferenceError), a logic error that produces wrong output, a security hole, data loss, a build/test breakage, an API/contract break, or a genuine algorithmic-complexity/performance regression introduced by the diff (e.g. a DB query or network call moved inside a loop creating an N+1 pattern, an unbounded loop/fanout over input whose size is not capped). Reference the file (and function/line). Empty [] if there are genuinely none.",
   "- confidence: a single number in [0,1] — your CALIBRATED probability that the blockers above are REAL, must-fix defects (not false positives). Use 1.0 only when you are certain the diff itself breaks; use 0.5 for a genuine coin-flip; lower it when you cannot fully see the breaking code or the defect is speculative. When blockers is empty, set confidence to 1.0.",
   "- nits: each ONE sentence — a NON-blocking point: style, naming, a missing doc, or DEFENSIVE hardening ('should handle the empty case', 'consider catching errors', 'add validation'). File-reference where you can.",
   "- suggestions: a few concrete, file-referenced improvements (may overlap nits).",
   "BE SELECTIVE — report only the findings that genuinely matter. List at MOST ~3 blockers and ~5 nits, keeping only the most important; prefer signal over volume and do NOT pad the lists.",
   "DEDUPLICATE — if the same kind of issue recurs across several functions or lines, report it ONCE and note it applies broadly; never repeat a near-identical finding per occurrence.",
   "SEVERITY DISCIPLINE — defensive or speculative hardening ('should handle X', 'consider validating', 'add error handling') is a NIT, not a blocker, UNLESS a real input WILL actually trigger the failure. CI or check status itself (failing, pending, unverified) is NOT a code defect — never list it (the gate evaluates CI separately).",
+  "PERFORMANCE SEVERITY — a performance concern is a blocker ONLY when the diff introduces a genuine, visible regression with a concrete trigger (a DB query or network call moved inside a loop, a loop/fanout over input whose size the diff removed a bound on). A stylistic or micro-optimization preference ('could use a Map instead of an array', 'this could be slightly faster') is a NIT, not a blocker, even if real.",
   "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
   "TRACE BEFORE ASSERTING ABSENCE — this rule extends to ANY 'X is missing' blocker (a missing schema/annotation/field, a missing null/array/type guard, a missing await/error-handler, an unregistered route/tool/handler): a backfill loop, a default, an early guard, or a registration ELSEWHERE may already supply it. Before calling absence a blocker, find the line in the visible context that WOULD break and reference it; if you cannot SEE the breaking code, downgrade to a nit phrased as a verification ('confirm X is registered/guarded'), never a blocker.",
   `FAIL CLOSED ON AN INCOHERENT DIFF — if the diff does not cohere with the PR title/description (it appears to describe a DIFFERENT change, the changed-file set looks stale or wrong, or you cannot map it to one coherent change), DO NOT emit a confident assessment or approval: set assessment to exactly '${INCOHERENT_DIFF_ASSESSMENT}' and return empty blockers, nits, and suggestions. Never rubber-stamp a change you cannot actually see.`,
@@ -177,6 +181,14 @@ export type GittensoryAiReviewInput = {
    * (the default) ⇒ no instruction is appended, so the prompt is byte-identical and the model emits none.
    */
   inlineFindings?: boolean | undefined;
+  /**
+   * This PR's changed file paths (#2558) — reused to splice a concise "changed code files with zero
+   * test-path evidence" section into the user prompt via the engine's own deterministic classifier
+   * (src/signals/test-evidence.ts), so the reviewer can name specific untested files instead of guessing
+   * from the raw diff. Additional CONTEXT only, never a new blocker/nit rule. Absent/empty, or when the PR
+   * has ANY test-path changes ⇒ no section is appended (byte-identical to today).
+   */
+  changedFiles?: ReadonlyArray<{ path: string }> | null | undefined;
 };
 
 /** A consensus critical defect, already public-safe, ready to become a gate blocker finding. */
@@ -490,7 +502,26 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
   // GITTENSORY_REVIEW_ENRICHMENT on AND REES_URL set). Absent/empty (the default) → the prompt is byte-identical.
   const enrichmentSection = input.enrichment?.promptSection;
   if (enrichmentSection) lines.push("", enrichmentSection);
+  // Test-evidence classifier (#2558): ground the reviewer's test-adequacy judgment in the engine's own
+  // deterministic classification instead of eyeballing the diff. Absent/no changed code files without test
+  // evidence ⇒ the prompt is byte-identical.
+  const testEvidenceSection = buildTestEvidencePromptSection(input.changedFiles ?? []);
+  if (testEvidenceSection) lines.push("", testEvidenceSection);
   return lines.join("\n");
+}
+
+/**
+ * A concise "changed code files with zero test-path evidence" section for the user prompt (#2558). Reuses the
+ * existing deterministic classifiers (isCodeFile, isTestPath) — no new signal, this is a wiring gap only.
+ * Mirrors slop.ts's buildMissingTestEvidenceFinding's whole-PR semantics: ANY changed path that already looks
+ * like a test file means there IS test evidence for this PR, so nothing is called out (a partial-but-real test
+ * change is not "zero evidence") — only a fully test-free PR touching real code files gets a section.
+ */
+export function buildTestEvidencePromptSection(files: ReadonlyArray<{ path: string }>): string | undefined {
+  const codePaths = [...new Set(files.map((file) => file.path).filter(Boolean).filter(isCodeFile))];
+  if (codePaths.length === 0) return undefined;
+  if (files.some((file) => isTestPath(file.path))) return undefined;
+  return `Test evidence (engine classifier): this PR has NO test-path changes. The following changed code file(s) have zero test-path evidence: ${codePaths.join(", ")}.`;
 }
 
 // `.gittensory.yml` review.profile → an appended tone instruction (#review-profile). `balanced`/absent appends
@@ -1228,6 +1259,11 @@ export async function runGittensoryAiReview(
       reviewDiagnostics.some((diagnostic) => diagnostic.status === "unparseable_output"))
   )
     inconclusive = true;
+  // Observability (#2540): the single canonical point where `inconclusive` reaches its final value for this
+  // review call -- increment exactly once here, never at the downstream consumers in queue/processors.ts that
+  // push an `ai_review_inconclusive` advisory finding off this same already-computed result (incrementing there
+  // too would double/triple-count one review).
+  if (inconclusive) incr("gittensory_ai_review_inconclusive_total", { mode: input.mode });
   const advisoryNotes =
     reviewsForNotes.length > 0
       ? (composeAdvisoryNotes(reviewsForNotes) ?? composeFallbackAdvisoryNotes(fallbackNotes))

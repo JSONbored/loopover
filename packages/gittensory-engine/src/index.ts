@@ -10,3 +10,9 @@ export {
   type OpportunityRankInput,
 } from "./opportunity-ranker.js";
 export * from "./governor/rate-limit.js";
+export {
+  resolveAiPolicyVerdict,
+  scanAiPolicyText,
+  type AiPolicySource,
+  type AiPolicyVerdict,
+} from "./ai-policy-map.js";

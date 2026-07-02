@@ -15,6 +15,11 @@ Current scope is intentionally small:
 
 Real miner commands land in follow-up issues.
 
+The package also includes the first metadata-only discovery primitive: `fetchCandidateIssues` lists open issue
+metadata across target repos, and `searchCandidateIssues` does the same from a GitHub issue-search query. Both
+paths hard-skip repos whose `AI-USAGE.md` or `CONTRIBUTING.md` explicitly bans AI-generated PRs. They perform
+GitHub GET requests only, never clone source, never upload source, and never write to GitHub.
+
 ## Install
 
 From a local checkout:

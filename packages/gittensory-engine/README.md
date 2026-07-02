@@ -57,3 +57,9 @@ rankOpportunities(candidates); // sorted by descending score, each annotated wit
 
 `rankOpportunities` is a stable sort with an explicit index tie-break: candidates with an equal score keep their
 input order.
+
+## AI Policy Map
+
+`scanAiPolicyText` and `resolveAiPolicyVerdict` provide the deterministic policy gate used by miner discovery.
+They only deny on small, explicit AI-contribution ban phrases in `AI-USAGE.md` or `CONTRIBUTING.md`; ambiguous,
+missing, or empty policy text stays allowed so discovery does not invent a ban.

@@ -194,6 +194,27 @@ describe("self-host backup script", () => {
     expect(passfileContent).toBe("*:*:*:*:SuperSecret123!");
   });
 
+  it("strips EVERY occurrence of a repeated query-string password, not just the first", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const argsFile = join(root, "pg-dump.args");
+
+    // A malformed URL repeating `password=` isn't rejected by libpq's own parser -- stripping only the
+    // first occurrence would leave a second one sitting in argv, still a leaked credential regardless of
+    // which one libpq itself would actually authenticate with.
+    runBackup(root, {
+      DATABASE_URL: "postgresql://u@h/db?password=oneSecret&sslmode=require&password=twoSecret",
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ARGS_FILE: argsFile,
+    });
+
+    const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
+    expect(args).not.toContain("oneSecret");
+    expect(args).not.toContain("twoSecret");
+    expect(args).not.toContain("password=");
+    expect(args).toContain("postgresql://u@h/db?sslmode=require");
+  });
+
   it("does not mistake a query value merely containing the substring 'password' for the password key", () => {
     const root = tmpRoot();
     const pgBin = fakePgDump(root);

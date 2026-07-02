@@ -121,18 +121,21 @@ prepare_pg_env() {
       ;;
   esac
 
+  # A malformed (but not rejected by libpq's own parser) URL could repeat `password=` -- loop until none
+  # remain rather than stripping only the first, so a leftover second occurrence can never survive into
+  # $PG_SANITIZED_URL. Each iteration overwrites PGPASSWORD_VALUE, so the LAST occurrence wins; which one
+  # libpq itself would actually authenticate with is unspecified for a duplicate key, but every occurrence
+  # is a credential either way and none may reach argv.
   pg_query_wrapped="&$pg_query&"
-  case "$pg_query_wrapped" in
-    *"&password="*"&"*)
-      pg_before_pw=${pg_query_wrapped%%&password=*}
-      pg_from_pw=${pg_query_wrapped#*&password=}
-      PGPASSWORD_VALUE=$(url_decode "${pg_from_pw%%&*}")
-      pg_after_pw=${pg_from_pw#*&}
-      pg_query_wrapped="${pg_before_pw}&${pg_after_pw}"
-      pg_query=${pg_query_wrapped#&}
-      pg_query=${pg_query%&}
-      ;;
-  esac
+  while case "$pg_query_wrapped" in *"&password="*"&"*) true ;; *) false ;; esac; do
+    pg_before_pw=${pg_query_wrapped%%&password=*}
+    pg_from_pw=${pg_query_wrapped#*&password=}
+    PGPASSWORD_VALUE=$(url_decode "${pg_from_pw%%&*}")
+    pg_after_pw=${pg_from_pw#*&}
+    pg_query_wrapped="${pg_before_pw}&${pg_after_pw}"
+  done
+  pg_query=${pg_query_wrapped#&}
+  pg_query=${pg_query%&}
 
   pg_suffix=$pg_path
   if [ -n "$pg_query" ]; then pg_suffix="$pg_suffix?$pg_query"; fi

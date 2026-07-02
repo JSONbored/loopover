@@ -50,10 +50,15 @@ fi
 if [ -n "\${PG_DUMP_ENV_FILE:-}" ]; then
   passfile_path="\${PGPASSFILE:-}"
   passfile_content=""
+  passfile_mode_ok="no"
   if [ -n "$passfile_path" ] && [ -f "$passfile_path" ]; then
     passfile_content="$(cat "$passfile_path")"
+    # find -perm is portable across BSD (macOS) and GNU (Linux) find, unlike \`stat\`'s incompatible flags.
+    case "$(find "$passfile_path" -perm 600 2>/dev/null)" in
+      "$passfile_path") passfile_mode_ok="yes" ;;
+    esac
   fi
-  printf '%s|%s\\n' "$passfile_path" "$passfile_content" > "$PG_DUMP_ENV_FILE"
+  printf '%s|%s|%s\\n' "$passfile_path" "$passfile_content" "$passfile_mode_ok" > "$PG_DUMP_ENV_FILE"
 fi
 printf 'postgres dump\\n' > "$out"
 `,
@@ -131,7 +136,7 @@ describe("self-host backup script", () => {
 
     const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
     const pgEnv = execFileSync("cat", [envFile], { encoding: "utf8" }).trim();
-    const [passfilePath, passfileContent] = pgEnv.split("|");
+    const [passfilePath, passfileContent, passfileModeOk] = pgEnv.split("|");
 
     // The password (percent-encoded or decoded) must never appear on argv.
     expect(args).not.toContain("SuperSecret123");
@@ -145,6 +150,7 @@ describe("self-host backup script", () => {
     // but the assertion shouldn't assume that).
     expect(passfilePath).toMatch(/\/gittensory-pgpass\.[^/]+$/);
     expect(passfileContent).toBe("*:*:*:*:SuperSecret123!");
+    expect(passfileModeOk).toBe("yes");
   });
 
   it("preserves query-string-only connection info that a host/port/dbname split would otherwise drop", () => {
@@ -180,6 +186,21 @@ describe("self-host backup script", () => {
 
     const [, passfileContent] = execFileSync("cat", [envFile], { encoding: "utf8" }).trim().split("|");
     expect(passfileContent).toBe("*:*:*:*:pass+word");
+  });
+
+  it("refuses to write a PGPASSFILE when the decoded password contains a newline", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+
+    // pgpass_escape only escapes ':' and '\' -- a raw newline (here percent-encoded as %0A) would still
+    // split the entry across lines and corrupt the single-line pgpass format, so this must fail loudly
+    // rather than silently write a malformed passfile.
+    expect(() =>
+      runBackup(root, {
+        DATABASE_URL: "postgres://user:bad%0Apassword@host/db",
+        PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      }),
+    ).toThrow(/backup\.sh/);
   });
 
   it("keeps the SQLite online backup path when no Postgres URL is configured", () => {

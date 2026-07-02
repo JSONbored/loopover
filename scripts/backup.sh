@@ -80,6 +80,22 @@ prepare_pg_env() {
   esac
 
   if [ -n "$PGPASSWORD_VALUE" ]; then
+    # pgpass is a single-line-per-entry format; pgpass_escape only handles the two characters (':' and
+    # '\') that format itself treats specially. A decoded password containing a raw newline or carriage
+    # return would still split the entry across lines, corrupting the field layout -- refuse outright
+    # rather than silently write a malformed passfile.
+    #
+    # NOTE: "$(printf '\n')" as a case pattern would NOT work here -- command substitution strips ALL
+    # trailing newlines, so it evaluates to an empty string and the pattern would match everything. Build
+    # a variable holding exactly one newline/CR by stripping a trailing marker byte instead.
+    pg_nl=$(printf '\nx'); pg_nl=${pg_nl%x}
+    pg_cr=$(printf '\rx'); pg_cr=${pg_cr%x}
+    case "$PGPASSWORD_VALUE" in
+      *"$pg_nl"*|*"$pg_cr"*)
+        echo "[backup] refusing to write PGPASSFILE: decoded Postgres password contains a newline or carriage return" >&2
+        exit 1
+        ;;
+    esac
     PGPASSFILE_CREATED=$(mktemp "${TMPDIR:-/tmp}/gittensory-pgpass.XXXXXX")
     chmod 600 "$PGPASSFILE_CREATED"
     printf '*:*:*:*:%s\n' "$(pgpass_escape "$PGPASSWORD_VALUE")" > "$PGPASSFILE_CREATED"

@@ -25,6 +25,7 @@ type InlineFinding = {
   line: number;
   severity: "blocker" | "nit";
   body: string;
+  suggestion?: string;
 };
 type ModelReviewShape = {
   assessment: string;
@@ -376,7 +377,9 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
       await runGittensoryAiReview(env, { ...baseInput, inlineFindings });
       return systemPromptOf(run);
     };
-    expect(await runInline(true)).toContain("INLINE FINDINGS");
+    const withInline = await runInline(true);
+    expect(withInline).toContain("INLINE FINDINGS");
+    expect(withInline).toContain('"suggestion": optional replacement text');
     // Absent / false ⇒ byte-identical prompt (no inline instruction).
     expect(await runInline(false)).not.toContain("INLINE FINDINGS");
     expect(await runInline(undefined)).not.toContain("INLINE FINDINGS");
@@ -1405,7 +1408,7 @@ describe("pure helpers", () => {
     expect(withNits).toContain("Add coverage for the edge case.");
   });
 
-  it("parseModelReview parses well-formed inline findings; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
+  it("parseModelReview parses well-formed inline findings, including a trimmed optional suggestion; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
     const json = JSON.stringify({
       assessment: "ok",
       blockers: [],
@@ -1417,13 +1420,39 @@ describe("pure helpers", () => {
           line: 12,
           severity: "blocker",
           body: "Null deref.",
+          suggestion: "  const value = input ?? fallback;  ",
         },
         { path: "src/b.ts", line: 3, severity: "whatever", body: "Rename x." },
       ],
     });
     expect(parseModelReview(json)?.inlineFindings).toEqual([
-      { path: "src/a.ts", line: 12, severity: "blocker", body: "Null deref." },
+      {
+        path: "src/a.ts",
+        line: 12,
+        severity: "blocker",
+        body: "Null deref.",
+        suggestion: "const value = input ?? fallback;",
+      },
       { path: "src/b.ts", line: 3, severity: "nit", body: "Rename x." },
+    ]);
+  });
+
+  it("parseModelReview keeps findings but drops empty, whitespace-only, and malformed suggestions (#2138)", () => {
+    const json = JSON.stringify({
+      assessment: "ok",
+      blockers: [],
+      nits: [],
+      suggestions: [],
+      inlineFindings: [
+        { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me.", suggestion: "" },
+        { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too.", suggestion: "   " },
+        { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type.", suggestion: 42 },
+      ],
+    });
+    expect(parseModelReview(json)?.inlineFindings).toEqual([
+      { path: "src/a.ts", line: 2, severity: "nit", body: "Keep me." },
+      { path: "src/b.ts", line: 4, severity: "nit", body: "Keep me too." },
+      { path: "src/c.ts", line: 6, severity: "nit", body: "Bad suggestion type." },
     ]);
   });
 
@@ -1480,12 +1509,19 @@ describe("pure helpers", () => {
   it("composeInlineFindings dedupes by path+line (first wins) and drops public-unsafe bodies (#inline-comments)", () => {
     const out = composeInlineFindings([
       reviewWithFindings([
-        { path: "src/a.ts", line: 1, severity: "nit", body: "First." },
+        {
+          path: "src/a.ts",
+          line: 1,
+          severity: "nit",
+          body: "First.",
+          suggestion: "  const renamed = first;  ",
+        },
         {
           path: "src/a.ts",
           line: 1,
           severity: "blocker",
           body: "Duplicate line — dropped.",
+          suggestion: "const duplicate = true;",
         },
         {
           path: "src/a.ts",
@@ -1497,7 +1533,13 @@ describe("pure helpers", () => {
       ]),
     ]);
     expect(out).toEqual([
-      { path: "src/a.ts", line: 1, severity: "nit", body: "First." },
+      {
+        path: "src/a.ts",
+        line: 1,
+        severity: "nit",
+        body: "First.",
+        suggestion: "const renamed = first;",
+      },
       { path: "src/b.ts", line: 9, severity: "blocker", body: "Keep me." },
     ]);
   });
@@ -1528,6 +1570,7 @@ describe("pure helpers", () => {
           line: 3,
           severity: "nit",
           body: "Guard the empty case.",
+          suggestion: "  if (!items.length) return;  ",
         },
       ],
     });
@@ -1550,6 +1593,7 @@ describe("pure helpers", () => {
           line: 3,
           severity: "nit",
           body: "Guard the empty case.",
+          suggestion: "if (!items.length) return;",
         },
       ]);
   });

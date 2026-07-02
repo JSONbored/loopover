@@ -217,6 +217,7 @@ export type InlineFinding = {
   line: number;
   severity: "blocker" | "nit";
   body: string;
+  suggestion?: string | undefined;
 };
 
 export type ModelReview = {
@@ -410,7 +411,8 @@ export function parseModelReview(text: string): ModelReview | null {
             .slice(0, 6)
         : [];
     // Fail-safe: a malformed/absent inlineFindings field degrades to []; each item missing a usable path / a
-    // positive line / a body is skipped, never partial. Severity defaults to "nit" unless it's exactly "blocker".
+    // positive line / a body is skipped, never partial. Severity defaults to "nit" unless it's exactly "blocker";
+    // a bad/blank suggestion is simply dropped while keeping the finding itself. (#2138)
     const toInlineFindings = (value: unknown): InlineFinding[] =>
       Array.isArray(value)
         ? value
@@ -422,10 +424,20 @@ export function parseModelReview(text: string): ModelReview | null {
               // float, and the `line > 0` guard below drops 0/negative anchors.
               const line = typeof o.line === "number" ? Math.trunc(o.line) : 0;
               const body = typeof o.body === "string" ? o.body.trim() : "";
+              const suggestion =
+                typeof o.suggestion === "string" ? o.suggestion.trim() : "";
               const severity: "blocker" | "nit" =
                 o.severity === "blocker" ? "blocker" : "nit";
               return path && line > 0 && body
-                ? [{ path, line, severity, body }]
+                ? [
+                    {
+                      path,
+                      line,
+                      severity,
+                      body,
+                      ...(suggestion ? { suggestion } : {}),
+                    },
+                  ]
                 : [];
             })
             .slice(0, 20)
@@ -494,7 +506,7 @@ const REVIEW_PROFILE_SUFFIX: Record<"chill" | "assertive", string> = {
 // quiet inline PR comments (#inline-comments). Absent/off appends nothing (byte-identical). The model keeps the
 // existing 4-field shape and simply ADDS an `inlineFindings` array.
 const INLINE_FINDINGS_SUFFIX =
-  '\n\nINLINE FINDINGS: ALSO include an additional top-level field "inlineFindings" in the SAME JSON object — an array (possibly empty) of your most important findings, each anchored to a specific changed line, for inline PR comments. Each item: {"path": the changed file path EXACTLY as shown in the diff, "line": the 1-based line number in the NEW file (count forward from the "+" start in the nearest "@@ -old +new @@" hunk header) of an ADDED ("+") line you are commenting on, "severity": "blocker" or "nit", "body": the one-sentence finding}. Include ONLY findings you can place on a specific added line; OMIT any you cannot anchor precisely (a wrong line is worse than none). At most ~10 items.';
+  '\n\nINLINE FINDINGS: ALSO include an additional top-level field "inlineFindings" in the SAME JSON object — an array (possibly empty) of your most important findings, each anchored to a specific changed line, for inline PR comments. Each item: {"path": the changed file path EXACTLY as shown in the diff, "line": the 1-based line number in the NEW file (count forward from the "+" start in the nearest "@@ -old +new @@" hunk header) of an ADDED ("+") line you are commenting on, "severity": "blocker" or "nit", "body": the one-sentence finding, "suggestion": optional replacement text for that line}. Include ONLY findings you can place on a specific added line; OMIT any you cannot anchor precisely (a wrong line is worse than none). If a suggestion is blank or you are not confident in an exact replacement, omit the suggestion field and keep the finding. At most ~10 items.';
 
 /** The effective reviewer SYSTEM prompt. Appends the grounding-discipline suffix when the caller supplied one
  *  (flag GITTENSORY_REVIEW_GROUNDING on), the `review.profile` tone suffix when set, then the inline-findings
@@ -848,7 +860,11 @@ export function composeInlineFindings(reviews: ModelReview[]): InlineFinding[] {
     const safeBody = toPublicSafe(finding.body);
     if (!safeBody) continue;
     seen.add(key);
-    out.push({ ...finding, body: safeBody });
+    out.push({
+      ...finding,
+      body: safeBody,
+      ...(finding.suggestion?.trim() ? { suggestion: finding.suggestion.trim() } : {}),
+    });
   }
   return out;
 }

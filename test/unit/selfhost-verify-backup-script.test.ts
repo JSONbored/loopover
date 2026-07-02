@@ -20,17 +20,24 @@ afterEach(() => {
 // A well-formed dump contains GOODDUMP; anything else makes the fake pg_restore fail as if the archive were
 // truncated. `--list` prints a header (`;`-prefixed) plus two TOC entry lines; a restore just exits 0.
 const PG_RESTORE = `#!/bin/sh
+if [ -n "\${PG_CAPTURE_FILE:-}" ]; then
+  printf 'pg_restore %s | PGPASSFILE=%s\\n' "$*" "\${PGPASSFILE:-}" >> "$PG_CAPTURE_FILE"
+fi
 mode=list
 dump=
+dbname=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) mode=list; shift ;;
-    --dbname) mode=restore; shift 2 ;;
+    --dbname) mode=restore; dbname="$2"; shift 2 ;;
     --clean|--if-exists|--no-owner|--no-privileges) shift ;;
     -*) shift ;;
     *) dump="$1"; shift ;;
   esac
 done
+if [ "$mode" = restore ] && [ -n "\${PG_CAPTURE_DBNAME_FILE:-}" ]; then
+  printf '%s\\n' "$dbname" >> "$PG_CAPTURE_DBNAME_FILE"
+fi
 if ! grep -q GOODDUMP "$dump" 2>/dev/null; then
   echo "pg_restore: error: could not read from input file: end of file" >&2
   exit 1
@@ -55,6 +62,9 @@ function fakePsql(identities: Record<string, string>, tableCount = "3"): string 
     .join("\n");
   return `#!/bin/sh
 url="$1"
+if [ -n "\${PG_CAPTURE_FILE:-}" ]; then
+  printf 'psql %s | PGPASSFILE=%s\\n' "$url" "\${PGPASSFILE:-}" >> "$PG_CAPTURE_FILE"
+fi
 shift
 sql=""
 while [ "$#" -gt 0 ]; do
@@ -75,6 +85,37 @@ ${cases}
     ;;
 esac
 `;
+}
+
+// Mirrors scripts/verify-backup.sh's pg_connect_arg: strips the password from a postgres(ql):// URI --
+// from EITHER the userinfo (restricted to the authority component, before the first '/', '?', or '#', so
+// a literal '@'/':' in the query string is never mistaken for credentials) OR a `password=` query-string
+// parameter -- and normalizes the scheme to postgresql://. The real script never invokes psql/pg_restore
+// with the raw (possibly password-bearing) URL, so fakePsql's identity map must be keyed on this
+// sanitized form to prove that property -- a test that could still pass with the raw URL as the key would
+// not actually verify the credential never reaches argv.
+function sanitizedUrl(url: string): string {
+  const rest = url.replace(/^postgres:\/\//, "").replace(/^postgresql:\/\//, "");
+  const boundary = rest.search(/[/?#]/);
+  const boundaryIdx = boundary === -1 ? rest.length : boundary;
+  const authority = rest.slice(0, boundaryIdx);
+  const suffix = rest.slice(boundaryIdx);
+  const atIdx = authority.indexOf("@");
+  const sanitizedAuthority = (() => {
+    if (atIdx === -1) return authority;
+    const userinfo = authority.slice(0, atIdx);
+    const afterAt = authority.slice(atIdx + 1);
+    const colonIdx = userinfo.indexOf(":");
+    const user = colonIdx === -1 ? userinfo : userinfo.slice(0, colonIdx);
+    return `${user}@${afterAt}`;
+  })();
+
+  const queryMatch = suffix.match(/^([^?#]*)(?:\?([^#]*))?(#.*)?$/);
+  const [, path = "", query = "", frag = ""] = queryMatch ?? ["", "", "", ""];
+  const params = query.length > 0 ? query.split("&").filter((kv) => !kv.startsWith("password=")) : [];
+  const cleanedSuffix = path + (params.length > 0 ? `?${params.join("&")}` : "") + frag;
+
+  return `postgresql://${sanitizedAuthority}${cleanedSuffix}`;
 }
 
 function fakeBin(root: string, bins: Record<string, string>): string {
@@ -194,7 +235,7 @@ describe("self-host verify-backup script", () => {
         VERIFY_RESTORE_SCRATCH: "1",
         GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: live,
       },
-      { pg_restore: PG_RESTORE, psql: fakePsql({ [live]: "same-cluster@10.0.0.5:5432/live" }) },
+      { pg_restore: PG_RESTORE, psql: fakePsql({ [sanitizedUrl(live)]: "same-cluster@10.0.0.5:5432/live" }) },
     );
 
     expect(r.status).toBe(1);
@@ -223,8 +264,8 @@ describe("self-host verify-backup script", () => {
         // Both URLs resolve to the identical real connection identity, exactly as they would in production
         // if they point at the same Postgres server/database despite the different spelling.
         psql: fakePsql({
-          [live]: "gittensory@10.0.0.5:5432",
-          [scratch]: "gittensory@10.0.0.5:5432",
+          [sanitizedUrl(live)]: "gittensory@10.0.0.5:5432",
+          [sanitizedUrl(scratch)]: "gittensory@10.0.0.5:5432",
         }),
       },
     );
@@ -268,7 +309,7 @@ describe("self-host verify-backup script", () => {
         GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
       },
       // Scratch resolves fine, but the live URL has no mapping — its identity query fails.
-      { pg_restore: PG_RESTORE, psql: fakePsql({ [scratch]: "gittensory@10.0.0.9:5432/scratch" }) },
+      { pg_restore: PG_RESTORE, psql: fakePsql({ [sanitizedUrl(scratch)]: "gittensory@10.0.0.9:5432/scratch" }) },
     );
 
     expect(r.status).toBe(1);
@@ -291,12 +332,62 @@ describe("self-host verify-backup script", () => {
       },
       {
         pg_restore: PG_RESTORE,
-        psql: fakePsql({ [live]: "gittensory@10.0.0.5:5432/live", [scratch]: "gittensory@10.0.0.5:5432/scratch" }, "42"),
+        psql: fakePsql(
+          { [sanitizedUrl(live)]: "gittensory@10.0.0.5:5432/live", [sanitizedUrl(scratch)]: "gittensory@10.0.0.5:5432/scratch" },
+          "42",
+        ),
       },
     );
 
     expect(r.status).toBe(0);
     expect(r.out).toContain("scratch restore OK: 42 tables");
+  });
+
+  it("never passes a password to psql/pg_restore argv across the full scratch-restore flow, and never leaks one URL's password onto a different URL's connection", () => {
+    const root = tmpRoot();
+    writePgDump(root, "gittensory-a.dump", true);
+    // live has NO password; scratch supplies its password via the libpq query-string form (not userinfo)
+    // -- both must be handled, and the live connection (checked between two scratch connections) must
+    // never see a PGPASSFILE left over from scratch's.
+    const live = "postgres://gittensory@postgres/gittensory";
+    const scratch = "postgresql://gittensory@postgres/scratch?password=SuperSecret123%21";
+    const captureFile = join(root, "pg-capture.log");
+
+    const r = runVerify(
+      root,
+      [],
+      {
+        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: live,
+        VERIFY_RESTORE_SCRATCH: "1",
+        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        PG_CAPTURE_FILE: captureFile,
+      },
+      {
+        pg_restore: PG_RESTORE,
+        psql: fakePsql(
+          { [sanitizedUrl(scratch)]: "gittensory@10.0.0.5:5432/scratch", [sanitizedUrl(live)]: "gittensory@10.0.0.5:5432/live" },
+          "7",
+        ),
+      },
+    );
+
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("scratch restore OK: 7 tables");
+    const capture = execFileSync("cat", [captureFile], { encoding: "utf8" });
+    const lines = capture.trim().split("\n");
+    // 5 connections in order: pg_restore --list (structural validation, no URL involved yet),
+    // db_identity(scratch), db_identity(live), pg_restore --dbname scratch, psql scratch (sanity query).
+    expect(lines).toHaveLength(5);
+    expect(capture).not.toContain("SuperSecret123");
+    expect(capture).not.toContain("password=");
+    // The scratch connections (indices 1, 3, 4) must show a real PGPASSFILE...
+    expect(lines[1]).toContain("PGPASSFILE=/");
+    expect(lines[3]).toContain("PGPASSFILE=/");
+    expect(lines[4]).toContain("PGPASSFILE=/");
+    // ...but the live connection sandwiched between two scratch ones (index 2) must NOT inherit scratch's
+    // PGPASSFILE, since live's own URL has no password at all.
+    expect(lines[2]).toContain("PGPASSFILE=");
+    expect(lines[2]).not.toMatch(/PGPASSFILE=\/./);
   });
 
   it("verifies an explicit dump path argument", () => {

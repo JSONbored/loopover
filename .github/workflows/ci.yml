@@ -56,6 +56,8 @@ jobs:
               - 'scripts/**'
               - 'migrations/**'
               - '.github/workflows/**'
+              - 'wrangler.jsonc'
+              - 'worker-configuration.d.ts'
             # The UI's own app/extension code -- triggers the FULL toolchain (lint/typecheck/test/build).
             # A dependency bump (package.json/package-lock.json) stays here too since it can break the UI
             # build or types in ways only that full toolchain would catch.
@@ -190,6 +192,12 @@ jobs:
       - name: Check migrations
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run db:migrations:check
+      # Guards against the same staleness-drift class as db:migrations:check/ui:openapi:check: two PRs that
+      # each independently add a wrangler.jsonc binding can both pass CI in isolation, then merge sequentially
+      # and leave a stale committed worker-configuration.d.ts with zero prior gate signal (#2557).
+      - name: cf-typegen drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        run: npm run cf-typegen:check
       - name: Typecheck
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run typecheck

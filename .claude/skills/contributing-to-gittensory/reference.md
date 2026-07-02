@@ -26,6 +26,7 @@ path filter matched; on push to `main`, everything runs.
 | changes | `git diff --check` + path filter | `git diff --check` | trailing whitespace / conflict markers |
 | lint → actionlint | workflow lint | `npm run actionlint` | any `.github/workflows/*.yml` violation |
 | lint → migrations | migration guard | `npm run db:migrations:check` | duplicate/gap/misnamed migration number |
+| lint → cf-typegen | worker types drift | `npm run cf-typegen:check` | committed `worker-configuration.d.ts` is stale (run `npm run cf-typegen`) |
 | lint → typecheck | `tsc --noEmit` | `npm run typecheck` | any backend type error |
 | test (1/2) | sharded vitest + coverage | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |
 | workers | workers-pool vitest | `npm run test:workers` | any failing `test/workers/**` |

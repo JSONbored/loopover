@@ -97,6 +97,12 @@ services:
       pgbouncer:
         condition: service_healthy
         required: false
+    # Sane defaults so a runaway optional service (below) can't OOM-kill or starve the core review pipeline;
+    # override via .env for a bigger/smaller host (#1828).
+    deploy:
+      resources:
+        limits:
+          memory: "${GITTENSORY_MEM_LIMIT:-2g}"
     healthcheck:
       # Probe /ready (not /health): /health is a liveness stub that is 200 even when the DB is down,
       # whereas /ready returns 503 until the DB answers AND migrations are applied — so dependents that
@@ -130,6 +136,10 @@ services:
       - ""
       - --appendonly
       - "no"
+    deploy:
+      resources:
+        limits:
+          memory: "${REDIS_MEM_LIMIT:-512m}"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -146,6 +156,10 @@ services:
       POSTGRES_DB: gittensory
     volumes:
       - gittensory-pg:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: "${POSTGRES_MEM_LIMIT:-2g}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gittensory"]
       interval: 10s
@@ -217,6 +231,10 @@ services:
       - "127.0.0.1:6334:6334" # gRPC (localhost only)
     volumes:
       - qdrant-data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          memory: "${QDRANT_MEM_LIMIT:-2g}"
     # The image is Debian (bash present) but ships no curl/wget/nc. bash's /dev/tcp pseudo-device speaks
     # HTTP without an external binary, so we hit Qdrant's k8s-style /readyz probe (200 once it accepts
     # traffic). This lets the app's depends_on gate on a serving Qdrant. /readyz is unauthenticated even
@@ -250,6 +268,12 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 5
+    # Ollama can load multi-GB models into memory; default high enough for common 7-8B quantized models but
+    # cap it so a large model pull can't exhaust host RAM and take down the core review pipeline (#1828).
+    deploy:
+      resources:
+        limits:
+          memory: "${OLLAMA_MEM_LIMIT:-8g}"
 
   # ── Litestream (--profile litestream) ─────────────────────────────────────
   # Continuous WAL backup of the SQLite DB to S3/B2/R2. Copy litestream.yml.example
@@ -307,6 +331,10 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-180d}"
+    deploy:
+      resources:
+        limits:
+          memory: "${PROMETHEUS_MEM_LIMIT:-1g}"
 
   # Routes Prometheus alerts to your notification channel. Ships SILENT: alerts go to a
   # null receiver until you fill in a receiver in alertmanager/alertmanager.yml.
@@ -351,6 +379,10 @@ services:
       GF_INSTALL_PLUGINS: frser-sqlite-datasource,grafana-github-datasource
       # Read-only fine-grained PAT for the GitHub data source provisioning ($GITHUB_TOKEN expansion). From .env.
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+    deploy:
+      resources:
+        limits:
+          memory: "${GRAFANA_MEM_LIMIT:-512m}"
     entrypoint:
       - /bin/sh
       - -ec
@@ -418,6 +450,10 @@ services:
     volumes:
       - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki-data:/loki
+    deploy:
+      resources:
+        limits:
+          memory: "${LOKI_MEM_LIMIT:-1g}"
     # No healthcheck: grafana/loki:latest is distroless (no shell/wget/curl), so an in-container probe
     # can't run — a CMD-SHELL check would leave the container stuck "starting". Readiness is observable
     # at GET /ready; Promtail retries/backs off until Loki accepts pushes and Grafana retries the
@@ -493,6 +529,10 @@ services:
     volumes:
       - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
+    deploy:
+      resources:
+        limits:
+          memory: "${TEMPO_MEM_LIMIT:-1g}"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3200/ready"]
       interval: 10s

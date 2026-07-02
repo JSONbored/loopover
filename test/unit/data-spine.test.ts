@@ -23,6 +23,7 @@ import {
   listRepoSyncStates,
   listSignalSnapshots,
   countOpenIssues,
+  countOpenItemsByAuthorAcrossInstall,
   persistRepoSnapshot,
   persistSignalSnapshot,
   replaceCollisionEdges,
@@ -459,6 +460,25 @@ describe("data spine repositories", () => {
     expect(await listIssueSignalSample(env, "owner/repo", 1)).toHaveLength(1);
     expect(await listContributorPullRequests(env, "jsonbored")).toMatchObject([{ repoFullName: "owner/repo", number: 1 }]);
     expect(await listContributorIssues(env, "JSONBORED")).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "owner/repo", number: 10 }), expect.objectContaining({ repoFullName: "owner/repo", number: 11 })]));
+  });
+
+  it("countOpenItemsByAuthorAcrossInstall (#2562) sums one author's open PRs + open issues across every repo this install tracks, excludes closed items and other authors, and matches case-insensitively", async () => {
+    const env = createTestEnv();
+    // farmer99's open items, spread across TWO different repos this install gates.
+    await upsertPullRequestFromGitHub(env, "owner/repo-a", { number: 1, title: "PR one", state: "open", user: { login: "farmer99" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "owner/repo-b", { number: 2, title: "PR two", state: "open", user: { login: "farmer99" }, labels: [], body: "y" });
+    await upsertIssueFromGitHub(env, "owner/repo-a", { number: 3, title: "Issue one", state: "open", user: { login: "farmer99" }, labels: [], body: "z" });
+    // A CLOSED item from farmer99 — must be excluded from the count.
+    await upsertPullRequestFromGitHub(env, "owner/repo-b", { number: 4, title: "PR three (closed)", state: "closed", user: { login: "farmer99" }, labels: [], body: "w" });
+    // An OPEN item from a DIFFERENT author — must be excluded from the count.
+    await upsertIssueFromGitHub(env, "owner/repo-a", { number: 5, title: "Someone else's issue", state: "open", user: { login: "other-author" }, labels: [], body: "v" });
+
+    // 2 open PRs + 1 open issue for farmer99, across repo-a and repo-b combined.
+    expect(await countOpenItemsByAuthorAcrossInstall(env, "farmer99")).toBe(3);
+    // Case-insensitive: a differently-cased login still matches the same rows.
+    expect(await countOpenItemsByAuthorAcrossInstall(env, "FARMER99")).toBe(3);
+    // An author with no open items anywhere counts zero.
+    expect(await countOpenItemsByAuthorAcrossInstall(env, "nobody")).toBe(0);
   });
 
   it("persists a per-PR slop assessment, round-trips it via the cached record, and keeps latest-wins (PR2)", async () => {

@@ -1,6 +1,7 @@
 import {
   countOpenIssues,
   countOpenPullRequests,
+  countOpenItemsByAuthorAcrossInstall,
   getAgentCommandAnswer,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -2056,6 +2057,33 @@ async function runAgentMaintenancePlanAndExecute(
     }
   }
 
+  // Install-wide contributor open-item cap (#2562, anti-abuse): a self-host operator gating multiple repos on
+  // one install has no fleet-wide view via the per-repo cap above -- an actor spreading low-volume spam across
+  // several gated repos never trips any single repo's own cap. Independent of and complementary to the per-repo
+  // check: only runs when that one didn't already match (no reason to also hit the DB once a close is already
+  // decided), and reuses the SAME contributor_cap closeKind/close-message shape, just with a fleet-wide count.
+  // Off by default (GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP unset). Honors the same autoCloseExemptLogins list the
+  // review-nag cooldown already uses -- the owner/admin/automation-bot exemption is still applied by the
+  // planner itself, same as the per-repo check above.
+  const globalContributorOpenItemCap = parseGlobalContributorOpenItemCapEnv(env.GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
+  if (
+    contributorCapMatch === undefined &&
+    globalContributorOpenItemCap !== null &&
+    pr.authorLogin &&
+    !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)
+  ) {
+    const globalOpenCount = await countOpenItemsByAuthorAcrossInstall(env, pr.authorLogin);
+    if (globalOpenCount > globalContributorOpenItemCap) {
+      contributorCapMatch = {
+        matched: true,
+        authorLogin: pr.authorLogin,
+        openCount: globalOpenCount,
+        cap: globalContributorOpenItemCap,
+        itemKind: "pull requests",
+      };
+    }
+  }
+
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -3889,6 +3917,16 @@ async function loadOpenQueueCounts(
   };
 }
 
+// GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP (#2562): unset/blank/non-finite/non-positive all mean "off" (null), never a
+// silent fallback to some default cap -- this install-wide check must be explicitly opted into.
+function parseGlobalContributorOpenItemCapEnv(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  const cap = Math.floor(value);
+  return cap >= 1 ? cap : null;
+}
+
 /**
  * Per-contributor open-ISSUE cap (#2270, anti-abuse): the first `eventName === "issues"` actuation branch —
  * issues have no other auto-close path today. Mirrors the PR-path cap in runAgentMaintenancePlanAndExecute:
@@ -3923,8 +3961,9 @@ async function maybeCloseIssueOverContributorCap(
 ): Promise<void> {
   const { installationId, repoFullName, issue, settings } = args;
   const cap = settings.contributorOpenIssueCap;
+  const globalContributorOpenItemCap = parseGlobalContributorOpenItemCapEnv(env.GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP);
   const authorLogin = issue.authorLogin;
-  if (typeof cap !== "number" || !authorLogin) return;
+  if ((typeof cap !== "number" && globalContributorOpenItemCap === null) || !authorLogin) return;
 
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
   const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
@@ -3932,43 +3971,64 @@ async function maybeCloseIssueOverContributorCap(
   const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
   if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return;
 
-  const otherOpenIssues = await listOpenIssues(env, repoFullName);
-  const authorLoginLower = authorLogin.toLowerCase();
-  const otherAuthorIssueNumbers = otherOpenIssues
-    .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower && other.number !== issue.number)
-    .map((other) => other.number);
+  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" } | undefined;
+  let overCapNumbers = new Set<number>();
 
-  // Live-verify each OTHER counted sibling before trusting it toward the cap (#2479 gate finding): the stored
-  // open-issue cache lags GitHub, so a sibling already closed elsewhere (manually, by another automation, or a
-  // webhook this instance hasn't processed yet) can still read `open` here and inflate the count enough to close
-  // a newly opened issue that is actually within the real cap. `issue` itself is trusted unverified -- it is the
-  // issue THIS webhook just delivered, so it is open by construction.
-  //
-  // Fail SAFE (not open, per gate finding on this exact block, second pass), NOT fail-open-to-stored like
-  // reconcileLiveDuplicateSiblings: that helper only re-ranks a duplicate-cluster WINNER (a non-final signal
-  // recomputed every delivery), so failing open there just risks a transient wrong ranking. Here the count
-  // directly gates an IRREVERSIBLE close, so an unreadable live check (a transient fetch failure) must NOT be
-  // allowed to compound with a stale "open" DB row and tip a within-cap issue into being wrongly closed --
-  // any sibling this delivery cannot POSITIVELY confirm is still open is excluded from the count. The cost is
-  // symmetric-but-safe: a transient miss can undercount and momentarily under-enforce the cap, but that is
-  // self-correcting (the delivery-order guard below already re-evaluates on every subsequent issue-open), while
-  // a wrongful close is not.
-  const token = await createInstallationToken(env, installationId).catch(() => undefined);
-  const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
-  const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
-  const confirmedOpen = new Set<number>();
-  await Promise.all(
-    otherAuthorIssueNumbers.map(async (number) => {
-      const liveState = await fetchLiveIssueState(env, repoFullName, number, liveToken, admissionKey).catch(() => undefined);
-      if (liveState === "open") confirmedOpen.add(number);
-    }),
-  );
-  const authorOpenIssueNumbers = otherAuthorIssueNumbers
-    .filter((number) => confirmedOpen.has(number))
-    .concat(issue.number)
-    .sort((a, b) => a - b);
-  const overCapNumbers = new Set(authorOpenIssueNumbers.slice(cap));
-  if (overCapNumbers.size === 0) return;
+  if (typeof cap === "number") {
+    const otherOpenIssues = await listOpenIssues(env, repoFullName);
+    const authorLoginLower = authorLogin.toLowerCase();
+    const otherAuthorIssueNumbers = otherOpenIssues
+      .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower && other.number !== issue.number)
+      .map((other) => other.number);
+
+    // Live-verify each OTHER counted sibling before trusting it toward the cap (#2479 gate finding): the stored
+    // open-issue cache lags GitHub, so a sibling already closed elsewhere (manually, by another automation, or a
+    // webhook this instance hasn't processed yet) can still read `open` here and inflate the count enough to close
+    // a newly opened issue that is actually within the real cap. `issue` itself is trusted unverified -- it is the
+    // issue THIS webhook just delivered, so it is open by construction.
+    //
+    // Fail SAFE (not open, per gate finding on this exact block, second pass), NOT fail-open-to-stored like
+    // reconcileLiveDuplicateSiblings: that helper only re-ranks a duplicate-cluster WINNER (a non-final signal
+    // recomputed every delivery), so failing open there just risks a transient wrong ranking. Here the count
+    // directly gates an IRREVERSIBLE close, so an unreadable live check (a transient fetch failure) must NOT be
+    // allowed to compound with a stale "open" DB row and tip a within-cap issue into being wrongly closed --
+    // any sibling this delivery cannot POSITIVELY confirm is still open is excluded from the count. The cost is
+    // symmetric-but-safe: a transient miss can undercount and momentarily under-enforce the cap, but that is
+    // self-correcting (the delivery-order guard below already re-evaluates on every subsequent issue-open), while
+    // a wrongful close is not.
+    const token = await createInstallationToken(env, installationId).catch(() => undefined);
+    const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
+    const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
+    const confirmedOpen = new Set<number>();
+    await Promise.all(
+      otherAuthorIssueNumbers.map(async (number) => {
+        const liveState = await fetchLiveIssueState(env, repoFullName, number, liveToken, admissionKey).catch(() => undefined);
+        if (liveState === "open") confirmedOpen.add(number);
+      }),
+    );
+    const authorOpenIssueNumbers = otherAuthorIssueNumbers
+      .filter((number) => confirmedOpen.has(number))
+      .concat(issue.number)
+      .sort((a, b) => a - b);
+    overCapNumbers = new Set(authorOpenIssueNumbers.slice(cap));
+    if (overCapNumbers.size > 0) {
+      contributorCapMatch = { matched: true, authorLogin, openCount: authorOpenIssueNumbers.length, cap, itemKind: "issues" };
+    }
+  }
+
+  if (
+    contributorCapMatch === undefined &&
+    globalContributorOpenItemCap !== null &&
+    !isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)
+  ) {
+    const globalOpenCount = await countOpenItemsByAuthorAcrossInstall(env, authorLogin);
+    if (globalOpenCount > globalContributorOpenItemCap) {
+      contributorCapMatch = { matched: true, authorLogin, openCount: globalOpenCount, cap: globalContributorOpenItemCap, itemKind: "issues" };
+      overCapNumbers = new Set([issue.number]);
+    }
+  }
+
+  if (contributorCapMatch === undefined) return;
 
   const planned = planAgentMaintenanceActions({
     conclusion: "skipped",
@@ -3980,7 +4040,7 @@ async function maybeCloseIssueOverContributorCap(
     authorIsAdmin,
     authorIsAutomationBot,
     ciState: "unverified",
-    contributorCapMatch: { matched: true, authorLogin, openCount: authorOpenIssueNumbers.length, cap, itemKind: "issues" },
+    contributorCapMatch,
     contributorCapLabel: settings.contributorCapLabel,
     pr: { labels: [] },
   });

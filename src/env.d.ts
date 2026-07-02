@@ -80,6 +80,11 @@ declare global {
       onMerge?: import("./services/ai-review").OnMerge | undefined;
     };
     ADMIN_GITHUB_LOGINS?: string;
+    /** Install-wide contributor open-item cap (#2562, anti-abuse): unset/blank/non-positive ⇒ off (the
+     *  default). When set, caps an author's combined open-PR + open-issue count summed across EVERY repo
+     *  this install/instance gates -- not per-repo, since it aggregates across repos (mirrors
+     *  ADMIN_GITHUB_LOGINS's own bare-env-var, non-per-repo shape). */
+    GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
     /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's

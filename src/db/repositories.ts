@@ -3104,6 +3104,27 @@ export async function countOpenPullRequests(env: Env, fullName: string): Promise
   return Number(row?.count ?? 0);
 }
 
+/**
+ * Install-wide contributor open-item count (#2562, anti-abuse): sums this author's open PRs + open issues
+ * across EVERY repo this install/instance tracks in the SAME D1 database -- no cross-instance networking, no
+ * join through `repositories` (every row in `pullRequests`/`issues` already belongs to a repo this install
+ * gates). Only called when GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP is configured; the existing per-repo
+ * countOpenPullRequests/countOpenIssues stay scoped to one repo and are unaffected by this addition.
+ */
+export async function countOpenItemsByAuthorAcrossInstall(env: Env, authorLogin: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [prRow] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin)));
+  const [issueRow] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(issues)
+    .where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin)));
+  /* v8 ignore next 2 -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
+  return Number(prRow?.count ?? 0) + Number(issueRow?.count ?? 0);
+}
+
 // Anti-farming (#anti-gaming-flood): how many PRs this author has SUBMITTED to this repo since `sinceIso` (ANY
 // state — open/merged/closed), so a flood that merges fast is still caught. createdAt is the row-insert time
 // (≈ when gittensory first saw the PR), a good proxy for submission time on live webhook-driven PRs.

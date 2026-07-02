@@ -31,7 +31,7 @@ function jobSteps(workflow: Record<string, unknown>, jobName: string): Array<Rec
 
 // actions/checkout wipes node_modules on every run (git clean -ffdx) and npm ci always deletes+reinstalls
 // it by design, so neither gives node_modules any real cross-run reuse -- these restore/save pairs (via
-// GitHub's own cache service) fill that gap: an exact package-lock.json match skips the install step
+// GitHub's own cache service) fill that gap: an exact manifest+lockfile match skips the install step
 // entirely. Cache-save is placed right after a successful install (not as an automatic post-job hook), so
 // a job that fails installing never reaches the save step -- a broken node_modules can never get cached.
 describe("CI dependency-install caching", () => {
@@ -43,7 +43,11 @@ describe("CI dependency-install caching", () => {
     const restoreWith = record(restore.with, "restore.with");
     expect(String(restoreWith.path)).toContain("node_modules");
     expect(String(restoreWith.path)).toContain("apps/gittensory-ui/node_modules");
-    expect(String(restoreWith.key)).toContain("hashFiles('package-lock.json')");
+    expect(String(restoreWith.key)).toContain("hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json')");
+    expect(String(restoreWith.key)).toContain("package.json");
+    expect(String(restoreWith.key)).toContain("apps/*/package.json");
+    expect(String(restoreWith.key)).toContain("packages/*/package.json");
+    expect(String(restoreWith.key)).toContain("package-lock.json");
     // A Node bump (.nvmrc) with no lockfile change must still bust the cache -- otherwise a hit would
     // silently reuse node_modules whose native addons were compiled against the OLD Node's ABI.
     expect(String(restoreWith.key)).toContain("hashFiles('.nvmrc')");
@@ -70,7 +74,9 @@ describe("CI dependency-install caching", () => {
     const restore = step(steps, "Restore review-enrichment node_modules cache");
     const restoreWith = record(restore.with, "restore.with");
     expect(restoreWith.path).toBe("review-enrichment/node_modules");
-    expect(String(restoreWith.key)).toContain("hashFiles('review-enrichment/package-lock.json')");
+    expect(String(restoreWith.key)).toContain("hashFiles('review-enrichment/package.json', 'review-enrichment/package-lock.json')");
+    expect(String(restoreWith.key)).toContain("review-enrichment/package.json");
+    expect(String(restoreWith.key)).toContain("review-enrichment/package-lock.json");
     expect(String(restoreWith.key)).toContain("hashFiles('.nvmrc')");
 
     const install = step(steps, "REES install");

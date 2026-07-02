@@ -138,7 +138,7 @@ jobs:
       # runner's own persistence, and npm ci always deletes+reinstalls node_modules by design -- so
       # neither the runner nor npm ci gives node_modules any real cross-run reuse on its own. This
       # explicit restore/save pair (via GitHub's own cache service, not the wiped local disk) fills that
-      # gap: an exact package-lock.json match skips npm ci entirely. Keyed separately per fork/trusted
+      # gap: an exact manifest+lockfile match skips npm ci entirely. Keyed separately per fork/trusted
       # (see the runs-on expression above) because self-hosted's Docker image and GitHub's ubuntu-latest
       # image are not guaranteed binary-compatible for native modules (sharp, workerd, fsevents, ...) --
       # crossing them could load an incompatible native binary. Fork PRs get read-only cache tokens (a
@@ -152,10 +152,12 @@ jobs:
           path: |
             node_modules
             apps/gittensory-ui/node_modules
-          # hashFiles('.nvmrc') matters as much as the lockfile: a Node bump with no lockfile change
-          # would otherwise still hit and silently reuse node_modules whose native addons (sharp,
-          # workerd, fsevents) were compiled against the OLD Node's ABI.
-          key: npm-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package-lock.json') }}
+          # hashFiles('.nvmrc') matters as much as the package manifests and lockfile: a Node bump
+          # with no lockfile change would otherwise still hit and silently reuse node_modules whose
+          # native addons (sharp, workerd, fsevents) were compiled against the OLD Node's ABI. The
+          # manifests matter too because npm ci validates package.json/package-lock.json consistency
+          # and runs lifecycle scripts from package.json; a package.json-only change must not skip it.
+          key: npm-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('package.json', 'apps/*/package.json', 'packages/*/package.json', 'package-lock.json') }}
       - name: Install dependencies (retry on transient failures)
         if: ${{ steps.node-modules-cache.outputs.cache-hit != 'true' }}
         run: |
@@ -313,8 +315,9 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: review-enrichment/node_modules
-          # Same Node-version guard as the root cache key above -- REES runs on the same pinned .nvmrc.
-          key: npm-rees-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('review-enrichment/package-lock.json') }}
+          # Same Node-version and manifest guards as the root cache key above -- REES runs on the same
+          # pinned .nvmrc and has its own package.json lifecycle/install validation.
+          key: npm-rees-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('review-enrichment/package.json', 'review-enrichment/package-lock.json') }}
       - name: REES install
         if: ${{ (github.event_name == 'push' || needs.changes.outputs.rees == 'true') && steps.rees-node-modules-cache.outputs.cache-hit != 'true' }}
         run: npm run rees:install

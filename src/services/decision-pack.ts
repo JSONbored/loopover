@@ -616,7 +616,9 @@ function buildContributorDecisionPack(args: {
     ? new Map([...args.issueQualityByRepo.entries()].map(([repoFullName, report]) => [repoFullName.toLowerCase(), report]))
     : new Map<string, IssueQualityReport>();
   const languageSet = new Set((args.profile.github?.topLanguages ?? []).map((language) => language.toLowerCase()));
-  const labelHistory = new Set(args.profile.registeredRepoActivity?.dominantLabels ?? []);
+  // Case-insensitive, mirroring the opportunity engine (signals/engine.ts) and this file's own languageSet:
+  // GitHub labels compare case-insensitively, so a mixed-case dominant label must still overlap a config label.
+  const labelHistory = new Set((args.profile.registeredRepoActivity?.dominantLabels ?? []).map((label) => label.toLowerCase()));
   const roleContexts = registeredRepositories.map((repo) =>
     buildRoleContext({
       login: args.login,
@@ -773,7 +775,7 @@ function buildRepoDecision(args: {
   };
   const labelHistory = args.labelHistory;
   const labelFit = labelHistory
-    ? Object.keys(args.repo.registryConfig?.labelMultipliers ?? {}).filter((label) => labelHistory.has(label))
+    ? Object.keys(args.repo.registryConfig?.labelMultipliers ?? {}).filter((label) => labelHistory.has(label.toLowerCase()))
     : [];
   const copyContext: RepoCopyContext = {
     repoFullName: args.repo.fullName,

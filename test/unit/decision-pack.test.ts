@@ -1379,6 +1379,43 @@ describe("decision-pack service", () => {
     ).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
   });
 
+  it("matches label history against config labels case-insensitively (regression)", () => {
+    // A mixed-case dominant label must overlap a differently-cased config label, mirroring the opportunity
+    // engine and this file's own case-insensitive languageSet. Covers both the built Set and the lookup.
+    const profile = {
+      login: "jsonbored",
+      github: { topLanguages: [] },
+      source: {},
+      gittensor: null,
+      registeredRepoActivity: { reposTouched: ["owner/gfi"], dominantLabels: ["Good First Issue"] },
+      trustSignals: {},
+    } as any;
+    const pack = __decisionPackInternals.buildContributorDecisionPack({
+      login: "jsonbored",
+      profile,
+      outcomeHistory: { login: "jsonbored", totals: {}, repoOutcomes: [], successPatterns: [], failurePatterns: [], summary: "" } as any,
+      repositories: [repoWithLabels("owner/gfi", 0.04, 0, { "good first issue": 1.5 })],
+      syncStates: [],
+      syncSegments: [],
+      totals: [],
+      scoringModelSnapshotId: "scoring-1",
+      contributorPullRequests: [],
+      contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
+    });
+    const decision = pack.repoDecisions.find((d) => d.repoFullName === "owner/gfi")!;
+    expect(decision.labelFit).toEqual(["good first issue"]);
+
+    // Direct lookup-side check: a mixed-case config key overlaps a lowercased history entry.
+    const repoDecision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/lang", 0.005, 0, { "Good First Issue": 1.5 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequestRate: 0, credibility: 1 } as any,
+      labelHistory: new Set(["good first issue"]),
+    } as any);
+    expect(repoDecision.labelFit).toEqual(["Good First Issue"]);
+  });
+
   it("covers languageMatch true/false and labelFit empty/non-empty paths", () => {
     const ctx = (overrides: Record<string, unknown> = {}) =>
       __decisionPackInternals.buildRepoDecision({

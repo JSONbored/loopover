@@ -31,10 +31,16 @@ const analyzerCircuits = new Map<AnalyzerName, AnalyzerCircuitState>();
 /** True while `name`'s breaker should skip the caller: either still within the full cooldown window, or past
  *  it but another caller already claimed this cycle's single half-open probe. The FIRST caller to observe an
  *  expired cooldown claims the probe as a side effect and gets `false` (proceed) -- this is the one function
- *  planning calls to decide runnable vs skipped, so the claim has to happen here, not at execution time. */
+ *  planning calls to decide runnable vs skipped, so the claim has to happen here, not at execution time.
+ *
+ *  `cooldownUntilMs === 0` means the circuit has NEVER actually tripped (below the streak threshold) --
+ *  recordAnalyzerCircuitFailure only sets a non-zero cooldownUntilMs once consecutiveFailures reaches the
+ *  threshold, so this is a reliable "never opened" check. Without it, a caller after just 1-2 failures would
+ *  claim the half-open probe slot too, spuriously skipping a concurrent second caller as circuit_open even
+ *  though the breaker was never actually open. */
 export function isAnalyzerCircuitOpen(name: AnalyzerName, nowMs = Date.now()): boolean {
   const state = analyzerCircuits.get(name);
-  if (state === undefined) return false;
+  if (state === undefined || state.cooldownUntilMs === 0) return false;
   if (state.cooldownUntilMs > nowMs) return true;
   if (state.probeClaimed) return true;
   state.probeClaimed = true;

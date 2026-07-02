@@ -132,6 +132,25 @@ test("an EXPLICITLY requested analyzer (req.analyzers) is still skipped while it
 // Half-open probing (#2624 review follow-up): once the cooldown expires, only ONE caller should get to
 // re-try the analyzer at a time — a burst of concurrent requests must not all hit the same still-unhealthy
 // dependency simultaneously just because the cooldown clock happened to expire.
+test("REGRESSION: below the failure-streak threshold, isAnalyzerCircuitOpen never claims a probe — a second concurrent caller is NOT skipped as circuit_open", async () => {
+  // Before the fix, isAnalyzerCircuitOpen claimed probeClaimed for ANY existing state (cooldownUntilMs <=
+  // nowMs is true even at cooldownUntilMs === 0, i.e. never-tripped), so a circuit with only 1-2 recorded
+  // failures would spuriously block a second concurrent caller — even though the breaker never actually opened.
+  recordAnalyzerCircuitFailure("history");
+  recordAnalyzerCircuitFailure("history"); // 2 failures — still below the 3-failure trip threshold
+
+  assert.equal(isAnalyzerCircuitOpen("history"), false); // first caller — not open
+  assert.equal(isAnalyzerCircuitOpen("history"), false); // second, concurrent caller — also not open
+
+  let calls = 0;
+  const failing = { history: async () => { calls += 1; throw new Error("boom"); } };
+  const [first, second] = await Promise.all([buildBrief(baseReq, failing), buildBrief(baseReq, failing)]);
+
+  assert.equal(calls, 2); // both concurrent calls actually invoked the analyzer
+  assert.notEqual(first.analyzerStatus.history, "skipped");
+  assert.notEqual(second.analyzerStatus.history, "skipped");
+});
+
 test("half-open: only the FIRST caller after cooldown expiry gets to probe — a second caller in the same instant is still blocked", async () => {
   const realNow = Date.now();
   let fakeNow = realNow;

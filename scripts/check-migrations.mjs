@@ -17,6 +17,8 @@
 //   • 0074 — both 0074_ai_review_cache (#1462) and 0074_orb_self_enrollment_disabled (#1465, a bare ADD COLUMN)
 //     merged + deployed before the collision surfaced; the column already exists in prod, so a rename would
 //     re-run the ALTER and fail. Grandfathered for the same reason as 0015/0017.
+//   • 0090 — both 0090_contributor_cap_label (#2479) and 0090_pull_request_detail_sync_head_sha (#2527, a bare
+//     ADD COLUMN) merged + deployed before the collision surfaced. Grandfathered for the same reason as 0074.
 import { readdirSync, readFileSync } from "node:fs";
 
 const DIR = process.env.CHECK_MIGRATIONS_DIR || "migrations";
@@ -25,6 +27,7 @@ const KNOWN_DUPLICATES = new Map([
   [15, new Set(["0015_github_agent_command_feedback.sql", "0015_product_usage_events.sql"])],
   [17, new Set(["0017_agent_recommendation_outcomes.sql", "0017_product_usage_role_retention_rollups.sql"])],
   [74, new Set(["0074_ai_review_cache.sql", "0074_orb_self_enrollment_disabled.sql"])],
+  [90, new Set(["0090_contributor_cap_label.sql", "0090_pull_request_detail_sync_head_sha.sql"])],
 ]);
 
 const fail = (message) => {

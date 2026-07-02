@@ -234,6 +234,8 @@ import {
   type PlannedAgentAction,
 } from "../settings/agent-actions";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
+import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES } from "../db/migration-collisions";
+import { listMigrationFilenamesAtRef } from "../github/migration-tree";
 import {
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
@@ -1573,6 +1575,73 @@ export function changedPathsForGuardrail(
 }
 
 /**
+ * Live premerge migrations/** collision recheck (#2550). `check-migrations.mjs` (CI) only validates against
+ * THIS PR's own branch snapshot at the time CI ran — it can never see a sibling PR that merged a
+ * same-numbered migration file to `baseRef` in the meantime. This does the live check right before the
+ * merge-decision moment: fetch the base branch's CURRENT migration filenames, union them with THIS PR's own
+ * new migration filenames (the live tree never contains this PR's own not-yet-merged files, so checking main
+ * alone could never detect a collision from this PR's perspective — the union is load-bearing, not optional),
+ * then run the SAME collision-detection function scripts/check-migrations.mjs uses.
+ *
+ * Deliberately scoped to a collision involving THIS PR's own migration number(s) only (via `prNumbers`) — a
+ * pre-existing collision between two OTHER already-merged files (which would mean `main` itself is already
+ * broken, a separate problem CI already surfaces loudly) must not hold an unrelated third PR whose own
+ * migration number doesn't collide with anything.
+ *
+ * Fail-OPEN throughout: a missing baseRef or a failed live fetch returns undefined (no hold) rather than
+ * risking a false hold on inconclusive data — this is a safety net, not a new way to get PRs stuck.
+ */
+// The live tree listing is shared across EVERY migrations/**-touching PR on the same repo+baseRef, not
+// per-PR — main's migration-filename set doesn't depend on which PR is asking. Cached briefly so the
+// recurring maintenance sweep (every ~2 minutes, plus every webhook-driven re-review) doesn't re-issue the
+// full recursive Trees API call on every single pass for as long as a migrations-touching PR stays open; a
+// real base-branch change is picked up again within one TTL window. Only successful fetches are cached — a
+// transient failure must never get "stuck" as a cached miss, so the next call retries for real.
+const MIGRATION_TREE_CACHE_TTL_SECONDS = 180;
+
+async function cachedListMigrationFilenamesAtRef(env: Env, repoFullName: string, baseRef: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise<string[] | null> {
+  const cacheKey = `migration-tree:${repoFullName}#${baseRef}`;
+  const cached = await getTransientKey(env, cacheKey);
+  if (cached !== null) {
+    try {
+      const parsed = JSON.parse(cached) as unknown;
+      if (Array.isArray(parsed) && parsed.every((f) => typeof f === "string")) return parsed;
+    } catch {
+      // Corrupt cache entry — fall through to a fresh fetch below.
+    }
+  }
+  const filenames = await listMigrationFilenamesAtRef(repoFullName, baseRef, token, admissionKey);
+  if (filenames !== null) {
+    await putTransientKey(env, cacheKey, JSON.stringify(filenames), MIGRATION_TREE_CACHE_TTL_SECONDS);
+  }
+  return filenames;
+}
+
+async function resolveLiveMigrationCollisionHold(
+  env: Env,
+  args: {
+    repoFullName: string;
+    baseRef: string | null | undefined;
+    token: string | undefined;
+    admissionKey: GitHubRateLimitAdmissionKey | undefined;
+    prMigrationFilenames: string[];
+  },
+): Promise<{ reason: string; comment: string } | undefined> {
+  if (!args.baseRef) return undefined;
+  const liveFilenames = await cachedListMigrationFilenamesAtRef(env, args.repoFullName, args.baseRef, args.token, args.admissionKey);
+  if (liveFilenames === null) return undefined;
+  const union = [...new Set([...liveFilenames, ...args.prMigrationFilenames])];
+  const prNumbers = new Set(args.prMigrationFilenames.map((f) => extractMigrationNumber(f)).filter((n): n is number => n !== null));
+  const collisions = detectMigrationCollisions(union, KNOWN_MIGRATION_DUPLICATES).filter((c) => prNumbers.has(c.number));
+  if (collisions.length === 0) return undefined;
+  const detail = collisions.map((c) => `${c.paddedNumber}: ${c.files.join(", ")}`).join("; ");
+  return {
+    reason: `live migrations/** collision on ${args.baseRef} (${detail})`,
+    comment: `Gittensory: a live check of \`migrations/**\` on \`${args.baseRef}\` found a migration-number collision that isn't visible from this PR's own diff — another PR merged a same-numbered migration file since this PR's CI last ran (**${detail}**). This PR is held for manual review — please rebase onto the latest \`${args.baseRef}\` and renumber your migration to the next free number before this can merge.`,
+  };
+}
+
+/**
  * Chain the two INDEPENDENT precision circuit-breakers over a planned action set (the merge-side and close-side
  * downgrades), in order. PURE — the live flag reads happen at the call site (each fail-open), so this composes
  * only the transforms:
@@ -1823,6 +1892,26 @@ async function runAgentMaintenancePlanAndExecute(
     );
   }
   const changedPaths = changedPathsForGuardrail(changedFiles);
+  // #2550: live migrations/** collision recheck — config-gated (off by default) AND path-gated (only a PR
+  // that actually touches migrations/** pays the extra GitHub API call), so a non-migrations PR sees zero
+  // added latency: the whole block short-circuits on the boolean+array checks before any network call.
+  //
+  // Deliberately built from `changedFiles` directly, NOT from `changedPaths` (changedPathsForGuardrail's
+  // output) — that helper unions BOTH `file.path` (current name) and `file.previousFilename` (pre-rename
+  // name) into one flat set for its own, unrelated guardrail-path-matching purpose. Reusing it here would
+  // mean a PR that simply RENAMES its own not-yet-merged migration file (e.g. fixing a typo, or renumbering
+  // to resolve a collision — the exact remediation this feature's own hold comment recommends) counts BOTH
+  // the old and new filenames as "this PR's own migration files", numerically colliding with itself and
+  // producing a false hold that can never clear (a later rename still carries the stale old name forever, on
+  // every subsequent maintenance pass). Only `.path` (the file's CURRENT name) and only non-removed files
+  // reflect what will actually exist in this PR's tree once merged.
+  const prMigrationFilenames = changedFiles
+    .filter((f) => f.status !== "removed" && f.path.startsWith("migrations/") && f.path.endsWith(".sql"))
+    .map((f) => f.path.slice("migrations/".length));
+  const migrationCollisionHold =
+    settings.premergeContentRecheck === true && prMigrationFilenames.length > 0
+      ? await resolveLiveMigrationCollisionHold(env, { repoFullName, baseRef, token, admissionKey, prMigrationFilenames })
+      : undefined;
   const repoOwner = repoFullName.includes("/")
     ? repoFullName.slice(0, repoFullName.indexOf("/"))
     : "";
@@ -1935,6 +2024,7 @@ async function runAgentMaintenancePlanAndExecute(
       verifyBeforeClose: linkedIssueRulesConfig.verifyBeforeClose,
       closeDelaySeconds: linkedIssueRulesConfig.closeDelaySeconds,
     },
+    ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,

@@ -479,7 +479,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
@@ -787,7 +787,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1781,5 +1781,29 @@ describe("gate.dryRun dry-run disposition config (#gate-dryrun)", () => {
     expect(m.gate.dryRun).toBe(true);
     expect(m.gate.present).toBe(true);
     expect(gateConfigToJson(m.gate)).toMatchObject({ dryRun: true });
+  });
+});
+
+describe("gate.premergeContentRecheck live migration-collision recheck config (#2550)", () => {
+  it("parses gate.premergeContentRecheck, sets present, round-trips, and resolves into effective settings", () => {
+    const m = parseFocusManifest({ gate: { premergeContentRecheck: true } });
+    expect(m.gate.premergeContentRecheck).toBe(true);
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ premergeContentRecheck: true });
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.premergeContentRecheck).toBe(true);
+  });
+
+  it("defaults to unset/undefined when omitted — byte-identical to today", () => {
+    const m = parseFocusManifest({});
+    expect(m.gate.premergeContentRecheck).toBeNull();
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.premergeContentRecheck).toBeUndefined();
+  });
+
+  it("warns and drops an invalid (non-boolean) value rather than silently coercing it", () => {
+    const m = parseFocusManifest({ gate: { premergeContentRecheck: "yes" as never } });
+    expect(m.gate.premergeContentRecheck).toBeNull();
+    expect(m.warnings.some((w) => /gate\.premergeContentRecheck/i.test(w))).toBe(true);
   });
 });

@@ -27,7 +27,7 @@
     "rees:metadata": "npm --prefix review-enrichment run metadata",
     "rees:metadata:check": "npm --prefix review-enrichment run metadata:check",
     "rees:validate-sourcemaps": "npm --prefix review-enrichment run validate:sourcemaps",
-    "db:migrations:check": "node scripts/check-migrations.mjs",
+    "db:migrations:check": "tsx scripts/check-migrations.mjs",
     "actionlint": "node scripts/actionlint.mjs",
     "ui:dev": "npm run ui:preview",
     "extension:build": "node scripts/build-extension.mjs",

@@ -153,6 +153,15 @@ gate:
   # use. Bool. Default: false.
   firstTimeContributorGrace: false
 
+  # Live premerge migrations/** collision recheck (#2550, anti-abuse-adjacent safety net). When true, a PR
+  # touching migrations/** gets a fresh GitHub read of the base branch's CURRENT migration filenames
+  # immediately before an agent-driven merge (not just at CI time against this PR's own branch snapshot) —
+  # catching the case where a DIFFERENT PR merged a same-numbered migration file in the meantime. A live
+  # collision holds the PR (rebase-needed label + comment) instead of merging blind. Config-as-code only (no
+  # dashboard/DB equivalent). Bool. Default: false. Costs one extra GitHub API call per migrations/**-touching
+  # PR, so it is opt-in rather than a new default.
+  premergeContentRecheck: false
+
   # AI maintainer review. Opt-in; the AI capabilities are switched on at the
   # deployment level.
   aiReview:

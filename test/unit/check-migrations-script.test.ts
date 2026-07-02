@@ -9,6 +9,12 @@ afterEach(() => {
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+// #2550: the script imports src/db/migration-collisions.ts (a .ts module), so it must be run via `tsx` (the
+// same binary package.json's db:migrations:check uses) rather than plain `node` — a bare `node.execPath`
+// invocation can't resolve the .ts import without an experimental flag CI's pinned Node isn't guaranteed to
+// support.
+const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
+
 // Run scripts/check-migrations.mjs over a throwaway fixture dir (via CHECK_MIGRATIONS_DIR) and normalize the
 // pass/fail into { status, out }. On a non-zero exit execFileSync throws; the violation text is on stderr.
 function runCheck(files: Record<string, string>): { status: number; out: string } {
@@ -16,7 +22,7 @@ function runCheck(files: Record<string, string>): { status: number; out: string 
   tmpDirs.push(dir);
   for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
   try {
-    const stdout = execFileSync(process.execPath, ["scripts/check-migrations.mjs"], {
+    const stdout = execFileSync(TSX_BIN, ["scripts/check-migrations.mjs"], {
       encoding: "utf8",
       env: { ...process.env, CHECK_MIGRATIONS_DIR: dir },
     });
@@ -29,7 +35,7 @@ function runCheck(files: Record<string, string>): { status: number; out: string 
 
 describe("check-migrations script", () => {
   it("reports every grandfathered duplicate migration number in the success summary", () => {
-    const output = execFileSync(process.execPath, ["scripts/check-migrations.mjs"], { encoding: "utf8" });
+    const output = execFileSync(TSX_BIN, ["scripts/check-migrations.mjs"], { encoding: "utf8" });
 
     expect(output).toContain("(4 grandfathered duplicates: 0015, 0017, 0074, 0090)");
   });

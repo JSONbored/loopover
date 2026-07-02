@@ -36,6 +36,11 @@ export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
 // would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets
 // this distinct "needs a human" label instead. Blocking verdicts keep AGENT_LABEL_CHANGES.
 export const AGENT_LABEL_NEEDS_REVIEW = "gittensory:needs-human-review";
+// A PR that touches migrations/** and would otherwise auto-merge, but a LIVE recheck against the current tip
+// of the base branch found a migration-number collision with a sibling PR merged since this PR's CI last ran
+// (#2550). Distinct from AGENT_LABEL_NEEDS_REVIEW so an operator can filter/alert on this specific, proven-
+// recurring failure mode separately from an ordinary guardrail hold.
+export const AGENT_LABEL_MIGRATION_COLLISION = "gittensory:migration-collision";
 
 // Maintainer-managed automation accounts whose PRs are never auto-closed. A recurring accumulator (e.g.
 // github-actions[bot] opening automation/readme-refresh) or a dependency PR must not be killed by a duplicate
@@ -185,6 +190,14 @@ export type AgentActionPlanInput = {
   // pass it). `closeDelaySeconds` is surfaced in the flag comment so the contributor knows the verification
   // window. The presence of the label is read from `input.pr.labels`.
   linkedIssueVerify?: { verifyBeforeClose: boolean; closeDelaySeconds: number } | undefined;
+  // Live premerge migrations/** collision recheck (#2550). The trigger (runAgentMaintenancePlanAndExecute) has
+  // already fetched the base branch's LIVE migration filenames, unioned them with this PR's own new migration
+  // additions, and run collision detection — this input is already the resolved "yes, hold this merge"
+  // verdict (or absent, meaning no live collision was found). When present, this SUPPRESSES the merge exactly
+  // like a hard-guardrail hold (folded into `heldForManualReview`), and its `comment` is attached to the
+  // emitted `gittensory:migration-collision` label so the contributor knows why. Never causes a CLOSE — only
+  // ever downgrades a would-merge into a held-for-review state, same risk profile as the guardrail hold.
+  migrationCollisionHold?: { reason: string; comment: string } | undefined;
   pr: {
     mergeableState?: string | null | undefined;
     reviewDecision?: string | null | undefined;
@@ -420,12 +433,14 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // never auto-merge, auto-approve, or auto-close a PR whose diff we don't know. Repos with no guardrails
   // configured stay permissive.
   const guardrailHit = isGuardrailHit(input.changedPaths, input.hardGuardrailGlobs);
-  // Manual review is the RARE exception (the operator's minimize-manual goal): the ONLY thing that holds a PR for
-  // a human instead of merge/close is an auto-merge-ready PR that touches a hard-guardrail path. (An owner PR that
-  // is not review-good is held separately, via the owner close-exemption below — never auto-closed.) Submission
-  // volume is NOT a hold reason: a high-volume author's clean PR still merges and their bad PR still closes — the
-  // quality gate, not a submission count, is the defense (anti-farming-by-manual-hold removed).
-  const heldForManualReview = guardrailHit;
+  // Manual review is the RARE exception (the operator's minimize-manual goal): the ONLY things that hold a PR
+  // for a human instead of merge/close are an auto-merge-ready PR that touches a hard-guardrail path, or a
+  // live migration-number collision detected against the CURRENT tip of the base branch (#2550 — a sibling PR
+  // merged a same-numbered migration file since this PR's CI last ran). (An owner PR that is not review-good
+  // is held separately, via the owner close-exemption below — never auto-closed.) Submission volume is NOT a
+  // hold reason: a high-volume author's clean PR still merges and their bad PR still closes — the quality
+  // gate, not a submission count, is the defense (anti-farming-by-manual-hold removed).
+  const heldForManualReview = guardrailHit || input.migrationCollisionHold !== undefined;
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
@@ -503,16 +518,29 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // linked-issue hard-rule close (flag OR close pass) forces the changes-requested label regardless of the gate
   // verdict (the PR is about to be closed for an ineligible linked issue). Idempotent.
   if (acting("label")) {
-    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : heldForManualReview ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    // A live migration-collision hold takes priority over a plain guardrail hold when both are true — it is
+    // the more specific, actionable signal (tells the contributor exactly what to do: rebase), and gets its
+    // own distinct label (#2550) so an operator can filter/alert on it separately from an ordinary guardrail.
+    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : input.migrationCollisionHold !== undefined ? AGENT_LABEL_MIGRATION_COLLISION : heldForManualReview ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
     const reason = linkedIssueCloseInFlight
       ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
       : !reviewGood
         ? `verdict=${conclusion}${ciReason ? `; ${ciReason}` : ""}`
-        : heldForManualReview
-          ? `verdict=${conclusion}; guarded path → manual review`
-          : `verdict=${conclusion}; CI green`;
+        : input.migrationCollisionHold !== undefined
+          ? `verdict=${conclusion}; ${input.migrationCollisionHold.reason}`
+          : heldForManualReview
+            ? `verdict=${conclusion}; guarded path → manual review`
+            : `verdict=${conclusion}; CI green`;
     if (!hasLabel(input.pr.labels, label)) {
-      actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
+      actions.push({
+        actionClass: "label",
+        requiresApproval: approval("label"),
+        reason,
+        label,
+        // Only the migration-collision hold carries a comment here — the guardrail/ready/changes labels never
+        // did and still don't (comment stays undefined, matching the pre-#2550 shape exactly).
+        ...(!linkedIssueCloseInFlight && reviewGood && input.migrationCollisionHold !== undefined ? { comment: sanitizePublicComment(input.migrationCollisionHold.comment) } : {}),
+      });
     }
     // Flag-then-close double-check, Pass 1: add the pending-closure label + a warning comment citing the specific
     // rule and the verification window. The label's presence is the state that, persisting to the next pass with

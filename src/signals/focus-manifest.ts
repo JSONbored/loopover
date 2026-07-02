@@ -45,6 +45,14 @@ export type FocusManifestGateConfig = {
   selfAuthoredLinkedIssue: GateRuleMode | null;
   dryRun: boolean | null;
   firstTimeContributorGrace: boolean | null;
+  /** `gate.premergeContentRecheck` (#2550): for a PR touching `migrations/**`, re-verify against a live,
+   *  freshly-fetched tip of the base branch — unioned with this PR's own new migration filenames — for a
+   *  migration-number collision immediately before an agent-driven merge, not just at CI time against the
+   *  PR's own stale branch snapshot. On a live collision, the merge is suppressed and the PR is held with a
+   *  rebase-needed comment instead of merging blind. null (unset) ⇒ off (byte-identical to today) — this
+   *  costs one extra, uncached GitHub Trees-API call for any PR that touches migrations/**, so it is opt-in
+   *  rather than a new default. */
+  premergeContentRecheck: boolean | null;
 };
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
@@ -292,6 +300,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   selfAuthoredLinkedIssue: null,
   dryRun: null,
   firstTimeContributorGrace: null,
+  premergeContentRecheck: null,
 };
 
 const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
@@ -510,6 +519,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     selfAuthoredLinkedIssue: normalizeOptionalGateMode(record.selfAuthoredLinkedIssue, "gate.selfAuthoredLinkedIssue", warnings),
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
+    premergeContentRecheck: normalizeOptionalBoolean(record.premergeContentRecheck, "gate.premergeContentRecheck", warnings),
   };
   // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
   // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
@@ -539,7 +549,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.manifestPolicy !== null ||
     gate.selfAuthoredLinkedIssue !== null ||
     gate.dryRun !== null ||
-    gate.firstTimeContributorGrace !== null;
+    gate.firstTimeContributorGrace !== null ||
+    gate.premergeContentRecheck !== null;
   return gate;
 }
 
@@ -583,6 +594,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.selfAuthoredLinkedIssue !== null) out.selfAuthoredLinkedIssue = gate.selfAuthoredLinkedIssue;
   if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
+  if (gate.premergeContentRecheck !== null) out.premergeContentRecheck = gate.premergeContentRecheck;
   return out;
 }
 
@@ -1194,6 +1206,7 @@ export function resolveEffectiveSettings(
   if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;
   if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
+  if (gate.premergeContentRecheck !== null) effective.premergeContentRecheck = gate.premergeContentRecheck;
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {

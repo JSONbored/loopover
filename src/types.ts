@@ -536,6 +536,14 @@ export type RepositorySettings = {
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
    *  preview exactly what it would do before the maintainer flips to real enforcement. Default off. */
   gateDryRun?: boolean | undefined;
+  /** Live premerge migrations/** collision recheck (#2550). When true, an agent-driven merge of a PR that
+   *  touches migrations/** is preceded by a fresh GitHub Trees-API read of the base branch's CURRENT migration
+   *  filenames — unioned with this PR's own new migration filenames — checked for a live numeric collision.
+   *  A collision suppresses the merge and holds the PR with a rebase-needed label + comment instead of merging
+   *  blind. Config-as-code only (no DB column, mirrors gateDryRun) — set via `.gittensory.yml`
+   *  `gate.premergeContentRecheck`. Default off/undefined — opt-in, since it costs one extra, uncached
+   *  GitHub API call for any PR that touches migrations/**. */
+  premergeContentRecheck?: boolean | undefined;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;
   /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (blocked paths,

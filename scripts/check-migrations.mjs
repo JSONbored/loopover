@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S npx tsx
 // Guards the D1 migration set against the silent failure modes that git can't catch:
 //   • two PRs that each grab the same next number (e.g. `0038_foo.sql` + `0038_bar.sql`) are DIFFERENT
 //     files, so git reports no conflict and both merge — then `wrangler d1 migrations apply` runs both
@@ -6,13 +6,19 @@
 //   • a skipped number (gap) or a stray non-conforming filename.
 // Migration-only PRs trigger this via the `migrations/**` path filter in .github/workflows/ci.yml.
 //
-// KNOWN_DUPLICATES: pairs already merged AND applied in production before the collision was noticed — D1
-// records applied migrations by filename, so renaming either now would make wrangler (and the self-host
-// migrator) try to RE-APPLY it. For a non-idempotent statement (e.g. `ALTER TABLE … ADD COLUMN`, which SQLite
-// cannot guard with IF NOT EXISTS) the re-apply ERRORS and breaks the deploy, so renumbering is unsafe once the
-// dup has shipped — those are grandfathered here. Do NOT add a NEW (not-yet-merged) duplicate to this list:
-// renumber its branch to the next free number BEFORE merge. Only an already-shipped, can't-be-renumbered dup
-// belongs here.
+// Run via `tsx` (not plain `node`), not for style but because this script's number/duplicate-detection logic
+// is imported from src/db/migration-collisions.ts (#2550) — the SAME pure module the live premerge recheck
+// uses inside the Worker, so CI and the Worker can never disagree about what counts as a collision. Plain
+// `node` cannot resolve a `.ts` import without a flag CI's pinned Node version isn't guaranteed to support;
+// `tsx` is already an established devDependency for exactly this (see ui:openapi/selfhost:postgres:migrate).
+//
+// KNOWN_MIGRATION_DUPLICATES (src/db/migration-collisions.ts): pairs already merged AND applied in production
+// before the collision was noticed — D1 records applied migrations by filename, so renaming either now would
+// make wrangler (and the self-host migrator) try to RE-APPLY it. For a non-idempotent statement (e.g.
+// `ALTER TABLE … ADD COLUMN`, which SQLite cannot guard with IF NOT EXISTS) the re-apply ERRORS and breaks the
+// deploy, so renumbering is unsafe once the dup has shipped — those are grandfathered there. Do NOT add a NEW
+// (not-yet-merged) duplicate: renumber its branch to the next free number BEFORE merge. Only an
+// already-shipped, can't-be-renumbered dup belongs there.
 //   • 0015 / 0017 — predate the guard.
 //   • 0074 — both 0074_ai_review_cache (#1462) and 0074_orb_self_enrollment_disabled (#1465, a bare ADD COLUMN)
 //     merged + deployed before the collision surfaced; the column already exists in prod, so a rename would
@@ -21,15 +27,11 @@
 //     merged with bare ADD COLUMN statements. Preserve both filenames so already-applied databases never
 //     replay either ALTER under a new migration name.
 import { readdirSync, readFileSync } from "node:fs";
+import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.ts";
 
 const DIR = process.env.CHECK_MIGRATIONS_DIR || "migrations";
-const NAME = /^(\d{4})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
-const KNOWN_DUPLICATES = new Map([
-  [15, new Set(["0015_github_agent_command_feedback.sql", "0015_product_usage_events.sql"])],
-  [17, new Set(["0017_agent_recommendation_outcomes.sql", "0017_product_usage_role_retention_rollups.sql"])],
-  [74, new Set(["0074_ai_review_cache.sql", "0074_orb_self_enrollment_disabled.sql"])],
-  [90, new Set(["0090_contributor_cap_label.sql", "0090_pull_request_detail_sync_head_sha.sql"])],
-]);
+const NAME = MIGRATION_FILENAME_PATTERN;
+const KNOWN_DUPLICATES = KNOWN_MIGRATION_DUPLICATES;
 
 const fail = (message) => {
   process.stderr.write(`check-migrations: ${message}\n`);
@@ -137,7 +139,7 @@ if (malformed.length > 0) {
 
 const filesByNumber = new Map();
 for (const file of files) {
-  const number = Number(NAME.exec(file)[1]);
+  const number = extractMigrationNumber(file);
   if (!filesByNumber.has(number)) filesByNumber.set(number, []);
   filesByNumber.get(number).push(file);
 }
@@ -148,14 +150,13 @@ const nextFree = () => {
   return String(n).padStart(4, "0");
 };
 
-for (const [number, group] of filesByNumber) {
-  if (group.length === 1) continue;
-  const padded = String(number).padStart(4, "0");
-  const allowed = KNOWN_DUPLICATES.get(number);
-  const grandfathered = allowed && group.length === allowed.size && group.every((f) => allowed.has(f));
-  if (!grandfathered) {
-    fail(`duplicate migration number ${padded}: ${group.map((f) => `"${f}"`).join(", ")}. Two PRs grabbed the same number — renumber the newest to the next free number (${nextFree()}).`);
-  }
+// #2550: the actual duplicate-vs-grandfathered decision runs through detectMigrationCollisions, the SAME
+// pure function the live premerge recheck uses — this is not just the equivalent logic re-derived here, it
+// is the identical import, so CI and the Worker can never silently disagree about what counts as a collision.
+const collisions = detectMigrationCollisions(files, KNOWN_DUPLICATES);
+if (collisions.length > 0) {
+  const { paddedNumber, files: group } = collisions[0];
+  fail(`duplicate migration number ${paddedNumber}: ${group.map((f) => `"${f}"`).join(", ")}. Two PRs grabbed the same number — renumber the newest to the next free number (${nextFree()}).`);
 }
 
 const numbers = [...filesByNumber.keys()].sort((a, b) => a - b);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
@@ -323,6 +323,61 @@ describe("planAgentMaintenanceActions (#778)", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, changedPaths: ["docs/readme.md", "src/ui/button.tsx"], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       expect(classes(plan)).toContain("merge");
       // A clean, non-guarded passing PR keeps the `ready-to-merge` label (the auto-merge it promises happens).
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
+    });
+  });
+
+  describe("live migration-collision hold: a live premerge recheck found a same-numbered sibling on the base branch (#2550)", () => {
+    const collided = { migrationCollisionHold: { reason: "live migrations/** collision on main (0090: 0090_a.sql, 0090_b.sql)", comment: "Gittensory: a live check found a migration-number collision. Please rebase." } };
+
+    it("does NOT auto-merge a clean+approved+passing PR when a live migration collision is found", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, ...collided, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).not.toContain("merge");
+    });
+
+    it("labels the PR gittensory:migration-collision (NOT needs-human-review or ready-to-merge) with the live-collision reason", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, ...collided, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_MIGRATION_COLLISION);
+      expect(label?.label).not.toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.label).not.toBe(AGENT_LABEL_READY);
+      expect(label?.reason).toContain("live migrations/** collision");
+      expect(classes(plan)).not.toContain("merge");
+    });
+
+    it("attaches the rebase-needed comment to the migration-collision label action", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, ...collided, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.comment).toContain("Please rebase");
+    });
+
+    it("does not attach a comment for the ordinary guardrail hold (only migration-collision carries one)", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, changedPaths: ["src/scoring/model.ts"], hardGuardrailGlobs: ["src/scoring/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.comment).toBeUndefined();
+    });
+
+    it("does not re-plan the migration-collision label when the PR already carries it (idempotent)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, ...collided, pr: { labels: [AGENT_LABEL_MIGRATION_COLLISION] } })));
+      expect(plan).not.toContain("label");
+    });
+
+    it("a BLOCKING PR keeps the changes-requested label even with a migration collision present (blocker wins)", () => {
+      const label = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { label: "auto" }, blockerTitles: ["x"], ...collided, pr: { labels: [] } })).find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_CHANGES);
+      expect(label?.comment).toBeUndefined();
+    });
+
+    it("takes priority over a plain guardrail hold when both are true simultaneously — distinct label, not the generic one", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, changedPaths: ["src/scoring/model.ts"], hardGuardrailGlobs: ["src/scoring/**"], ...collided, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_MIGRATION_COLLISION);
+    });
+
+    it("still auto-merges when no migration collision is present (absent input, byte-identical to today)", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      expect(classes(plan)).toContain("merge");
       expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
     });
   });

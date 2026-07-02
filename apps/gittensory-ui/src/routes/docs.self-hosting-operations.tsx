@@ -120,6 +120,16 @@ docker compose --profile postgres --profile observability --profile backup up -d
         check if you haven&apos;t wired up push notifications yet — it&apos;s exactly what the{" "}
         <code>Dead jobs stay at zero</code> routine check below is watching for.
       </p>
+      <p>
+        Dead-lettered jobs also get one automatic revival attempt every 30 minutes (
+        <code>QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS</code>), as long as the job hasn't already been
+        revived more than a small, bounded number of extra times (
+        <code>QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS</code>, default 3) — so a job that
+        died from a bug that's since been fixed and redeployed recovers on its own within the next
+        cycle, without needing direct database access. A job that keeps failing the same way
+        eventually exhausts this budget and stays dead, which is exactly what the alert above is
+        watching for.
+      </p>
 
       <h2>Docker resource hygiene</h2>
       <p>

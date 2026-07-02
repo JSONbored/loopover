@@ -24,6 +24,8 @@ import {
   nonConsumingRetryDelayMs,
   parsePositiveIntEnv,
   queueBackgroundConcurrency,
+  queueDeadLetterAutoRetryMaxExtraAttempts,
+  queueDeadLetterReviveIntervalMs,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
   queueSnapshotBacklog,
@@ -1191,5 +1193,28 @@ describe("resolvePostgresPoolMax (#audit-rate-headroom)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(resolvePostgresPoolMax()).toBe(10);
     expect(warn).toHaveBeenCalledOnce();
+  });
+});
+
+describe("dead-letter auto-retry config (#audit-rate-headroom)", () => {
+  afterEach(() => {
+    delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+    delete process.env.QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS;
+  });
+
+  it("queueDeadLetterReviveIntervalMs defaults to 30 minutes and honors its env override", () => {
+    delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+    expect(queueDeadLetterReviveIntervalMs()).toBe(30 * 60_000);
+
+    process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "60000";
+    expect(queueDeadLetterReviveIntervalMs()).toBe(60_000);
+  });
+
+  it("queueDeadLetterAutoRetryMaxExtraAttempts defaults to 3 and honors its env override", () => {
+    delete process.env.QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS;
+    expect(queueDeadLetterAutoRetryMaxExtraAttempts()).toBe(3);
+
+    process.env.QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS = "0";
+    expect(queueDeadLetterAutoRetryMaxExtraAttempts()).toBe(0);
   });
 });

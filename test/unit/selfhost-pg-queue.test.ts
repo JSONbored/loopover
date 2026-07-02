@@ -914,6 +914,53 @@ describe("createPgQueue (durable #977)", () => {
     expect(calls).toBe(2);
   });
 
+  describe("reviveDeadLetterJobs (#audit-rate-headroom)", () => {
+    afterEach(() => {
+      delete process.env.QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS;
+    });
+
+    it("requeues dead jobs still under the auto-retry ceiling, clearing last_error, and records the metric", async () => {
+      process.env.QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS = "2";
+      const m = makePool();
+      m.fn.mockResolvedValueOnce({
+        rows: [
+          { id: "1", payload: JSON.stringify({ type: "t" }), job_key: null },
+          { id: "2", payload: JSON.stringify({ type: "t" }), job_key: "k" },
+        ],
+        rowCount: 2,
+      }); // SELECT status='dead' AND attempts<ceiling
+      const q = createPgQueue(m.pool, async () => undefined, { maxRetries: 1 });
+
+      const revived = await q.reviveDeadLetterJobs();
+
+      expect(revived).toBe(2);
+      // The SELECT was bound to the ceiling (maxRetries=1 + extra=2 = 3), not a raw maxRetries.
+      expect(m.fn).toHaveBeenCalledWith(expect.stringContaining("status='dead' AND attempts<$1"), [3]);
+      // Each eligible row is revived to pending with last_error cleared -- not a fresh retry budget (attempts
+      // is never touched here).
+      expect(m.fn).toHaveBeenCalledWith(
+        expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL"),
+        expect.arrayContaining(["1"]),
+      );
+      expect(m.fn).toHaveBeenCalledWith(
+        expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL"),
+        expect.arrayContaining(["2"]),
+      );
+      expect(await renderMetrics()).toContain("gittensory_jobs_dead_letter_revived_total 2");
+    });
+
+    it("is a no-op (and records nothing) when no dead job is under the ceiling", async () => {
+      const m = makePool();
+      m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      const q = createPgQueue(m.pool, async () => undefined, { maxRetries: 1 });
+
+      const revived = await q.reviveDeadLetterJobs();
+
+      expect(revived).toBe(0);
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_dead_letter_revived_total");
+    });
+  });
+
   it("reschedules GitHub rate-limit failures without consuming the dead-letter budget", async () => {
     const m = makePool();
     m.enqueueJob("1", { type: "github-webhook" }, 4);

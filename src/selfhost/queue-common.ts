@@ -22,6 +22,12 @@ const DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MIN_JOBS = 8;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BACKGROUND_CONCURRENCY = 1;
+// Dead-letter auto-retry (#audit-rate-headroom): a job that exhausted its normal retry budget and landed in
+// `dead` gets ONE more attempt every revive interval, as long as its lifetime attempts stay under
+// maxRetries + this extra ceiling — bounded so a permanently-broken job cannot cycle dead→pending→dead
+// forever. The revive interval itself IS the cooldown; no separate timestamp bookkeeping is needed.
+const DEFAULT_DEAD_LETTER_REVIVE_INTERVAL_MS = 30 * 60_000;
+const DEFAULT_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS = 3;
 export const FOREGROUND_QUEUE_PRIORITY_FLOOR = 8;
 
 export type SelfHostQueueJobStatus = "pending" | "processing" | "dead";
@@ -577,6 +583,17 @@ export function queueStartupJitterMinJobs(): number {
 // without a code change (#audit-rate-headroom).
 export function resolvePostgresPoolMax(): number {
   return parsePositiveIntEnv("PGPOOL_MAX", { min: 1, fallback: 10 });
+}
+
+export function queueDeadLetterReviveIntervalMs(): number {
+  return envDurationMs("QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS", DEFAULT_DEAD_LETTER_REVIVE_INTERVAL_MS);
+}
+
+export function queueDeadLetterAutoRetryMaxExtraAttempts(): number {
+  return parsePositiveIntEnv("QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS", {
+    min: 0,
+    fallback: DEFAULT_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS,
+  });
 }
 
 export function deterministicJitterMs(seed: string, maxJitterMs: number): number {

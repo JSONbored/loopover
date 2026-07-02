@@ -33,6 +33,7 @@ path filter matched; on push to `main`, everything runs.
 | mcp → build | MCP pkg build | `npm run build:mcp` | MCP package build error |
 | mcp → pack | tarball hygiene | `npm run test:mcp-pack` | unexpected/forbidden file or stale README in the npm tarball |
 | ui → openapi drift | spec check | `npm run ui:openapi:check` | committed `openapi.json` is stale (run `npm run ui:openapi`) |
+| ui → openapi settings-parity | schema/type structural diff | `npm run ui:openapi:settings-parity` | `RepositorySettingsSchema` (src/openapi/schemas.ts) is missing a field the `RepositorySettings` type has |
 | ui → version audit | MCP version copy | `npm run ui:version-audit` | stale MCP version strings / non-`@latest` install copy (hits npm registry) |
 | ui → lint | `eslint .` (UI) | `npm run ui:lint` | ESLint **incl. Prettier formatting** + design-token rules |
 | ui → typecheck | `tsc --noEmit` (UI) | `npm run ui:typecheck` | UI type error |

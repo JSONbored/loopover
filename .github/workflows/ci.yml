@@ -344,6 +344,12 @@ jobs:
       - name: OpenAPI drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.uiContract == 'true' }}
         run: npm run ui:openapi:check
+      # #2556: RepositorySettingsSchema (hand-authored Zod) can silently drift from the actual
+      # RepositorySettings TS type -- the OpenAPI drift check above only verifies the generated spec
+      # matches the Zod schema, never that the schema matches the type the API actually serializes.
+      - name: OpenAPI settings-parity check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.uiContract == 'true' }}
+        run: npm run ui:openapi:settings-parity
       # Checks apps/gittensory-ui/src' known-latest MCP version string against the published package, so
       # its dependency is `ui` (the file it scans) + `mcp` (the package it checks against) -- NOT the
       # OpenAPI contract, which this script never reads.

@@ -42,7 +42,7 @@ function SelfHostingReleases() {
           {
             title: "latest",
             description:
-              "Moves with the newest release. Useful for trials, not for controlled production.",
+              "Moves with the newest STABLE release only — never a prerelease. Useful for trials, not for controlled production.",
           },
           {
             title: "sha",
@@ -55,6 +55,22 @@ function SelfHostingReleases() {
         code={`docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
 docker pull ghcr.io/jsonbored/gittensory-selfhost:latest`}
       />
+
+      <h2>Prerelease (beta/rc) images</h2>
+      <p>
+        A tag like <code>orb-v0.1.0-rc.1</code> or <code>orb-v0.1.0-beta.1</code> runs the identical
+        build/provenance/SBOM/Sentry pipeline as a stable release, but is marked prerelease on
+        GitHub and is never pushed under <code>latest</code>. External beta testers should pull the
+        exact prerelease tag, not <code>latest</code>.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0-rc.1`}
+      />
+      <Callout variant="note">
+        Stable release behavior is unchanged: a plain <code>X.Y.Z</code> tag still moves{" "}
+        <code>latest</code> and publishes an unmarked (non-prerelease) GitHub Release.
+      </Callout>
 
       <h2>Upgrade flow</h2>
       <ol>

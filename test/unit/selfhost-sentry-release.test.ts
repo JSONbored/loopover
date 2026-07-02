@@ -19,7 +19,13 @@ describe("self-host Sentry release wiring", () => {
     expect(releaseWorkflow).toContain('"orb-v*"');
     expect(releaseWorkflow).toContain('orb-v*) VERSION="${REF_NAME#orb-v}"');
     expect(releaseWorkflow).toContain("tag=orb-v${VERSION}");
-    expect(releaseWorkflow).toContain("type=raw,value=${{ steps.version.outputs.tag }}");
+    // #1937: the resolved version tag flows steps.version.outputs.tag -> VERSION_TAG env -> the "Resolve
+    // image tags" step's bash, not inlined directly into docker/metadata-action's `tags:` anymore (that
+    // step now needs to conditionally omit `latest` for a prerelease, which a plain multi-line literal
+    // can't express).
+    expect(releaseWorkflow).toContain("VERSION_TAG: ${{ steps.version.outputs.tag }}");
+    expect(releaseWorkflow).toContain("type=raw,value=${VERSION_TAG}");
+    expect(releaseWorkflow).toContain("tags: ${{ steps.tags.outputs.list }}");
     expect(releaseWorkflow).toContain(
       "docker pull ghcr.io/${REPOSITORY_OWNER}/gittensory-selfhost:${RELEASE_TAG}",
     );

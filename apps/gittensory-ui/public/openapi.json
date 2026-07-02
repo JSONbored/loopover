@@ -8631,6 +8631,57 @@
           },
           "contributorCapLabel": {
             "type": "string"
+          },
+          "sizeGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "gateDryRun": {
+            "type": "boolean"
+          },
+          "premergeContentRecheck": {
+            "type": "boolean"
+          },
+          "aiReviewMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "aiReviewByok": {
+            "type": "boolean"
+          },
+          "aiReviewProvider": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "anthropic",
+              "openai",
+              null
+            ]
+          },
+          "aiReviewModel": {
+            "type": "string",
+            "nullable": true
+          },
+          "aiReviewAllAuthors": {
+            "type": "boolean"
+          },
+          "aiReviewCloseConfidence": {
+            "type": "number",
+            "nullable": true
+          },
+          "closeOwnerAuthors": {
+            "type": "boolean"
+          },
+          "badgeEnabled": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -8651,6 +8702,10 @@
           "selfAuthoredLinkedIssueGateMode",
           "firstTimeContributorGrace",
           "slopAiAdvisory",
+          "aiReviewMode",
+          "aiReviewByok",
+          "aiReviewAllAuthors",
+          "closeOwnerAuthors",
           "autoLabelEnabled",
           "gittensorLabel",
           "blacklistLabel",
@@ -9260,6 +9315,31 @@
               },
               "blacklistLabel": {
                 "type": "string"
+              },
+              "badgeEnabled": {
+                "type": "boolean"
+              },
+              "aiReviewMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "aiReviewByok": {
+                "type": "boolean"
+              },
+              "aiReviewProvider": {
+                "type": "string",
+                "nullable": true
+              },
+              "aiReviewModel": {
+                "type": "string",
+                "nullable": true
+              },
+              "aiReviewAllAuthors": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9285,6 +9365,12 @@
               "createMissingLabel",
               "includeMaintainerAuthors",
               "requireLinkedIssue",
+              "badgeEnabled",
+              "aiReviewMode",
+              "aiReviewByok",
+              "aiReviewProvider",
+              "aiReviewModel",
+              "aiReviewAllAuthors",
               "commandAuthorization"
             ]
           },

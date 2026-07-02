@@ -4,6 +4,12 @@
 #   git tag orb-v0.1.0 && git push origin orb-v0.1.0
 #
 # Pull:  docker pull ghcr.io/<owner>/gittensory-selfhost:orb-v0.1.0
+#
+# Prerelease tags (#1937): orb-v0.1.0-rc.1 / orb-v0.1.0-beta.1 run the identical pipeline but never move
+# `latest` and are marked prerelease on the GitHub Release -- for beta-testing an image before it becomes
+# the stable/latest recommendation.
+#
+#   git tag orb-v0.1.0-rc.1 && git push origin orb-v0.1.0-rc.1
 name: release-orb
 
 on:
@@ -13,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g. 0.1.0)"
+        description: "Version to publish (e.g. 0.1.0, or a prerelease 0.1.0-rc.1 / 0.1.0-beta.1)"
         required: true
 
 permissions:
@@ -66,14 +72,23 @@ jobs:
               *) echo "expected an orb-v<semver> tag, got $REF_NAME" >&2; exit 1 ;;
             esac
           fi
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "expected semver version X.Y.Z, got $VERSION" >&2
+          # #1937: a stable X.Y.Z tag is the only kind that ever moved `latest` or an unmarked GitHub
+          # Release; a prerelease tag (X.Y.Z-rc.N / X.Y.Z-beta.N) publishes the SAME image/provenance/SBOM/
+          # Sentry pipeline below, just flagged as prerelease and never pushed under `latest` (see the
+          # "Resolve image tags" and "GitHub Release" steps).
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$'; then
+            echo "expected semver version X.Y.Z, or a prerelease X.Y.Z-rc.N / X.Y.Z-beta.N, got $VERSION" >&2
             exit 1
+          fi
+          PRERELEASE=false
+          if printf '%s' "$VERSION" | grep -Eq -- '-(rc|beta)\.[0-9]+$'; then
+            PRERELEASE=true
           fi
           {
             echo "v=${VERSION}"
             echo "tag=orb-v${VERSION}"
             echo "release=gittensory-orb@${VERSION}"
+            echo "prerelease=${PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
 
       # Release jobs receive publishing/Sentry credentials, so avoid shared dependency caches here.
@@ -139,15 +154,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # #1937: `latest` must never move to a prerelease build -- an operator who blindly pulls `latest`
+      # for a trial should always land on the newest STABLE image, not an in-flight rc/beta.
+      - name: Resolve image tags
+        id: tags
+        env:
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          VERSION_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo "list<<GTORBTAGS"
+            echo "type=raw,value=${VERSION_TAG}"
+            if [ "$PRERELEASE" != "true" ]; then
+              echo "type=raw,value=latest"
+            fi
+            echo "type=sha,format=short"
+            echo "GTORBTAGS"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/gittensory-selfhost
-          tags: |
-            type=raw,value=${{ steps.version.outputs.tag }}
-            type=raw,value=latest
-            type=sha,format=short
+          tags: ${{ steps.tags.outputs.list }}
           labels: |
             org.opencontainers.image.title=gittensory-orb
             org.opencontainers.image.description=Self-hostable Gittensory review engine
@@ -210,6 +241,7 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_ID: ${{ steps.version.outputs.release }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           set -euo pipefail
           NOTES="$(cat <<EOF
@@ -224,14 +256,23 @@ jobs:
           Sentry release id baked into the image: \`${RELEASE_ID}\`.
           EOF
           )"
+          # #1937: a prerelease tag never becomes the repo's "Latest release" and is visibly marked as such
+          # on GitHub -- distinct from the image-tag `latest` decision above (Resolve image tags), which
+          # this flag also drives at the version-resolution step.
+          PRERELEASE_ARGS=()
+          if [ "$PRERELEASE" = "true" ]; then
+            PRERELEASE_ARGS=(--prerelease --latest=false)
+          fi
           if gh release view "$REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "gittensory-orb ${RELEASE_TAG}" \
-              --notes "$NOTES"
+              --notes "$NOTES" \
+              "${PRERELEASE_ARGS[@]}"
           else
             gh release create "$REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --title "gittensory-orb ${RELEASE_TAG}" \
+              "${PRERELEASE_ARGS[@]}" \
               --notes "$NOTES" \
               --generate-notes
           fi

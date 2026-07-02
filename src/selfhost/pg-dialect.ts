@@ -1,9 +1,9 @@
 // SQLite → Postgres SQL dialect translation for the self-host Postgres backend (#977). gittensory's core and
 // drizzle-orm/d1 emit SQLite-dialect SQL; this translates the bounded set of SQLite-isms the codebase uses
-// (placeholders + a handful of scalar functions + INSERT OR REPLACE/IGNORE) so the SAME queries run on
-// Postgres. The timestamp columns are TEXT (ISO strings written by the app), so the datetime/CURRENT_TIMESTAMP
-// translations return TEXT in SQLite's format to preserve the existing text-comparison semantics. Validated
-// against a real Postgres (all 56 migrations + the runtime query paths).
+// (placeholders + a handful of scalar functions + INSERT OR REPLACE/IGNORE + the rowid pseudo-column) so
+// the SAME queries run on Postgres. The timestamp columns are TEXT (ISO strings written by the app), so the
+// datetime/CURRENT_TIMESTAMP translations return TEXT in SQLite's format to preserve the existing
+// text-comparison semantics. Validated against a real Postgres (all 56 migrations + the runtime query paths).
 
 // INSERT OR REPLACE needs an explicit conflict target on Postgres; map the (few) tables that use it to their PK.
 const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
@@ -14,14 +14,29 @@ const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
   orb_signals: ["instance_id", "repo_hash", "pr_hash"],
 };
 
-/** Replace `?` placeholders with `$1,$2,…`, skipping any `?` inside single-quoted string literals. */
+/** Replace `?` placeholders with `$1,$2,…`, skipping any `?` inside single-quoted string literals. A `?`
+ *  immediately followed by digits is SQLite's *numbered* placeholder (`?1`, `?2`, …, e.g. retention.ts's
+ *  `retentionWhere()` and repositories.ts's `claimRegateFanoutSlot()`) — its index is reused verbatim as
+ *  `$1`/`$2` rather than folded into the anonymous-placeholder counter below, otherwise `?1` corrupts to
+ *  `$1` + a literal trailing `1` (i.e. `$11`), which Postgres reads as bind parameter 11. Per SQLite's own
+ *  rule, a later anonymous `?` gets "one greater than the largest parameter number already assigned", so a
+ *  numbered placeholder also raises the anonymous counter's floor — otherwise a later `?` could collide with
+ *  an earlier `?N` (e.g. `?1` then `?` must yield `$1`, `$2`, not `$1`, `$1`). */
 export function toNumberedPlaceholders(sql: string): string {
   let out = "";
   let n = 0;
   let inString = false;
-  for (const ch of sql) {
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i] as string;
     if (ch === "'") inString = !inString;
     if (ch === "?" && !inString) {
+      const numbered = /^\d+/.exec(sql.slice(i + 1))?.[0];
+      if (numbered) {
+        n = Math.max(n, Number(numbered));
+        out += `$${numbered}`;
+        i += numbered.length;
+        continue;
+      }
       n += 1;
       out += `$${n}`;
     } else {
@@ -48,6 +63,18 @@ export function translateFunctions(sql: string): string {
       // json_extract(col, '$.key') → (col::jsonb ->> 'key')  (single-level paths — all the codebase uses)
       .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/gi, `(($1)::jsonb ->> '$2')`)
   );
+}
+
+/** Translate SQLite's `rowid` pseudo-column to Postgres's `ctid` system column. Both give a stable,
+ *  per-row identifier for the lifetime of a single statement/snapshot — exactly how the codebase uses
+ *  it: `DELETE ... WHERE rowid IN (SELECT rowid FROM t WHERE ... LIMIT n)` for bounded batched pruning
+ *  (retention.ts) and `ORDER BY rowid` for insertion-order tie-breaking (orb/relay.ts, tests). `ctid` is
+ *  a *physical* row location that can change across `VACUUM FULL` / row rewrites, so this is only safe
+ *  for the codebase's existing usage — internal bookkeeping resolved within one statement — never for
+ *  durable application-facing row identity. Fixes the self-host Postgres dead-letter where the raw
+ *  `rowid` reached Postgres verbatim ("column \"rowid\" does not exist"). */
+export function translateRowid(sql: string): string {
+  return sql.replace(/\browid\b/gi, "ctid");
 }
 
 /** Translate INSERT OR REPLACE / INSERT OR IGNORE to Postgres ON CONFLICT. */
@@ -87,7 +114,7 @@ export function stripConflictTargetQualifiers(sql: string): string {
 
 /** Translate a runtime query (SQLite → Postgres). */
 export function translateSql(sql: string): string {
-  return toNumberedPlaceholders(stripConflictTargetQualifiers(translateFunctions(translateInsertOr(sql))));
+  return toNumberedPlaceholders(stripConflictTargetQualifiers(translateRowid(translateFunctions(translateInsertOr(sql)))));
 }
 
 /** Migrations are applied as whole multi-statement files via exec(), so the statement-anchored

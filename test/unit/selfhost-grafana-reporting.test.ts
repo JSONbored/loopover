@@ -50,6 +50,16 @@ function fakePsql(root: string): string {
     psql,
     `#!/bin/sh
 args="$*"
+case " $args " in
+  *" postgres://"*|*" postgresql://"*)
+    echo 'psql command line leaked postgres URL' >&2
+    exit 8
+    ;;
+esac
+if [ "\${PGDATABASE:-}" != "postgres://gittensory:pw@postgres:5432/gittensory" ]; then
+  echo 'psql did not receive postgres URL through PGDATABASE' >&2
+  exit 8
+fi
 case "$args" in
   *\\\\copy*)
     echo 'unexpected psql meta-command copy' >&2

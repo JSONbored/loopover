@@ -75,17 +75,18 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
     ...(env?.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
   };
   try {
-    const signal = AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS);
+    const fetchWithTimeout = (url: string): Promise<Response> =>
+      timeoutFetch(url, { headers, signal: AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS) });
     const [userResponse, reposResponse] = await Promise.all([
-      timeoutFetch(`https://api.github.com/users/${safeLogin}`, { headers, signal }),
-      timeoutFetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`, { headers, signal }),
+      fetchWithTimeout(`https://api.github.com/users/${safeLogin}`),
+      fetchWithTimeout(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`),
     ]);
     if (!userResponse.ok) throw new Error(`GitHub user lookup failed (${userResponse.status})`);
     const user = (await userResponse.json()) as GitHubUserResponse;
     const repos: GitHubRepoResponse[] = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
     let linkHeader = reposResponse.ok ? reposResponse.headers.get("link") : null;
     for (let page = 2; page <= MAX_REPO_PAGES && linkHeader?.includes('rel="next"'); page += 1) {
-      const nextResponse = await timeoutFetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`, { headers, signal });
+      const nextResponse = await fetchWithTimeout(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`);
       if (!nextResponse.ok) break;
       const batch = (await nextResponse.json()) as GitHubRepoResponse[];
       repos.push(...batch);

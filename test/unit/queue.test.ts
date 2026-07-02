@@ -55,6 +55,7 @@ import {
   fetchPullRequestFreshness,
 } from "../../src/github/pr-freshness";
 import { createTestEnv } from "../helpers/d1";
+import { SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
@@ -1571,18 +1572,28 @@ describe("queue processors", () => {
   });
 
   it("issue label change wakes the linked PR's hard-rule re-evaluation promptly (#2259)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
     // Links issue #1 — the issue the "labeled" event below fires on.
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Linking PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
-    let checkRunsFetched = false;
+    let fetchCount = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      fetchCount += 1;
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Linking PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
-      if (url.includes("/commits/a7/check-runs")) { checkRunsFetched = true; return Response.json({ total_count: 0, check_runs: [] }); }
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
       if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [{ name: "maintainer-only" }], user: { login: "owner" } });
       if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
@@ -1602,9 +1613,12 @@ describe("queue processors", () => {
       } as never,
     });
 
-    // The linked PR was re-reviewed promptly off the issue-side signal, not left for the next PR-side webhook or
-    // the staleness-ordered sweep.
-    expect(checkRunsFetched).toBe(true);
+    // The linked PR wake is queued promptly off the issue-side signal, not performed inline or left only for the
+    // staleness-ordered sweep.
+    expect(fetchCount).toBe(0);
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }) },
+    ]);
     const webhookRow = await env.DB.prepare("select status from webhook_events where delivery_id = ?").bind("issue-label-wake").first<{ status: string }>();
     expect(webhookRow?.status).toBe("processed");
   });
@@ -1702,7 +1716,16 @@ describe("queue processors", () => {
     // unrelated CI re-review silently swallow a genuine issue-side signal, leaving the PR on stale linked-issue
     // state until the window expired or the sweep eventually reached it. The issue-side wake must use its OWN
     // window and proceed regardless of what the CI-completion window holds.
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
@@ -1710,12 +1733,13 @@ describe("queue processors", () => {
     // A CI completion for this exact PR claimed the CI-completion window moments earlier — a wholly separate
     // trigger from the issue-side label change below.
     await env.SELFHOST_TRANSIENT_CACHE?.set("ci-coalesce:owner/agent-repo#7", "1", 60);
-    let checkRunsFetched = false;
+    let fetchCount = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      fetchCount += 1;
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Linking PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
-      if (url.includes("/commits/a7/check-runs")) { checkRunsFetched = true; return Response.json({ total_count: 0, check_runs: [] }); }
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
       if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [{ name: "maintainer-only" }], user: { login: "owner" } });
       if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
@@ -1735,13 +1759,25 @@ describe("queue processors", () => {
       } as never,
     });
 
-    expect(checkRunsFetched).toBe(true); // the CI window's claim is irrelevant to the issue-side wake
+    expect(fetchCount).toBe(0); // issue-side wake only enqueues; it never performs the expensive live re-review inline
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }) },
+    ]); // the CI window's claim is irrelevant to the issue-side wake
   });
 
   it("issue label change coalesces a burst of same-PR issue-side signals within its OWN window (#2371)", async () => {
     // The issue-side window's legitimate purpose: bound FREQUENCY for a burst of label/assignment churn on the
     // same PR, without depending on (or being defeated by) the unrelated CI-completion window.
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_REPOS: "owner/agent-repo" });
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
@@ -1772,19 +1808,75 @@ describe("queue processors", () => {
     });
 
     await processJob(env, labeled("issue-label-burst-1"));
-    expect(fetchCallCount).toBeGreaterThan(0); // sanity: the first signal genuinely re-reviewed
+    expect(fetchCallCount).toBe(0); // the first signal queues a bounded per-PR job instead of re-reviewing inline
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }) },
+    ]);
     const fetchCallCountAfterFirst = fetchCallCount;
 
     await processJob(env, labeled("issue-label-burst-2"));
 
-    // Second signal within the window coalesces — no additional GitHub interaction at all, not even a token mint.
+    // Second signal within the window coalesces — no GitHub interaction and one trailing job for the latest state.
     expect(fetchCallCount).toBe(fetchCallCountAfterFirst);
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }) },
+      {
+        message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
+        options: { delaySeconds: 60 },
+      },
+    ]);
+  });
+
+  it("REGRESSION: issue-side linked PR wake is capped and queued instead of re-reviewing every linked PR inline", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    for (let number = 1; number <= SWEEP_MAX_PRS + 2; number += 1) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Linking PR ${number}`, state: "open", user: { login: "contributor" }, head: { sha: `a${number}` }, labels: [], body: "Closes #1" });
+    }
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount += 1;
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "issue-label-capped-fanout",
+      eventName: "issues",
+      payload: {
+        action: "labeled",
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        installation: { id: 9001 },
+        issue: { number: 1, title: "Issue", state: "open", labels: [{ name: "maintainer-only" }] },
+        label: { name: "maintainer-only" },
+      } as never,
+    });
+
+    expect(fetchCount).toBe(0);
+    expect(sent).toHaveLength(SWEEP_MAX_PRS);
+    expect(sent.map(({ message }) => message)).toEqual(
+      Array.from({ length: SWEEP_MAX_PRS }, (_, index) =>
+        expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: index + 1, installationId: 9001 }),
+      ),
+    );
+    expect(sent.map(({ options }) => options)).toEqual([undefined, { delaySeconds: 10 }, { delaySeconds: 20 }]);
   });
 
   it("REGRESSION (#2371): a coalesced issue-side signal schedules a trailing re-review so an add-then-remove sequence is never lost", async () => {
     // Unlike CI-completion events, same-PR issue-side events are NOT interchangeable within the window: a
     // label ADD immediately followed by a REMOVE carries genuinely different states. The first event's
-    // re-review captures the ADD; the second is coalesced (per the window's frequency bound) but must not
+    // queued re-review captures the ADD; the second is coalesced (per the window's frequency bound) but must not
     // silently drop the REMOVE — it schedules a trailing agent-regate-pr re-review to run just after the
     // window closes, so the PR converges on the LATEST (removed) state instead of staying stuck on the ADD.
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
@@ -1825,12 +1917,15 @@ describe("queue processors", () => {
     });
 
     await processJob(env, event("issue-add-then-remove-1", "labeled"));
-    expect(sent).toEqual([]); // the FIRST event re-reviews live — no trailing job needed yet
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }) },
+    ]); // the FIRST event queues bounded per-PR work — no trailing job needed yet
 
     await processJob(env, event("issue-add-then-remove-2", "unlabeled"));
     // The REMOVE was coalesced (same window), so it must schedule exactly one trailing re-review for the PR,
     // delayed past the window's close, rather than being silently dropped.
     expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }) },
       {
         message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
         options: { delaySeconds: 60 },
@@ -1839,14 +1934,20 @@ describe("queue processors", () => {
 
     await processJob(env, event("issue-add-then-remove-3", "labeled"));
     // A THIRD coalesced event in the same window must not schedule a second, redundant trailing job.
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(2);
   });
 
   it("a failed trailing-re-review enqueue is swallowed — best-effort, the sweep remains the ultimate backstop (#2371)", async () => {
+    let sendAttempts = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       GITTENSORY_REVIEW_REPOS: "owner/agent-repo",
-      JOBS: { async send() { throw new Error("queue unavailable"); } } as unknown as Queue,
+      JOBS: {
+        async send() {
+          sendAttempts += 1;
+          if (sendAttempts > 1) throw new Error("queue unavailable");
+        },
+      } as unknown as Queue,
     });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
@@ -1875,7 +1976,7 @@ describe("queue processors", () => {
       } as never,
     });
 
-    await expect(processJob(env, labeled("issue-enqueue-fail-1"))).resolves.toBeUndefined(); // live re-review, no enqueue on this path
+    await expect(processJob(env, labeled("issue-enqueue-fail-1"))).resolves.toBeUndefined(); // immediate per-PR enqueue succeeds
     // The second (coalesced) event exercises scheduleTrailingIssueLinkedReReview's env.JOBS.send — its failure
     // must be swallowed, not thrown into the webhook handler.
     await expect(processJob(env, labeled("issue-enqueue-fail-2"))).resolves.toBeUndefined();
@@ -1894,7 +1995,7 @@ describe("queue processors", () => {
       JOBS: {
         async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
           sendAttempts += 1;
-          if (sendAttempts === 1) throw new Error("queue transiently unavailable");
+          if (sendAttempts === 2) throw new Error("queue transiently unavailable");
           sent.push(options ? { message, options } : { message });
         },
       } as unknown as Queue,
@@ -1926,19 +2027,22 @@ describe("queue processors", () => {
       } as never,
     });
 
-    await processJob(env, labeled("issue-transient-retry-1")); // live re-review, no enqueue
+    await processJob(env, labeled("issue-transient-retry-1")); // immediate per-PR enqueue succeeds
     await processJob(env, labeled("issue-transient-retry-2")); // coalesced — the FIRST send attempt, throws
-    expect(sendAttempts).toBe(1);
-    expect(sent).toEqual([]); // the failed attempt must NOT have claimed the marker
-
-    await processJob(env, labeled("issue-transient-retry-3")); // still coalesced — retries the enqueue, succeeds
     expect(sendAttempts).toBe(2);
     expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7 }) },
+    ]); // the failed trailing attempt must NOT have claimed the marker
+
+    await processJob(env, labeled("issue-transient-retry-3")); // still coalesced — retries the enqueue, succeeds
+    expect(sendAttempts).toBe(3);
+    expect(sent).toEqual([
+      { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7 }) },
       { message: expect.objectContaining({ type: "agent-regate-pr", repoFullName: "owner/agent-repo", prNumber: 7 }), options: { delaySeconds: 60 } },
     ]);
 
     await processJob(env, labeled("issue-transient-retry-4")); // coalesced again — the successful claim now dedupes further retries
-    expect(sendAttempts).toBe(2);
+    expect(sendAttempts).toBe(3);
   });
 
   it("#4 stale-surface repair: a rebased PR resyncs + re-reviews at the new head, and the marker survives the resync", async () => {
@@ -11731,7 +11835,7 @@ describe("one-shot reopen prevention", () => {
     expect(webhookRow?.status).toBe("processed");
   });
 
-  it("skips the reopen-reclose when a concurrent delivery already holds the per-PR actuation lock (#2135)", async () => {
+  it("retries the reopen-reclose when a concurrent delivery already holds the per-PR actuation lock (#2447)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -11756,16 +11860,16 @@ describe("one-shot reopen prevention", () => {
     // happens; the webhook path must stop BEFORE resolveRepositorySettings, the first call the re-review makes.
     const resolveSettingsSpy = vi.spyOn(repositorySettingsModule, "resolveRepositorySettings");
 
-    await processJob(env, {
+    await expect(processJob(env, {
       type: "github-webhook",
       deliveryId: "reopen-lock-contended",
       eventName: "pull_request",
       payload: reopenedPayload("contributor"),
-    });
+    })).rejects.toThrow("pr actuation lock contended");
 
     expect(calls.some((call) => call.method === "PATCH" && call.url.endsWith("/pulls/42"))).toBe(false);
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ n: number }>();
-    expect(audit?.n).toBe(0); // no decision recorded either way — the in-flight delivery owns this pass
+    expect(audit?.n).toBe(0); // no decision recorded either way — the queue retry owns the deferred decision
     expect(resolveSettingsSpy).not.toHaveBeenCalled(); // the normal re-review pass never started
   });
 
@@ -12273,7 +12377,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     expect(audit?.detail).toContain("dry-run: would close");
   });
 
-  it("skips the draft-dodge close when a concurrent delivery already holds the per-PR actuation lock (#2135)", async () => {
+  it("retries the draft-dodge close when a concurrent delivery already holds the per-PR actuation lock (#2447)", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -12291,11 +12395,11 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     // racing this converted_to_draft event) — the lock key it would hold is pre-claimed here.
     await env.SELFHOST_TRANSIENT_CACHE?.set("pr-actuation-lock:jsonbored/gittensory#42", "1", 60);
 
-    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-lock-contended", eventName: "pull_request", payload: draftPayload("contributor") });
+    await expect(processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-lock-contended", eventName: "pull_request", payload: draftPayload("contributor") })).rejects.toThrow("pr actuation lock contended");
 
     expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ n: number }>();
-    expect(audit?.n).toBe(0); // no decision recorded either way — the in-flight delivery owns this pass
+    expect(audit?.n).toBe(0); // no decision recorded either way — the queue retry owns the deferred decision
   });
 
   it("REGRESSION: exactly ONE of two genuinely concurrent draft-dodge deliveries for the SAME PR wins the actuation lock (#2135)", async () => {
@@ -12318,10 +12422,12 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-race-a", eventName: "pull_request", payload: draftPayload("contributor") }),
       processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-race-b", eventName: "pull_request", payload: draftPayload("contributor") }),
     ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
 
     const patchCalls = calls.filter((c) => c.includes("PATCH") && c.includes("/pulls/42"));
     expect(patchCalls).toHaveLength(1); // exactly one delivery won the race and closed the PR

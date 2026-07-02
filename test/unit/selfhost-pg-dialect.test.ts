@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { stripConflictTargetQualifiers, toNumberedPlaceholders, translateDdl, translateFunctions, translateInsertOr, translateMigrationInserts, translateSql } from "../../src/selfhost/pg-dialect";
+import { stripConflictTargetQualifiers, toNumberedPlaceholders, translateDdl, translateFunctions, translateInsertOr, translateMigrationInserts, translateRowid, translateSql } from "../../src/selfhost/pg-dialect";
 
 describe("pg-dialect (#977 SQLite → Postgres)", () => {
   it("numbers placeholders, skipping `?` inside string literals", () => {
     expect(toNumberedPlaceholders("SELECT * FROM t WHERE a=? AND b=?")).toBe("SELECT * FROM t WHERE a=$1 AND b=$2");
     expect(toNumberedPlaceholders("SELECT '?' AS lit WHERE a=?")).toBe("SELECT '?' AS lit WHERE a=$1");
+  });
+
+  it("REGRESSION: reuses a SQLite numbered placeholder's own index instead of corrupting it via the anonymous counter", () => {
+    // Before the fix: `?1` scanned as anonymous `?` (→ $1) followed by a literal `1`, corrupting to `$11`
+    // — a bind index Postgres has no value for. retentionWhere() (retention.ts) and claimRegateFanoutSlot()
+    // (repositories.ts) both use this numbered syntax.
+    expect(toNumberedPlaceholders("created_at < ?1")).toBe("created_at < $1");
+    expect(toNumberedPlaceholders("last_regate_fanout_at = ?1 WHERE id = 'singleton' AND (x IS NULL OR x < ?2)")).toBe(
+      "last_regate_fanout_at = $1 WHERE id = 'singleton' AND (x IS NULL OR x < $2)",
+    );
+    // A later anonymous `?` continues from the highest index already assigned (SQLite's own rule), so it
+    // must not collide with an earlier numbered placeholder.
+    expect(toNumberedPlaceholders("a=?1 AND b=?")).toBe("a=$1 AND b=$2");
+    // A literal `?1` inside a string is left untouched, same as a bare `?` literal.
+    expect(toNumberedPlaceholders("SELECT '?1' AS lit WHERE a=?")).toBe("SELECT '?1' AS lit WHERE a=$1");
   });
 
   it("translates datetime/strftime/CURRENT_TIMESTAMP/json to Postgres (text-returning to match SQLite)", () => {
@@ -79,5 +94,30 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(out).not.toContain('"webhook_events"."delivery_id"');
     expect(out).toContain("values ($1, $2)"); // placeholders numbered
     expect(out).toContain("set \"status\" = $3");
+  });
+
+  it("translates the rowid pseudo-column to Postgres's ctid system column", () => {
+    expect(translateRowid("SELECT rowid FROM t WHERE a = ?")).toBe("SELECT ctid FROM t WHERE a = ?");
+    expect(translateRowid("ORDER BY rowid DESC")).toBe("ORDER BY ctid DESC");
+    expect(translateRowid("ORDER BY ROWID ASC")).toBe("ORDER BY ctid ASC"); // case-insensitive
+    // Only the bare `rowid` token is rewritten — identifiers that merely contain it are left alone.
+    expect(translateRowid("SELECT row_id, my_rowid_col FROM t")).toBe("SELECT row_id, my_rowid_col FROM t");
+    expect(translateRowid("SELECT 1")).toBe("SELECT 1"); // no-op passthrough
+  });
+
+  it("REGRESSION (self-host Postgres prune-retention dead-letter): translateSql strips rowid from the exact batched-delete shape retention.ts emits", () => {
+    // The literal shape src/db/retention.ts's pruneExpiredRecords() builds for its bounded batched delete.
+    // Before the fix, this reached Postgres verbatim and failed with `column "rowid" does not exist`.
+    const deleteSql = 'DELETE FROM ai_usage_events WHERE rowid IN (SELECT rowid FROM ai_usage_events WHERE created_at < ?1 LIMIT 1000)';
+    const out = translateSql(deleteSql);
+    expect(out.toLowerCase()).not.toContain("rowid");
+    expect(out).toBe("DELETE FROM ai_usage_events WHERE ctid IN (SELECT ctid FROM ai_usage_events WHERE created_at < $1 LIMIT 1000)");
+  });
+
+  it("also fixes the rowid tie-break ORDER BY used by orb/relay.ts enrollment resolution", () => {
+    const sql = "SELECT relay_mode FROM orb_enrollments WHERE installation_id = ? ORDER BY enrolled_at DESC, rowid DESC";
+    const out = translateSql(sql);
+    expect(out.toLowerCase()).not.toContain("rowid");
+    expect(out).toContain("ORDER BY enrolled_at DESC, ctid DESC");
   });
 });

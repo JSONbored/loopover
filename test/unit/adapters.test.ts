@@ -165,6 +165,34 @@ describe("small adapters and normalizers", () => {
     expect(profile.topLanguages).toContain("Rust");
   });
 
+  it("uses a fresh timeout signal for each paginated public GitHub request", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/users/slowpager")) return Response.json({ login: "slowpager", public_repos: 220 });
+      if (url.includes("/slowpager/repos?") && !url.includes("page=2") && !url.includes("page=3")) {
+        return Response.json(Array.from({ length: 100 }, () => ({ language: "TypeScript" })), {
+          headers: { link: '<https://api.github.com/users/slowpager/repos?page=2>; rel="next"' },
+        });
+      }
+      if (url.includes("/slowpager/repos?") && url.includes("page=2")) {
+        return Response.json(Array.from({ length: 100 }, () => ({ language: "Rust" })), {
+          headers: { link: '<https://api.github.com/users/slowpager/repos?page=3>; rel="next"' },
+        });
+      }
+      if (url.includes("/slowpager/repos?") && url.includes("page=3")) {
+        return Response.json(Array.from({ length: 20 }, () => ({ language: "Go" })));
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("slowpager");
+    expect(profile.topLanguages).toEqual(expect.arrayContaining(["TypeScript", "Rust", "Go"]));
+    // One timeout per request: user + page1 + page2 + page3.
+    expect(timeoutSpy).toHaveBeenCalledTimes(4);
+    timeoutSpy.mockRestore();
+  });
+
   it("stops paginating repos when a subsequent page returns a non-ok response", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();

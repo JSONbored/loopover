@@ -613,6 +613,14 @@ export type RepositorySettings = {
    *  the label a repo sets. Always populated by the DB layer (default `"slop"`); optional so existing settings
    *  fixtures/callers need not be touched (mirrors the sibling `contributorBlacklist`). */
   blacklistLabel?: string | undefined;
+  /** Per-contributor open-PR cap (#2270, anti-abuse): the max PRs a single non-owner/admin/bot contributor may
+   *  have open on this repo at once. `null`/absent (default) = no cap, byte-identical to today. Layered like
+   *  every other settings field (`.gittensory.yml` `settings.contributorOpenPrCap` > DB > `null`). Enforcement
+   *  (closing the newest PR(s) over the cap) is a separate follow-up; this field only carries the threshold. */
+  contributorOpenPrCap?: number | null | undefined;
+  /** Per-contributor open-issue cap (#2270, anti-abuse): same shape and precedence as {@link contributorOpenPrCap},
+   *  applied to open issues instead of open PRs. `null`/absent (default) = no cap. */
+  contributorOpenIssueCap?: number | null | undefined;
   /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
    *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
    *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */

@@ -1,6 +1,7 @@
 import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, RepoTimeDecayOverrides, ScoringModelSnapshotRecord, ScorePreviewRecord } from "../types";
 import { DEFAULT_SCORING_CONSTANTS } from "./model";
 import { nowIso } from "../utils/json";
+import { hasUnsafeWildcardCount } from "../signals/change-guardrail";
 
 export type ScorePreviewInput = {
   repoFullName: string;
@@ -927,11 +928,20 @@ export function labelMatchesPattern(label: string, pattern: string): boolean {
 // Compiled fnmatch→RegExp matchers are memoized by pattern. The same small,
 // config-derived set of label keys is matched on every scored PR/issue, so the
 // per-call recompile inside the nested label loops in engine.ts is pure waste.
-// Keys are configured label patterns (bounded, not attacker-supplied), so the
-// cache needs no eviction bound. The compiled RegExp carries only the "i" flag
-// (no global/sticky `lastIndex` state), so sharing one instance across calls is
-// safe and byte-identical to recompiling on every call.
+// Keys come from a repo's registryConfig.labelMultipliers, sourced from the externally-fetched gittensor
+// registry (registry/sync.ts + registry/normalize.ts, not a value this repo's own maintainer directly controls
+// via .gittensory.yml) — so the pattern SET is small per repo, but individual pattern CONTENT is untrusted, not
+// literally attacker-supplied-per-request the way GitHub PR content is. The cache still needs no eviction bound
+// (the key set is bounded by real registry entries, not attacker-loop-controlled at request time), but the
+// wildcard-count cap below (#2456) matters regardless of that distinction. The compiled RegExp carries only the
+// "i" flag (no global/sticky `lastIndex` state), so sharing one instance across calls is safe and byte-identical
+// to recompiling on every call.
 const labelPatternRegExpCache = new Map<string, RegExp>();
+
+// A RegExp that never matches any input — mirrors change-guardrail.ts's identical NEVER_MATCHES fallback for an
+// over-complex pattern, so a pathological registry entry degrades to "this label multiplier never applies"
+// instead of hanging the scoring path that evaluates it.
+const LABEL_PATTERN_NEVER_MATCHES = /^(?!)$/;
 
 // Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
 // literal string: `fnmatch(label.lower(), pattern.lower())` in
@@ -946,6 +956,16 @@ const labelPatternRegExpCache = new Map<string, RegExp>();
 function labelPatternToRegExp(pattern: string): RegExp {
   const cached = labelPatternRegExpCache.get(pattern);
   if (cached !== undefined) return cached;
+  // Reuses change-guardrail.ts's wildcard-GROUP counting (a `*` here matches the same "any run of chars"
+  // semantics as that glob compiler's `*`, so the same catastrophic-backtracking risk and the same empirically-
+  // safe threshold apply) — an over-complex registry-sourced label_multipliers key degrades to a safe never-match
+  // instead of hanging RegExp.test() on an adversarial near-miss label (#2456). Reachable via the public
+  // score-preview API, the MCP tool, and the per-PR label-audit signal, so one bad registry entry could otherwise
+  // hang scoring for every PR on that repo.
+  if (hasUnsafeWildcardCount(pattern)) {
+    labelPatternRegExpCache.set(pattern, LABEL_PATTERN_NEVER_MATCHES);
+    return LABEL_PATTERN_NEVER_MATCHES;
+  }
   let regex = "";
   let i = 0;
   while (i < pattern.length) {

@@ -630,6 +630,8 @@ export const RepositorySettingsSchema = z
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),
     agentDryRun: z.boolean().optional(),
+    contributorOpenPrCap: z.number().int().positive().nullable().optional(),
+    contributorOpenIssueCap: z.number().int().positive().nullable().optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })

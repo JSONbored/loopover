@@ -125,6 +125,8 @@ export type FocusManifestSettings = Partial<
     | "commandAuthorization"
     | "contributorBlacklist"
     | "blacklistLabel"
+    | "contributorOpenPrCap"
+    | "contributorOpenIssueCap"
   >
 >;
 
@@ -791,6 +793,27 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     const { entries, warnings: blacklistWarnings } = normalizeContributorBlacklist(r.contributorBlacklist);
     warnings.push(...blacklistWarnings);
     if (entries.length > 0) out.contributorBlacklist = entries;
+  }
+  // Per-contributor open PR/issue caps (#2270): discrete counts, not scores — reuse the same positive-integer
+  // normalizer as contentLane.maxAppendedEntries so a fractional/non-positive typo is dropped with a warning
+  // instead of configuring a nonsensical cap. UNLIKE contributorBlacklist above, an explicit yml `null` here is
+  // load-bearing (not the same as omitting the key): the documented `yml > DB > null` precedence means a
+  // maintainer must be able to force a DB-configured cap back to "no cap" via `.gittensory.yml` without deleting
+  // the DB row. `normalizeOptionalPositiveInteger` collapses "absent" and "null" to the same silent `null`
+  // return, so that distinction has to be made HERE, before calling it: a literal `null` sets the key to `null`
+  // (clears); omitted (`undefined`) leaves the key unset (preserves the DB value via the resolver's spread); an
+  // invalid non-null value (fractional/non-positive/wrong type) warns and also leaves the key unset.
+  if (r.contributorOpenPrCap === null) {
+    out.contributorOpenPrCap = null;
+  } else {
+    const contributorOpenPrCap = normalizeOptionalPositiveInteger(r.contributorOpenPrCap, "settings.contributorOpenPrCap", warnings);
+    if (contributorOpenPrCap !== null) out.contributorOpenPrCap = contributorOpenPrCap;
+  }
+  if (r.contributorOpenIssueCap === null) {
+    out.contributorOpenIssueCap = null;
+  } else {
+    const contributorOpenIssueCap = normalizeOptionalPositiveInteger(r.contributorOpenIssueCap, "settings.contributorOpenIssueCap", warnings);
+    if (contributorOpenIssueCap !== null) out.contributorOpenIssueCap = contributorOpenIssueCap;
   }
   return out;
 }

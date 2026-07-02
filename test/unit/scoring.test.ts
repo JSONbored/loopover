@@ -1913,4 +1913,27 @@ describe("label pattern matcher memoization (#2106)", () => {
     expect(labelMatchesPattern("bug", "bug")).toBe(true);
     expect(labelMatchesPattern("bugfix", "bug")).toBe(false);
   });
+
+  it("SECURITY (ReDoS, #2456): a label pattern with too many chained wildcards no longer risks catastrophic backtracking — it fails SAFE TOWARD NO MULTIPLIER (never matches) instead of ever compiling the pathological pattern", () => {
+    // 3 chained wildcards is already empirically dangerous for the identical `.*`-chaining shape this reuses
+    // from change-guardrail.ts's globToRegExp (see MAX_GLOB_WILDCARD_GROUPS's rationale: over 2 seconds at a
+    // ~4,000-char adversarial input) — one over the cap, proving the boundary itself is safe, not just an
+    // extreme over-the-top example. Must resolve INSTANTLY even against that adversarial length. Unlike the
+    // guardrail glob (which fails toward MATCHING, the safe direction for a security hold), a label multiplier
+    // pattern fails toward NEVER matching — the safe direction here is "no multiplier applies", not "every label
+    // gets a multiplier".
+    const pathological = "*-*-*-final";
+    const adversarialLabel = "a-".repeat(2000) + "X"; // ~4,000 chars — the empirically dangerous length for 3 wildcards
+    const start = Date.now();
+    expect(labelMatchesPattern(adversarialLabel, pathological)).toBe(false);
+    expect(labelMatchesPattern("completely-unrelated-label", pathological)).toBe(false);
+    expect(labelMatchesPattern("", pathological)).toBe(false);
+    expect(labelMatchesPattern("a-b-c-final", pathological)).toBe(false); // even a "near miss" that would otherwise match
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
+  it("a label pattern AT the safe cap (2 wildcards) still compiles and matches NORMALLY, not the fail-safe path — proves the cap is inclusive, not exclusive", () => {
+    expect(labelMatchesPattern("type-bug-fix", "type-*-*")).toBe(true);
+    expect(labelMatchesPattern("type-bug", "type-*-*")).toBe(false);
+  });
 });

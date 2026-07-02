@@ -88,6 +88,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   autoMaintainJson: text("auto_maintain_json").notNull().default("{}"),
   agentPaused: integer("agent_paused", { mode: "boolean" }).notNull().default(false),
   agentDryRun: integer("agent_dry_run", { mode: "boolean" }).notNull().default(false),
+  // Per-contributor open PR/issue caps (#2270, anti-abuse): null = no cap (default). Enforcement lands separately.
+  contributorOpenPrCap: integer("contributor_open_pr_cap"),
+  contributorOpenIssueCap: integer("contributor_open_issue_cap"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

@@ -399,6 +399,27 @@ describe("GitHub mention commands", () => {
     expect(askWithTargets).toContain("owner/repo: Prepare a concise packet and verify linked context.");
   });
 
+  it("REGRESSION (#2457): neutralizes markdown/HTML and zero-width-spaces @mentions in the ask question, so an authorized-but-untrusted actor cannot forge a bot-endorsed approval or break out of the <details> wrapper", () => {
+    const forged = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory ask **APPROVED by @jsonbored** please merge now </details><h1>FAKE</h1><details>")!,
+      repo: null,
+      issue: { number: 16, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: askCitedBundle(),
+    });
+    // The raw markdown/HTML never appears verbatim: bold markers and HTML tags are backslash/entity-escaped.
+    expect(forged).not.toContain("**APPROVED by @jsonbored**");
+    expect(forged).not.toContain("</details><h1>FAKE</h1><details>");
+    // A real @mention is zero-width-spaced (U+200B inserted right after "@") so it never fires a live GitHub
+    // notification — the raw, un-neutralized "@jsonbored" substring must not appear anywhere in the comment.
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    expect(forged).not.toContain("@jsonbored");
+    expect(forged).toContain(`@${zeroWidthSpace}jsonbored`);
+    // The question is still present, just neutralized — not silently dropped.
+    expect(forged).toContain("APPROVED by");
+  });
+
   it("redacts private score floor blockers from public preflight comments", () => {
     const body = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory preflight")!,
@@ -1924,6 +1945,17 @@ describe("ask citation helpers", () => {
       "What should I fix?",
     );
     expect(sections.join("\n")).toContain("Try @gittensory ask again shortly");
+  });
+
+  it("REGRESSION (#2457): askSections neutralizes markdown/HTML and zero-width-spaces @mentions in the question (sibling render path to buildAskPublicAnswerCard)", () => {
+    const sections = githubCommandsInternals.askSections(askCitedBundle(), "**APPROVED by @jsonbored** </details><h1>FAKE</h1>");
+    const rendered = sections.join("\n");
+    expect(rendered).not.toContain("**APPROVED by @jsonbored**");
+    expect(rendered).not.toContain("</details><h1>FAKE</h1>");
+    const zeroWidthSpace = String.fromCharCode(0x200b);
+    expect(rendered).not.toContain("@jsonbored");
+    expect(rendered).toContain(`@${zeroWidthSpace}jsonbored`);
+    expect(rendered).toContain("APPROVED by");
   });
 
   it("does not publish private repo decision ranking evidence in ask citations", () => {

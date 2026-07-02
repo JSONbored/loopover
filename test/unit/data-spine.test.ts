@@ -302,6 +302,22 @@ describe("data spine repositories", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/saferepo", agentPaused: false });
     expect((await getRepositorySettings(env, "owner/saferepo")).agentPaused).toBe(false); // update persists
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ agentPaused: false, agentDryRun: false }); // defaults
+    // #2270 per-contributor open PR/issue caps: no row and no cap set both default to null (disabled).
+    expect(await getRepositorySettings(env, "missing/repo")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });
+    expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });
+    // Round-trips on insert and persists on update.
+    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 2, contributorOpenIssueCap: 5 });
+    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 2, contributorOpenIssueCap: 5 });
+    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 3, contributorOpenIssueCap: null });
+    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 3, contributorOpenIssueCap: null }); // update persists + can clear
+    // A cap must be a positive whole number: fractional, non-positive, and non-finite values are all
+    // dropped to null rather than silently coerced (there's no such thing as "allow 2.5 open PRs").
+    await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: 2.5 as never });
+    expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
+    await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: 0 });
+    expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
+    await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: Number.NaN as never });
+    expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
     expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();

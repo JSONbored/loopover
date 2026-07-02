@@ -2361,6 +2361,13 @@ export async function releasePrActuationLock(
   }
 }
 
+class PrActuationLockContendedError extends Error {
+  constructor(repoFullName: string, prNumber: number, policy: string) {
+    super(`pr actuation lock contended for ${repoFullName}#${prNumber} during ${policy}`);
+    this.name = "PrActuationLockContendedError";
+  }
+}
+
 /**
  * True when CI for this PR+headSha has been pending past STUCK_CI_DEFER_MS. Stamps the first-seen time in a
  * transient cache keyed by repo#pr:headSha — a new push is a new SHA, so the window resets per commit. A missing
@@ -2756,8 +2763,9 @@ async function maybeReReviewOnCiCompletion(
  * Wake linked PRs on an issue-side signal (#2259). Labeling/unlabeling (e.g. maintainer-only) or
  * assigning/unassigning on a linked ISSUE can flip a linked-issue hard-rule verdict, but that only gets
  * re-evaluated when the PR ITSELF receives a webhook or the staleness-ordered sweep eventually reaches it —
- * which can lag for many cycles on a repo with more than a few open PRs. Re-review every OPEN PR that links
- * this issue promptly instead of waiting. Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
+ * which can lag for many cycles on a repo with more than a few open PRs. Enqueue a bounded, staggered batch of
+ * per-PR re-gate jobs for OPEN PRs that link this issue instead of doing the expensive live re-review inline.
+ * Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
  * DISTINCT from CI-completion's — #2371): the two triggers are not interchangeable, so a shared window let an
  * unrelated CI re-review silently suppress a genuinely different issue-side signal. Within the issue-side
  * window itself, same-PR events are ALSO not interchangeable (an add-then-remove or assign-then-unassign
@@ -2786,8 +2794,9 @@ async function maybeReReviewOnLinkedIssueChange(
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
     const linkingPrNumbers = openPullRequests
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
-      .map((pr) => pr.number);
-    for (const prNumber of linkingPrNumbers) {
+      .map((pr) => pr.number)
+      .slice(0, SWEEP_MAX_PRS);
+    for (const [index, prNumber] of linkingPrNumbers.entries()) {
       if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
         await scheduleTrailingIssueLinkedReReview(
           env,
@@ -2798,13 +2807,17 @@ async function maybeReReviewOnLinkedIssueChange(
         );
         continue;
       }
-      await reReviewStoredPullRequest(
-        env,
+      const job: JobMessage = {
+        type: "agent-regate-pr",
         deliveryId,
-        installationId,
         repoFullName,
         prNumber,
-      );
+        installationId,
+      };
+      const delaySeconds = Math.min(index * 10, 600);
+      await (delaySeconds > 0
+        ? env.JOBS.send(job, { delaySeconds })
+        : env.JOBS.send(job));
     }
   }
   await recordWebhookEvent(env, {
@@ -3754,8 +3767,8 @@ async function processGitHubWebhook(
       // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
       // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
       // closed their own PR) stay reopenable; the bot's own nightly-re-review reopens are exempt. A contended
-      // actuation lock ALSO skips the re-review (#2135, review round 3) — the winning delivery already owns
-      // this PR, so this pass must not evaluate/mutate it concurrently under a false "not blocked" reading.
+      // actuation lock is retryable (#2135/#2447): this pass must not evaluate/mutate the PR concurrently, but
+      // ordinary maintenance can now hold the same lock and may not enforce this one-shot reopen event.
       // Deliberately UNCAUGHT here: every step inside maybeRecloseDisallowedReopen already fails safe on its own
       // (the lock claim/release fail open; recloseDisallowedReopenIfNeeded's own operations all .catch()), so a
       // swallowing catch at this call site could only ever mask a genuinely unexpected error into a silent
@@ -3772,7 +3785,7 @@ async function processGitHubWebhook(
               payload,
             )
           : "allowed";
-      if (reopenOutcome === "reclosed" || reopenOutcome === "lock_contended") {
+      if (reopenOutcome === "reclosed") {
         // Stamp the delivery processed like every other owning path — the early return otherwise leaves the
         // webhook_events row stuck at "queued"/its body hash, mis-reporting the delivery as un-acked (#review-audit).
         await recordWebhookEvent(env, {
@@ -7743,9 +7756,9 @@ async function recordPrPanelRetriggerSkip(
 /** Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use draft state
  *  to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current headSha (and the
  *  block has not been maintainer-overridden), close the PR immediately — the gate verdict stands and does not
- *  reset on draft conversion. Per-PR actuation-locked (#2135): a concurrent delivery for the same PR must not
- *  evaluate + potentially mutate it at the same time. Lock-contended is a silent no-op for this pass — the
- *  delivery holding the lock is handling this PR. */
+ *  reset on draft conversion. Per-PR actuation-locked (#2135/#2447): a concurrent delivery for the same PR must
+ *  not evaluate + potentially mutate it at the same time. Lock contention is retryable because ordinary
+ *  maintenance can hold the shared lock without enforcing this converted_to_draft event. */
 async function maybeCloseDraftDodgeAttempt(
   env: Env,
   deliveryId: string,
@@ -7754,7 +7767,9 @@ async function maybeCloseDraftDodgeAttempt(
   pr: PullRequestRecord,
   settings: RepositorySettings,
 ): Promise<void> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) return;
+  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) {
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "draft-dodge");
+  }
   try {
     await closeDraftDodgeAttemptIfBlocked(
       env,
@@ -7940,18 +7955,16 @@ async function closeDraftDodgeAttemptIfBlocked(
   }
 }
 
-/** Outcome of {@link maybeRecloseDisallowedReopen}: "reclosed" and "lock_contended" both mean the caller must
- *  skip the normal re-review pass — a plain boolean can't distinguish "evaluated, not blocked" from "never
- *  evaluated, another delivery owns this PR", and conflating them let a contended pass fall through to a
- *  concurrent re-review (#2135, review round 3). */
-type ReopenRecloseOutcome = "reclosed" | "allowed" | "lock_contended";
+/** Outcome of {@link maybeRecloseDisallowedReopen}: "reclosed" means the caller must skip the normal re-review
+ *  pass; a plain boolean can't distinguish "evaluated, not blocked" from "reclosed, stop here". */
+type ReopenRecloseOutcome = "reclosed" | "allowed";
 
 /** Reopen-prevention (#one-shot-reopen): re-close a contributor's reopen of a PR that gittensory / a maintainer
  *  closed (closes are one-shot). Returns "reclosed" when it re-closed (caller skips the re-review). Exempt: the
  *  bot's own re-review reopens, owner/admin reopens, and a contributor reopening a PR they CLOSED THEMSELVES.
- *  Per-PR actuation-locked (#2135): a concurrent delivery for the same PR (e.g. a check_suite completion racing
- *  this reopen) must not evaluate + potentially mutate this PR at the same time. Lock-contended returns
- *  "lock_contended" — the caller skips its own re-review too, since the delivery holding the lock owns this PR. */
+ *  Per-PR actuation-locked (#2135/#2447): a concurrent delivery for the same PR must not evaluate + potentially
+ *  mutate this PR at the same time. Lock contention is retryable because ordinary maintenance can hold the
+ *  shared lock without enforcing this reopened event. */
 async function maybeRecloseDisallowedReopen(
   env: Env,
   deliveryId: string,
@@ -7960,7 +7973,9 @@ async function maybeRecloseDisallowedReopen(
   pr: PullRequestRecord,
   payload: GitHubWebhookPayload,
 ): Promise<ReopenRecloseOutcome> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) return "lock_contended";
+  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) {
+    throw new PrActuationLockContendedError(repoFullName, pr.number, "reopen-reclose");
+  }
   try {
     const reclosed = await recloseDisallowedReopenIfNeeded(
       env,

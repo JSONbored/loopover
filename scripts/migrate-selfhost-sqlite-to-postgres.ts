@@ -36,14 +36,15 @@ const TABLES_ALLOWED_AFTER_SCHEMA_INIT = new Set(["global_agent_controls", "glob
 const POSTGRES_TEXT_NUL_REPLACEMENT = "\uFFFD";
 
 function usage(): string {
-  return `Usage: npm run selfhost:postgres:migrate -- --sqlite <path> --postgres-url <url> [--execute]
+  return `Usage: DATABASE_URL=<postgres-url> npm run selfhost:postgres:migrate -- --sqlite <path> [--execute]
 
 Copies a self-host SQLite database into an empty Postgres backend. The default is a transactionally
-rolled-back dry run. Pass --execute to commit the copy.
+rolled-back dry run. Pass --execute to commit the copy. Prefer DATABASE_URL over --postgres-url so
+the Postgres credential is not exposed through process command lines.
 
 Options:
   --sqlite <path>          SQLite source file. Defaults to DATABASE_PATH or /data/gittensory.sqlite.
-  --postgres-url <url>     Postgres target URL. Defaults to DATABASE_URL.
+  --postgres-url <url>     Postgres target URL. Defaults to DATABASE_URL; avoid this on shared hosts.
   --migrations-dir <path>  Migration directory. Defaults to migrations.
   --execute                Commit the copy. Omit for a rollback dry run.
   --allow-non-empty        Allow non-empty target tables only when overlapping primary keys are identical.

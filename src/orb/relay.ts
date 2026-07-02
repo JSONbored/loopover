@@ -243,7 +243,14 @@ export async function pullRelayPending(
       .run();
   }
 
-  const limit = Math.min(opts?.limit ?? RELAY_PENDING_BATCH_SIZE, RELAY_PENDING_BATCH_SIZE);
+  // SQLite interprets LIMIT -1 as "unbounded", so non-positive/non-integer values must
+  // fall back to the default batch size instead of passing through verbatim.
+  const requested = opts?.limit;
+  const requestedLimit =
+    typeof requested === "number" && Number.isInteger(requested) && requested > 0
+      ? requested
+      : RELAY_PENDING_BATCH_SIZE;
+  const limit = Math.min(requestedLimit, RELAY_PENDING_BATCH_SIZE);
   const { results } = await env.DB
     .prepare("SELECT delivery_id, event_name, raw_body FROM orb_relay_pending WHERE installation_id = ? ORDER BY created_at, delivery_id LIMIT ?")
     .bind(installationId, limit)

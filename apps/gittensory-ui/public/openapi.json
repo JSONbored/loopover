@@ -8589,6 +8589,18 @@
           },
           "blacklistLabel": {
             "type": "string"
+          },
+          "contributorOpenPrCap": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "contributorOpenIssueCap": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true
           }
         },
         "required": [

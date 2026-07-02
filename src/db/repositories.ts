@@ -501,6 +501,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       contributorBlacklist: [],
       autonomy: {},
       autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
+      contributorOpenPrCap: null,
+      contributorOpenIssueCap: null,
     };
   }
   return {
@@ -545,6 +547,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     contributorBlacklist: parseContributorBlacklist(row.contributorBlacklistJson),
     autonomy: parseAutonomyPolicy(row.autonomyJson),
     autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
+    contributorOpenPrCap: normalizeOpenItemCap(row.contributorOpenPrCap),
+    contributorOpenIssueCap: normalizeOpenItemCap(row.contributorOpenIssueCap),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -621,6 +625,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     contributorBlacklist: normalizeContributorBlacklist(settings.contributorBlacklist).entries,
     autonomy: normalizeAutonomyPolicy(settings.autonomy),
     autoMaintain: normalizeAutoMaintainPolicy(settings.autoMaintain),
+    contributorOpenPrCap: normalizeOpenItemCap(settings.contributorOpenPrCap),
+    contributorOpenIssueCap: normalizeOpenItemCap(settings.contributorOpenIssueCap),
   };
   const db = getDb(env.DB);
   await db
@@ -667,6 +673,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
       autonomyJson: jsonString(resolved.autonomy),
       autoMaintainJson: jsonString(resolved.autoMaintain),
+      contributorOpenPrCap: resolved.contributorOpenPrCap,
+      contributorOpenIssueCap: resolved.contributorOpenIssueCap,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -714,6 +722,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         contributorBlacklistJson: jsonString(resolved.contributorBlacklist),
         autonomyJson: jsonString(resolved.autonomy),
         autoMaintainJson: jsonString(resolved.autoMaintain),
+        contributorOpenPrCap: resolved.contributorOpenPrCap,
+        contributorOpenIssueCap: resolved.contributorOpenIssueCap,
         updatedAt: nowIso(),
       },
     });
@@ -5584,6 +5594,15 @@ function normalizeAiReviewProvider(value: string | null | undefined): "anthropic
 function normalizeQualityGateMinScore(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+// A per-contributor open-item cap (#2270) counts discrete open PRs/issues, not a 0-100 score, so unlike
+// normalizeQualityGateMinScore it is neither clamped into a range nor rounded — a fractional or non-positive
+// value is a malformed cap (there's no such thing as "allow 2.5 open PRs"), so it is dropped to null (no cap)
+// rather than silently coerced into a nonsensical threshold.
+function normalizeOpenItemCap(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return null;
+  return value;
 }
 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {

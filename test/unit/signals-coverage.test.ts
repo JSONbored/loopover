@@ -40,6 +40,7 @@ import {
   buildRepoRewardRisk,
 } from "../../src/signals/reward-risk";
 import { PREFLIGHT_LIMITS } from "../../src/signals/preflight-limits";
+import { MAX_LINKED_ISSUE_NUMBERS } from "../../src/db/repositories";
 import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
   ContributorRepoStatRecord,
@@ -695,6 +696,26 @@ describe("signal coverage edge cases", () => {
 
     expect(linkedInsideLimit.linkedIssues).toContain(99);
     expect(linkedPastLimit.linkedIssues).not.toContain(100);
+  });
+
+  it("warns when preflight body links more closing issues than the gate cap", () => {
+    const directRepo = repo("owner/direct");
+    const overflowBody = Array.from({ length: MAX_LINKED_ISSUE_NUMBERS + 5 }, (_, index) => `Fixes #${index + 1}`).join("\n");
+    const preflight = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bulk close",
+        body: overflowBody,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+
+    expect(preflight.linkedIssues).toHaveLength(MAX_LINKED_ISSUE_NUMBERS);
+    expect(preflight.findings.map((finding) => finding.code)).toContain("linked_issue_overflow");
+    expect(preflight.status).toBe("needs_work");
   });
 
   it("sanitizes public PR comments and supports minimal public signal level", () => {

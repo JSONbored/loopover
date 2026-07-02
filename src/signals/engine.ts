@@ -26,13 +26,14 @@ import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
-import { hasLocalTestEvidence } from "./test-evidence";
+import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFailingCheckSummary } from "./local-branch";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
 import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
+import { extractLinkedIssueNumbersWithOverflow, MAX_LINKED_ISSUE_NUMBERS } from "../db/repositories";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -2138,7 +2139,7 @@ export function buildRepoOutcomePatterns(args: {
   };
   for (const pr of outsideDecided) {
     for (const bucket of new Set(pr.filePaths.map(pathBucket))) addToGroup("path", bucket, pr);
-    if (pr.filePaths.length > 0) addToGroup("test_evidence", pr.filePaths.some(isTestFile) ? "with_tests" : "without_tests", pr);
+    if (pr.filePaths.length > 0) addToGroup("test_evidence", pr.filePaths.some(isTestPath) ? "with_tests" : "without_tests", pr);
     for (const label of pr.labels) addToGroup("label", label, pr);
     const size = sizeBucket(pr);
     if (size) addToGroup("size", size, pr);
@@ -2489,9 +2490,10 @@ export function buildPreflightResult(
   issueQuality?: IssueQualityReport | null | undefined,
 ): PreflightResult {
   const lane = buildLaneAdvice(repo, input.repoFullName);
-  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars))])].sort(
-    (left, right) => left - right,
-  );
+  const bodyExtraction = extractLinkedIssueNumbersWithOverflow(truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars), MAX_LINKED_ISSUE_NUMBERS);
+  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...bodyExtraction.numbers])]
+    .sort((left, right) => left - right)
+    .slice(0, PREFLIGHT_LIMITS.linkedIssues);
   // Flag an existing open-work cluster as a possible duplicate when it shares a
   // linked issue, OR when its title/body meaningfully overlaps the planned
   // contribution. The previous check used `item.title.includes(input.title)`,
@@ -2534,6 +2536,15 @@ export function buildPreflightResult(
       action: "Link the issue being solved, or explicitly explain why this is a no-issue PR.",
     });
   }
+  if (bodyExtraction.overflow) {
+    findings.push({
+      code: "linked_issue_overflow",
+      severity: "warning",
+      title: "Too many linked issues in the PR body",
+      detail: `The body references more than ${MAX_LINKED_ISSUE_NUMBERS} closing issues; the gate cannot safely verify that many automatically.`,
+      action: "Reduce linked closing references before submitting.",
+    });
+  }
   if (collisions.length > 0) {
     findings.push({
       code: "possible_duplicate_work",
@@ -2571,7 +2582,7 @@ export function buildPreflightResult(
   findings.push(...issueQualityFindings(linkedIssues, issueQuality));
   const changedFiles = input.changedFiles ?? [];
   const tests = input.tests ?? [];
-  if (changedFiles.some((file) => isCodeFile(file)) && tests.length === 0 && !changedFiles.some((file) => isTestFile(file))) {
+  if (changedFiles.some((file) => isCodeFile(file)) && tests.length === 0 && !changedFiles.some((file) => isTestPath(file))) {
     findings.push({
       code: "missing_test_evidence",
       severity: "warning",
@@ -2604,12 +2615,15 @@ export function buildLocalDiffPreflightResult(
 ): LocalDiffPreflightResult {
   /* v8 ignore next -- Undefined metadata arrays are normalized at API/MCP boundaries; local analysis tests cover empty metadata behavior. */
   const changedFiles = [...new Set([...(input.changedFiles ?? []), ...(input.testFiles ?? [])])];
-  const linkedFromCommit = extractLinkedIssueNumbers([input.commitMessage, input.body, input.title].filter(Boolean).join("\n"));
+  const commitExtraction = extractLinkedIssueNumbersWithOverflow(
+    [input.commitMessage, input.body, input.title].filter(Boolean).join("\n"),
+    MAX_LINKED_ISSUE_NUMBERS,
+  );
   const base = buildPreflightResult(
     {
       ...input,
       changedFiles,
-      linkedIssues: [...new Set([...(input.linkedIssues ?? []), ...linkedFromCommit])],
+      linkedIssues: [...new Set([...(input.linkedIssues ?? []), ...commitExtraction.numbers])],
       tests: [...(input.tests ?? []), ...(input.testFiles ?? [])],
     },
     repo,
@@ -2618,8 +2632,20 @@ export function buildLocalDiffPreflightResult(
     bounties,
     issueQuality,
   );
+  if (commitExtraction.overflow && !base.findings.some((finding) => finding.code === "linked_issue_overflow")) {
+    base.findings.push({
+      code: "linked_issue_overflow",
+      severity: "warning",
+      title: "Too many linked issues in commit metadata",
+      detail: `The commit message or title references more than ${MAX_LINKED_ISSUE_NUMBERS} closing issues; the gate cannot safely verify that many automatically.`,
+      action: "Reduce linked closing references before submitting.",
+    });
+    if (base.status === "ready") {
+      base.status = "needs_work";
+    }
+  }
   const codeFileCount = changedFiles.filter(isCodeFile).length;
-  const testFileCount = changedFiles.filter(isTestFile).length;
+  const testFileCount = changedFiles.filter(isTestPath).length;
   /* v8 ignore next -- Sparse local-git adapters omit changed-line totals; aggregate local diff behavior covers the zero fallback. */
   const changedLineCount = input.changedLineCount ?? 0;
   const findings = [...base.findings];
@@ -2651,7 +2677,7 @@ export function buildLocalDiffPreflightResult(
       changedLineCount,
       testFileCount,
       codeFileCount,
-      inferredLinkedIssues: linkedFromCommit,
+      inferredLinkedIssues: commitExtraction.numbers,
       summary: `${changedFiles.length} file(s), ${changedLineCount} changed line(s), ${testFileCount} test file(s), ${codeFileCount} code file(s).`,
     },
   };
@@ -2721,7 +2747,7 @@ export function buildPullRequestMaintainerPacket(args: {
     ? collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number)).length
     : 0;
   const codeFiles = args.files.filter((file) => isCodeFile(file.path));
-  const testFiles = args.files.filter((file) => isTestFile(file.path));
+  const testFiles = args.files.filter((file) => isTestPath(file.path));
   const additions = args.files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = args.files.reduce((sum, file) => sum + file.deletions, 0);
   const approvalCount = args.reviews.filter((review) => review.state.toUpperCase() === "APPROVED").length;
@@ -5276,11 +5302,6 @@ function tokenize(value: string): string[] {
     .filter((term) => term.length > 2 && !STOPWORDS.has(term));
 }
 
-function extractLinkedIssueNumbers(text: string): number[] {
-  const matches = [...text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi)];
-  return [...new Set(matches.map((match) => Number(match[1])).filter((value) => Number.isInteger(value) && value > 0))];
-}
-
 function outcomeSuccessPatterns(history: ContributorOutcomeHistory): OutcomePattern[] {
   const patterns: OutcomePattern[] = [];
   for (const outcome of history.repoOutcomes) {
@@ -5484,17 +5505,7 @@ function sanitizeOutcomeDimensionKey(key: string): string {
 }
 
 function isCodeFile(file: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
-}
-
-function isTestFile(file: string): boolean {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
-    /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
-    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
-  );
+  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestPath(file);
 }
 
 function riskRank(risk: CollisionCluster["risk"]): number {

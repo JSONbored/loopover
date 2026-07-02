@@ -18,12 +18,18 @@ describe("GitHub PR action primitives (#778)", () => {
     await expect(closePullRequest(createTestEnv(), 1, "owner/repo/extra", 4)).rejects.toThrow(
       /Invalid repository full name/,
     );
+    await expect(closePullRequest(createTestEnv(), 1, " owner/repo ", 4)).rejects.toThrow(
+      /Invalid repository full name/,
+    );
     let called = false;
     vi.stubGlobal("fetch", async () => {
       called = true;
       return Response.json({ token: "t" });
     });
     await expect(closePullRequest(envWithKey(), 1, "owner/repo/extra", 4)).rejects.toThrow(
+      /Invalid repository full name/,
+    );
+    await expect(closePullRequest(envWithKey(), 1, " owner/repo ", 4)).rejects.toThrow(
       /Invalid repository full name/,
     );
     expect(called).toBe(false);

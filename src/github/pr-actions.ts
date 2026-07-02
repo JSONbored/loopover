@@ -17,7 +17,10 @@ const REVIEW_PAGE_LIMIT = 10;
 // recorded, not swallowed.
 
 function splitRepo(repoFullName: string): { owner: string; repo: string } {
-  const parts = repoFullName.trim().split("/");
+  if (repoFullName !== repoFullName.trim()) {
+    throw new Error(`Invalid repository full name: ${repoFullName}`);
+  }
+  const parts = repoFullName.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(`Invalid repository full name: ${repoFullName}`);
   }

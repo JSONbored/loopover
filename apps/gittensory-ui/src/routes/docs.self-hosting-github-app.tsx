@@ -71,8 +71,8 @@ SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a fresh
         Manual App creation (below) is still fully supported — for an air-gapped instance, a
         stricter change-review process, or simply a preference for reviewing every permission by
         hand before it exists. Whichever path you take, the resulting App needs the SAME
-        permissions: this doc's manual list is generated from the identical source the wizard's
-        manifest uses, so the two can never drift apart again.
+        permissions: this doc's manual list is kept in sync with the wizard's manifest and checked
+        in CI, so the two can't silently drift apart.
       </Callout>
 
       <h2>Direct App permissions</h2>

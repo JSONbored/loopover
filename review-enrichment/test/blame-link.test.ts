@@ -35,20 +35,38 @@ test("firstTouchedOldLine: reports the first modified/deleted old-file line, nul
   assert.equal(firstTouchedOldLine("no hunk header here"), null);
   // The `\ No newline at end of file` marker is metadata — it must not advance the old-line counter.
   assert.equal(firstTouchedOldLine("@@ -7,2 +7,1 @@\n keep\n-gone\n\\ No newline at end of file\n"), 8);
+  // Only space-prefixed context advances: a malformed/extended line must NOT be counted as an old-file line.
+  assert.equal(firstTouchedOldLine("@@ -5,2 +5,2 @@\nmalformed no-prefix line\n-x\n"), 5); // not 6
 });
 
-test("scanBlameLink: resolves the originating PR for a modified line", async () => {
+test("scanBlameLink: resolves the last PR to touch a modified file", async () => {
   const findings = await scanBlameLink(
     req([{ path: "src/app.ts", status: "modified", patch: modifyPatch(40) }], { baseSha: "base123" }),
     routedFetch({ commitSha: "abcdef1234567890", prNumber: 42 }),
   );
   assert.deepEqual(findings, [
-    { file: "src/app.ts", line: 41, introducedByShaPrefix: "abcdef123456", introducedByPr: 42 },
+    { file: "src/app.ts", line: 41, lastTouchedByShaPrefix: "abcdef123456", lastTouchedByPr: 42 },
   ]);
-  // and it renders into the brief with the PR reference
+  // and it renders into the brief as file-level "last touched", not a line-origin claim
   const brief = renderBrief({ blameLink: findings }).promptSection;
-  assert.match(brief, /blame → originating PR/i);
+  assert.match(brief, /last touched by/i);
   assert.match(brief, /#42/);
+});
+
+test("scanBlameLink: file-level only — it does NOT attribute the last-touch PR to the changed line's origin", async () => {
+  // The file's latest base commit (PR #99) touched a DIFFERENT region than the line this PR changes (old line 51).
+  // The finding must report #99 as the file's last toucher and line 51 only as a change POINTER — never a claim
+  // that #99 introduced line 51. (Reviewer's false-attribution regression case.)
+  const findings = await scanBlameLink(
+    req([{ path: "src/app.ts", status: "modified", patch: "@@ -50,3 +50,3 @@\n keep\n-line51\n+new\n" }], { baseSha: "b" }),
+    routedFetch({ commitSha: "aaaaaaaaaaaabbbb", prNumber: 99 }),
+  );
+  assert.deepEqual(findings, [
+    { file: "src/app.ts", line: 51, lastTouchedByShaPrefix: "aaaaaaaaaaaa", lastTouchedByPr: 99 },
+  ]);
+  // The finding carries no "introducedBy"/origin field for the line — attribution is file-level by construction.
+  assert.equal("introducedByPr" in findings[0], false);
+  assert.match(renderBrief({ blameLink: findings }).promptSection, /file-level context/i);
 });
 
 test("scanBlameLink: reports the OLD-file line on a shifted hunk, and renders it as an old line", async () => {
@@ -67,7 +85,7 @@ test("scanBlameLink: a removed file is blamed via its path even without a patch"
     routedFetch({ commitSha: "abcdef1234567890", prNumber: 8 }),
   );
   assert.deepEqual(findings, [
-    { file: "src/gone.ts", line: 1, introducedByShaPrefix: "abcdef123456", introducedByPr: 8 },
+    { file: "src/gone.ts", line: 1, lastTouchedByShaPrefix: "abcdef123456", lastTouchedByPr: 8 },
   ]);
 });
 
@@ -77,8 +95,8 @@ test("scanBlameLink: a commit with no associated PR still surfaces the SHA prefi
     routedFetch({ commitSha: "deadbeefcafebabe", prNumber: null }),
   );
   assert.equal(findings.length, 1);
-  assert.equal(findings[0].introducedByShaPrefix, "deadbeefcafe");
-  assert.equal(findings[0].introducedByPr, undefined);
+  assert.equal(findings[0].lastTouchedByShaPrefix, "deadbeefcafe");
+  assert.equal(findings[0].lastTouchedByPr, undefined);
 });
 
 test("scanBlameLink: an unresolvable line (no prior commit) yields no finding", async () => {

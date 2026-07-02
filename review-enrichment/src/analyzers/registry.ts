@@ -443,7 +443,7 @@ export const ANALYZER_DESCRIPTORS = [
   }),
   descriptor({
     name: "blameLink",
-    title: "Blame → originating PR",
+    title: "Recent file history (last PR to touch)",
     category: "history",
     cost: "github-light",
     defaultEnabled: true,
@@ -451,26 +451,28 @@ export const ANALYZER_DESCRIPTORS = [
     limits: { maxFilesProbed: 6, maxLookups: 12 },
     docs: {
       summary:
-        "For files this PR modifies or deletes, links the region to the prior PR that most recently introduced it.",
+        "For files this PR modifies or deletes, surfaces the last PR to touch each file — file-level history context, not per-line blame.",
       looksAt:
-        "The first modified/deleted line of each changed file, then that path's most recent base-branch commit and its associated PR.",
-      reports: "File, a representative old line, the originating PR number, and a short commit-SHA prefix — never file contents.",
+        "Each changed file's most recent base-branch commit (bounded to the first few files) and that commit's associated PR.",
+      reports: "File, a pointer to where this PR changes it, the last-touching PR number, and a short commit-SHA prefix — never file contents.",
       network: "Calls the GitHub commits API and the commit→PR association API, both bounded by a total lookup cap.",
       notes:
-        "Not per-line blame: it attributes each touched file's most recent prior commit. Fail-safe and partial on cap.",
+        "File-level, not per-line: it reports each file's most recent prior toucher, never claiming a specific line's origin. Fail-safe and partial on cap.",
     },
     render: (findings, helpers) => {
       if (!findings.length) return [];
-      const lines = ["### Prior PRs this change alters (blame → originating PR)"];
+      const lines = [
+        "### Recent history of changed files (last PR to touch each — file-level context, bounded scan)",
+      ];
       for (const item of findings) {
-        const origin =
-          item.introducedByPr !== undefined
-            ? `#${item.introducedByPr}`
-            : item.introducedByShaPrefix
-              ? `commit ${helpers.safeCodeSpan(item.introducedByShaPrefix)}`
+        const toucher =
+          item.lastTouchedByPr !== undefined
+            ? `#${item.lastTouchedByPr}`
+            : item.lastTouchedByShaPrefix
+              ? `commit ${helpers.safeCodeSpan(item.lastTouchedByShaPrefix)}`
               : "an unknown prior change";
         lines.push(
-          `- ${helpers.safeCodeSpan(item.file)} (around old line ${item.line}) was most recently touched by ${origin}`,
+          `- ${helpers.safeCodeSpan(item.file)} (this PR changes it around old line ${item.line}) was last touched by ${toucher}`,
         );
       }
       return lines;

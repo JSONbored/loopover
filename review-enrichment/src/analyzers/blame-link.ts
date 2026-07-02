@@ -1,9 +1,10 @@
-// Blame-to-PR regression linker (#2034, part of #1499). For files this PR MODIFIES or DELETES, resolves which
-// prior PR most recently introduced that region and surfaces it, so the reviewer sees at a glance what history the
-// change is altering. It does not run true per-line blame (no checkout, no blame API): for each touched file it
-// reads the path's most recent commit on the base branch and maps that commit to its PR via the commit→PR
-// association API. Bounded (maxFilesProbed + maxLookups) and fail-safe — any missing token, bad slug, or fetch
-// error yields no finding rather than an error. Surfaces only a PR number and a short SHA prefix, never contents.
+// Blame-to-PR regression linker (#2034, part of #1499). For files this PR MODIFIES or DELETES, surfaces the prior
+// PR that most recently touched that FILE, so the reviewer sees at a glance what recent history the change sits on
+// top of. It is deliberately NOT per-line blame (no checkout, no blame API): for each touched file it reads the
+// path's most recent commit on the base branch and maps that commit to its PR via the commit→PR association API —
+// so the result is file-level "last touched by", never a claim that the surfaced PR introduced a specific line.
+// Bounded (maxFilesProbed + maxLookups) and fail-safe — any missing token, bad slug, or fetch error yields no
+// finding rather than an error. Surfaces only a PR number and a short SHA prefix, never contents.
 import type {
   AnalyzerDiagnostics,
   EnrichRequest,
@@ -39,8 +40,10 @@ interface AssociatedPr {
 /**
  * The old-file line number of the FIRST line this patch modifies or deletes, or null when the patch only ADDS
  * lines (nothing pre-existing is being altered, so there is no prior author to attribute). Walks unified-diff
- * hunks: a `@@ -old,+new @@` header resets the old-line cursor; context lines advance it; a deletion line reports
- * the cursor; addition lines do not advance it (they exist only in the new file). Pure. */
+ * hunks: a `@@ -old,+new @@` header resets the old-line cursor; a deletion line reports the cursor; only a real
+ * space-prefixed CONTEXT line advances it. Additions, the `\ No newline` marker, and any malformed/extended patch
+ * text are NOT counted as old-file lines, so a garbled patch fails closed (returns null) rather than reporting a
+ * drifted line. Pure. */
 export function firstTouchedOldLine(patch: string): number | null {
   let oldLine = 0;
   let inHunk = false;
@@ -52,11 +55,9 @@ export function firstTouchedOldLine(patch: string): number | null {
       continue;
     }
     if (!inHunk) continue;
-    if (raw.startsWith("---") || raw.startsWith("+++")) continue; // stray file headers inside the fragment
-    if (raw.startsWith("\\")) continue; // `\ No newline at end of file` marker — metadata, not a real line
-    if (raw.startsWith("-")) return oldLine; // first modified/deleted old-file line
-    if (raw.startsWith("+")) continue; // added line: present only in the new file, no old-line advance
-    oldLine += 1; // context line
+    if (raw.startsWith("-") && !raw.startsWith("---")) return oldLine; // first modified/deleted old-file line
+    if (raw.startsWith(" ")) oldLine += 1; // a real context line — the ONLY thing that advances the old cursor
+    // Everything else (additions, `\`/`+++` markers, malformed text) is not an old-file line: do not advance.
   }
   return null;
 }
@@ -173,17 +174,17 @@ export async function scanBlameLink(
     if (lookups >= MAX_LOOKUPS) break; // cap reached → emit partial
     lookups += 1;
     const sha = await fetchLatestCommitSha(owner, repo, path, baseSha, headers, fetchFn, options.signal, options);
-    if (!sha) continue; // unresolvable line → no finding
-    let introducedByPr: number | null = null;
+    if (!sha) continue; // no prior commit on the path → no finding
+    let lastTouchedByPr: number | null = null;
     if (lookups < MAX_LOOKUPS && !options.signal?.aborted) {
       lookups += 1;
-      introducedByPr = await fetchPrForCommit(owner, repo, sha, headers, fetchFn, options.signal, options);
+      lastTouchedByPr = await fetchPrForCommit(owner, repo, sha, headers, fetchFn, options.signal, options);
     }
     findings.push({
       file: path,
       line,
-      introducedByShaPrefix: sha.slice(0, SHA_PREFIX_LEN),
-      ...(introducedByPr !== null ? { introducedByPr } : {}),
+      lastTouchedByShaPrefix: sha.slice(0, SHA_PREFIX_LEN),
+      ...(lastTouchedByPr !== null ? { lastTouchedByPr } : {}),
     });
   }
   return findings;

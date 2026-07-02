@@ -285,18 +285,20 @@ export interface ChurnHotspotFinding {
   capped: boolean;
 }
 
-/** For a changed file that MODIFIES or DELETES existing lines, the prior PR (or commit) that most recently
- *  introduced that region — resolved from the path's public commit history + the commit→PR association API. Gives
- *  the reviewer instant context on what the change is altering. Surfaces only a PR number and a short SHA prefix,
- *  never file contents. (#2034, part of #1499) */
+/** For a changed file that MODIFIES or DELETES existing lines, the prior PR (or commit) that most recently touched
+ *  that FILE — resolved from the path's latest base-branch commit + the commit→PR association API. This is
+ *  FILE-LEVEL context (the last change to land on the file before this PR), not per-line blame: it does not claim
+ *  the surfaced PR introduced any specific line. Surfaces only a PR number and a short SHA prefix, never file
+ *  contents. (#2034, part of #1499) */
 export interface BlameLinkFinding {
   file: string;
-  /** A representative old-file line number from the touched range (the first modified/deleted line). */
+  /** A representative old-file line from THIS PR's change (its first modified/deleted line) — a pointer to where
+   *  the change lands, NOT a line attributed to `lastTouchedByPr`. */
   line: number;
-  /** The PR that introduced the region, when the commit maps to one via the commit/PR-association API. */
-  introducedByPr?: number;
-  /** Short prefix of the introducing commit's SHA (prefix only — never the full SHA). */
-  introducedByShaPrefix?: string;
+  /** The last PR to touch this file before the change, when its commit maps to one via the commit/PR-association API. */
+  lastTouchedByPr?: number;
+  /** Short prefix of that most-recent commit's SHA (prefix only — never the full SHA). */
+  lastTouchedByShaPrefix?: string;
 }
 
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */

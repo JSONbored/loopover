@@ -3785,6 +3785,11 @@ async function processGitHubWebhook(
       // closed their own PR) stay reopenable; the bot's own nightly-re-review reopens are exempt. A contended
       // actuation lock ALSO skips the re-review (#2135, review round 3) — the winning delivery already owns
       // this PR, so this pass must not evaluate/mutate it concurrently under a false "not blocked" reading.
+      // Deliberately UNCAUGHT here: every step inside maybeRecloseDisallowedReopen already fails safe on its own
+      // (the lock claim/release fail open; recloseDisallowedReopenIfNeeded's own operations all .catch()), so a
+      // swallowing catch at this call site could only ever mask a genuinely unexpected error into a silent
+      // "allowed" — which would re-permit exactly the disallowed reopen this guard exists to stop. Let it
+      // propagate and retry instead, same reasoning as the draft-dodge sibling's uncaught getInstallation read.
       const reopenOutcome: ReopenRecloseOutcome =
         payload.action === "reopened" && installationId
           ? await maybeRecloseDisallowedReopen(
@@ -3794,7 +3799,7 @@ async function processGitHubWebhook(
               repoFullName,
               pr,
               payload,
-            ).catch(() => "allowed" as const)
+            )
           : "allowed";
       if (reopenOutcome === "reclosed" || reopenOutcome === "lock_contended") {
         // Stamp the delivery processed like every other owning path — the early return otherwise leaves the

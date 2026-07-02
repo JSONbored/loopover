@@ -75,7 +75,6 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
-  cachedFetchLivePullRequestHeadSha,
   cachedFetchLivePullRequestMergeState,
   cachedFetchLivePullRequestState,
   enqueueRepositoryOpenDataBackfill,
@@ -7436,8 +7435,11 @@ async function recordGithubProductUsage(
  * THAT commit (the neutral check-run is per-commit by design). FAIL-OPEN: an unreadable live fetch returns the
  * cached head, so a transient GitHub hiccup never strands the override — it just targets the stored SHA as before.
  * Mirrors the rebase path's live re-fetch (prReadyForReview) and the dup-winner live reconcile.
- * #2537: durable-cached — a separate `issue_comment` webhook handler with no request-local `liveFacts`, so the
- * cross-webhook cache is a pure win here (not the act-boundary merge/close decision).
+ * #2537: deliberately NOT routed through the durable head-SHA cache (flagged by the gate's own review) — this
+ * is the same class of security-sensitive, human-triggered re-check as the act-boundary merge/close decision,
+ * wanting the literal current commit rather than a value that can be up to PR_STATE_CACHE_MAX_AGE_MS stale. A
+ * commit landing inside that freshness window right after the override comment is exactly the race this
+ * function exists to close; a cache hit would silently reintroduce it.
  */
 export async function resolveOverrideHeadSha(
   env: Env,
@@ -7450,7 +7452,7 @@ export async function resolveOverrideHeadSha(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
-  const liveHeadSha = await cachedFetchLivePullRequestHeadSha(
+  const liveHeadSha = await fetchLivePullRequestHeadSha(
     env,
     repoFullName,
     pr.number,

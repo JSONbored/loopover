@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOverrideHeadSha } from "../../src/queue/processors";
 import { createInstallationToken } from "../../src/github/app";
+import { upsertPullRequestDetailSyncState } from "../../src/db/repositories";
 import type { PullRequestRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -58,5 +59,19 @@ describe("resolveOverrideHeadSha (#16 / gate-override stale head)", () => {
     mockedToken.mockResolvedValue("inst-tok");
     stubLiveHead(null);
     expect(await resolveOverrideHeadSha(env, 123, "owner/repo", makePr("stale-sha"))).toBe("stale-sha");
+  });
+
+  it("REGRESSION (#2537, gate-flagged): a FRESH durable PR-state cache row for this PR must NOT short-circuit the live fetch — a commit landing inside the cache's freshness window right after the override comment is exactly the race this function exists to close, so it must always hit GitHub directly rather than trust a recent-but-possibly-already-stale cached headSha", async () => {
+    const env = createTestEnv();
+    mockedToken.mockResolvedValue("inst-tok");
+    await upsertPullRequestDetailSyncState(env, {
+      repoFullName: "owner/repo",
+      pullNumber: 90,
+      status: "complete",
+      headSha: "cached-sha",
+      prStateFetchedAt: new Date().toISOString(),
+    });
+    stubLiveHead("brand-new-live-sha");
+    expect(await resolveOverrideHeadSha(env, 123, "owner/repo", makePr("stale-sha"))).toBe("brand-new-live-sha");
   });
 });

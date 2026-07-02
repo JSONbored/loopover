@@ -374,4 +374,39 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
     await backfillRegisteredRepositories(env, { repoFullName: "JSONbored/gittensory", force: true, limits: { issues: 10, pullRequests: 10, recentMergedPullRequests: 10, pullRequestDetails: 10 } });
     expect(filesCallCount).toBe(1);
   });
+
+  describe("upsertPullRequestDetailSyncState partial-update contract", () => {
+    it("preserves an existing headSha (and other fields) when a later upsert omits them, as every 'running' pre-fetch stamp does", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 90,
+        status: "complete",
+        headSha: "sha-a",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+        errorSummary: "prior warning",
+      });
+
+      // The "running" pre-fetch stamp every backfill path sends touches ONLY status — headSha/filesSyncedAt/
+      // errorSummary are omitted (undefined), not explicitly cleared. The file cache depends on this NOT
+      // wiping the row it is about to read.
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 90, status: "running" });
+
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 90)).toMatchObject({
+        status: "running",
+        headSha: "sha-a",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+        errorSummary: "prior warning",
+      });
+    });
+
+    it("clears headSha when a caller explicitly passes null, distinguishing 'omitted' from 'cleared'", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 91, status: "complete", headSha: "sha-b" });
+
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 91, status: "complete", headSha: null });
+
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 91)).toMatchObject({ headSha: null });
+    });
+  });
 });

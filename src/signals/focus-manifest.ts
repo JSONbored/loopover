@@ -127,7 +127,11 @@ export type FocusManifestSettings = Partial<
     | "blacklistLabel"
     | "contributorOpenPrCap"
     | "contributorOpenIssueCap"
+<<<<<<< HEAD
     | "contributorCapLabel"
+||||||| parent of ad44ba36 (feat(settings): add contributorOpenPrCap/contributorOpenIssueCap config (#2270))
+=======
+>>>>>>> ad44ba36 (feat(settings): add contributorOpenPrCap/contributorOpenIssueCap config (#2270))
   >
 >;
 
@@ -797,6 +801,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   // Per-contributor open PR/issue caps (#2270): discrete counts, not scores — reuse the same positive-integer
   // normalizer as contentLane.maxAppendedEntries so a fractional/non-positive typo is dropped with a warning
+<<<<<<< HEAD
   // instead of configuring a nonsensical cap. UNLIKE contributorBlacklist above, an explicit yml `null` here is
   // load-bearing (not the same as omitting the key): the documented `yml > DB > null` precedence means a
   // maintainer must be able to force a DB-configured cap back to "no cap" via `.gittensory.yml` without deleting
@@ -818,6 +823,14 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const contributorCapLabel = normalizeOptionalString(r.contributorCapLabel, "settings.contributorCapLabel", warnings);
   if (contributorCapLabel !== null) out.contributorCapLabel = contributorCapLabel;
+||||||| parent of ad44ba36 (feat(settings): add contributorOpenPrCap/contributorOpenIssueCap config (#2270))
+=======
+  // instead of configuring a nonsensical cap.
+  const contributorOpenPrCap = normalizeOptionalPositiveInteger(r.contributorOpenPrCap, "settings.contributorOpenPrCap", warnings);
+  if (contributorOpenPrCap !== null) out.contributorOpenPrCap = contributorOpenPrCap;
+  const contributorOpenIssueCap = normalizeOptionalPositiveInteger(r.contributorOpenIssueCap, "settings.contributorOpenIssueCap", warnings);
+  if (contributorOpenIssueCap !== null) out.contributorOpenIssueCap = contributorOpenIssueCap;
+>>>>>>> ad44ba36 (feat(settings): add contributorOpenPrCap/contributorOpenIssueCap config (#2270))
   return out;
 }
 

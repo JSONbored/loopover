@@ -11,6 +11,7 @@
 // used with the taostats/registry identity in the live merge gate), registry dedup keys, freshness,
 // functional-surface probing, and PR scope classification.
 import { isSafeEndpointUrl, isSafeHttpUrl } from "./safe-url";
+import { canonicalize } from "../../signals/change-guardrail";
 
 /** The gate's final verdict vocabulary (reviewbot core/types.ts). */
 export type Verdict = "merge" | "close" | "manual" | "comment" | "ignore";
@@ -735,8 +736,13 @@ export interface RegistryScopeResult {
  */
 export function classifyRegistryPrScope(spec: RegistryLaneSpec, changedFiles: string[]): RegistryScopeResult {
   const files = (changedFiles ?? []).map((f) => String(f || "").trim()).filter(Boolean);
-  const entryFiles = files.filter((f) => spec.entryFilePattern.test(f));
-  const providerFiles = spec.providerFilePattern ? files.filter((f) => spec.providerFilePattern!.test(f)) : [];
+  // globToRegExp compiles the spec patterns against a CANONICALIZED path (lowercased + `./`-stripped + `\`→`/`),
+  // exactly as matchesAny does for guardrails — so match on canonicalize(f), or an uppercase / `./`-prefixed /
+  // `\`-separated changed path silently fails to classify as a registry submission. Keep the ORIGINAL path in the
+  // returned files: directFile/companion flow to case-sensitive content fetches (orchestrator loadFile).
+  const matchesPattern = (pattern: RegExp | undefined, f: string): boolean => pattern?.test(canonicalize(f)) ?? false;
+  const entryFiles = files.filter((f) => matchesPattern(spec.entryFilePattern, f));
+  const providerFiles = files.filter((f) => matchesPattern(spec.providerFilePattern, f));
   const tooManyEntryFiles = entryFiles.length > 1;
   const tooManyProviderFilesWithNoEntry = entryFiles.length === 0 && providerFiles.length > 1;
   if (tooManyEntryFiles || tooManyProviderFilesWithNoEntry) {
@@ -748,7 +754,7 @@ export function classifyRegistryPrScope(spec: RegistryLaneSpec, changedFiles: st
     return { scope: "not-direct-submission", directFile: null, isProvider: false, providerCompanionFile: null };
   }
   const isAllowed = (f: string): boolean =>
-    spec.entryFilePattern.test(f) || (spec.providerFilePattern?.test(f) ?? false) || (spec.artifactPattern?.test(f) ?? false);
+    matchesPattern(spec.entryFilePattern, f) || matchesPattern(spec.providerFilePattern, f) || matchesPattern(spec.artifactPattern, f);
   if (files.some((f) => !isAllowed(f))) {
     return { scope: "mixed-files", directFile: null, isProvider: false, providerCompanionFile: null };
   }

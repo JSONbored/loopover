@@ -8,7 +8,7 @@
 // leading `./` or `/`, and case-fold. Mirrors signals/focus-manifest `normalizePathForMatch` — without it a
 // guarded path is evaded with `.github/Workflows/` (capital W), a `./`-prefix, or a `\` separator, turning a
 // mandatory human hold on CI/policy files into an auto-merge.
-function canonicalize(value: string): string {
+export function canonicalize(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").toLowerCase();
 }
 

@@ -302,6 +302,21 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(r.providerCompanionFile).toBeNull();
   });
 
+  it("matches changed paths against the canonicalized form while preserving the original-case directFile (regression)", () => {
+    // The spec patterns are compiled by globToRegExp against a canonicalized (lowercased, `./`-stripped) path, so
+    // a mixed-case / dot-prefixed changed path must still classify — but directFile keeps original case because it
+    // flows to a case-sensitive content fetch (orchestrator loadFile).
+    const mixed = classifyRegistryPrScope(spec, ["Registry/Subnets/Actual.json"]);
+    expect(mixed.scope).toBe("entry-submission");
+    expect(mixed.directFile).toBe("Registry/Subnets/Actual.json");
+
+    // Entry-only spec (no provider/artifact patterns) still classifies a canonicalized match.
+    const entryOnly = { entryFilePattern: /^data\/[^/]*\.json$/ } as unknown as Parameters<typeof classifyRegistryPrScope>[0];
+    const dotPrefixed = classifyRegistryPrScope(entryOnly, ["./Data/Item.json"]);
+    expect(dotPrefixed.scope).toBe("entry-submission");
+    expect(dotPrefixed.directFile).toBe("./Data/Item.json");
+  });
+
   // Symmetric case explicitly documented: an entry file present alongside a provider file ALWAYS resolves to
   // entry-submission scope with the provider file as its companion — there is no "provider-submission scope with
   // a companion entry file" (the entry file's presence forecloses isProviderPr, which requires zero entry files).

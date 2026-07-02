@@ -60,10 +60,8 @@ function SelfHostingGithubApp() {
       </p>
       <CodeBlock
         filename=".env"
-        code={`PUBLIC_API_ORIGIN=https://reviews.example.com  # your instance's exact public URL — embedded in the
-                                                # App manifest's redirect_url
-SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup so a random visitor can't drive
-                                                     # App creation on a freshly-booted instance`}
+        code={`PUBLIC_API_ORIGIN=https://reviews.example.com  # exact public URL, embedded in the manifest
+SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a freshly-booted instance`}
       />
       <CodeBlock
         lang="bash"

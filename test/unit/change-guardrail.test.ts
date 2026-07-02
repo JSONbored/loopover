@@ -1,5 +1,45 @@
 import { describe, expect, it } from "vitest";
-import { changedPathsHittingGuardrail, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
+import { changedPathsHittingGuardrail, globToRegExp, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
+
+describe("globToRegExp (the exported compiler itself — must be safe for ANY direct caller, not just matchesAny)", () => {
+  it("compiles an ordinary glob to a working anchored RegExp", () => {
+    expect(globToRegExp("scripts/**").test("scripts/build.mjs")).toBe(true);
+    expect(globToRegExp("src/*.ts").test("src/auth.ts")).toBe(true);
+    expect(globToRegExp("src/*.ts").test("src/auth/session.ts")).toBe(false);
+  });
+
+  it("SECURITY (ReDoS): called DIRECTLY (bypassing matchesAny entirely) on a pathological glob, resolves instantly against a genuinely adversarial multi-KB path and matches nothing — the cap lives inside the compiler itself, not just in matchesAny's wrapper", () => {
+    // 3 chained single-segment wildcards is already empirically dangerous (over 2 seconds at ~4,000 chars — see
+    // MAX_GLOB_WILDCARD_GROUPS's rationale), so this glob alone proves the cap rejects the FIRST unsafe value, not
+    // just an extreme one.
+    const pathological = "src/*-*-*-final.ts";
+    const adversarialPath = "src/" + "a-".repeat(2000) + "X"; // ~4,000 chars — the empirically dangerous length for 3 wildcards
+    const start = Date.now();
+    const compiled = globToRegExp(pathological);
+    expect(compiled.test(adversarialPath)).toBe(false);
+    expect(compiled.test("completely/unrelated/path.md")).toBe(false);
+    expect(compiled.test("")).toBe(false);
+    expect(compiled.test("src/a-b-c-final.ts")).toBe(false); // even a "near miss" that would otherwise match
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
+  it("a glob AT the safe cap (2 wildcards), called directly, still compiles and matches normally — proves the cap is inclusive, not exclusive", () => {
+    const atCap = "src/*/*.ts";
+    expect(globToRegExp(atCap).test("src/a/f.ts")).toBe(true);
+    expect(globToRegExp(atCap).test("src/a/f.js")).toBe(false);
+  });
+
+  it("SECURITY (ReDoS, correctness of the group-vs-character count): a single `**` globstar is ONE wildcard group (not two), so it never gets anywhere near the cap on its own", () => {
+    expect(globToRegExp("scripts/**").test("scripts/deep/nested/build.mjs")).toBe(true);
+  });
+
+  it("a `**` globstar PLUS a single `*` — 3 raw star CHARACTERS but only 2 wildcard GROUPS — compiles and matches normally, not the fail-safe path. This is the real content-lane/spec-resolver.ts shape (e.g. an artifactGlob like \"public/**/*.json\"); counting raw `*` characters instead of groups would wrongly reject it", () => {
+    const mixed = "public/**/*.json";
+    expect(globToRegExp(mixed).test("public/deep/nested/report.json")).toBe(true);
+    expect(globToRegExp(mixed).test("public/report.json")).toBe(true); // `**/` also matches zero segments
+    expect(globToRegExp(mixed).test("public/deep/nested/report.txt")).toBe(false); // wrong extension
+  });
+});
 
 describe("change-guardrail glob matching", () => {
   it("`**` matches across path separators (a guarded dir guards its whole subtree)", () => {
@@ -52,6 +92,44 @@ describe("change-guardrail glob matching", () => {
     expect(isGuardrailHit(["docs/a.md", "src/ui/b.tsx"], globs)).toBe(false);
     // FAIL-SAFE (#1062): guardrails configured but the changed-file set is empty (unknown) ⇒ treat as a hit.
     expect(isGuardrailHit([], globs)).toBe(true);
+  });
+
+  it("SECURITY (ReDoS): a glob with too many chained wildcards no longer risks catastrophic backtracking — it fails SAFE TOWARD GUARDING (matches every path) instead of ever compiling the pathological pattern", () => {
+    // 3 chained single-segment wildcards is already empirically dangerous (see MAX_GLOB_WILDCARD_GROUPS's rationale:
+    // over 2 seconds at a ~4,000-char adversarial path) — one over the cap, proving the boundary itself is safe,
+    // not just an extreme over-the-top example. Must resolve INSTANTLY even against that adversarial length.
+    const pathological = "src/*-*-*-final.ts";
+    const adversarialPath = "src/" + "a-".repeat(2000) + "X";
+    const start = Date.now();
+    // A pathological guardrail glob still HOLDS the PR for manual review (the safe direction for a guardrail —
+    // silently disabling protection would be far worse than an unnecessary hold).
+    expect(matchesAny(adversarialPath, [pathological])).toBe(true);
+    expect(matchesAny("completely/unrelated/path.md", [pathological])).toBe(true);
+    expect(matchesAny("", [pathological])).toBe(true);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(changedPathsHittingGuardrail(["unrelated/file.ts"], [pathological])).toEqual(["unrelated/file.ts"]);
+    expect(isGuardrailHit(["unrelated/file.ts"], [pathological])).toBe(true);
+  });
+
+  it("SECURITY (ReDoS): a glob AT the safe cap (2 wildcards) still compiles and matches NORMALLY (not the fail-safe path)", () => {
+    // Exactly 2 stars: at the cap, still safely compiled/evaluated — proves the cap is inclusive, not exclusive,
+    // and that ordinary (non-pathological) multi-wildcard globs keep their real matching semantics. This is also
+    // the shape of nearly every real guardrail glob in production (a single `**` = 2 wildcard characters).
+    const atCap = "src/*/*.ts";
+    expect(matchesAny("src/a/f.ts", [atCap])).toBe(true);
+    expect(matchesAny("src/a/f.js", [atCap])).toBe(false); // wrong extension — genuinely doesn't match
+  });
+
+  it("a wildcard-free literal glob (e.g. an exact guarded file like '.gittensory.yml') is never treated as unsafe", () => {
+    expect(matchesAny(".gittensory.yml", [".gittensory.yml"])).toBe(true);
+    expect(matchesAny("other-file.yml", [".gittensory.yml"])).toBe(false);
+  });
+
+  it("a mix of one pathological glob among otherwise-fine globs still forces a hold for ANY path (fail-safe dominates)", () => {
+    const globs = ["docs/**", "src/*-*-*-final.ts"];
+    // "docs/**" alone would not match this path, but the pathological glob's fail-safe short-circuits matchesAny
+    // to true for every path once any configured glob is judged unsafe to compile.
+    expect(matchesAny("completely/unrelated.md", globs)).toBe(true);
   });
 });
 

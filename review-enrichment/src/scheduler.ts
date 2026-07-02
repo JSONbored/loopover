@@ -295,9 +295,6 @@ function skipReasonForAnalyzer(
   profile: ReesProfileName,
   explicitAnalyzers: boolean,
 ): string | null {
-  // #2541: a known-unhealthy analyzer is skipped regardless of an EXPLICIT request for it (req.analyzers) --
-  // the circuit is about the underlying dependency being down right now, which an explicit request can't fix.
-  if (isAnalyzerCircuitOpen(descriptor.name)) return "circuit_open";
   if (!explicitAnalyzers && !PROFILE_CONFIG[profile].costs.has(descriptor.cost)) return "profile";
   if (!explicitAnalyzers && costClassConcurrency(profile, descriptor.cost) <= 0) return "profile";
 
@@ -325,7 +322,19 @@ function skipReasonForAnalyzer(
     return "missing_github_token";
   }
 
-  return inputSkipReason(descriptor.name, analysis, req);
+  const inputSkip = inputSkipReason(descriptor.name, analysis, req);
+  if (inputSkip) return inputSkip;
+
+  // #2541: checked LAST, only once every other skip reason has cleared -- isAnalyzerCircuitOpen claims a
+  // single half-open probe as a side effect when the cooldown has expired, and that claim is only ever
+  // released inside runAnalyzer (brief.ts), which never runs for a plan.skipped item. Checking this any
+  // earlier could claim the probe for an analyzer that's about to be skipped for an UNRELATED reason (a
+  // missing head SHA, no dependency manifest, etc.), leaking the claim forever with no outcome ever recorded.
+  // An EXPLICIT request (req.analyzers) does not bypass this -- the circuit is about the dependency being
+  // down right now, which an explicit request can't fix.
+  if (isAnalyzerCircuitOpen(descriptor.name)) return "circuit_open";
+
+  return null;
 }
 
 function inputSkipReason(

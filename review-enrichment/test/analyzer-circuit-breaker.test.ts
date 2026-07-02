@@ -265,3 +265,45 @@ test("end-to-end: two concurrent buildBrief calls right after cooldown expiry �
     Date.now = originalNow;
   }
 });
+
+test("REGRESSION: a half-open probe claim is not leaked when the SAME planning pass skips the analyzer for an UNRELATED reason", async () => {
+  // Before the fix, isAnalyzerCircuitOpen was checked FIRST in skipReasonForAnalyzer, so it could claim the
+  // half-open probe even for a request that's about to be skipped for a totally unrelated reason (e.g. no
+  // added lines for "secret"). Since a plan.skipped item never reaches runAnalyzer -- the only place a
+  // claimed probe is released -- that claim would leak forever, permanently blocking every later request
+  // from ever probing the analyzer again even once it's actually healthy.
+  const realNow = Date.now();
+  let fakeNow = realNow;
+  const originalNow = Date.now;
+  try {
+    Date.now = () => fakeNow;
+    recordAnalyzerCircuitFailure("secret");
+    recordAnalyzerCircuitFailure("secret");
+    recordAnalyzerCircuitFailure("secret");
+    fakeNow = realNow + 5 * 60_000 + 1; // past the cooldown window
+
+    // A pure deletion (no `+` line) — "secret" requires added lines, so this is skipped as "no_added_lines",
+    // unrelated to the circuit breaker.
+    const noAddedLinesReq = {
+      ...baseReq,
+      analyzers: ["secret"],
+      files: [{ path: "src/a.ts", patch: "@@ -1,1 +1,0 @@\n-export const a = 1;" }],
+    };
+    const noop = { secret: async () => [] };
+    const unrelatedSkip = await buildBrief(noAddedLinesReq, noop);
+    assert.equal(unrelatedSkip.analyzerStatus.secret, "skipped");
+    assert.equal(unrelatedSkip.telemetry.analyzers.secret.skipReason, "no_added_lines");
+
+    // A LATER, normal request must still be able to claim a fresh probe — not spuriously blocked as
+    // circuit_open by a claim the unrelated skip above should never have made in the first place.
+    let calls = 0;
+    const secretReq = { ...baseReq, analyzers: ["secret"] };
+    const ok = { secret: async () => { calls += 1; return []; } };
+    const probe = await buildBrief(secretReq, ok);
+
+    assert.equal(calls, 1);
+    assert.notEqual(probe.analyzerStatus.secret, "skipped");
+  } finally {
+    Date.now = originalNow;
+  }
+});

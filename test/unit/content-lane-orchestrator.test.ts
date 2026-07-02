@@ -277,15 +277,34 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
   it("closes a same-PR duplicate append against the metagraphed spec (removing the entry cap removed this incidental protection)", async () => {
     const copy = { ...newEntry, id: "a-copy-of-newEntry" };
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, newEntry, copy]), [`base:${SUBNET}`]: doc([existing]) });
-    expect(r?.verdict).toBe("close");
-    expect(r?.summary).toContain(newEntry.url);
+    expect(r).toEqual({
+      verdict: "close",
+      summary: "A surface submission must not duplicate an entry already in this PR or already in the registry — resubmit without the duplicate.",
+    });
   });
 
   it("closes an appended entry that resubmits a url already present in the base document's surfaces[]", async () => {
     const resubmission = { ...existing, id: "resubmitted-existing-url" };
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, resubmission]), [`base:${SUBNET}`]: doc([existing]) });
-    expect(r?.verdict).toBe("close");
-    expect(r?.summary).toContain(existing.url);
+    expect(r).toEqual({
+      verdict: "close",
+      summary: "A surface submission must not duplicate an entry already in this PR or already in the registry — resubmit without the duplicate.",
+    });
+  });
+
+  it("does not echo unvalidated duplicate URLs into public close summaries", async () => {
+    const unsafeUrl = "not-a-safe-url ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n### injected markdown";
+    const duplicate = { ...newEntry, id: "unsafe-duplicate", url: unsafeUrl };
+    const copy = { ...duplicate, id: "unsafe-duplicate-copy" };
+    const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, duplicate, copy]), [`base:${SUBNET}`]: doc([existing]) });
+
+    expect(r).toEqual({
+      verdict: "close",
+      summary: "A surface submission must not duplicate an entry already in this PR or already in the registry — resubmit without the duplicate.",
+    });
+    expect(r?.summary).not.toContain(unsafeUrl);
+    expect(r?.summary).not.toContain("ghp_");
+    expect(r?.summary).not.toContain("### injected markdown");
   });
 
   it("a same-PR duplicate is still detected across trivial URL formatting differences (trailing slash/tracking params)", async () => {

@@ -85,11 +85,9 @@ function appendCountCloseSummary(maxAppendedEntries: number): string {
 }
 
 /** The close summary for a duplicate appended entry (a same-PR repeat, or a resubmission of an entry already in
- *  the registry) — names the colliding url when the duplicate entry has one, for a concrete resubmit target. */
-function duplicateEntryCloseSummary(duplicate: unknown): string {
-  const url = (duplicate as { url?: unknown } | null)?.url;
-  const detail = typeof url === "string" && url.trim() !== "" ? ` (${url.trim()})` : "";
-  return `A surface submission must not duplicate an entry already in this PR or already in the registry${detail} — resubmit without the duplicate.`;
+ *  the registry). Keep it fully generic: duplicate detection runs before content safety validation. */
+function duplicateEntryCloseSummary(): string {
+  return "A surface submission must not duplicate an entry already in this PR or already in the registry — resubmit without the duplicate.";
 }
 
 // A spec with no domain-specific validator configured yet (RegistryLaneSpec.assessAppendedEntry /
@@ -171,7 +169,7 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
   const existingEntries = surfacesOf(safeParseJson(baseRaw), spec.collectionField) ?? [];
   const duplicate = findDuplicateAppendedEntry(spec, appendedEntries, existingEntries);
   if (duplicate !== null) {
-    return { verdict: "close", summary: duplicateEntryCloseSummary(duplicate[0]) };
+    return { verdict: "close", summary: duplicateEntryCloseSummary() };
   }
   const assessEntry = spec.assessAppendedEntry;
   if (!assessEntry) {

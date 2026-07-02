@@ -37,6 +37,10 @@ test("firstTouchedOldLine: reports the first modified/deleted old-file line, nul
   assert.equal(firstTouchedOldLine("@@ -7,2 +7,1 @@\n keep\n-gone\n\\ No newline at end of file\n"), 8);
   // Only space-prefixed context advances: a malformed/extended line must NOT be counted as an old-file line.
   assert.equal(firstTouchedOldLine("@@ -5,2 +5,2 @@\nmalformed no-prefix line\n-x\n"), 5); // not 6
+  // Inside a hunk, a deletion whose CONTENT starts with dashes (rendered as `---…`) is still a deletion, not a
+  // file header — it must be reported, not skipped.
+  assert.equal(firstTouchedOldLine("@@ -4,2 +4,1 @@\n keep\n---dashes\n"), 5);
+  assert.equal(firstTouchedOldLine("@@ -8,1 +8,0 @@\n--dash-first\n"), 8);
 });
 
 test("scanBlameLink: resolves the last PR to touch a modified file", async () => {

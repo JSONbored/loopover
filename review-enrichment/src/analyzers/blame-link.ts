@@ -54,10 +54,12 @@ export function firstTouchedOldLine(patch: string): number | null {
       inHunk = true;
       continue;
     }
-    if (!inHunk) continue;
-    if (raw.startsWith("-") && !raw.startsWith("---")) return oldLine; // first modified/deleted old-file line
+    if (!inHunk) continue; // file headers (`---`/`+++`) only appear before a hunk; the flag skips them
+    // Inside a hunk EVERY `-`-prefixed line is an old-file deletion — including content that itself starts with
+    // `--`/`---` (git renders a deleted `--x` line as `---x`). The marker is the first char; the rest is content.
+    if (raw.startsWith("-")) return oldLine; // first modified/deleted old-file line
     if (raw.startsWith(" ")) oldLine += 1; // a real context line — the ONLY thing that advances the old cursor
-    // Everything else (additions, `\`/`+++` markers, malformed text) is not an old-file line: do not advance.
+    // Everything else (additions, `\`/`+` markers, malformed text) is not an old-file line: do not advance.
   }
   return null;
 }

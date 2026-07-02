@@ -73,6 +73,9 @@ function fakeSqlite(root: string): string {
     join(bin, "sqlite3"),
     `#!/bin/sh
 cmd="$2"
+# backup.sh now verifies the online backup via PRAGMA integrity_check; answer ok so the
+# healthy-path assertions still exercise the success branch (#2084).
+case "$cmd" in *integrity_check*) echo ok; exit 0 ;; esac
 out="$(printf '%s\\n' "$cmd" | sed "s/^\\\\.backup '\\\\(.*\\\\)'$/\\\\1/")"
 if [ "$out" = "$cmd" ]; then
   echo "unexpected sqlite command: $cmd" >&2

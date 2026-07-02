@@ -33,6 +33,8 @@ test("firstTouchedOldLine: reports the first modified/deleted old-file line, nul
   assert.equal(firstTouchedOldLine("@@ -5,2 +5,2 @@\n-first\n+repl\n"), 5); // deletion is the first hunk line
   assert.equal(firstTouchedOldLine("@@ -0,0 +1,3 @@\n+a\n+b\n+c\n"), null); // pure addition → nothing to blame
   assert.equal(firstTouchedOldLine("no hunk header here"), null);
+  // The `\ No newline at end of file` marker is metadata — it must not advance the old-line counter.
+  assert.equal(firstTouchedOldLine("@@ -7,2 +7,1 @@\n keep\n-gone\n\\ No newline at end of file\n"), 8);
 });
 
 test("scanBlameLink: resolves the originating PR for a modified line", async () => {

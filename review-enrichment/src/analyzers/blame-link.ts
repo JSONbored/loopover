@@ -53,6 +53,7 @@ export function firstTouchedOldLine(patch: string): number | null {
     }
     if (!inHunk) continue;
     if (raw.startsWith("---") || raw.startsWith("+++")) continue; // stray file headers inside the fragment
+    if (raw.startsWith("\\")) continue; // `\ No newline at end of file` marker — metadata, not a real line
     if (raw.startsWith("-")) return oldLine; // first modified/deleted old-file line
     if (raw.startsWith("+")) continue; // added line: present only in the new file, no old-line advance
     oldLine += 1; // context line

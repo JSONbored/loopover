@@ -4866,6 +4866,21 @@ describe("GitHub backfill", () => {
       expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 999999, "tok")).toEqual({ status: "not_found" });
     });
 
+    it("REGRESSION: treats a 404 seen with the public/anonymous token as fetch_error, not not_found — GitHub also returns 404 for a real but inaccessible private issue", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-tok" });
+      vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+      // The public token proves nothing about repo access, so a 404 here could just as easily mean "this issue
+      // is real but private and this token can't see it" -- treating it as CONFIRMED absence risks closing a PR
+      // over a genuinely-linked issue.
+      expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, env.GITHUB_PUBLIC_TOKEN)).toEqual({ status: "fetch_error" });
+    });
+
+    it("REGRESSION: treats a 404 seen with no token at all as fetch_error, not not_found", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+      expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, undefined)).toEqual({ status: "fetch_error" });
+    });
+
     it("returns fetch_error on a transient failure (5xx), never conflating it with not_found", async () => {
       const env = createTestEnv({});
       vi.stubGlobal("fetch", async () => new Response("server error", { status: 500 }));

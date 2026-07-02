@@ -289,12 +289,23 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
   });
 
   it("treats a confirmed-nonexistent linked issue as a violation, not a silent pass (#2136)", async () => {
-    // Every reference 404s (CONFIRMED not-found, not a transient error) — a contributor citing a fabricated
-    // issue number must not silently satisfy the hard rule the same way a genuine fetch outage fails open.
+    // Every reference 404s with a GENUINE installation token (proven repo access) — CONFIRMED not-found, not a
+    // transient error — a contributor citing a fabricated issue number must not silently satisfy the hard rule
+    // the same way a genuine fetch outage fails open.
     vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
-    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, linkedIssues: [1, 2] }));
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", linkedIssues: [1, 2] }));
     expect(r?.violated).toBe(true);
     expect(r?.reason).toMatch(/could not be found/i);
+  });
+
+  it("REGRESSION: does NOT violate when every reference 404s but ciToken is unavailable (falls back to the public token) — a 404 without proven repo access is not confirmed absence", async () => {
+    // GitHub also returns 404 for a real-but-inaccessible private issue, not just a genuinely nonexistent one.
+    // Without a genuine ciToken, this call falls back to env.GITHUB_PUBLIC_TOKEN, which proves nothing about
+    // repo access — closing the PR here would risk punishing a contributor for a real linked issue our token
+    // just can't see.
+    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, linkedIssues: [1, 2] }));
+    expect(r).toBeUndefined();
   });
 
   it("still fails open (undefined) when a linked-issue fetch fails transiently (5xx), not confirmed-nonexistent", async () => {

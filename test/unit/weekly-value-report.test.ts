@@ -243,6 +243,38 @@ describe("weekly value reports", () => {
     expect(JSON.stringify(report)).not.toMatch(new RegExp(slackToken.slice(0, 4), "i"));
   });
 
+  it("redacts npm tokens in operator rollup dimensions", () => {
+    const npmToken = ["npm", "abcdefghijklmnopqrstuvwxyz0123"].join("_");
+    const report = buildWeeklyValueReport({
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      variant: "operator",
+      days: 7,
+      repositories: [repo("JSONbored/gittensory", true, true)],
+      installations: [installation(1)],
+      health: [health(1, "healthy")],
+      registry: registry([]),
+      scoring: scoring([]),
+      upstreamDrift: upstream({ status: "current", openReportCount: 0 }),
+      usageSummary: usageSummary({ totalEvents: 1, activeActors: 1 }),
+      usageRollups: [
+        rollup("2026-05-31", {
+          totalEvents: 1,
+          activeActors: 1,
+          activeRepos: 1,
+          repos: [{ key: npmToken, count: 1 }],
+          events: [],
+          surfaces: [],
+          commands: [],
+          tools: [],
+        }),
+      ],
+      usageRollupStatus: rollupStatus({ status: "ready" }),
+    });
+
+    expect(report.operatorDetails?.topRepos).toEqual([{ key: "<redacted-token>", count: 1 }]);
+    expect(JSON.stringify(report)).not.toMatch(/npm_[A-Za-z0-9]{20,}/);
+  });
+
   it("keeps clean complete windows marked ready", () => {
     const report = buildWeeklyValueReport({
       generatedAt: "2026-06-01T12:00:00.000Z",

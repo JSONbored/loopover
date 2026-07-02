@@ -4,12 +4,16 @@ import { listLatestGitHubRateLimitObservations } from "../db/repositories";
 // from draining the budget real webhook traffic needs, maintenance yields while there is still headroom:
 //   - backfill yields at LOW_REST_RATE_LIMIT_REMAINING;
 //   - the re-gate sweep + its per-PR jobs yield EARLIER, at MAINTENANCE_RESERVED_HEADROOM, reserving the budget
-//     between the two floors for webhooks.
+//     between the two floors for webhooks;
+//   - historical/scheduled hydration that isn't needed for any CURRENT PR (e.g. backfilling file lists for old
+//     merged pull requests) yields EARLIEST, at HISTORICAL_BACKFILL_RESERVED_HEADROOM — it is the least urgent
+//     GitHub REST consumer, so it must never be the reason a live review or an open-PR convergence pass stalls.
 // Self-host queues also use the latest persisted observation for admission control, so a known-exhausted bucket
 // delays webhook jobs before they start and avoids burning the first live delivery just to discover the limit.
 // (#audit-rate-headroom)
 export const LOW_REST_RATE_LIMIT_REMAINING = 75;
 export const MAINTENANCE_RESERVED_HEADROOM = 150;
+export const HISTORICAL_BACKFILL_RESERVED_HEADROOM = 300;
 
 /** The REST rate-limit reset time to wait until when the latest recorded REST budget is at/below `floor`, or
  *  undefined when there is headroom, no usable observation, or the reset is already in the past. Reads the latest

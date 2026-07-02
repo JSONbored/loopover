@@ -7518,13 +7518,15 @@ async function maybeProcessPrPanelRetrigger(
   });
   // A manual re-run is a re-evaluation surface — the user clicks it AFTER the PR changed — so the slop and
   // manifest-policy gates must see the PR's current files, not whatever is cached. Mirror the webhook path
-  // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set.
+  // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set. This is
+  // the explicit manual repair/debug trigger (#audit-rate-headroom), so force a fresh fetch past the head-SHA
+  // snapshot cache — the user asked for a re-check even if nothing detectably changed.
   if (
     shouldCollectSlopEvidence(settings) ||
     settings.manifestPolicyGateMode !== "off" ||
     (await shouldRefreshFilesForPreMergeChecks(env, repoFullName))
   ) {
-    await refreshPullRequestDetails(env, repoFullName, pr.number);
+    await refreshPullRequestDetails(env, repoFullName, pr.number, { force: true });
   }
   const liveFacts = createLiveGithubFacts();
   if (

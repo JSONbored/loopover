@@ -8,6 +8,7 @@ import {
   deletePullRequestFiles,
   countRepoLabels,
   getInstallation,
+  getPullRequestDetailSyncState,
   listRepoGithubTotalsSnapshotHistory,
   getRepoSyncSegment,
   getRepoSyncState,
@@ -67,7 +68,7 @@ import {
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
-import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
+import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, shouldWaitForGitHubRateLimit } from "./rate-limit";
 import {
   githubRateLimitAdmissionKeyForPublicToken,
   githubRateLimitAdmissionKeyForToken,
@@ -76,6 +77,7 @@ import {
   type GitHubRateLimitAdmissionKey,
 } from "./client";
 import { fetchCachedGitHubGraphQl } from "./graphql-cache";
+import { incr } from "../selfhost/metrics";
 type GitHubLabelPayload = {
   name: string;
   color?: string;
@@ -316,6 +318,14 @@ const FRESH_SYNC_MS = 6 * 60 * 60 * 1000;
 const ERROR_BACKOFF_MS = 60 * 60 * 1000;
 const SEGMENT_PAGE_BUDGET: Record<BackfillMode, number> = { light: 2, full: 10, resume: 10 };
 const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40, resume: 40 };
+// Caps how many NOT-yet-hydrated merged PRs get a `/pulls/{n}/files` fetch per `recent_merged_pull_requests`
+// page (independent of SEGMENT_PAGE_BUDGET, which only caps LIST pages). Without this a repo with a large
+// un-hydrated merged-PR backlog can fan out one files fetch per PR across up to SEGMENT_PAGE_BUDGET * 100 PRs
+// in a single job execution, draining the shared installation bucket before the once-per-segment rate check
+// runs again (#audit-rate-headroom). Any PR left un-hydrated this run stays a candidate on the next page/run.
+const MERGED_PR_FILE_HYDRATION_BATCH_SIZE: Record<BackfillMode, number> = { light: 10, full: 20, resume: 20 };
+const PULL_REQUEST_FILES_FETCH_METRIC = "gittensory_github_pull_request_files_fetch_total";
+type PullRequestFilesFetchCaller = "backfill_open_pr_details" | "backfill_merged_history" | "live_review";
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
 const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
@@ -603,13 +613,14 @@ export async function backfillOpenPullRequestDetails(
   await mapWithConcurrency(batch, 2, async (pr) => {
     await upsertPullRequestDetailSyncState(env, { repoFullName: repo.fullName, pullNumber: pr.number, status: "running" });
     const before = warnings.length;
-    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey);
+    await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
     const syncedAt = nowIso();
     const newWarnings = warnings.slice(before);
     await upsertPullRequestDetailSyncState(env, {
       repoFullName: repo.fullName,
       pullNumber: pr.number,
       status: newWarnings.length > 0 ? "partial" : "complete",
+      headSha: pr.headSha,
       filesSyncedAt: syncedAt,
       reviewsSyncedAt: syncedAt,
       checksSyncedAt: syncedAt,
@@ -659,22 +670,33 @@ export async function refreshPullRequestDetails(
   env: Env,
   repoFullName: string,
   pullNumber: number,
+  options: { force?: boolean } = {},
 ): Promise<{ ok: true; repoFullName: string; pullNumber: number; status: PullRequestDetailSyncStateRecord["status"]; warnings: string[] }> {
   const [repo, pr] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, pullNumber)]);
   if (!repo || !pr) {
     return { ok: true, repoFullName, pullNumber, status: "partial", warnings: ["Repository or pull request was not found."] };
   }
+  // Closed/missing PR guard (#audit-rate-headroom): a CLOSED PR that already has a complete detail sync has all
+  // the outcome/telemetry it will ever need — GitHub's data for it is final. Skip the files/reviews/checks
+  // refetch unless the caller explicitly forces one (e.g. the manual "review-now" repair command).
+  if (!options.force && pr.state !== "open") {
+    const existingState = await getPullRequestDetailSyncState(env, repoFullName, pullNumber);
+    if (existingState?.status === "complete") {
+      return { ok: true, repoFullName, pullNumber, status: existingState.status, warnings: [] };
+    }
+  }
   const token = await tokenForRepo(env, repo);
   const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const warnings: string[] = [];
   await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
-  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey);
+  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey, "live_review", { forceFiles: options.force });
   const syncedAt = nowIso();
   const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
   await upsertPullRequestDetailSyncState(env, {
     repoFullName,
     pullNumber,
     status,
+    headSha: pr.headSha,
     filesSyncedAt: syncedAt,
     reviewsSyncedAt: syncedAt,
     checksSyncedAt: syncedAt,
@@ -1276,7 +1298,7 @@ async function backfillRecentMergedSegment(
       // recent_merged_pull_requests.changedFiles is populated instead of always empty.
       const warnings: string[] = [];
       const admissionKey = repoAdmissionKeyForToken(env, repo, token);
-      await hydrateMergedPullRequestFiles(env, repo.fullName, merged, token, warnings, 8, admissionKey);
+      await hydrateMergedPullRequestFiles(env, repo.fullName, merged, token, warnings, 8, mode, admissionKey);
       return merged.length;
     },
     { progressiveHistory: true, countPersisted: () => countRecentMergedPullRequests(env, repo.fullName) },
@@ -1287,6 +1309,13 @@ async function backfillRecentMergedSegment(
 // fetch — the N+1 REST fan-out that dominated this segment's GitHub cost — for any merged PR ALREADY hydrated,
 // re-upserting only the cheap metadata (the upsert preserves the stored files when passed an empty list). One
 // `listRecentMergedPullRequests` read per batch replaces up to one `/files` fetch per merged PR. (#1941)
+//
+// This is scheduled, historical work: none of it is needed for a CURRENT review, so it is both hard-capped
+// (MERGED_PR_FILE_HYDRATION_BATCH_SIZE, independent of the page's own size) and budget-gated at the earliest,
+// most conservative floor (HISTORICAL_BACKFILL_RESERVED_HEADROOM) — re-checked on every page, not just once at
+// segment entry, so a large un-hydrated backlog can never flood the shared bucket in one job execution
+// (#audit-rate-headroom). A PR skipped for either reason is upserted with cheap metadata only (empty
+// changedFiles, preserved by the upsert if already hydrated) and stays a candidate on the next run.
 async function hydrateMergedPullRequestFiles(
   env: Env,
   repoFullName: string,
@@ -1294,6 +1323,7 @@ async function hydrateMergedPullRequestFiles(
   token: string | undefined,
   warnings: string[],
   concurrency: number,
+  mode: BackfillMode,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<void> {
   const alreadyHydrated = new Set(
@@ -1301,11 +1331,15 @@ async function hydrateMergedPullRequestFiles(
       .filter((record) => record.changedFiles.length > 0)
       .map((record) => record.number),
   );
+  const pending = merged.filter((pr) => !alreadyHydrated.has(pr.number));
+  const resetAt = pending.length > 0 ? await shouldWaitForGitHubRateLimit(env, HISTORICAL_BACKFILL_RESERVED_HEADROOM) : undefined;
+  if (resetAt) warnings.push(`Historical merged PR file hydration deferred for ${pending.length} pull request(s): GitHub REST budget below the historical-backfill headroom floor (retry after ${resetAt}).`);
+  const budgeted = resetAt ? new Set<number>() : new Set(pending.slice(0, MERGED_PR_FILE_HYDRATION_BATCH_SIZE[mode]).map((pr) => pr.number));
   await mapWithConcurrency(merged, concurrency, async (pr) => {
     // fetchPullRequestFiles never throws — it returns [] (and records a warning) on any fetch failure.
-    const changedFiles = alreadyHydrated.has(pr.number)
-      ? []
-      : await fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey);
+    const changedFiles = budgeted.has(pr.number)
+      ? await fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey, "backfill_merged_history")
+      : [];
     await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repoFullName, pr, changedFiles));
   });
 }
@@ -1767,12 +1801,12 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const normalizedPullRequests = await mapWithConcurrency(pullRequests, 16, async (pr) => upsertPullRequestFromGitHub(env, repo.fullName, pr, { seenOpenAt: startedAt }));
 
     const mergedFileWarningStart = warnings.length;
-    await hydrateMergedPullRequestFiles(env, repo.fullName, recentMerged, token, warnings, limits.detailConcurrency, admissionKey);
+    await hydrateMergedPullRequestFiles(env, repo.fullName, recentMerged, token, warnings, limits.detailConcurrency, mode, admissionKey);
 
     const detailTargets = normalizedPullRequests.slice(0, limits.pullRequestDetails);
     const detailWarningStart = warnings.length;
     await mapWithConcurrency(detailTargets, limits.detailConcurrency, async (pr) => {
-      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey);
+      await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
     });
     const fileWarnings = warnings.slice(mergedFileWarningStart).filter((warning) => /File sync failed/i.test(warning));
     const reviewWarnings = warnings.slice(detailWarningStart).filter((warning) => /Review sync failed/i.test(warning));
@@ -1923,17 +1957,25 @@ async function fetchAndStorePullRequestDetails(
   pr: PullRequestRecord,
   token: string | undefined,
   warnings: string[],
-  admissionKey?: GitHubRateLimitAdmissionKey,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  caller: PullRequestFilesFetchCaller,
+  options: { forceFiles?: boolean | undefined } = {},
 ): Promise<void> {
+  // Durable repo+PR+headSha file snapshot (#audit-rate-headroom): a bare URL cache is insufficient because
+  // `/pulls/{n}/files` has the SAME url across different heads. Reuse the stored `pull_request_files` rows
+  // instead of refetching when the last successful files sync already covered the PR's CURRENT head SHA —
+  // only files are cached here; reviews/checks are more volatile at a fixed head and still refresh every call.
+  const existingState = !options.forceFiles && pr.headSha ? await getPullRequestDetailSyncState(env, repoFullName, pr.number) : null;
+  const filesUpToDate = Boolean(existingState?.headSha) && existingState?.headSha === pr.headSha && Boolean(existingState?.filesSyncedAt);
   const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([
-    fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey),
+    filesUpToDate ? Promise.resolve<GitHubFilePayload[]>([]) : fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey, caller),
     fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings, admissionKey),
     fetchPullRequestChecks(env, repoFullName, pr, token, warnings, admissionKey),
   ]);
   const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
 
-  if (!fileSyncFailed) {
+  if (!filesUpToDate && !fileSyncFailed) {
     await deletePullRequestFiles(env, repoFullName, pr.number);
     for (const file of files) {
       await upsertPullRequestFile(env, {
@@ -2009,8 +2051,10 @@ async function fetchPullRequestFiles(
   pullNumber: number,
   token: string | undefined,
   warnings: string[],
-  admissionKey?: GitHubRateLimitAdmissionKey,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  caller: PullRequestFilesFetchCaller,
 ): Promise<GitHubFilePayload[]> {
+  incr(PULL_REQUEST_FILES_FETCH_METRIC, { caller });
   const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token, admissionKey);
   if (files) return files;
   const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token, admissionKey).catch(() => undefined) : undefined;
@@ -2055,7 +2099,7 @@ export async function fetchAndStorePullRequestFilesForReview(
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<PullRequestFileRecord[]> {
   const warnings: string[] = [];
-  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey).catch(() => [] as GitHubFilePayload[]);
+  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey, "live_review").catch(() => [] as GitHubFilePayload[]);
   if (files.length === 0) return [];
   const records = files.map((file) => toPullRequestFileRecordFromGitHub(repoFullName, pullNumber, file));
   // Persist so the AI review, grounding, gate, check-run, and unified-comment reads in THIS run (and any later

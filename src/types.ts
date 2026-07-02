@@ -820,6 +820,7 @@ export type PullRequestDetailSyncStateRecord = {
   repoFullName: string;
   pullNumber: number;
   status: "never_synced" | "running" | "complete" | "partial" | "waiting_rate_limit" | "error";
+  headSha?: string | null | undefined;
   filesSyncedAt?: string | null | undefined;
   reviewsSyncedAt?: string | null | undefined;
   checksSyncedAt?: string | null | undefined;

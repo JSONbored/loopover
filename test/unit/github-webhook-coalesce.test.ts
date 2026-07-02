@@ -51,6 +51,21 @@ describe("githubWebhookCoalesceKey", () => {
     }
   });
 
+  it("coalesces a burst of reopened + synchronize + ready_for_review events for the same PR head into one key (regression for #audit-rate-headroom)", () => {
+    // "reopened" triggers the same file-refresh path as "opened"/"synchronize" (PR_PUBLIC_SURFACE_ACTIONS in
+    // src/queue/processors.ts) but was missing from the coalescable set — a burst of reopen-adjacent events for
+    // the same PR+head fanned out one `/pulls/{n}/files` fetch per delivery instead of coalescing into one job.
+    const burstKeys = (["reopened", "synchronize", "ready_for_review"] as const).map((action) =>
+      githubWebhookCoalesceKey("pull_request", {
+        action,
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 100, head: { sha: "BEEF123" } },
+      } as GitHubWebhookPayload),
+    );
+    expect(new Set(burstKeys).size).toBe(1);
+    expect(burstKeys[0]).toBe("github-webhook:pr-refresh:jsonbored/gittensory#100@beef123");
+  });
+
   it("returns null for malformed or non-coalescible webhook shapes", () => {
     expect(githubWebhookCoalesceKey("issues", { action: "closed", repository: { full_name: "JSONbored/Gittensory" } } as never)).toBeNull();
     expect(githubWebhookCoalesceKey("check_suite", { action: "requested", repository: { full_name: "JSONbored/Gittensory" } } as never)).toBeNull();

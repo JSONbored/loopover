@@ -1,7 +1,11 @@
 import type { GitHubWebhookPayload } from "../types";
 
+// Kept in sync with PR_PUBLIC_SURFACE_ACTIONS (src/queue/processors.ts) minus "closed" (merge/close has its own
+// non-coalesced handling): every action that can trigger a file refresh for the SAME PR+head should collapse a
+// burst into one job, not one job per delivery (#audit-rate-headroom).
 const COALESCABLE_PULL_REQUEST_ACTIONS = new Set([
   "opened",
+  "reopened",
   "synchronize",
   "edited",
   "ready_for_review",

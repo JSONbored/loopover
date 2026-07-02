@@ -79,15 +79,21 @@ function severityOf(vuln: OsvVuln): Cve["severity"] {
         : "low";
 }
 
-function fixedOf(vuln: OsvVuln): string | null {
+export function fixedOf(vuln: OsvVuln): string | null {
+  const fixes = new Set<string>();
   for (const affected of vuln.affected ?? []) {
     for (const range of affected.ranges ?? []) {
       for (const event of range.events ?? []) {
-        if (event.fixed) return event.fixed;
+        if (event.fixed) fixes.add(event.fixed);
       }
     }
   }
-  return null;
+  // Report a fixed version only when it is UNAMBIGUOUS. A CVE with multiple version-lines patched separately
+  // (e.g. fixed in `1.5.0` for the 1.x line AND `2.3.0` for the 2.x line) exposes more than one `fixed` version;
+  // returning the first would tell a 2.x user to "upgrade" to `1.5.0`, which does not fix their line. Without
+  // per-range version matching we cannot pick the right one, so report none rather than a wrong remediation.
+  const list = [...fixes];
+  return list.length === 1 ? list[0]! : null;
 }
 
 function toCves(vulns: OsvVuln[] | undefined): Cve[] {

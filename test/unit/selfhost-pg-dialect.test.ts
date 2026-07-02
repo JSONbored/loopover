@@ -15,8 +15,9 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(toNumberedPlaceholders("last_regate_fanout_at = ?1 WHERE id = 'singleton' AND (x IS NULL OR x < ?2)")).toBe(
       "last_regate_fanout_at = $1 WHERE id = 'singleton' AND (x IS NULL OR x < $2)",
     );
-    // A numbered placeholder mixed with anonymous ones in the same call still resolves each independently.
-    expect(toNumberedPlaceholders("a=?1 AND b=?")).toBe("a=$1 AND b=$1");
+    // A later anonymous `?` continues from the highest index already assigned (SQLite's own rule), so it
+    // must not collide with an earlier numbered placeholder.
+    expect(toNumberedPlaceholders("a=?1 AND b=?")).toBe("a=$1 AND b=$2");
     // A literal `?1` inside a string is left untouched, same as a bare `?` literal.
     expect(toNumberedPlaceholders("SELECT '?1' AS lit WHERE a=?")).toBe("SELECT '?1' AS lit WHERE a=$1");
   });

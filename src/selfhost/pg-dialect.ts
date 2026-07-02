@@ -18,7 +18,10 @@ const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
  *  immediately followed by digits is SQLite's *numbered* placeholder (`?1`, `?2`, …, e.g. retention.ts's
  *  `retentionWhere()` and repositories.ts's `claimRegateFanoutSlot()`) — its index is reused verbatim as
  *  `$1`/`$2` rather than folded into the anonymous-placeholder counter below, otherwise `?1` corrupts to
- *  `$1` + a literal trailing `1` (i.e. `$11`), which Postgres reads as bind parameter 11. */
+ *  `$1` + a literal trailing `1` (i.e. `$11`), which Postgres reads as bind parameter 11. Per SQLite's own
+ *  rule, a later anonymous `?` gets "one greater than the largest parameter number already assigned", so a
+ *  numbered placeholder also raises the anonymous counter's floor — otherwise a later `?` could collide with
+ *  an earlier `?N` (e.g. `?1` then `?` must yield `$1`, `$2`, not `$1`, `$1`). */
 export function toNumberedPlaceholders(sql: string): string {
   let out = "";
   let n = 0;
@@ -29,6 +32,7 @@ export function toNumberedPlaceholders(sql: string): string {
     if (ch === "?" && !inString) {
       const numbered = /^\d+/.exec(sql.slice(i + 1))?.[0];
       if (numbered) {
+        n = Math.max(n, Number(numbered));
         out += `$${numbered}`;
         i += numbered.length;
         continue;

@@ -1809,6 +1809,7 @@ describe("REVIEW_SYSTEM_PROMPT performance-regression instruction (#2559)", () =
       opts.messages.find((m) => m.role === "system")?.content ??
       String(opts.messages[0]?.content);
     expect(system).toContain("N+1");
+    expect(system).toContain("unbounded loop/fanout");
     expect(system).toContain("PERFORMANCE SEVERITY");
     // Severity discipline: a micro-optimization/style preference must still be steered toward a nit, not a blocker.
     expect(system).toContain("micro-optimization preference");

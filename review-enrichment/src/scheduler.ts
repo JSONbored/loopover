@@ -1,4 +1,5 @@
 import type { AnalysisContext } from "./analysis-context.js";
+import { isAnalyzerCircuitOpen } from "./analyzer-circuit-breaker.js";
 import {
   ANALYZER_NAMES,
   getAnalyzerDescriptor,
@@ -294,6 +295,9 @@ function skipReasonForAnalyzer(
   profile: ReesProfileName,
   explicitAnalyzers: boolean,
 ): string | null {
+  // #2541: a known-unhealthy analyzer is skipped regardless of an EXPLICIT request for it (req.analyzers) --
+  // the circuit is about the underlying dependency being down right now, which an explicit request can't fix.
+  if (isAnalyzerCircuitOpen(descriptor.name)) return "circuit_open";
   if (!explicitAnalyzers && !PROFILE_CONFIG[profile].costs.has(descriptor.cost)) return "profile";
   if (!explicitAnalyzers && costClassConcurrency(profile, descriptor.cost) <= 0) return "profile";
 

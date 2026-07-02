@@ -15,6 +15,10 @@ import type {
   AnalyzerCostClass,
 } from "./analyzers/types.js";
 import {
+  recordAnalyzerCircuitFailure,
+  recordAnalyzerCircuitSuccess,
+} from "./analyzer-circuit-breaker.js";
+import {
   createAnalysisContext,
   type AnalysisContext,
 } from "./analysis-context.js";
@@ -296,6 +300,11 @@ export async function buildBrief(
         },
       );
       findings[name] = result as never;
+      // #2541: the analyzer completed WITHOUT throwing -- whether "ok" or a non-throwing partial/degraded
+      // result (its own internal cap, not a dependency failure) -- so the dependency responded. Reset the
+      // circuit rather than only resetting on a clean "ok"; a benign internal partial must not itself count
+      // toward tripping the breaker.
+      recordAnalyzerCircuitSuccess(name);
       if (resultIsPartial(result) || diagnostics.partialStatus === "partial") {
         const status = statusFromDiagnostics(diagnostics, "degraded");
         const partialReason = publicPartialReason(
@@ -342,6 +351,10 @@ export async function buildBrief(
         };
       }
     } catch (error) {
+      // #2541: a THROWN failure (including the analyzer_timeout rejection from runWithTimeout) is the signal
+      // the circuit breaker tracks -- the dependency did not respond at all, unlike a non-throwing partial
+      // result above.
+      recordAnalyzerCircuitFailure(name);
       const status = timeoutStatus(error, diagnostics);
       const partialReason = publicPartialReason(diagnostics.partialReason, "analyzer_error");
       analyzerStatus[name] = status;
@@ -374,6 +387,18 @@ export async function buildBrief(
     }
   }
 
+  // #2541 (cost-class parallelization evaluated, NOT implemented): cost classes run strictly sequentially --
+  // this loop awaits each class's bounded worker pool (runWithConcurrency) before starting the next -- with
+  // cheaper/more-certain classes (local, then registry) always draining before expensive/less-essential ones
+  // (github-heavy, tooling). This is deliberate prioritization, not an oversight: it guarantees the cheap,
+  // always-safe signals are collected first, and a shrinking remainingMs budget (see analyzerTimeoutMs above)
+  // correctly starves LATER, less-essential classes first when time runs short -- never the reverse. Running
+  // every class's worker pool concurrently would sum EVERY class's concurrency limit at once (8+3+2+1+1 = 15
+  // simultaneous external calls on the "deep" profile instead of at most 8), spiking the third-party burst
+  // rate exactly when third-party health is already the concern this issue is about, and would let an
+  // expensive/uncertain "tooling" call start competing for budget with a cheap "local" one instead of only
+  // running once local has had its turn. That risk is not "low", so this stays sequential; the per-analyzer
+  // circuit breaker above is the intended fix for a specific unhealthy dependency, not a scheduling change.
   for (const cost of COST_ORDER) {
     const items = plan.runnable.filter((item) => item.descriptor.cost === cost);
     if (!items.length) continue;

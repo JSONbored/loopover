@@ -135,13 +135,26 @@ function positiveEnvSeconds(env: EnvLookup, name: string, fallback: number): num
 }
 
 export function githubResponseCacheTtlSeconds(cls: GitHubCacheClass, env: EnvLookup = process.env): number {
+  const defaultTtl = positiveEnvSeconds(env, "GITHUB_CACHE_TTL_SECONDS", 0);
   if (cls === "branch_protection") {
-    return positiveEnvSeconds(env, "GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS", DEFAULT_BRANCH_PROTECTION_TTL_SECONDS);
+    return positiveEnvSeconds(
+      env,
+      "GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS",
+      defaultTtl || DEFAULT_BRANCH_PROTECTION_TTL_SECONDS,
+    );
   }
   if (cls === "commit") {
-    return positiveEnvSeconds(env, "GITHUB_COMMIT_CACHE_TTL_SECONDS", DEFAULT_COMMIT_TTL_SECONDS);
+    return positiveEnvSeconds(
+      env,
+      "GITHUB_COMMIT_CACHE_TTL_SECONDS",
+      defaultTtl || DEFAULT_COMMIT_TTL_SECONDS,
+    );
   }
-  return positiveEnvSeconds(env, "GITHUB_METADATA_CACHE_TTL_SECONDS", DEFAULT_METADATA_TTL_SECONDS);
+  return positiveEnvSeconds(
+    env,
+    "GITHUB_METADATA_CACHE_TTL_SECONDS",
+    defaultTtl || DEFAULT_METADATA_TTL_SECONDS,
+  );
 }
 
 function isCacheableGithubResponseStatus(cls: GitHubCacheClass, status: number): boolean {

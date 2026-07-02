@@ -90,6 +90,9 @@ describe("graphql cache allowlist", () => {
     expect(githubGraphQlCacheTtlSeconds("repo_totals")).toBe(600);
     vi.stubEnv("GITHUB_GRAPHQL_CACHE_TTL_SECONDS", "not-a-number");
     expect(githubGraphQlCacheTtlSeconds("repo_totals")).toBe(600);
+    vi.stubEnv("GITHUB_GRAPHQL_CACHE_TTL_SECONDS", "");
+    vi.stubEnv("GITHUB_CACHE_TTL_SECONDS", "45");
+    expect(githubGraphQlCacheTtlSeconds("repo_totals")).toBe(45);
   });
 });
 

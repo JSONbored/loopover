@@ -586,9 +586,13 @@ describe("timeoutFetch", () => {
     expect(githubResponseCacheTtlSeconds("branch_protection", {})).toBe(20 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", {})).toBe(10 * 60);
     expect(githubResponseCacheTtlSeconds("commit", {})).toBe(15 * 60);
+    expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_CACHE_TTL_SECONDS: "45" })).toBe(45);
+    expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_CACHE_TTL_SECONDS: "45" })).toBe(45);
+    expect(githubResponseCacheTtlSeconds("commit", { GITHUB_CACHE_TTL_SECONDS: "45" })).toBe(45);
     expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS: "3600" })).toBe(3600);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "90.8" })).toBe(90);
     expect(githubResponseCacheTtlSeconds("commit", { GITHUB_COMMIT_CACHE_TTL_SECONDS: "300" })).toBe(300);
+    expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_CACHE_TTL_SECONDS: "45", GITHUB_METADATA_CACHE_TTL_SECONDS: "120" })).toBe(120);
     expect(githubResponseCacheTtlSeconds("commit", { GITHUB_COMMIT_CACHE_TTL_SECONDS: "0" })).toBe(15 * 60);
     expect(githubResponseCacheTtlSeconds("branch_protection", { GITHUB_BRANCH_PROTECTION_CACHE_TTL_SECONDS: "" })).toBe(20 * 60);
     expect(githubResponseCacheTtlSeconds("metadata", { GITHUB_METADATA_CACHE_TTL_SECONDS: "0" })).toBe(10 * 60);

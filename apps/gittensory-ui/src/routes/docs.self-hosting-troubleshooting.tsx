@@ -10,13 +10,13 @@ export const Route = createFileRoute("/docs/self-hosting-troubleshooting")({
       {
         name: "description",
         content:
-          "Troubleshoot self-hosted Gittensory reviews: webhook delivery, AI unavailable, REES silent, RAG empty, queue stuck, and readiness failures.",
+          "Troubleshoot self-hosted Gittensory reviews: webhook delivery, AI unavailable, REES silent, RAG empty, queue stuck, GitHub rate limits, Qdrant, Orb, AI provider circuit breakers, and readiness failures.",
       },
       { property: "og:title", content: "Self-host troubleshooting — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Troubleshoot self-hosted Gittensory reviews: webhook delivery, AI unavailable, REES silent, RAG empty, queue stuck, and readiness failures.",
+          "Troubleshoot self-hosted Gittensory reviews: webhook delivery, AI unavailable, REES silent, RAG empty, queue stuck, GitHub rate limits, Qdrant, Orb, AI provider circuit breakers, and readiness failures.",
       },
       { property: "og:url", content: "/docs/self-hosting-troubleshooting" },
     ],
@@ -174,10 +174,15 @@ sum(rate(gittensory_github_rest_rate_limit_responses_total[10m]))`}
       </p>
       <CodeBlock
         lang="promql"
-        code={`# Hit rate by endpoint class over the last 15m
+        code={`# REST hit rate by endpoint class over the last 15m
 sum by (class) (rate(gittensory_github_response_cache_total{result="hit"}[15m]))
 /
-sum by (class) (rate(gittensory_github_response_cache_total[15m]))`}
+sum by (class) (rate(gittensory_github_response_cache_total[15m]))
+
+# GraphQL hit rate — same shape, separate metric
+sum by (class) (rate(gittensory_github_graphql_cache_total{result="hit"}[15m]))
+/
+sum by (class) (rate(gittensory_github_graphql_cache_total[15m]))`}
       />
 
       <h2>Qdrant / vector-store errors</h2>
@@ -197,16 +202,21 @@ sum by (class) (rate(gittensory_github_response_cache_total[15m]))`}
           deployment&apos;s configuration.
         </li>
         <li>
-          A dimension-mismatch error means the existing collection was created with a different
-          embedding model than the one currently configured (<code>AI_EMBED_MODEL</code>) — recreate
-          the collection (drop it in Qdrant and let the next index run recreate it at the current
-          width) rather than trying to reuse it across embedding models.
+          A dimension-mismatch error means the existing <code>gittensory</code> collection (the
+          fixed collection name self-host always uses) was created with a different embedding model
+          than the one currently configured (<code>AI_EMBED_MODEL</code>). Recreating it — delete
+          the collection and let the next index run recreate it at the current width — is the fix,
+          but it temporarily removes ALL indexed RAG context for every repo until re-indexing
+          completes, so treat it as a deliberate, disruptive step, not a routine one.
         </li>
       </ul>
       <CodeBlock
         lang="bash"
-        code={`curl "$QDRANT_URL/collections"
-docker compose --profile qdrant ps qdrant`}
+        code={`curl "$QDRANT_URL/collections/gittensory"
+docker compose --profile qdrant ps qdrant
+
+# Only after confirming a dimension mismatch is the actual cause:
+curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
       />
 
       <h2>Orb export or relay problems</h2>

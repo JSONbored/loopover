@@ -27,21 +27,3 @@ export function createRedisCache(redis: Redis) {
 }
 
 export type RedisCache = ReturnType<typeof createRedisCache>;
-
-/**
- * Idempotency check for GitHub webhook deliveries. Returns true if the delivery was
- * already seen (caller should short-circuit with 204). Marks the delivery as seen
- * for `ttlSeconds` (default 5 min — covers GitHub's retry window) on the FIRST call.
- * Best-effort: a Redis error is swallowed to avoid blocking webhook processing.
- */
-export async function checkAndMarkDelivery(cache: RedisCache, deliveryId: string, ttlSeconds = 300): Promise<boolean> {
-  try {
-    const seen = await cache.get(`delivery:${deliveryId}`);
-    if (seen) return true;
-    await cache.set(`delivery:${deliveryId}`, "1", ttlSeconds);
-    return false;
-  } catch {
-    // Redis unavailable → treat as first-time (never block processing on cache failure)
-    return false;
-  }
-}

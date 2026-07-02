@@ -83,6 +83,23 @@ groups:
           description: "The dead-letter queue holds {{ $value | printf \"%.0f\" }} jobs (sustained 10m). Work is accumulating with no automatic recovery."
           runbook: "Drain or triage the dead-letter queue. If it only ever grows, fix the root cause before requeuing or you'll just re-fill it."
 
+      - alert: GittensoryDeadLetterBacklogPersisting
+        # The two rules above have a coverage gap: the rate alert (increase() over 15m)
+        # only fires in a narrow window around a job's transition INTO dead, and the
+        # backlog alert only trips above 50. A single dead job — the common case, e.g. one
+        # job hit a since-fixed bug during a deploy — sits in the table forever after that
+        # 15m window closes, invisible to both. This is a LEVEL check with no count floor:
+        # any non-zero dead-letter count sustained for an hour pages, regardless of how it
+        # got there or how large it is.
+        expr: gittensory_queue_dead > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory dead-letter queue not empty for over an hour"
+          description: "{{ $value | printf \"%.0f\" }} job(s) have sat in the dead-letter queue for over an hour with no automatic recovery."
+          runbook: "Check whether the underlying bug is already fixed and redeployed — if so the job(s) can be requeued; otherwise triage before requeuing."
+
   # ── Queue backlog (live processing pressure) ───────────────────────────────
   - name: gittensory-queue
     rules:

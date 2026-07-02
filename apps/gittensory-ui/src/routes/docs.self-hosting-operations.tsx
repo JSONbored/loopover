@@ -95,6 +95,32 @@ review_context_fetch_failed`}
 docker compose --profile postgres --profile observability --profile backup up -d`}
       />
 
+      <h2>Alerting — required for a 24/7 deployment</h2>
+      <p>
+        Alertmanager ships with a valid but <strong>silent</strong> default: every alert routes to a
+        name-only receiver that discards it, so{" "}
+        <code>docker compose --profile observability up -d</code> always starts clean even before
+        you've configured anywhere to send notifications. This is intentional — the shipped config
+        can&apos;t bake in a Slack/Discord/email destination that works for everyone — but it means
+        nothing pages anyone until you edit <code>alertmanager/alertmanager.yml</code> yourself.
+        Treat this as a required step, not an optional one, for any deployment you expect to run
+        unattended.
+      </p>
+      <p>
+        The fastest verified path: create a Discord channel webhook (channel settings → Integrations
+        → Webhooks → New Webhook), then uncomment the <code>discord</code> receiver block in{" "}
+        <code>alertmanager/alertmanager.yml</code> and point the root route at it. Slack, email, and
+        a generic webhook receiver (for PagerDuty or a custom handler) are also ready to uncomment
+        in the same file.
+      </p>
+      <p>
+        Until you do, alerts are still visible without any extra setup: open Grafana and check the{" "}
+        <strong>Alerts</strong> row on the main dashboard, which lists every currently-firing alert
+        directly from Prometheus, independent of Alertmanager routing. Use this as your fallback
+        check if you haven&apos;t wired up push notifications yet — it&apos;s exactly what the{" "}
+        <code>Dead jobs stay at zero</code> routine check below is watching for.
+      </p>
+
       <h2>Sentry tracing</h2>
       <p>
         Leave <code>SENTRY_TRACES_SAMPLE_RATE</code> unset or blank to disable trace export, or set

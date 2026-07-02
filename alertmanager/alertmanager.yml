@@ -6,6 +6,13 @@
 # "null" receiver that discards notifications. Nothing pages you until you opt in by
 # uncommenting one of the example receivers below and pointing the route at it. This
 # means `docker compose --profile observability up -d` always comes up green.
+#
+# THIS IS A REQUIRED STEP for any deployment you expect to run unattended, not an
+# optional one — see the self-hosting Operations doc's "Alerting" section for the
+# fastest verified path (a Discord webhook, uncomment the block below) and for the
+# Grafana "Active Alerts" panel you can check manually until you do. Until a real
+# receiver is wired up, every rule in prometheus/rules/alerts.yml can fire and nobody
+# will be notified — only an operator who opens Grafana will see it.
 
 global:
   # How long to wait before declaring a firing alert "resolved" once it stops arriving.

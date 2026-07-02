@@ -170,6 +170,46 @@ describe("self-host backup script", () => {
     expect(args).toContain("postgresql:///gittensory?host=/var/run/postgresql");
   });
 
+  it("strips a password supplied via the libpq query-string form, not just userinfo", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const argsFile = join(root, "pg-dump.args");
+    const envFile = join(root, "pg-dump.env");
+
+    // postgresql://user@host/db?password=... is an equally valid, if less common, way to supply a libpq
+    // password -- entirely independent of the userinfo form this function already strips. Includes other
+    // query parameters on both sides of `password` to prove they survive, in order, untouched.
+    runBackup(root, {
+      DATABASE_URL: "postgresql://app_user@db.example:6543/gittensory?sslmode=require&password=SuperSecret123%21&application_name=app",
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ARGS_FILE: argsFile,
+      PG_DUMP_ENV_FILE: envFile,
+    });
+
+    const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
+    const [, passfileContent] = execFileSync("cat", [envFile], { encoding: "utf8" }).trim().split("|");
+    expect(args).not.toContain("SuperSecret123");
+    expect(args).not.toContain("password=");
+    expect(args).toContain("postgresql://app_user@db.example:6543/gittensory?sslmode=require&application_name=app");
+    expect(passfileContent).toBe("*:*:*:*:SuperSecret123!");
+  });
+
+  it("does not mistake a query value merely containing the substring 'password' for the password key", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const argsFile = join(root, "pg-dump.args");
+
+    const url = "postgresql://host/db?application_name=has_password_in_name&other=1";
+    runBackup(root, {
+      DATABASE_URL: url,
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ARGS_FILE: argsFile,
+    });
+
+    const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
+    expect(args).toContain(url);
+  });
+
   it("does not mistake a literal '@'/':' inside the query string for userinfo", () => {
     const root = tmpRoot();
     const pgBin = fakePgDump(root);

@@ -45,8 +45,10 @@ pgpass_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/:/\\:/g'
 }
 
-# Strips only the password from a postgres(ql):// URI and hands pg_dump the rest untouched (host, port,
-# dbname, and the FULL query string) as its connection argument, instead of re-parsing those pieces
+# Strips the password from a postgres(ql):// URI -- from EITHER the userinfo (user:password@host) or a
+# `password=` libpq query-string parameter (postgresql://user@host/db?password=secret is equally valid
+# and equally a leak if left in place) -- and hands pg_dump everything else untouched (host, port, dbname,
+# and every other query parameter) as its connection argument, instead of re-parsing those pieces
 # ourselves. libpq's own URI parser already handles every form it needs to (query-string-only host, as in
 # `postgresql:///db?host=/var/run/postgresql`, IPv6 literals, multi-host strings, sslmode, etc.) -- an
 # earlier version of this function extracted host/port/dbname manually and discarded the query string
@@ -74,8 +76,8 @@ prepare_pg_env() {
   if [ ${#pg_before_frag} -lt ${#pg_authority} ]; then pg_authority=$pg_before_frag; fi
   pg_suffix=${pg_rest#"$pg_authority"}
 
-  PG_SANITIZED_URL="postgresql://$pg_authority$pg_suffix"
   PGPASSWORD_VALUE=""
+  pg_sanitized_authority=$pg_authority
   case "$pg_authority" in
     *@*)
       pg_userinfo=${pg_authority%%@*}
@@ -84,14 +86,58 @@ prepare_pg_env() {
         *:*)
           pg_user_part=${pg_userinfo%%:*}
           PGPASSWORD_VALUE=$(url_decode "${pg_userinfo#*:}")
-          PG_SANITIZED_URL="postgresql://${pg_user_part}@${pg_after_at}$pg_suffix"
+          pg_sanitized_authority="${pg_user_part}@${pg_after_at}"
           ;;
         *)
-          PG_SANITIZED_URL="postgresql://${pg_userinfo}@${pg_after_at}$pg_suffix"
+          pg_sanitized_authority="${pg_userinfo}@${pg_after_at}"
           ;;
       esac
       ;;
   esac
+
+  # A libpq query string can carry `password=...` as an alternative to userinfo -- split $pg_suffix into
+  # its path / query / fragment components (in that order; each optional) and, if the query component has
+  # a `password` key, extract and remove it, leaving every other parameter (and their order) untouched.
+  pg_path=$pg_suffix
+  pg_query=""
+  pg_frag=""
+  case "$pg_suffix" in
+    *\?*)
+      pg_path=${pg_suffix%%\?*}
+      pg_after_q=${pg_suffix#*\?}
+      case "$pg_after_q" in
+        *#*)
+          pg_query=${pg_after_q%%#*}
+          pg_frag="#${pg_after_q#*#}"
+          ;;
+        *)
+          pg_query=$pg_after_q
+          ;;
+      esac
+      ;;
+    *#*)
+      pg_path=${pg_suffix%%#*}
+      pg_frag="#${pg_suffix#*#}"
+      ;;
+  esac
+
+  pg_query_wrapped="&$pg_query&"
+  case "$pg_query_wrapped" in
+    *"&password="*"&"*)
+      pg_before_pw=${pg_query_wrapped%%&password=*}
+      pg_from_pw=${pg_query_wrapped#*&password=}
+      PGPASSWORD_VALUE=$(url_decode "${pg_from_pw%%&*}")
+      pg_after_pw=${pg_from_pw#*&}
+      pg_query_wrapped="${pg_before_pw}&${pg_after_pw}"
+      pg_query=${pg_query_wrapped#&}
+      pg_query=${pg_query%&}
+      ;;
+  esac
+
+  pg_suffix=$pg_path
+  if [ -n "$pg_query" ]; then pg_suffix="$pg_suffix?$pg_query"; fi
+  pg_suffix="$pg_suffix$pg_frag"
+  PG_SANITIZED_URL="postgresql://$pg_sanitized_authority$pg_suffix"
 
   if [ -n "$PGPASSWORD_VALUE" ]; then
     # pgpass is a single-line-per-entry format; pgpass_escape only handles the two characters (':' and

@@ -5,7 +5,7 @@
 import type { EnrichRequest, ActionPinFinding } from "../types.js";
 
 const USES_RE = /^\s*-?\s*["']?uses["']?\s*:\s*["']?([\w.-]+\/[\w./-]+)@([^\s"'#]+)/;
-const FULL_SHA = /^[0-9a-f]{40}$/;
+const FULL_SHA = /^[0-9a-f]{40}$/i;
 const OFFICIAL = /^(actions|github)\//;
 const WORKFLOW_PATH = /^\.github\/workflows\/.+\.ya?ml$/;
 

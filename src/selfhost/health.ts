@@ -5,6 +5,7 @@
 export interface Readiness {
   ok: boolean;
   checks: Record<string, boolean>;
+  durationsMs: Record<string, number>;
 }
 
 export type HealthBackend = "sqlite" | "postgres";
@@ -49,34 +50,40 @@ export function buildHealthBody(opts: {
  *  stop routing to it — so every probe gates readiness. */
 export type ReadinessProbe = { name: string; check: () => Promise<boolean> };
 
+async function timedReadinessCheck(
+  name: string,
+  durationsMs: Record<string, number>,
+  check: () => Promise<boolean>,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  try {
+    return await check();
+  } catch {
+    return false;
+  } finally {
+    durationsMs[name] = Math.max(0, Date.now() - startedAt);
+  }
+}
+
 /** Readiness: the DB answers a trivial query, the migrations table shows applied rows, and every configured
  *  optional-backend probe (Redis/Qdrant, when wired) answers. An instance can no longer report ready while a
  *  backend it actually depends on is down. */
 export async function readiness(db: D1Database, probes: ReadinessProbe[] = []): Promise<Readiness> {
-  let dbOk = false;
-  let migrations = false;
-  try {
+  const durationsMs: Record<string, number> = {};
+  const dbOk = await timedReadinessCheck("db", durationsMs, async () => {
     await db.prepare("SELECT 1 AS one").first();
-    dbOk = true;
-  } catch {
-    /* db down */
-  }
-  try {
+    return true;
+  });
+  const migrations = await timedReadinessCheck("migrations", durationsMs, async () => {
     const row = await db.prepare("SELECT COUNT(*) AS c FROM _selfhost_migrations").first<{ c: number }>();
     // COUNT(*) always returns one row on D1/SQLite; if an adapter violates that, this try/catch fails closed.
-    migrations = Number(row!.c) > 0;
-  } catch {
-    /* migrations table missing */
-  }
+    return Number(row!.c) > 0;
+  });
   const checks: Record<string, boolean> = { db: dbOk, migrations };
   for (const probe of probes) {
-    try {
-      checks[probe.name] = await probe.check();
-    } catch {
-      checks[probe.name] = false; // an unreachable / erroring backend is not ready
-    }
+    checks[probe.name] = await timedReadinessCheck(probe.name, durationsMs, probe.check);
   }
-  return { ok: Object.values(checks).every(Boolean), checks };
+  return { ok: Object.values(checks).every(Boolean), checks, durationsMs };
 }
 
 /** Boot-time DATA-SAFETY advisory. A single SQLite file with no acknowledged backup is a data-loss SPOF — yet

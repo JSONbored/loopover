@@ -68,6 +68,11 @@ describe("resolveHealthVersion (#2077)", () => {
   });
 });
 
+function expectDurations(result: Awaited<ReturnType<typeof readiness>>, names: string[]): void {
+  expect(Object.keys(result.durationsMs).sort()).toEqual([...names].sort());
+  for (const name of names) expect(result.durationsMs[name]).toEqual(expect.any(Number));
+}
+
 describe("sqliteBackupAdvisory (#8 data-safety)", () => {
   it("warns on SQLite without an acknowledged backup, and is silent otherwise", () => {
     expect(sqliteBackupAdvisory({ usingSqlite: true, backupAcknowledged: false })).toMatch(/single SQLite file with no acknowledged backup/);
@@ -77,17 +82,27 @@ describe("sqliteBackupAdvisory (#8 data-safety)", () => {
 });
 
 describe("readiness (#982)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("is not ready until the migrations table has applied rows", async () => {
     const driver = nodeSqliteDriver(new DatabaseSync(":memory:") as never);
     const db = createD1Adapter(driver);
     // db answers but no migrations table yet → not ready
-    expect(await readiness(db)).toEqual({ ok: false, checks: { db: true, migrations: false } });
+    let result = await readiness(db);
+    expect(result).toMatchObject({ ok: false, checks: { db: true, migrations: false } });
+    expectDurations(result, ["db", "migrations"]);
     // empty migrations table → still not ready
     driver.exec("CREATE TABLE _selfhost_migrations (name TEXT, applied_at INTEGER)");
-    expect((await readiness(db)).ok).toBe(false);
+    result = await readiness(db);
+    expect(result.ok).toBe(false);
+    expectDurations(result, ["db", "migrations"]);
     // an applied migration → ready
     driver.query("INSERT INTO _selfhost_migrations (name, applied_at) VALUES (?, ?)", ["0001", 0]);
-    expect(await readiness(db)).toEqual({ ok: true, checks: { db: true, migrations: true } });
+    result = await readiness(db);
+    expect(result).toMatchObject({ ok: true, checks: { db: true, migrations: true } });
+    expectDurations(result, ["db", "migrations"]);
   });
 
   it("reports db=false and migrations=false when the SELECT 1 probe throws (db down)", async () => {
@@ -105,7 +120,9 @@ describe("readiness (#982)", () => {
       batch: () => Promise.resolve([]),
       dump: () => Promise.resolve(new ArrayBuffer(0)),
     } as unknown as D1Database;
-    expect(await readiness(throwingDb)).toEqual({ ok: false, checks: { db: false, migrations: false } });
+    const result = await readiness(throwingDb);
+    expect(result).toMatchObject({ ok: false, checks: { db: false, migrations: false } });
+    expectDurations(result, ["db", "migrations"]);
   });
 
   it("gates readiness on configured backend probes (#4) and reports each in checks", async () => {
@@ -114,10 +131,55 @@ describe("readiness (#982)", () => {
     driver.exec("CREATE TABLE _selfhost_migrations (name TEXT, applied_at INTEGER)");
     driver.query("INSERT INTO _selfhost_migrations (name, applied_at) VALUES (?, ?)", ["0001", 0]);
     // A healthy probe → still ready, reported in checks.
-    expect(await readiness(db, [{ name: "redis", check: async () => true }])).toEqual({ ok: true, checks: { db: true, migrations: true, redis: true } });
+    let result = await readiness(db, [{ name: "redis", check: async () => true }]);
+    expect(result).toMatchObject({ ok: true, checks: { db: true, migrations: true, redis: true } });
+    expectDurations(result, ["db", "migrations", "redis"]);
     // A failing probe → NOT ready (a configured backend that's down means the instance is degraded).
-    expect(await readiness(db, [{ name: "redis", check: async () => false }])).toEqual({ ok: false, checks: { db: true, migrations: true, redis: false } });
+    result = await readiness(db, [{ name: "redis", check: async () => false }]);
+    expect(result).toMatchObject({ ok: false, checks: { db: true, migrations: true, redis: false } });
+    expectDurations(result, ["db", "migrations", "redis"]);
     // A throwing probe → caught → false → not ready.
-    expect(await readiness(db, [{ name: "qdrant", check: async () => { throw new Error("unreachable"); } }])).toEqual({ ok: false, checks: { db: true, migrations: true, qdrant: false } });
+    result = await readiness(db, [
+      {
+        name: "qdrant",
+        check: async () => {
+          throw new Error("unreachable");
+        },
+      },
+    ]);
+    expect(result).toMatchObject({ ok: false, checks: { db: true, migrations: true, qdrant: false } });
+    expectDurations(result, ["db", "migrations", "qdrant"]);
+  });
+
+  it("records per-probe durations for db, migrations, false probes, and throwing probes (#2078)", async () => {
+    const driver = nodeSqliteDriver(new DatabaseSync(":memory:") as never);
+    const db = createD1Adapter(driver);
+    driver.exec("CREATE TABLE _selfhost_migrations (name TEXT, applied_at INTEGER)");
+    driver.query("INSERT INTO _selfhost_migrations (name, applied_at) VALUES (?, ?)", ["0001", 0]);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(999)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(2007)
+      .mockReturnValueOnce(3000)
+      .mockReturnValueOnce(3002)
+      .mockReturnValueOnce(4000)
+      .mockReturnValueOnce(4009);
+
+    const result = await readiness(db, [
+      { name: "redis", check: async () => false },
+      {
+        name: "qdrant",
+        check: async () => {
+          throw new Error("unreachable");
+        },
+      },
+    ]);
+
+    expect(result).toEqual({
+      ok: false,
+      checks: { db: true, migrations: true, redis: false, qdrant: false },
+      durationsMs: { db: 0, migrations: 7, redis: 2, qdrant: 9 },
+    });
   });
 });

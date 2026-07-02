@@ -12,13 +12,13 @@ export const Route = createFileRoute("/docs/github-app")({
       {
         name: "description",
         content:
-          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
+          "How the Gittensory GitHub App reviews pull requests once installed — self-hosted (recommended) or via the private managed-beta shared app. The Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
       { property: "og:title", content: "GitHub App setup — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
+          "How the Gittensory GitHub App reviews pull requests once installed — self-hosted (recommended) or via the private managed-beta shared app. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
       { property: "og:url", content: "/docs/github-app" },
     ],
@@ -32,20 +32,30 @@ function GithubApp() {
     <DocsPage
       eyebrow="Workflows"
       title="GitHub App setup"
-      description="Install Gittensory on a repo so the gittensory app reviews your pull requests, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
+      description="Install a Gittensory GitHub App on a repo so it reviews your pull requests, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
     >
       <p>
-        Once installed, the <strong>gittensory app reviews every pull request</strong> on the repos
-        you select. Each review produces two surfaces: the{" "}
-        <strong>Gittensory Orb Review Agent</strong> check run (and the advisory{" "}
+        Once installed, a <strong>Gittensory GitHub App reviews every pull request</strong> on the
+        repos you select — whether that's your own self-hosted App (recommended; see{" "}
+        <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>) or, for private
+        managed-beta operators, the shared <code>gittensory</code> App below. Each review produces
+        two surfaces: the <strong>Gittensory Orb Review Agent</strong> check run (and the advisory{" "}
         <strong>Gittensory Context</strong> check), and a single review comment posted by{" "}
         <code>gittensory[bot]</code> that updates in place as the PR evolves. Everything on this
-        page configures that review.
+        page configures that review, and applies identically whichever App you install.
       </p>
 
       <h2>Install</h2>
       <p>
-        The hosted deployment uses the GitHub App slug <code>gittensory</code>. Start from{" "}
+        <strong>Self-hosting is the recommended, default path.</strong> Run the review stack
+        yourself, then install your own GitHub App on exactly the repos you choose using the
+        self-host setup wizard — see{" "}
+        <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>.
+      </p>
+      <p>
+        The shared <code>gittensory</code> App is <strong>private / managed-beta only</strong> — it
+        is not open for general public install. If you've been invited into the managed beta, start
+        from{" "}
         <a href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noreferrer">
           the GitHub App install flow
         </a>
@@ -332,11 +342,13 @@ GITTENSORY_REVIEW_REPOS="JSONbored/gittensory"`}
       </p>
       <p>
         If the install route changes, check the deployed <code>GITHUB_APP_SLUG</code> before
-        publishing setup copy. For the hosted app, the expected slug is <code>gittensory</code>.
+        publishing setup copy. Self-hosted deployments use whatever slug you chose during setup; for
+        the shared managed-beta app the expected slug is <code>gittensory</code>.
       </p>
 
       <p>
-        New maintainers should continue with{" "}
+        New maintainers should start with{" "}
+        <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>, then continue with{" "}
         <Link to="/docs/maintainer-workflow">Maintainer workflow</Link> or the{" "}
         <Link to="/docs/beta-onboarding">beta onboarding checklist</Link> after the health endpoint
         reports clean permissions and events.

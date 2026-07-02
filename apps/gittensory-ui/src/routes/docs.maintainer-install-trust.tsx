@@ -43,7 +43,9 @@ function MaintainerInstallTrust() {
 
       <h2>Install the GitHub App</h2>
       <p>
-        Start from <Link to="/docs/github-app">GitHub App setup</Link>, then keep the first rollout
+        Start from <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link> (the
+        recommended, default path — you install your own App) or{" "}
+        <Link to="/docs/github-app">GitHub App configuration</Link>, then keep the first rollout
         narrow until the repo owner has verified permissions, webhook delivery, and public copy.
       </p>
       <ol>

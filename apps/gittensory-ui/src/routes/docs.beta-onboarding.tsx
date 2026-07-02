@@ -107,13 +107,14 @@ gittensory-mcp preflight --login your-login --json`}
 
       <h2>Maintainer journey</h2>
       <p>
-        Maintainers install the GitHub App, configure per-repo policy, preview what could appear on
-        a confirmed-miner PR, then pull context on demand.
+        Maintainers self-host the review stack and install a GitHub App, configure per-repo policy,
+        preview what could appear on a confirmed-miner PR, then pull context on demand.
       </p>
       <ol>
         <li>
-          <strong>Install the GitHub App.</strong> Choose repositories and approve permissions —
-          default posture is silence. Start with the{" "}
+          <strong>Self-host, then install the GitHub App.</strong> Choose repositories and approve
+          permissions — default posture is silence. Start with{" "}
+          <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>, then the{" "}
           <Link to="/docs/github-app">GitHub App first-10-minutes checklist</Link>.
         </li>
         <li>
@@ -241,7 +242,8 @@ GET /v1/readiness`}
           <Link to="/docs/miner-workflow">Miner workflow</Link>
         </li>
         <li>
-          Maintainers: <Link to="/docs/github-app">GitHub App</Link> →{" "}
+          Maintainers: <Link to="/docs/maintainer-self-hosting">Self-hosting</Link> →{" "}
+          <Link to="/docs/github-app">GitHub App</Link> →{" "}
           <Link to="/docs/maintainer-workflow">Maintainer workflow</Link>
         </li>
         <li>

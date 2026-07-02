@@ -114,7 +114,7 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
       ),
       nextStep: {
         miner: { label: "PR packet format", to: "/docs/miner-workflow" },
-        maintainer: { label: "Install the GitHub App", to: "/docs/github-app" },
+        maintainer: { label: "Self-host reviews", to: "/docs/maintainer-self-hosting" },
       },
     },
   ];
@@ -131,15 +131,17 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
         the contributor is doing privately via MCP at the same point.
       </p>
       <p>
-        New installations should start with <Link to="/docs/github-app">GitHub App setup</Link>:
-        install on one repo, verify installation health, preview the public panel, then decide
-        whether <strong>Gittensory Orb Review Agent</strong> should become a required check.
+        New installations should start with{" "}
+        <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>, then{" "}
+        <Link to="/docs/github-app">GitHub App configuration</Link>: install on one repo, verify
+        installation health, preview the public panel, then decide whether{" "}
+        <strong>Gittensory Orb Review Agent</strong> should become a required check.
       </p>
       <WorkflowMirror
         role="maintainer"
         steps={steps}
         minerCta={{ label: "See the contributor side", to: "/docs/miner-workflow" }}
-        maintainerCta={{ label: "Install the GitHub App", to: "/docs/github-app" }}
+        maintainerCta={{ label: "Self-host reviews", to: "/docs/maintainer-self-hosting" }}
       />
 
       <h2>On-demand commands</h2>

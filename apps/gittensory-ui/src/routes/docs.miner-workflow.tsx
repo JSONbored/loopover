@@ -103,7 +103,7 @@ function MinerWorkflow() {
       ),
       nextStep: {
         miner: { label: "Set up your MCP client", to: "/docs/mcp-clients" },
-        maintainer: { label: "Install the GitHub App", to: "/docs/github-app" },
+        maintainer: { label: "Self-host reviews", to: "/docs/maintainer-self-hosting" },
       },
     },
   ];

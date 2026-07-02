@@ -1,42 +1,34 @@
-import { readFileSync } from "node:fs";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 type BoundValue = string | number | null | Uint8Array;
 
-// node:sqlite's DatabaseSync supports serialize()/deserialize() at runtime (verified against the installed
-// Node binary), but the bundled @types/node (24.13.2) hasn't caught up with these newer methods yet — bridge
-// the gap with a narrow local type instead of widening DatabaseSync usage elsewhere to `any`.
-type SerializableDatabaseSync = DatabaseSync & {
-  serialize(): Uint8Array;
-  deserialize(data: Uint8Array): void;
-};
-
-// Replaying every migrations/*.sql file into a fresh DatabaseSync is the dominant cost of constructing a
-// TestD1Database (~1500 call sites across the suite; ~33ms/call measured, almost entirely migration replay).
-// Build the migrated schema ONCE per worker process, serialize it, and clone that snapshot for every
-// subsequent instance instead of re-executing ~90 files each time (~1000x faster per call; same resulting
-// schema, since node:sqlite's deserialize() loads the exact byte-for-byte database the snapshot came from).
-// This cache is process-local and never invalidated within a run — correct only because migrations/*.sql
-// are read-only for the lifetime of a worker process; no test mutates a migration file in-process. If that
-// ever changes, this snapshot would need invalidating too.
-let migratedSnapshot: Uint8Array | null = null;
-function getMigratedSnapshot(): Uint8Array {
-  if (migratedSnapshot) return migratedSnapshot;
-  const template = new DatabaseSync(":memory:") as SerializableDatabaseSync;
-  for (const migrationFile of readdirSync("migrations").filter((file) => file.endsWith(".sql")).sort()) {
-    template.exec(readFileSync(`migrations/${migrationFile}`, "utf8"));
-  }
-  migratedSnapshot = template.serialize();
-  template.close();
-  return migratedSnapshot;
+// Listing + reading migrations/*.sql (~90 files) on every TestD1Database construction (~1500 call sites
+// across the suite) is pure overhead: the file list and contents never change within a worker process's
+// lifetime. Cache the concatenated SQL once per process instead of re-reading it every call.
+//
+// NOT using node:sqlite's serialize()/deserialize() here: they would let one migrated template be cloned
+// per instance instead of re-executing the SQL each time (a much bigger win), but they don't exist on this
+// repo's pinned Node 22 (`.nvmrc`) at all -- confirmed absent from DatabaseSync's prototype on Node 22.23.1,
+// present only from Node 24+. An earlier version of this cache used them and passed locally on a newer Node,
+// but crashed every test in CI (`db.deserialize is not a function`) since CI runs the pinned Node 22. Stick
+// to what Node 22 actually supports.
+let migratedSql: string | null = null;
+function getMigratedSql(): string {
+  if (migratedSql) return migratedSql;
+  migratedSql = readdirSync("migrations")
+    .filter((file) => file.endsWith(".sql"))
+    .sort()
+    .map((file) => readFileSync(`migrations/${file}`, "utf8"))
+    .join("\n");
+  return migratedSql;
 }
 
 export class TestD1Database {
   readonly db = new DatabaseSync(":memory:");
 
   constructor() {
-    (this.db as SerializableDatabaseSync).deserialize(getMigratedSnapshot());
+    this.db.exec(getMigratedSql());
   }
 
   prepare(sql: string) {

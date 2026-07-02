@@ -240,6 +240,14 @@ export const pullRequestDetailSyncState = sqliteTable(
     checksSyncedAt: text("checks_synced_at"),
     lastSyncedAt: text("last_synced_at"),
     errorSummary: text("error_summary"),
+    // Durable bare-PR-state cache (#2537): mirrors GET /pulls/{n}'s mutable state/mergeable_state, refreshed on
+    // synchronize/closed/reopened webhooks and read by the freshness-guard/readiness/dup-winner call sites that
+    // don't need a live-recompute guarantee. NEVER read by the act-boundary merge/close decision
+    // (planAgentMaintenanceActions / the unified-comment mirror) or by resolveOverrideHeadSha (gate-override) --
+    // both intentionally force a live read immediately before acting.
+    prMergeableState: text("pr_mergeable_state"),
+    prState: text("pr_state"),
+    prStateFetchedAt: text("pr_state_fetched_at"),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({

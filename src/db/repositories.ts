@@ -1138,8 +1138,10 @@ export async function getRepoQueueTrendSnapshot(env: Env, repoFullName: string):
 // drizzle's `onConflictDoUpdate` strips `undefined` entries from the generated SQL `SET` clause rather than
 // writing NULL. Every "running" pre-fetch stamp (backfill.ts) relies on this to touch only `status` without
 // clearing the PREVIOUS `headSha`/`*SyncedAt` row — including the repo+PR+headSha file cache
-// (#audit-rate-headroom), which would silently stop hitting if a future edit here coalesced an omitted field to
-// `null` (e.g. `headSha: state.headSha ?? null`). Pass `null` explicitly to actually clear a column.
+// (#audit-rate-headroom) and the durable bare-PR-state cache (#2537), which would silently stop hitting if a
+// future edit here coalesced an omitted field to `null` (e.g. `headSha: state.headSha ?? null`). Pass `null`
+// explicitly to actually clear a column (this is exactly how webhook invalidation clears prMergeableState/prState
+// below).
 export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequestDetailSyncStateRecord): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -1156,6 +1158,9 @@ export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequ
       checksSyncedAt: state.checksSyncedAt,
       lastSyncedAt: state.lastSyncedAt,
       errorSummary: state.errorSummary,
+      prMergeableState: state.prMergeableState,
+      prState: state.prState,
+      prStateFetchedAt: state.prStateFetchedAt,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -1169,6 +1174,9 @@ export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequ
         checksSyncedAt: state.checksSyncedAt,
         lastSyncedAt: state.lastSyncedAt,
         errorSummary: state.errorSummary,
+        prMergeableState: state.prMergeableState,
+        prState: state.prState,
+        prStateFetchedAt: state.prStateFetchedAt,
         updatedAt: nowIso(),
       },
     });
@@ -4295,6 +4303,9 @@ function toPullRequestDetailSyncStateRecord(row: typeof pullRequestDetailSyncSta
     checksSyncedAt: row.checksSyncedAt,
     lastSyncedAt: row.lastSyncedAt,
     errorSummary: row.errorSummary,
+    prMergeableState: row.prMergeableState,
+    prState: row.prState,
+    prStateFetchedAt: row.prStateFetchedAt,
     updatedAt: row.updatedAt,
   };
 }

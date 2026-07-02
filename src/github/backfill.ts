@@ -326,6 +326,12 @@ const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40
 const MERGED_PR_FILE_HYDRATION_BATCH_SIZE: Record<BackfillMode, number> = { light: 10, full: 20, resume: 20 };
 const PULL_REQUEST_FILES_FETCH_METRIC = "gittensory_github_pull_request_files_fetch_total";
 type PullRequestFilesFetchCaller = "backfill_open_pr_details" | "backfill_merged_history" | "live_review";
+// #2537: durable-cache counter for the bare PR-state read, mirroring PULL_REQUEST_FILES_FETCH_METRIC's bounded-
+// label style (no per-PR-number labels — cardinality-safe).
+const PR_STATE_CACHE_METRIC = "gittensory_pr_state_cache_total";
+// Safety-net max age for a webhook-invalidated PR-state cache row (a dropped/missed webhook must not pin a stale
+// value forever). Short enough that a missed synchronize/closed/reopened event self-heals within one sweep tick.
+const PR_STATE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
 const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
@@ -2759,6 +2765,183 @@ export async function fetchLivePullRequest(
 ): Promise<GitHubPullRequestPayload | undefined> {
   const result = await githubJsonWithHeaders<GitHubPullRequestPayload>(env, repoFullName, `/pulls/${prNumber}`, token, githubRateLimitOptions(admissionKey)).catch(() => undefined);
   return result?.data ?? undefined;
+}
+
+// #2537: durable, webhook-invalidated cache for the bare PR-state read (GET /pulls/{n}). Unlike the request-local
+// LiveGithubFacts memo (queue/processors.ts), this survives ACROSS webhook deliveries / sweep ticks, cutting
+// repeat /pulls/{n} calls for an unchanged PR at the freshness-guard/readiness/dup-winner call sites. NEVER used
+// by the act-boundary merge/close decision (planAgentMaintenanceActions's liveMergeState read, or its
+// unified-comment mirror) or by resolveOverrideHeadSha (gate-override, queue/processors.ts) -- those force-
+// refetch by design (the #4220 fix; the gate-override race respectively) and must keep doing so; this cache
+// exists purely for the OTHER, non-authoritative reads.
+function isPrStateCacheFresh(fetchedAt: string | null | undefined): boolean {
+  if (!fetchedAt) return false;
+  const fetchedAtMs = Date.parse(fetchedAt);
+  if (!Number.isFinite(fetchedAtMs)) return false;
+  return Date.now() - fetchedAtMs < PR_STATE_CACHE_MAX_AGE_MS;
+}
+
+/** Best-effort write-through for the PR-state cache fields. Always stamps prStateFetchedAt = now on a successful
+ *  live read (even when the live value itself is undefined/null — a confirmed-empty read is still a fresh read,
+ *  distinct from "never fetched"), so a run of undefined reads doesn't force every caller back to GitHub. Preserves
+ *  the row's own `status` (defaulting to "never_synced" only when no row exists yet) — this write must NEVER force
+ *  `status: "complete"`, since `status` is shared with the FILES-cache staleness machinery
+ *  (backfillOpenPullRequestDetails / refreshPullRequestDetails treat `status !== "complete"` as "needs a files
+ *  resync"); a PR-state-only write claiming `complete` would falsely mark a files sync that never happened. A
+ *  write failure is swallowed (#2537 fail-open: the cache is an optimization, never a correctness dependency —
+ *  every caller already tolerates a live-fetch fallback). */
+async function writeThroughPrStateCache(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  previousStatus: PullRequestDetailSyncStateRecord["status"] | undefined,
+  fields: { prMergeableState?: string | null; prState?: string | null; headSha?: string | null },
+): Promise<void> {
+  incr(PR_STATE_CACHE_METRIC, { field: "write", result: "set" });
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber: prNumber,
+    status: previousStatus ?? "never_synced",
+    prStateFetchedAt: nowIso(),
+    ...fields,
+  }).catch(() => undefined);
+}
+
+/**
+ * Shared live-fetch for the three cached PR-state readers below (#2537 review fix). A SINGLE `GET /pulls/{n}`
+ * already returns `mergeable_state`, `state`, AND `head.sha` together, so a cache miss on any ONE field now
+ * fetches and write-throughs ALL THREE at once under the one shared `prStateFetchedAt` stamp they share --
+ * instead of writing only the field the caller happened to ask for. Without this, a fresh write for field A
+ * would make an UN-fetched field B look "fresh" to the NEXT reader (they share one timestamp), so that reader
+ * would silently return `undefined` for a field that was simply never populated, mistaking it for a
+ * confirmed-empty GitHub value. Reusing the full-payload fetch costs nothing extra: all three narrow fetchers
+ * (`fetchLivePullRequestMergeState` / `fetchLivePullRequestState` / `fetchLivePullRequestHeadSha`) already hit
+ * this exact same endpoint, just extracting one field each -- this only changes what the CACHED wrappers fetch
+ * internally; those narrow fetchers stay untouched for their other, uncached, act-boundary callers.
+ * Returns the full payload, or `undefined` on a failed fetch -- in which case the cache is left untouched
+ * entirely (a failed live read must not poison it with a false "confirmed fresh" stamp).
+ */
+async function fetchAndCachePrStateFields(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+  previousStatus: PullRequestDetailSyncStateRecord["status"] | undefined,
+): Promise<GitHubPullRequestPayload | undefined> {
+  const live = await fetchLivePullRequest(env, repoFullName, prNumber, token, admissionKey);
+  if (!live) return undefined;
+  const liveHeadSha = live.head?.sha;
+  await writeThroughPrStateCache(env, repoFullName, prNumber, previousStatus, {
+    prMergeableState: live.mergeable_state ?? null,
+    prState: live.state ?? null,
+    // Omit (not null) when the live payload carries no head SHA -- mirrors primeDurablePrStateCache's own
+    // PARTIAL-UPDATE CONTRACT guard below: a PR-state write must never CLEAR the headSha the files cache
+    // (#audit-rate-headroom) relies on.
+    ...(liveHeadSha ? { headSha: liveHeadSha } : {}),
+  });
+  return live;
+}
+
+/** Prime the durable PR-state cache (#2537) from an ALREADY-FETCHED live payload (e.g. the sweep-resync's
+ *  `fetchLivePullRequest` read), so OTHER readers (readiness, dup-winner) benefit from this already-paid-for
+ *  fetch instead of re-fetching moments later. Best-effort, mirrors writeThroughPrStateCache's own "preserve
+ *  prior status" contract. */
+export async function primeDurablePrStateCache(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  live: { mergeable_state?: string | null; state?: string | null; head?: { sha?: string | null } | null } | undefined,
+): Promise<void> {
+  if (!live) return;
+  const existing = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  const liveHeadSha = live.head?.sha;
+  await writeThroughPrStateCache(env, repoFullName, prNumber, existing?.status, {
+    prMergeableState: live.mergeable_state ?? null,
+    prState: live.state ?? null,
+    // Omit (not null) when the live payload carries no head SHA — a PR-state-only write must never CLEAR the
+    // headSha the files cache (#audit-rate-headroom) relies on (PARTIAL-UPDATE CONTRACT: omitted = unchanged).
+    ...(liveHeadSha ? { headSha: liveHeadSha } : {}),
+  });
+}
+
+/** Cached read of the PR's live mergeable_state, backed by pull_request_detail_sync_state (#2537). A fresh cache
+ *  row (webhook-invalidated, capped at PR_STATE_CACHE_MAX_AGE_MS) is served without a GitHub call; otherwise
+ *  fetches live via fetchAndCachePrStateFields (which write-throughs ALL THREE cached fields together, not just
+ *  this one, since they share one fetchedAt stamp) and returns this field from that shared response.
+ *  Fail-open throughout: any cache read/write hiccup falls back to / degrades to a live fetch, never blocks it. */
+export async function cachedFetchLivePullRequestMergeState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (cached && isPrStateCacheFresh(cached.prStateFetchedAt)) {
+    incr(PR_STATE_CACHE_METRIC, { field: "mergeable_state", result: "hit" });
+    return cached.prMergeableState ?? undefined;
+  }
+  incr(PR_STATE_CACHE_METRIC, { field: "mergeable_state", result: "miss" });
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  return live?.mergeable_state ?? undefined;
+}
+
+/** Cached read of the PR's live state (open/closed), backed by pull_request_detail_sync_state (#2537). Same
+ *  freshness/fail-open/shared-fetch contract as cachedFetchLivePullRequestMergeState. */
+export async function cachedFetchLivePullRequestState(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (cached && isPrStateCacheFresh(cached.prStateFetchedAt)) {
+    incr(PR_STATE_CACHE_METRIC, { field: "state", result: "hit" });
+    return cached.prState ?? undefined;
+  }
+  incr(PR_STATE_CACHE_METRIC, { field: "state", result: "miss" });
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  return live?.state ?? undefined;
+}
+
+/** Cached read of the PR's live head SHA, backed by pull_request_detail_sync_state (#2537). Reuses the EXISTING
+ *  headSha column (written by the files-cache path too) as the cached value; a cache hit still respects the same
+ *  PR_STATE_CACHE_MAX_AGE_MS freshness window as the other two fields (headSha alone predates this issue and
+ *  carries no fetchedAt guarantee, so gate it on prStateFetchedAt like its siblings). NOT used by
+ *  resolveOverrideHeadSha (gate-override) -- that call site is security-sensitive and intentionally stays on
+ *  the raw live fetchLivePullRequestHeadSha instead (see queue/processors.ts). */
+export async function cachedFetchLivePullRequestHeadSha(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  const cached = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
+  if (cached && isPrStateCacheFresh(cached.prStateFetchedAt) && cached.headSha) {
+    incr(PR_STATE_CACHE_METRIC, { field: "head_sha", result: "hit" });
+    return cached.headSha;
+  }
+  incr(PR_STATE_CACHE_METRIC, { field: "head_sha", result: "miss" });
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  return live?.head?.sha ?? undefined;
+}
+
+/** Invalidate the durable PR-state cache fields (#2537) — called on synchronize/closed/reopened. Explicit null
+ *  (not omitted) so the PARTIAL-UPDATE CONTRACT actually clears the stale value rather than leaving it. Best-
+ *  effort by design at the call site (never blocks webhook processing on a cache-invalidation write). */
+export async function invalidatePrStateCache(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+  const existing = await getPullRequestDetailSyncState(env, repoFullName, pullNumber).catch(() => null);
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber,
+    status: existing?.status ?? "never_synced",
+    prMergeableState: null,
+    prState: null,
+    prStateFetchedAt: null,
+  });
 }
 
 /** Resolve the OPEN PRs associated with a commit SHA via the REST `GET /repos/{owner}/{repo}/commits/{sha}/pulls`

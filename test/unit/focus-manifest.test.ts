@@ -1090,24 +1090,32 @@ describe("parseFocusManifest gate config", () => {
     expect(m.warnings.some((w) => /contentLane\.entryFileGlob.*truncated/.test(w))).toBe(true);
   });
 
-  it("SECURITY (ReDoS): a glob with too many wildcards is REJECTED at parse time rather than ever reaching RegExp compilation", () => {
-    // 5 chained single-segment wildcards is empirically catastrophic against an adversarial input (verified
-    // ~19s in manual testing) — must never survive parsing to reach globToRegExp at all.
+  it("SECURITY (ReDoS): a glob with too many wildcard GROUPS is REJECTED at parse time rather than ever reaching RegExp compilation", () => {
+    // Shares change-guardrail.ts's countWildcardGroups/MAX_GLOB_WILDCARD_GROUPS — see that file for the
+    // benchmark proving 3+ chained wildcard groups risk catastrophic backtracking. 5 single-segment groups here
+    // is well over the cap; must never survive parsing to reach globToRegExp at all.
     const pathological = "registry/*-*-*-*-*-final.json";
     const m = parseFocusManifest({ contentLane: { entryFileGlob: pathological, collectionField: "items" } });
     expect(m.contentLane.entryFileGlob).toBeNull();
     expect(m.contentLane.present).toBe(false); // entryFileGlob is REQUIRED — a rejected glob degrades to absent
     expect(m.warnings.some((w) => /contentLane\.entryFileGlob.*too many wildcards/.test(w))).toBe(true);
-    // A glob AT the cap (3 wildcards) is accepted; the optional providerFileGlob/artifactGlob fields are dropped
-    // individually (with a warning) without invalidating the whole block, since only entryFileGlob/collectionField
-    // are required.
+    // A glob AT the cap (2 wildcard groups) is accepted; the optional providerFileGlob/artifactGlob fields are
+    // dropped individually (with a warning) without invalidating the whole block, since only
+    // entryFileGlob/collectionField are required.
     const atCap = parseFocusManifest({
-      contentLane: { entryFileGlob: "registry/*/*/*.json", providerFileGlob: "providers/*-*-*-*-*.json", collectionField: "items" },
+      contentLane: { entryFileGlob: "registry/*/*.json", providerFileGlob: "providers/*-*-*-*-*.json", collectionField: "items" },
     });
     expect(atCap.contentLane.present).toBe(true);
-    expect(atCap.contentLane.entryFileGlob).toBe("registry/*/*/*.json");
+    expect(atCap.contentLane.entryFileGlob).toBe("registry/*/*.json");
     expect(atCap.contentLane.providerFileGlob).toBeNull();
     expect(atCap.warnings.some((w) => /contentLane\.providerFileGlob.*too many wildcards/.test(w))).toBe(true);
+  });
+
+  it("REGRESSION: a `**` globstar plus a single `*` — 3 raw star CHARACTERS but only 2 wildcard GROUPS — is accepted, not rejected (counting raw characters instead of groups would wrongly reject this legitimate shape)", () => {
+    const m = parseFocusManifest({ contentLane: { entryFileGlob: "public/**/*.json", collectionField: "items" } });
+    expect(m.contentLane.present).toBe(true);
+    expect(m.contentLane.entryFileGlob).toBe("public/**/*.json");
+    expect(m.warnings.some((w) => /entryFileGlob.*too many wildcards/.test(w))).toBe(false);
   });
 
   it("contentLaneConfigToJson returns null for an absent config, and omits unset optional fields", () => {

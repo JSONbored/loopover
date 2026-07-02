@@ -23,14 +23,18 @@ function canonicalize(value: string): string {
 // matchesAny below) so every caller — present or future, direct or indirect, including
 // content-lane/spec-resolver.ts's config-driven globs — is protected automatically. A caller with a STRICTER
 // fail direction (e.g. matchesAny's fail-toward-guarding for a security guardrail) overrides at its own layer.
-const MAX_GLOB_WILDCARD_GROUPS = 2;
+// Exported so any OTHER glob-safety check in this codebase (e.g. focus-manifest.ts's parse-time
+// normalizeOptionalGlob, which rejects an over-complex contentLane.*Glob before it ever reaches globToRegExp)
+// shares this exact threshold instead of drifting with its own re-derived number.
+export const MAX_GLOB_WILDCARD_GROUPS = 2;
 
 /** Count `*` GROUPS in `glob` — a `**` pair is ONE group (it compiles to a single `.*`, see globToRegExp), not
  *  two. Mirrors globToRegExp's own tokenization exactly (including consuming a `**`'s trailing `/`) so the count
  *  reflects the actual number of backtracking-capable groups the compiled RegExp will contain, not raw `*`
  *  character count (which would double-count every globstar and reject legitimate globs like
- *  "public/**\/*.json" — 2 real groups — as if they were 3-groups-dangerous). */
-function countWildcardGroups(glob: string): number {
+ *  "public/**\/*.json" — 2 real groups — as if they were 3-groups-dangerous). Exported for reuse by any other
+ *  glob-safety check in this codebase — see MAX_GLOB_WILDCARD_GROUPS above. */
+export function countWildcardGroups(glob: string): number {
   let count = 0;
   for (let i = 0; i < glob.length; i += 1) {
     if (glob.charAt(i) !== "*") continue;

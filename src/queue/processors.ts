@@ -2310,10 +2310,12 @@ async function putTransientKey(
 // would read the same stale-but-still-"current" state, both pass their own freshness checks, and both
 // independently fire a mutating call. This is a lightweight interim mutex (a full per-PR Durable Object /
 // SubmissionLock is a separate, more-involved follow-up — see the TODO in env.d.ts) built on the SAME transient
-// cache used for CI-completion coalescing above, claimed ATOMICALLY (see claimPrActuationLock) so two racing
+// cache used for CI-completion coalescing above, claimed ATOMICALLY (see claimTransientLock) so two racing
 // deliveries can never both win the claim — a short TTL, best-effort release. A lock-contended caller fails
 // OPEN (returns false / skips this pass) rather than blocking — the delivery holding the lock is evaluating
-// the SAME PR, and the periodic sweep is the backstop if this specific trigger is dropped.
+// the SAME PR, and the periodic sweep is the backstop if this specific trigger is dropped. A cache adapter with
+// no claim() primitive gets NO exclusivity at all (every call proceeds) rather than a get-then-set pair that
+// only *looks* atomic — see claimTransientLock's doc comment for why that fallback was removed.
 //
 // KNOWN LIMITATION: the lock value is a constant, not a per-holder ownership token, so release does not verify
 // it still owns the key — if a holder ran past the TTL, a later claimer's live lock could be deleted by the
@@ -2331,26 +2333,11 @@ export async function claimPrActuationLock(
   repoFullName: string,
   prNumber: number,
 ): Promise<boolean> {
-  const key = prActuationLockKey(repoFullName, prNumber);
-  // Atomic claim (#2129, mirroring claimAgentMaintenanceLock): a get-then-set pair has a window between the
-  // read and the write where two concurrent deliveries for the SAME PR can both observe an absent key and both
-  // claim it, defeating this mutex entirely. env.SELFHOST_TRANSIENT_CACHE.claim performs the check-and-set as
-  // one operation (Redis SET NX server-side), closing that window. Falls back to the non-atomic get/set pair
-  // only for a cache adapter that hasn't implemented claim yet — strictly no worse than this function's prior
-  // behavior.
-  if (env.SELFHOST_TRANSIENT_CACHE?.claim) {
-    try {
-      return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", PR_ACTUATION_LOCK_TTL_SECONDS);
-    } catch {
-      return true; // fail open — see the doc comment above.
-    }
-  }
-  // getTransientKey/putTransientKey already fail open internally (a missing cache or a thrown read/write error
-  // both resolve rather than throw), so this never needs its own try/catch — a cache fault surfaces here as
-  // "no lock held", which correctly falls through to claiming it.
-  if (await getTransientKey(env, key)) return false;
-  await putTransientKey(env, key, "1", PR_ACTUATION_LOCK_TTL_SECONDS);
-  return true;
+  return claimTransientLock(
+    env,
+    prActuationLockKey(repoFullName, prNumber),
+    PR_ACTUATION_LOCK_TTL_SECONDS,
+  );
 }
 export async function releasePrActuationLock(
   env: Env,

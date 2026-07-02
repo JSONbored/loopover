@@ -3732,7 +3732,10 @@ describe("queue processors", () => {
     expect(calls).toEqual(["claim"]); // never falls through to the racy get/set pair when claim is available
   });
 
-  it("claimPrActuationLock falls back to the get/set pair and still denies a held key when the cache has no claim() (#2135)", async () => {
+  it("claimPrActuationLock returns true unconditionally when the cache has no claim() — no false exclusivity guarantee (#2135, review round 2)", async () => {
+    // Mirrors claimAgentMaintenanceLock's #confirmed-bug fix: a get-then-set pair (even with a re-read) is not
+    // a real exclusivity guarantee under concurrent load, so a cache without claim() now gets NO exclusivity at
+    // all rather than a fallback that only looks atomic.
     const values = new Map<string, string>();
     const env = createTestEnv({
       SELFHOST_TRANSIENT_CACHE: {
@@ -3741,7 +3744,23 @@ describe("queue processors", () => {
       },
     });
     expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(false);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+  });
+
+  it("REGRESSION (#2135, review round 2): claimPrActuationLock does not falsely claim exclusivity for two genuinely concurrent callers when the cache has no claim()", async () => {
+    const values = new Map<string, string>();
+    const yieldThenRun = <T,>(fn: () => T): Promise<T> => new Promise((resolve) => queueMicrotask(() => resolve(fn())));
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: (key: string) => yieldThenRun(() => values.get(key) ?? null),
+        set: (key: string, value: string) => yieldThenRun(() => { values.set(key, value); }),
+      },
+    });
+    const [first, second] = await Promise.all([
+      claimPrActuationLock(env, "owner/act-repo", 7),
+      claimPrActuationLock(env, "owner/act-repo", 7),
+    ]);
+    expect([first, second]).toEqual([true, true]);
   });
 
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {

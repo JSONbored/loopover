@@ -4,6 +4,7 @@ import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as repositoriesModule from "../../src/db/repositories";
+import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import * as sentryModule from "../../src/selfhost/sentry";
 import {
   listCollisionEdges,
@@ -11823,6 +11824,10 @@ describe("one-shot reopen prevention", () => {
     // Simulates a DIFFERENT concurrent delivery for the same PR already in flight (e.g. the draft-dodge sibling
     // racing this reopen) — the lock key it would hold is pre-claimed here.
     await env.SELFHOST_TRANSIENT_CACHE?.set("pr-actuation-lock:jsonbored/gittensory#42", "1", 60);
+    // REGRESSION (#2135, review round 3): a contended lock previously returned `false`, which the caller's old
+    // boolean contract read as "not blocked, proceed to normal re-review" -- this spy proves that no longer
+    // happens; the webhook path must stop BEFORE resolveRepositorySettings, the first call the re-review makes.
+    const resolveSettingsSpy = vi.spyOn(repositorySettingsModule, "resolveRepositorySettings");
 
     await processJob(env, {
       type: "github-webhook",
@@ -11834,6 +11839,7 @@ describe("one-shot reopen prevention", () => {
     expect(calls.some((call) => call.method === "PATCH" && call.url.endsWith("/pulls/42"))).toBe(false);
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ n: number }>();
     expect(audit?.n).toBe(0); // no decision recorded either way — the in-flight delivery owns this pass
+    expect(resolveSettingsSpy).not.toHaveBeenCalled(); // the normal re-review pass never started
   });
 
   it("does NOT re-close a disallowed reopen on an OBSERVE-only / un-opted-in repo (autonomy floor, #review-audit)", async () => {

@@ -3782,19 +3782,21 @@ async function processGitHubWebhook(
       // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
       // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
       // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
-      // closed their own PR) stay reopenable; the bot's own nightly-re-review reopens are exempt.
-      if (
-        payload.action === "reopened" &&
-        installationId &&
-        (await maybeRecloseDisallowedReopen(
-          env,
-          deliveryId,
-          installationId,
-          repoFullName,
-          pr,
-          payload,
-        ).catch(() => false))
-      ) {
+      // closed their own PR) stay reopenable; the bot's own nightly-re-review reopens are exempt. A contended
+      // actuation lock ALSO skips the re-review (#2135, review round 3) — the winning delivery already owns
+      // this PR, so this pass must not evaluate/mutate it concurrently under a false "not blocked" reading.
+      const reopenOutcome: ReopenRecloseOutcome =
+        payload.action === "reopened" && installationId
+          ? await maybeRecloseDisallowedReopen(
+              env,
+              deliveryId,
+              installationId,
+              repoFullName,
+              pr,
+              payload,
+            ).catch(() => "allowed" as const)
+          : "allowed";
+      if (reopenOutcome === "reclosed" || reopenOutcome === "lock_contended") {
         // Stamp the delivery processed like every other owning path — the early return otherwise leaves the
         // webhook_events row stuck at "queued"/its body hash, mis-reporting the delivery as un-acked (#review-audit).
         await recordWebhookEvent(env, {
@@ -7962,12 +7964,18 @@ async function closeDraftDodgeAttemptIfBlocked(
   }
 }
 
+/** Outcome of {@link maybeRecloseDisallowedReopen}: "reclosed" and "lock_contended" both mean the caller must
+ *  skip the normal re-review pass — a plain boolean can't distinguish "evaluated, not blocked" from "never
+ *  evaluated, another delivery owns this PR", and conflating them let a contended pass fall through to a
+ *  concurrent re-review (#2135, review round 3). */
+type ReopenRecloseOutcome = "reclosed" | "allowed" | "lock_contended";
+
 /** Reopen-prevention (#one-shot-reopen): re-close a contributor's reopen of a PR that gittensory / a maintainer
- *  closed (closes are one-shot). Returns true when it re-closed (caller skips the re-review). Exempt: the bot's
- *  own re-review reopens, owner/admin reopens, and a contributor reopening a PR they CLOSED THEMSELVES.
+ *  closed (closes are one-shot). Returns "reclosed" when it re-closed (caller skips the re-review). Exempt: the
+ *  bot's own re-review reopens, owner/admin reopens, and a contributor reopening a PR they CLOSED THEMSELVES.
  *  Per-PR actuation-locked (#2135): a concurrent delivery for the same PR (e.g. a check_suite completion racing
- *  this reopen) must not evaluate + potentially mutate this PR at the same time. Lock-contended fails open
- *  (returns false, falls through to normal re-review) — the delivery holding the lock is handling this PR. */
+ *  this reopen) must not evaluate + potentially mutate this PR at the same time. Lock-contended returns
+ *  "lock_contended" — the caller skips its own re-review too, since the delivery holding the lock owns this PR. */
 async function maybeRecloseDisallowedReopen(
   env: Env,
   deliveryId: string,
@@ -7975,10 +7983,10 @@ async function maybeRecloseDisallowedReopen(
   repoFullName: string,
   pr: PullRequestRecord,
   payload: GitHubWebhookPayload,
-): Promise<boolean> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) return false;
+): Promise<ReopenRecloseOutcome> {
+  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) return "lock_contended";
   try {
-    return await recloseDisallowedReopenIfNeeded(
+    const reclosed = await recloseDisallowedReopenIfNeeded(
       env,
       deliveryId,
       installationId,
@@ -7986,6 +7994,7 @@ async function maybeRecloseDisallowedReopen(
       pr,
       payload,
     );
+    return reclosed ? "reclosed" : "allowed";
   } finally {
     await releasePrActuationLock(env, repoFullName, pr.number);
   }

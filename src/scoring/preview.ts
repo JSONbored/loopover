@@ -933,6 +933,21 @@ export function labelMatchesPattern(label: string, pattern: string): boolean {
 // safe and byte-identical to recompiling on every call.
 const labelPatternRegExpCache = new Map<string, RegExp>();
 
+// labelPatternToRegExp compiles each `*` to `.*`, so chained wildcards in a registry-supplied
+// label_multipliers key can backtrack catastrophically on .test() — the same class of ReDoS
+// globToRegExp guards against in change-guardrail.ts (#2445). fnmatch label patterns only
+// use single-segment `*` wildcards (no `**` globstar), so each `*` is one wildcard group.
+const MAX_LABEL_PATTERN_WILDCARD_GROUPS = 2;
+const NEVER_MATCHES_LABEL_PATTERN = /^(?!)$/;
+
+function countLabelPatternWildcardGroups(pattern: string): number {
+  let count = 0;
+  for (let i = 0; i < pattern.length; i += 1) {
+    if (pattern.charAt(i) === "*") count += 1;
+  }
+  return count;
+}
+
 // Upstream resolves label multipliers by matching each configured key as a Python `fnmatch` GLOB, not a
 // literal string: `fnmatch(label.lower(), pattern.lower())` in
 // gittensor/validator/oss_contributions/label_resolution.py, so a repo can configure `type:*`, `kind/*`, or
@@ -946,6 +961,10 @@ const labelPatternRegExpCache = new Map<string, RegExp>();
 function labelPatternToRegExp(pattern: string): RegExp {
   const cached = labelPatternRegExpCache.get(pattern);
   if (cached !== undefined) return cached;
+  if (countLabelPatternWildcardGroups(pattern) > MAX_LABEL_PATTERN_WILDCARD_GROUPS) {
+    labelPatternRegExpCache.set(pattern, NEVER_MATCHES_LABEL_PATTERN);
+    return NEVER_MATCHES_LABEL_PATTERN;
+  }
   let regex = "";
   let i = 0;
   while (i < pattern.length) {

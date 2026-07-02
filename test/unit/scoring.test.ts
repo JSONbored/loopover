@@ -1913,4 +1913,15 @@ describe("label pattern matcher memoization (#2106)", () => {
     expect(labelMatchesPattern("bug", "bug")).toBe(true);
     expect(labelMatchesPattern("bugfix", "bug")).toBe(false);
   });
+
+  it("rejects over-complex wildcard label patterns instead of compiling a ReDoS-prone RegExp (#2456)", () => {
+    const overComplex = "*:*:*:*:*";
+    expect(labelMatchesPattern("type:bug-fix", overComplex)).toBe(false);
+    expect(labelMatchesPattern("anything", overComplex)).toBe(false);
+    // Repeated calls hit the cached never-match matcher.
+    expect(labelMatchesPattern("type:bug-fix", overComplex)).toBe(false);
+    // Two wildcards (at the cap) still compile and match normally.
+    expect(labelMatchesPattern("a:b", "*:*")).toBe(true);
+    expect(labelMatchesPattern("type:bug-fix", "type:*")).toBe(true);
+  });
 });

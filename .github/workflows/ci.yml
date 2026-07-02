@@ -22,7 +22,10 @@ jobs:
   # On push to main everything runs regardless (keeps the coverage baseline solid).
   changes:
     name: changes
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && '["ubuntu-latest"]' || '["self-hosted","gittensory"]') }}
+    # Just actions/checkout + git diff --check + dorny/paths-filter -- no build/test work, and it runs FIRST
+    # to decide whether validate-code needs to run at all, so gating it behind the same contended self-hosted
+    # queue it's meant to protect was circular (#2507).
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
@@ -364,7 +367,10 @@ jobs:
   security:
     name: security
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && '["ubuntu-latest"]' || '["self-hosted","gittensory"]') }}
+    # actions/dependency-review-action needs no self-hosted toolchain/cache (checkout + a lockfile diff), so
+    # this always runs on ubuntu-latest -- keeping it self-hosted for same-repo PRs only competed for the
+    # scarce self-hosted pool with validate-code, the one job that actually benefits from it (#2501).
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -386,7 +392,9 @@ jobs:
     name: validate
     needs: [changes, validate-code, security]
     if: ${{ always() }}
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && '["ubuntu-latest"]' || '["self-hosted","gittensory"]') }}
+    # Pure result-aggregation (reads needs.*.result, echoes pass/fail) -- no build/test work, so it never
+    # needed the self-hosted pool's cached toolchain (#2507).
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: All required jobs passed

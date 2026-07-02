@@ -29,7 +29,7 @@ jobs:
       ui: ${{ steps.filter.outputs.ui }}
       uiContract: ${{ steps.filter.outputs.uiContract }}
       mcp: ${{ steps.filter.outputs.mcp }}
-      mcpCliCluster: ${{ steps.filter.outputs.mcpCliCluster }}
+      mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
       rees: ${{ steps.filter.outputs.rees }}
     steps:
       - name: Checkout
@@ -43,10 +43,6 @@ jobs:
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         with:
           filters: |
-            # MAINTENANCE NOTE: `mcpCliCluster` below intentionally copies every non-src/test category from
-            # this `backend` filter verbatim (see its own comment for why). If you add/remove a category HERE
-            # (e.g. a new config-file glob), mirror the change there too, or the MCP CLI test cluster could
-            # start skipping on a category this filter now considers backend-relevant.
             backend:
               - 'src/**'
               - 'test/**'
@@ -81,21 +77,23 @@ jobs:
               - 'packages/gittensory-mcp/**'
               - 'scripts/check-mcp-package.mjs'
               - 'package-lock.json'
-            # The MCP CLI test cluster (test/unit/mcp-cli-*.test.ts, mcp-discovery, mcp-output-schemas): slow
-            # (subprocess-per-test / real MCP protocol handshakes, ~115s combined) and unconditionally bundled
-            # into `Test with coverage` today. DELIBERATE DESIGN: this is `backend` above, VERBATIM, for every
-            # category except src/**/test/** -- only those two are narrowed to the specific files this cluster
-            # actually touches (that's where the real savings are: most backend PRs touch SOME src/test file,
-            # but rarely these specific ones). Every other backend-relevant category (config, scripts, deps,
-            # migrations, the workflow file itself) is copied unchanged, so this can never silently drift out
-            # of sync with what `backend` already knows can affect a test run -- an earlier, narrower version
-            # of this filter missed test/helpers/**, vitest*.config.ts, migrations/**, and ci.yml itself before
-            # this was corrected to mirror `backend` directly instead of re-deriving a second opinion.
-            # Skipping tests can widen what Codecov's patch-coverage number can catch (a changed line this
-            # cluster uniquely covers just fails patch coverage loudly) but does NOT catch a pure runtime/
-            # dependency-behavior regression with no line-coverage signature -- hence copying `backend`'s
-            # non-src/test categories exactly, rather than re-guessing which of them matter.
-            mcpCliCluster:
+            # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
+            # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
+            # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
+            # and mcp-discovery.test.ts spawns packages/gittensory-mcp/bin/gittensory-mcp.js as a real
+            # subprocess via StdioClientTransport -- none of the 6 ever load root src/ in-process. This mirrors
+            # the `mcp` filter's own established trust boundary above (a self-contained package build).
+            # test/unit/mcp-output-schemas.test.ts is DELIBERATELY NOT in this filter: unlike the other 6, it
+            # imports src/mcp/server.ts in-process, and server.ts alone directly imports ~40 other src/ modules
+            # (src/github/app.ts, src/signals/slop.ts, src/settings/autonomy.ts, src/orb/analytics.ts, and
+            # most of src/services/** + src/signals/**), so its real dependency surface is practically all of
+            # `backend`. An earlier version of this filter hand-picked a handful of "the src files that affect
+            # it" for that file too -- that guess missed dozens of server.ts's actual direct imports, which was
+            # a reachable CI blind spot (a backend change outside the guessed list could regress MCP server
+            # behavior with zero test rerun to catch it). Enumerating that surface by hand is not safely
+            # possible, so mcp-output-schemas.test.ts is simply never excluded -- it always runs whenever
+            # `backend` does, at the cost of keeping its slice of the suite's runtime unconditional.
+            mcpCliHarness:
               - 'vitest*.config.ts'
               - 'tsconfig*.json'
               - 'package.json'
@@ -104,16 +102,9 @@ jobs:
               - 'migrations/**'
               - '.github/workflows/**'
               - 'packages/gittensory-mcp/**'
-              - 'src/mcp/**'
-              - 'src/auth/security.ts'
-              - 'src/db/repositories.ts'
-              - 'src/registry/normalize.ts'
-              - 'src/registry/sync.ts'
-              - 'src/services/repo-outcome-patterns.ts'
               - 'test/helpers/**'
               - 'test/unit/mcp-cli-*.test.ts'
               - 'test/unit/mcp-discovery.test.ts'
-              - 'test/unit/mcp-output-schemas.test.ts'
               - 'test/unit/support/mcp-cli-harness.ts'
             rees:
               - 'review-enrichment/**'
@@ -171,9 +162,11 @@ jobs:
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         env:
           VITEST_JUNIT_PATH: reports/junit/vitest.xml
-          # Push always runs the full suite (keeps the coverage baseline solid); a PR skips the slow MCP CLI
-          # cluster only when its real dependency surface (see the mcpCliCluster filter above) didn't change.
-          SKIP_MCP_CLI_CLUSTER: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliCluster != 'true' }}
+          # Push always runs the full suite (keeps the coverage baseline solid); a PR skips only the 6
+          # self-contained MCP CLI-harness files when their real dependency surface (the mcpCliHarness filter
+          # above) didn't change. mcp-output-schemas.test.ts is never in the exclude list -- see that filter's
+          # comment for why it can't be safely narrowed.
+          SKIP_MCP_CLI_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliHarness != 'true' }}
         # Pinned to the self-hosted runner's actual Docker CPU quota (4), not "100%": Node's os.cpus()
         # reports the HOST's full core count inside the container, ignoring the cgroup CPU limit, so
         # --maxWorkers=100% oversubscribed the worker pool far past what the runner can actually execute
@@ -181,12 +174,11 @@ jobs:
         # standard 4-core GitHub runner makes 4 the right number there too.
         run: |
           EXCLUDE_ARGS=()
-          if [ "$SKIP_MCP_CLI_CLUSTER" = "true" ]; then
-            echo "Skipping the MCP CLI test cluster (no mcp-relevant paths changed)."
+          if [ "$SKIP_MCP_CLI_HARNESS" = "true" ]; then
+            echo "Skipping the self-contained MCP CLI-harness tests (no packages/gittensory-mcp-relevant paths changed)."
             EXCLUDE_ARGS=(
               --exclude "test/unit/mcp-cli-*.test.ts"
               --exclude "test/unit/mcp-discovery.test.ts"
-              --exclude "test/unit/mcp-output-schemas.test.ts"
             )
           fi
           npm run test:coverage -- --maxWorkers=4 "${EXCLUDE_ARGS[@]}"

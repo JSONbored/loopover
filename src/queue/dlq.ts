@@ -1,6 +1,10 @@
 import { getWebhookEvent, recordAuditEvent } from "../db/repositories";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
+import { incr } from "../selfhost/metrics";
 import type { JobMessage, JsonValue } from "../types";
+
+const DLQ_DEAD_LETTERED_METRIC = "gittensory_dlq_dead_lettered_total";
+const DLQ_REDRIVEN_METRIC = "gittensory_dlq_redriven_total";
 
 /**
  * DLQ consumer for both `gittensory-jobs-dlq` (maintenance lane) and `gittensory-webhooks-dlq` (the
@@ -20,6 +24,8 @@ export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env,
     const body = message.body as { type?: string } | null | undefined;
     const jobType = body?.type ?? "unknown";
     const webhook = jobType === "github-webhook" ? (message.body as Extract<JobMessage, { type: "github-webhook" }> & { redriven?: boolean }) : null;
+    const redriven = webhook?.redriven === true;
+    incr(DLQ_DEAD_LETTERED_METRIC, { jobType, redriven: redriven ? "true" : "false" });
     console.error(
       JSON.stringify({
         level: "error",
@@ -36,17 +42,25 @@ export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env,
       targetKey: `dlq:${jobType}:${message.id}`,
       outcome: "error",
       detail: `Job of type '${jobType}' exhausted all retries and was dead-lettered.`,
-      metadata: { messageId: message.id, jobType, redriven: webhook?.redriven === true } satisfies Record<string, JsonValue>,
+      metadata: { messageId: message.id, jobType, redriven } satisfies Record<string, JsonValue>,
     }).catch(() => undefined);
     // Self-heal a recoverable webhook: re-drive ONCE (not already re-driven, and not already processed).
-    if (redriveWebhooks && webhook && webhook.redriven !== true && webhook.deliveryId) {
+    if (redriveWebhooks && webhook && !redriven && webhook.deliveryId) {
       const event = await getWebhookEvent(env, webhook.deliveryId).catch(() => null);
       if (event?.status !== "processed") {
         // If the webhook dead-lettered because the shared GitHub REST budget was exhausted, re-drive it AFTER the
         // reset (retry-until-recovered) rather than immediately re-failing it. (#audit-rate-headroom)
         const resetAt = await shouldWaitForGitHubRateLimit(env).catch(() => undefined);
         const options = resetAt ? { delaySeconds: delayUntil(resetAt) } : undefined;
-        await env.WEBHOOKS?.send({ type: "github-webhook", deliveryId: webhook.deliveryId, eventName: webhook.eventName, payload: webhook.payload, redriven: true }, options).catch(() => undefined);
+        const queue = env.WEBHOOKS;
+        if (queue) {
+          await queue
+            .send({ type: "github-webhook", deliveryId: webhook.deliveryId, eventName: webhook.eventName, payload: webhook.payload, redriven: true }, options)
+            .then(() => {
+              incr(DLQ_REDRIVEN_METRIC, { eventName: webhook.eventName });
+            })
+            .catch(() => undefined);
+        }
       }
     }
     message.ack();

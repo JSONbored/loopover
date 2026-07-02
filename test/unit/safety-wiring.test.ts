@@ -343,6 +343,29 @@ describe("gate treats secret_leak as a hard blocker", () => {
     expect(gate.conclusion).toBe("success");
     expect(gate.blockers).toEqual([]);
   });
+
+  // #2553: the three widened kinds (google_api_key, jwt, generic_secret_assignment) hard-block exactly like
+  // the original five — same secretLeakFinding -> evaluateGateCheck path, no separate opt-in.
+  it.each([
+    ["google_api_key", `### src/config.ts (modified) +1/-0\n@@\n+const key = "${"AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"}";`],
+    [
+      "jwt",
+      `### src/config.ts (modified) +1/-0\n@@\n+const jwt = "${"eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"}";`,
+    ],
+    ["generic_secret_assignment", `### src/config.ts (modified) +1/-0\n@@\n+secret = "${"sk_live_" + "aK9xQ2mZw7Ln4Rv8Pt3Bh6"}"`],
+  ])("hard-blocks a %s finding", (kind, diff) => {
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    expect(finding?.title).toContain(kind);
+    const gate = evaluateGateCheck(advisory([finding!]), { confirmedContributor: true });
+    expect(gate.conclusion).toBe("failure");
+    expect(gate.blockers.map((b) => b.code)).toContain("secret_leak");
+  });
+
+  it("does not hard-block a generic-assignment SHAPE that is only a placeholder value", () => {
+    const diff = '### src/config.ts (modified) +1/-0\n@@\n+password: "your-secret-token-value"';
+    expect(secretLeakFinding(diff)).toBeNull();
+  });
 });
 
 describe("secretLeakFinding scans only ADDED lines", () => {

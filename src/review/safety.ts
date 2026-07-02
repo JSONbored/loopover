@@ -16,12 +16,21 @@ import { scanForSecrets } from "./secrets-scan";
 // (RC6: #1505/#1495/#1485). A real-format token IS a leak regardless of the file it lives in, so we keep the
 // concrete formats as hard blockers and ignore only the ambiguous heuristics. This mirrors the same gate the
 // content lane already uses (src/review/content-lane/security-scan.ts).
+//
+// #2553: widened to match review-enrichment/src/analyzers/secret-scan.ts's richer, higher-recall rule set.
+// google_api_key/jwt are as format-precise as the original five (near-zero false-positive risk).
+// generic_secret_assignment is the one keyword-shaped pattern here — secrets-scan.ts already excludes
+// placeholder/type-declaration/schema-shaped matches (see isPlaceholderSecretValue there) before this kind
+// is ever produced, so it is safe to treat as an unconditional hard blocker like the rest.
 const HARD_SECRET_KINDS = new Set([
   "github_token",
   "github_pat",
   "private_key_block",
   "aws_access_key",
   "slack_token",
+  "google_api_key",
+  "jwt",
+  "generic_secret_assignment",
 ]);
 
 /** True when the safety scan is enabled. Flag-OFF (default) → every helper below is a no-op pass-through. */

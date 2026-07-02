@@ -31,7 +31,7 @@
     "lib"
   ],
   "scripts": {
-    "build": "node --check bin/gittensory-miner.js && node --check lib/cli.js && node --check lib/update-check.js"
+    "build": "node --check bin/gittensory-miner.js && node --check lib/cli.js && node --check lib/update-check.js && node --check lib/rejection-templates.js"
   },
   "dependencies": {
     "@jsonbored/gittensory-engine": "0.1.0"

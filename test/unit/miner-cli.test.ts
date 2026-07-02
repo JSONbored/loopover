@@ -10,6 +10,8 @@ import {
 type MinerCli = typeof import("../../packages/gittensory-miner/lib/cli.js");
 type MinerUpdateCheck =
   typeof import("../../packages/gittensory-miner/lib/update-check.js");
+type MinerRejectionTemplates =
+  typeof import("../../packages/gittensory-miner/lib/rejection-templates.js");
 
 let printHelp: MinerCli["printHelp"];
 let printVersion: MinerCli["printVersion"];
@@ -22,11 +24,15 @@ let resolveUpgradeCommand: MinerUpdateCheck["resolveUpgradeCommand"];
 let shouldSkipUpdateCheck: MinerUpdateCheck["shouldSkipUpdateCheck"];
 let startUpdateCheck: MinerUpdateCheck["startUpdateCheck"];
 let awaitOpportunisticUpdateCheck: MinerUpdateCheck["awaitOpportunisticUpdateCheck"];
+let listRejectionTemplateReasons: MinerRejectionTemplates["listRejectionTemplateReasons"];
+let renderRejectionTemplate: MinerRejectionTemplates["renderRejectionTemplate"];
 
 beforeAll(async () => {
   const cli = await import("../../packages/gittensory-miner/lib/cli.js");
   const updateCheck =
     await import("../../packages/gittensory-miner/lib/update-check.js");
+  const rejectionTemplates =
+    await import("../../packages/gittensory-miner/lib/rejection-templates.js");
   ({ printHelp, printVersion, runCli } = cli);
   ({
     compareSemver,
@@ -38,6 +44,7 @@ beforeAll(async () => {
     startUpdateCheck,
     awaitOpportunisticUpdateCheck,
   } = updateCheck);
+  ({ listRejectionTemplateReasons, renderRejectionTemplate } = rejectionTemplates);
 });
 
 afterEach(async () => {
@@ -328,5 +335,24 @@ describe("gittensory-miner startup update check (#2331)", () => {
     expect(Date.now() - startedAt).toBeLessThan(2000);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Unknown command: mystery");
+  });
+});
+
+describe("gittensory-miner rejection templates (#2324)", () => {
+  it("renders every reason bucket with deterministic, placeholder-free text", () => {
+    for (const reason of listRejectionTemplateReasons()) {
+      const message = renderRejectionTemplate(reason);
+      expect(message).toBeTruthy();
+      expect(message).not.toMatch(/\{\{[^}]+\}\}/);
+      expect(message).not.toMatch(
+        /\b(wallet|hotkey|coldkey|mnemonic|reward|score|farming|payout|ranking|trust score|reviewability)\b/i,
+      );
+    }
+  });
+
+  it("rejects unknown reason buckets", () => {
+    expect(() => renderRejectionTemplate("not_a_bucket" as never)).toThrow(
+      "unknown_rejection_reason:not_a_bucket",
+    );
   });
 });

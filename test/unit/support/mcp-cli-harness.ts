@@ -229,6 +229,11 @@ export async function startFixtureServer(
       response.end(JSON.stringify(options.localBranchAnalysis ?? localBranchAnalysisFixture()));
       return;
     }
+    if (request.url === "/v1/lint/pr-text" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { commitMessages?: string[]; prBody?: string; linkedIssue?: number };
+      response.end(JSON.stringify(lintPrTextFixture(body)));
+      return;
+    }
     // #784 maintainer controls (agent approval queue + kill-switch).
     if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "GET") {
       response.end(JSON.stringify({ repoFullName: "owner/repo", pendingActions: [{ id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" }] }));
@@ -410,5 +415,26 @@ export function agentFixture() {
     ],
     contextSnapshots: [],
     summary: "fixture",
+  };
+}
+
+export function lintPrTextFixture(input: { commitMessages?: string[]; prBody?: string; linkedIssue?: number } = {}) {
+  const weakCommit = (input.commitMessages ?? []).some((message) => /^wip$/i.test(message.trim()));
+  const missingTraceability = input.linkedIssue === undefined && !/no issue needed|no issue applies/i.test(input.prBody ?? "");
+  const verdict = weakCommit || !input.prBody ? "weak" : missingTraceability ? "adequate" : "strong";
+  return {
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    verdict,
+    score: verdict === "strong" ? 100 : verdict === "adequate" ? 81 : 45,
+    summary: `Fixture PR-text lint verdict: ${verdict}.`,
+    fixes: verdict === "strong" ? [] : ["Use a Conventional Commit subject with a specific scope and summary."],
+    components: [
+      {
+        key: "traceability",
+        label: "Traceability",
+        status: missingTraceability ? "weak" : "ok",
+        evidence: missingTraceability ? "No linked issue or no-issue rationale." : `Linked issue #${input.linkedIssue}.`,
+      },
+    ],
   };
 }

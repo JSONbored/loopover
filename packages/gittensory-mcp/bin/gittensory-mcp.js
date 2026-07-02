@@ -39,6 +39,7 @@ const CLI_COMMAND_SPEC = {
   "repo-decision": [],
   "analyze-branch": [],
   preflight: [],
+  "lint-pr-text": [],
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear"],
   agent: ["plan", "status", "explain", "packet"],
@@ -1402,6 +1403,7 @@ async function runCli(args) {
   if (command === "changelog") return changelog(options);
   if (command === "doctor") return doctor(options);
   if (command === "init-client") return initClient(options);
+  if (command === "lint-pr-text") return lintPrTextCli(args.slice(1));
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
@@ -1438,6 +1440,43 @@ async function runCli(args) {
     return;
   }
   writeBranchAnalysisCli(result, command);
+}
+
+function printLintPrTextHelp() {
+  process.stdout.write(
+    [
+      "Usage: gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
+      "",
+      "Lint a commit message and PR body against the Gittensory traceability and Conventional Commit rubric.",
+      "Mirrors the gittensory_lint_pr_text MCP tool and POST /v1/lint/pr-text. No source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+async function lintPrTextCli(args) {
+  if (!args.length || args[0] === "--help" || args[0] === "help") return printLintPrTextHelp();
+  const options = parseOptions(args);
+  const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
+  let prBody = options.body;
+  if (options.bodyFile) {
+    if (!existsSync(options.bodyFile)) throw new Error(`Body file not found: ${options.bodyFile}`);
+    prBody = readFileSync(options.bodyFile, "utf8");
+  }
+  const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
+  const payload = await apiPost("/v1/lint/pr-text", {
+    ...(commitMessages?.length ? { commitMessages } : {}),
+    ...(prBody !== undefined ? { prBody } : {}),
+    ...(linkedIssue !== undefined ? { linkedIssue } : {}),
+  });
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`PR text lint: ${payload.verdict} (score ${payload.score})\n`);
+  process.stdout.write(`${payload.summary}\n`);
+  for (const fix of payload.fixes ?? []) process.stdout.write(`- ${fix}\n`);
 }
 
 async function decisionPackCli(options) {
@@ -1826,6 +1865,7 @@ function printHelp() {
   gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--json]
+  gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
   gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
   gittensory-mcp agent status <run-id> [--json]
   gittensory-mcp agent explain <run-id> [--json]
@@ -1880,7 +1920,7 @@ Use --profile <name> or GITTENSORY_PROFILE to run login, logout, whoami, status,
 
 function parseOptions(args) {
   const options = {};
-  const repeatable = new Set(["label", "issue", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
+  const repeatable = new Set(["label", "issue", "commit", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -2663,6 +2703,13 @@ function optionalInteger(value) {
   if (value === undefined || value === true) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parsePositiveIntegerOption(value, flagName) {
+  if (value === undefined) return undefined;
+  const parsed = optionalInteger(value);
+  if (parsed === undefined || parsed <= 0) throw new Error(`Pass ${flagName} as a positive integer.`);
+  return parsed;
 }
 
 function optionalNumber(value) {

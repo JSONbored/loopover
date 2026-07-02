@@ -57,6 +57,7 @@ gittensory-mcp decision-pack --login jsonbored --json
 gittensory-mcp repo-decision --login jsonbored --repo we-promise/sure --json
 gittensory-mcp analyze-branch --login jsonbored --json
 gittensory-mcp preflight --login jsonbored --json
+gittensory-mcp lint-pr-text --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
 gittensory-mcp agent plan --login jsonbored --json
 gittensory-mcp agent packet --login jsonbored --json
 gittensory-mcp agent status <run-id> --json

@@ -349,6 +349,85 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     expect(out).toBe(generic); // degrades to the allowlist-default resolution path, never throws
   });
 
+  it("REGRESSION (#confirmed-bug): holds the gate NEUTRAL — rather than silently passing — when a NON-allowlisted repo's manifest fails to load, since that's the only way it could have configured a contentLane", async () => {
+    // OTHER_REPO is NOT in GITTENSORY_REVIEW_REPOS, so its only path to a resolved spec is an explicit
+    // contentLane: config in its OWN .gittensory.yml. If we can't even read that file, we cannot tell "this
+    // repo never configured content-lane" apart from "it did, but we couldn't check this pass" — silently
+    // falling through to the plain generic (clean) evaluation would let a real registry submission merge
+    // unevaluated.
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      OTHER_REPO,
+      true,
+      generic,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => {
+          throw new Error("getChangedFiles must NOT be called — held before any surface-lane fetch");
+        },
+      },
+      throwingLoader,
+    );
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.blockers).toEqual([]);
+    expect(out?.title).toMatch(/held for human review/i);
+  });
+
+  it("REGRESSION (#confirmed-bug): the neutral hold has empty warnings when there was no generic gate evaluation at all", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      OTHER_REPO,
+      true,
+      undefined, // no generic gate evaluation to fall back to for warnings
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => {
+          throw new Error("getChangedFiles must NOT be called — held before any surface-lane fetch");
+        },
+      },
+      throwingLoader,
+    );
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.warnings).toEqual([]);
+  });
+
+  it("REGRESSION (#confirmed-bug): a real generic hard blocker survives a NON-allowlisted repo's manifest-load failure — never cleared to neutral", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked" };
+    const genericWithBlocker = gate({ conclusion: "failure", blockers: [secret], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      OTHER_REPO,
+      true,
+      genericWithBlocker,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => {
+          throw new Error("getChangedFiles must NOT be called — held before any surface-lane fetch");
+        },
+      },
+      throwingLoader,
+    );
+    expect(out).toBe(genericWithBlocker); // the real hard blocker is preserved, not overridden to neutral
+  });
+
   it("activates the surface lane for a NON-metagraphed repo purely from an explicit contentLane: config — no allowlist entry needed", async () => {
     const OTHER_REPO = "SomeoneElse/other-registry";
     const OTHER_ENTRY = "registry/items/foo.json";

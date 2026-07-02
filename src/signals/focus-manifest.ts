@@ -636,15 +636,19 @@ function normalizeOptionalGlob(value: JsonValue | undefined, field: string, warn
   const normalized = normalizeOptionalString(value, field, warnings);
   if (normalized === null) return null;
   if (normalized.length > MAX_ITEM_LENGTH) {
-    warnings.push(`Manifest field "${field}" truncated an over-long glob.`);
+    // REJECT, not truncate: cutting characters out of a glob changes which files it matches (e.g. a
+    // mid-directory-name cut can turn a narrow, intended pattern into one that matches an unrelated path
+    // prefix, or one that never matches anything) — silently compiling a DIFFERENT pattern than the
+    // maintainer configured is worse than making them shorten an over-complex glob.
+    warnings.push(`Manifest field "${field}" is an over-long glob (${normalized.length} > ${MAX_ITEM_LENGTH} chars); ignoring it.`);
+    return null;
   }
-  const bounded = normalized.slice(0, MAX_ITEM_LENGTH);
-  const wildcardCount = (bounded.match(/\*/g) ?? []).length;
+  const wildcardCount = (normalized.match(/\*/g) ?? []).length;
   if (wildcardCount > MAX_GLOB_WILDCARDS) {
     warnings.push(`Manifest field "${field}" has too many wildcards (${wildcardCount} > ${MAX_GLOB_WILDCARDS}); ignoring it.`);
     return null;
   }
-  return bounded;
+  return normalized;
 }
 
 /**

@@ -1050,6 +1050,12 @@ describe("parseFocusManifest gate config", () => {
     expect(parseFocusManifest({ contentLane: contentLaneConfigToJson(m.contentLane) }).contentLane).toEqual(m.contentLane);
   });
 
+  it("accepts a wildcard-free (literal) entryFileGlob — a single exact-path registry has no `*` to count", () => {
+    const m = parseFocusManifest({ contentLane: { entryFileGlob: "registry/items.json", collectionField: "items" } });
+    expect(m.contentLane.entryFileGlob).toBe("registry/items.json");
+    expect(m.warnings.some((w) => /entryFileGlob/.test(w))).toBe(false);
+  });
+
   it("requires BOTH entryFileGlob and collectionField for contentLane: — a partial config warns and is ignored (not a broken half-spec)", () => {
     const missingCollectionField = parseFocusManifest({ contentLane: { entryFileGlob: "registry/*.json" } });
     expect(missingCollectionField.contentLane.present).toBe(false);
@@ -1083,11 +1089,14 @@ describe("parseFocusManifest gate config", () => {
     ).toBe(5);
   });
 
-  it("contentLane: glob fields are truncated at MAX_ITEM_LENGTH like any other string field", () => {
+  it("REGRESSION: an over-long contentLane glob is REJECTED, not truncated — truncation would silently compile a DIFFERENT pattern than configured", () => {
+    // A prior version truncated an over-long glob to MAX_ITEM_LENGTH and still returned it, which changes which
+    // files it matches (e.g. a mid-directory-name cut can match an unrelated path prefix, or match nothing).
     const overLong = "registry/" + "a".repeat(400) + ".json";
     const m = parseFocusManifest({ contentLane: { entryFileGlob: overLong, collectionField: "items" } });
-    expect(m.contentLane.entryFileGlob?.length).toBeLessThanOrEqual(300);
-    expect(m.warnings.some((w) => /contentLane\.entryFileGlob.*truncated/.test(w))).toBe(true);
+    expect(m.contentLane.entryFileGlob).toBeNull();
+    expect(m.contentLane.present).toBe(false); // entryFileGlob is REQUIRED — a rejected glob degrades to absent
+    expect(m.warnings.some((w) => /contentLane\.entryFileGlob.*over-long glob/.test(w))).toBe(true);
   });
 
   it("SECURITY (ReDoS): a glob with too many wildcards is REJECTED at parse time rather than ever reaching RegExp compilation", () => {

@@ -25,6 +25,7 @@
 //     adjudicator for this structured data — an AI opinion has no standing to veto it, only a real deterministic
 //     blocker does (see guard #1).
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation, isAiJudgmentOnlyFailure } from "../rules/advisory";
+import { GITTENSORY_GATE_CHECK_NAME } from "./check-names";
 import { isContentLaneEnabled } from "./content-lane/flag";
 import { runSurfaceReview, type SurfaceReviewInput, type SurfaceReviewResult } from "./content-lane/orchestrator";
 import type { RegistryLaneSpec } from "./content-lane/registry-logic";
@@ -194,8 +195,11 @@ export function resolveSurfaceRefs(
  *
  *  `loadManifestOverride` is injected by unit tests (mirrors `runRegistrySurfaceGate`'s `loadFileOverride`) so
  *  they never hit the real cached-manifest loader's D1/network I/O; production omits it and gets the real,
- *  cached `loadRepoFocusManifest`. A manifest-load failure degrades to null (the allowlist-default resolution
- *  path), never a thrown error.
+ *  cached `loadRepoFocusManifest`. A manifest-load failure never throws OUT of this function: for an allowlisted
+ *  repo it still degrades to the allowlist-default spec (unaffected, since that path never reads the manifest);
+ *  for a non-allowlisted repo — whose ONLY way to configure a spec is that same manifest — it instead holds the
+ *  gate neutral (unless a real generic hard blocker is already present, which is always preserved) rather than
+ *  silently looking identical to "this repo has no content-lane configured at all".
  *
  *  An unregistered `contentLane.validatorId` in the loaded manifest pushes a non-blocking diagnostic finding
  *  (`unregisteredValidatorIdFinding`) onto `args.advisory.findings` so an operator typo (e.g. "metagraph" instead
@@ -216,11 +220,40 @@ export async function evaluateWithSurfaceLane(
 ): Promise<GateCheckEvaluation | undefined> {
   if (!gateEnabled || !isContentLaneEnabled(env)) return gateEvaluation;
   const loadManifest = loadManifestOverride ?? loadRepoFocusManifest;
-  const manifest = await loadManifest(env, repoFullName).catch(() => null);
+  // loadRepoFocusManifest itself already degrades a fetch/parse blip to an EMPTY manifest (a legitimate "no
+  // config" signal) internally, so this catch only fires for a rarer failure outside that (e.g. the cache
+  // read/write layer). Track that distinctly from a genuinely-empty manifest: for a repo NOT on the
+  // isConvergenceRepoAllowed cutover list, `contentLane:` in its own `.gittensory.yml` is the ONLY way to
+  // resolve a spec (#2435) -- so `manifest` reading as absent here is indistinguishable, downstream, from
+  // "this repo never configured content-lane at all", and would silently skip the registry gate on nothing
+  // more than a transient read failure for exactly the self-hosted-maintainer use case this PR exists to
+  // support. An allowlisted repo is unaffected either way, since its fallback (METAGRAPHED_LANE_SPEC) never
+  // depends on the manifest.
+  let manifest: FocusManifest | undefined;
+  let manifestLoadFailed = false;
+  try {
+    manifest = await loadManifest(env, repoFullName);
+  } catch {
+    manifestLoadFailed = true;
+  }
   const badValidatorId = unregisteredValidatorId(manifest?.contentLane);
   if (badValidatorId) args.advisory.findings.push(unregisteredValidatorIdFinding(badValidatorId));
   const spec = resolveRegistryLaneSpec(env, manifest, repoFullName);
-  if (!spec) return gateEvaluation;
+  if (!spec) {
+    // A real hard blocker the generic gate already raised (e.g. a committed secret) must never be cleared by
+    // this path — mirrors applySurfaceGate's own guard #1. Only override when there is nothing to preserve.
+    if (!manifestLoadFailed || (gateEvaluation && gateEvaluation.blockers.length > 0)) return gateEvaluation;
+    // We could not read this repo's manifest AND it resolved to no spec — cannot rule out a configured
+    // contentLane block being silently skipped. Hold rather than let this look identical to "not configured".
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: `${GITTENSORY_GATE_CHECK_NAME} — held for human review`,
+      summary: "The repo's .gittensory.yml could not be read, so Gittensory cannot confirm whether a registry content-lane is configured for this repo. The gate is held for a human reviewer rather than silently skipping the registry check. It re-evaluates on the next update.",
+      blockers: [],
+      warnings: gateEvaluation?.warnings ?? [],
+    };
+  }
   const surfaceGate = await runRegistrySurfaceGate(env, spec, {
     installationId: args.installationId,
     repoFullName,

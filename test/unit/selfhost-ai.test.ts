@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, subscriptionCliEnv } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, subscriptionCliEnv } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -220,6 +220,23 @@ describe("isAiProviderHealthy (readiness streak, #2497)", () => {
     for (let i = 0; i < 3; i += 1) {
       await expect(createChainAi([failing]).run("m", { prompt: "x" })).rejects.toThrow();
     }
+    expect(isAiProviderHealthy()).toBe(false);
+
+    await expect(createChainAi([working]).run("m", { prompt: "x" })).resolves.toEqual({ response: "ok" });
+    expect(isAiProviderHealthy()).toBe(true);
+  });
+
+  it("regression: markAiProviderUnhealthyAtBoot reports unhealthy immediately, before any AI call (#2497 follow-up)", () => {
+    // The original gap: a missing required CLI binary is a real, immediately-known misconfiguration, but the
+    // pure call-streak design only reported it after 3 real (webhook-triggered) AI-call failures -- a fresh
+    // process with a broken CLI provider and no traffic yet stayed "healthy" indefinitely.
+    expect(isAiProviderHealthy()).toBe(true);
+    markAiProviderUnhealthyAtBoot();
+    expect(isAiProviderHealthy()).toBe(false);
+  });
+
+  it("a success after markAiProviderUnhealthyAtBoot still recovers the streak normally", async () => {
+    markAiProviderUnhealthyAtBoot();
     expect(isAiProviderHealthy()).toBe(false);
 
     await expect(createChainAi([working]).run("m", { prompt: "x" })).resolves.toEqual({ response: "ok" });

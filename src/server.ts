@@ -18,6 +18,7 @@ import {
   createOpenAiCompatibleAi,
   createSelfHostAi,
   isAiProviderHealthy,
+  markAiProviderUnhealthyAtBoot,
   resolveAiReviewerPlan,
   resolveRequiredCliProviders,
   resolveSubscriptionCliPath,
@@ -387,6 +388,10 @@ async function main(): Promise<void> {
         message: `AI_PROVIDER=${process.env.AI_PROVIDER} includes ${provider} but '${cli}' is not on PATH — every ${provider} AI review will produce NO output. Rebuild the image with --build-arg INSTALL_AI_CLIS=true (or use the published image) and authenticate the CLI.`,
       }),
     );
+    // Feed this into the ai_provider /ready probe (#2497): unlike an HTTP-provider bad API key, a missing
+    // required CLI binary is a real, immediately-known misconfiguration -- /ready should report it from the
+    // first check, not wait for three real webhook-triggered AI-call failures to exhaust the chain.
+    markAiProviderUnhealthyAtBoot();
   }
   // Dedicated RAG embed provider (keeps the review chain frontier-only): when AI_EMBED_BASE_URL is set, embeddings
   // route to a SEPARATE openai-compatible endpoint (e.g. ollama at http://ollama:11434/v1, model bge-m3) instead of
@@ -463,9 +468,13 @@ async function main(): Promise<void> {
   // Configured AI provider: gate on the chain's own consecutive-exhaustion streak (isAiProviderHealthy) rather
   // than a live reachability probe, which would cost a real API/CLI call on every health-check tick. Only
   // registered when a provider is actually configured -- without AI_PROVIDER reviews run deterministically,
-  // which is not a degraded state (#2497). Historical, not live: the streak only updates as real review
-  // traffic exercises the chain, so a freshly booted instance reports healthy before its first AI call, and
-  // a fix (credentials restored) only clears after a subsequent success, not instantly.
+  // which is not a degraded state (#2497). A missing required CLI binary is caught immediately at boot (see
+  // markAiProviderUnhealthyAtBoot above) -- for everything else (a bad HTTP-provider API key, an unreachable
+  // endpoint), the streak is historical, not live: it only updates as real review traffic exercises the
+  // chain, so a freshly booted instance with those specific misconfigurations reports healthy before its
+  // first AI call, and a fix only clears after a subsequent success, not instantly. Verifying an HTTP
+  // provider's credentials cheaply at boot would mean spending a real network call, which this probe design
+  // deliberately avoids paying on every health-check tick.
   if (ai) {
     readinessProbes.push({
       name: "ai_provider",

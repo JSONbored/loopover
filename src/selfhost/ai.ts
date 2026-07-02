@@ -604,6 +604,15 @@ export function resetAiProviderHealthForTest(): void {
   aiConsecutiveFailures = 0;
 }
 
+/** Force the streak straight to the unhealthy threshold (#2497 follow-up): for a REQUIRED CLI-subscription
+ *  provider's binary missing from PATH, caught at boot (server.ts's own fail-loud CLI-presence check) --
+ *  a real, immediately-known misconfiguration that shouldn't need three real AI-call failures to surface in
+ *  /ready, unlike a bad HTTP-provider API key or an unreachable endpoint, which can only be confirmed by a
+ *  real call and so still rely on the historical streak above. */
+export function markAiProviderUnhealthyAtBoot(): void {
+  aiConsecutiveFailures = AI_UNHEALTHY_FAILURE_STREAK;
+}
+
 /** Try each provider in order until one returns; if all throw, rethrow the last error so the caller degrades
  *  (AI summary → "unavailable"; the review still runs deterministically). The fallback chain is what makes a
  *  BYOK setup robust — e.g. AI_PROVIDER="anthropic,ollama" uses the API first and a local model if it's down. */

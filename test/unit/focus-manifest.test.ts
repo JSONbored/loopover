@@ -1344,6 +1344,41 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(nonNumber.settings.contributorOpenPrCap).toBeUndefined();
   });
 
+  it("parses + resolves the review-nag cooldown settings from the settings: block, overlaying the DB (#2463)", () => {
+    const manifest = parseFocusManifest({ settings: { reviewNagPolicy: "close", reviewNagMaxPings: 5, reviewNagCooldownDays: 10, reviewNagLabel: "too-chatty" } });
+    expect(manifest.settings.reviewNagPolicy).toBe("close");
+    expect(manifest.settings.reviewNagMaxPings).toBe(5);
+    expect(manifest.settings.reviewNagCooldownDays).toBe(10);
+    expect(manifest.settings.reviewNagLabel).toBe("too-chatty");
+    // yml overlays a DB-configured policy.
+    const eff = resolveEffectiveSettings({ reviewNagPolicy: "off", reviewNagMaxPings: 3, reviewNagCooldownDays: 5, reviewNagLabel: "review-nag-cooldown" } as unknown as RepositorySettings, manifest);
+    expect(eff.reviewNagPolicy).toBe("close");
+    expect(eff.reviewNagMaxPings).toBe(5);
+    // Omitted in yml ⇒ the DB-configured policy survives untouched.
+    const noOverride = resolveEffectiveSettings({ reviewNagPolicy: "hold", reviewNagMaxPings: 7 } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(noOverride.reviewNagPolicy).toBe("hold");
+    expect(noOverride.reviewNagMaxPings).toBe(7);
+    // An invalid policy enum / non-positive ping count / non-positive cooldown is dropped with a warning
+    // rather than silently coerced.
+    const invalid = parseFocusManifest({ settings: { reviewNagPolicy: "delete-everything" as never, reviewNagMaxPings: 0, reviewNagCooldownDays: -1 } });
+    expect(invalid.settings.reviewNagPolicy).toBeUndefined();
+    expect(invalid.settings.reviewNagMaxPings).toBeUndefined();
+    expect(invalid.settings.reviewNagCooldownDays).toBeUndefined();
+    expect(invalid.warnings.some((w) => /settings\.reviewNagPolicy/.test(w))).toBe(true);
+    expect(invalid.warnings.some((w) => /settings\.reviewNagMaxPings/.test(w))).toBe(true);
+    expect(invalid.warnings.some((w) => /settings\.reviewNagCooldownDays/.test(w))).toBe(true);
+  });
+
+  it("parses + resolves autoCloseExemptLogins from the settings: block, overlaying the DB (#2463)", () => {
+    const manifest = parseFocusManifest({ settings: { autoCloseExemptLogins: ["Trusted-Regular", "another-one", "-bad", 42 as never] } });
+    expect(manifest.settings.autoCloseExemptLogins).toEqual(["Trusted-Regular", "another-one"]); // invalid entries dropped
+    const eff = resolveEffectiveSettings({ autoCloseExemptLogins: ["db-only"] } as unknown as RepositorySettings, manifest);
+    expect(eff.autoCloseExemptLogins).toEqual(["Trusted-Regular", "another-one"]); // yml overlays (replaces) DB
+    // An empty/all-invalid block never blanks the DB-configured list (only set when a valid entry survives).
+    const noOverride = resolveEffectiveSettings({ autoCloseExemptLogins: ["keep-me"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { autoCloseExemptLogins: ["-bad"] } }));
+    expect(noOverride.autoCloseExemptLogins).toEqual(["keep-me"]);
+  });
+
   it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {
     // Omitted key preserves the DB value (already covered above); an explicit `null` must ALSO be able to
     // override a DB-configured cap back to "no cap" — the documented `yml > DB > null` precedence otherwise

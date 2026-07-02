@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
@@ -926,5 +926,60 @@ describe("per-contributor open-item cap short-circuit (#2270)", () => {
       overCap({ blacklistMatch: { matched: true, reason: "plagiarism" } }),
     );
     expect(plan[1]).toMatchObject({ closeKind: "blacklist" });
+  });
+});
+
+describe("review-nag cooldown short-circuit (#2463)", () => {
+  const nagged = (extra: Partial<AgentActionPlanInput> = {}) =>
+    input({
+      conclusion: "success",
+      autonomy: { label: "auto", close: "auto", approve: "auto", merge: "auto" },
+      reviewNagMatch: { matched: true, authorLogin: "chatty-contributor", pingCount: 4, maxPings: 3 },
+      ...extra,
+    });
+
+  it("labels + closes a nagging contributor's PR, winning over a passing gate (no merit review / merge)", () => {
+    const plan = planAgentMaintenanceActions(nagged());
+    expect(classes(plan)).toEqual(["label", "close"]); // short-circuit: no approve/merge despite a SUCCESS gate
+    expect(plan[0]).toMatchObject({ actionClass: "label", label: DEFAULT_REVIEW_NAG_LABEL, labelOp: "add" });
+    expect(plan[1]).toMatchObject({ actionClass: "close", closeKind: "review_nag" });
+    expect(plan[1]?.closeComment).toContain("chatty-contributor");
+    expect(plan[1]?.closeComment).toContain("4");
+    expect(plan[1]?.closeComment).toContain("3");
+  });
+
+  it("pins the review-nag close to the reviewed head, mirroring blacklist/merge/approve", () => {
+    const plan = planAgentMaintenanceActions(nagged({ pr: { labels: [], headSha: "h-reviewed" } }));
+    expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeKind: "review_nag", expectedHeadSha: "h-reviewed" });
+  });
+
+  it("omits expectedHeadSha on the review-nag close when the PR record has no headSha (defensive fallback)", () => {
+    const plan = planAgentMaintenanceActions(nagged());
+    expect(plan.find((a) => a.actionClass === "close")?.expectedHeadSha).toBeUndefined();
+  });
+
+  it("uses the repo-configured reviewNagLabel, defaulting to 'review-nag-cooldown' when unset", () => {
+    expect(planAgentMaintenanceActions(nagged({ reviewNagLabel: "cooldown-hit" }))[0]).toMatchObject({ label: "cooldown-hit" });
+    expect(DEFAULT_REVIEW_NAG_LABEL).toBe("review-nag-cooldown");
+    expect(planAgentMaintenanceActions(nagged())[0]).toMatchObject({ label: "review-nag-cooldown" });
+  });
+
+  it("fires AHEAD of CI — closes even while CI is still pending (not the pending early-return)", () => {
+    expect(classes(planAgentMaintenanceActions(nagged({ ciState: "pending" })))).toEqual(["label", "close"]);
+  });
+
+  it("NEVER fires for the owner, an admin login, or an automation bot (standing rule) — the PR falls through to normal disposition", () => {
+    expect(classes(planAgentMaintenanceActions(nagged({ authorIsOwner: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(nagged({ authorIsAdmin: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(nagged({ authorIsAutomationBot: true })))).not.toContain("close");
+  });
+
+  it("no-ops when the match is not matched (normal disposition runs)", () => {
+    expect(classes(planAgentMaintenanceActions(nagged({ reviewNagMatch: { matched: false, authorLogin: "x", pingCount: 0, maxPings: 3 } })))).not.toContain("close");
+  });
+
+  it("respects autonomy: observe plans nothing (still short-circuits); label-only labels but does not close", () => {
+    expect(planAgentMaintenanceActions(nagged({ autonomy: {} }))).toEqual([]);
+    expect(classes(planAgentMaintenanceActions(nagged({ autonomy: { label: "auto" } })))).toEqual(["label"]);
   });
 });

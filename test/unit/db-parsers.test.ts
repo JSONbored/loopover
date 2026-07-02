@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   claimRegateFanoutSlot,
   countRecentDeadLetters,
+  countRecentAuditEventsForActorAndTarget,
   getLatestScorePreview,
   getRepoAuthorPullRequestHistory,
   getLatestScoringModelSnapshot,
@@ -370,6 +371,22 @@ describe("database row parser hardening", () => {
     expect(await countRecentDeadLetters(env, "2026-06-24T09:00:00.000Z")).toBe(2); // both dead-letters in window
     expect(await countRecentDeadLetters(env, "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 one
     expect(await countRecentDeadLetters(env, "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
+  });
+
+  it("countRecentAuditEventsForActorAndTarget counts events scoped to ONE actor+eventType+targetKey since a cutoff (#2463)", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+    // A different actor on the SAME target must not be counted (the actor filter).
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "someone-else", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+    // The SAME actor pinging a DIFFERENT PR/issue must not be counted (the targetKey filter).
+    await recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "owner/repo#2", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+    // An unrelated event type on the same actor+target must not be counted (the eventType filter).
+    await recordAuditEvent(env, { eventType: "github_app.agent_command_replied", actor: "chatty", targetKey: "owner/repo#1", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+
+    expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T09:00:00.000Z")).toBe(2);
+    expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 one
+    expect(await countRecentAuditEventsForActorAndTarget(env, "chatty", "github_app.review_nag_ping", "owner/repo#1", "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
   });
 
   it("computes complete case-insensitive repo author PR history for gate grace", async () => {

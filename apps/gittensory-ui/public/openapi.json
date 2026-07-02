@@ -8602,6 +8602,33 @@
             "minimum": 0,
             "exclusiveMinimum": true
           },
+          "reviewNagPolicy": {
+            "type": "string",
+            "enum": [
+              "off",
+              "hold",
+              "close"
+            ]
+          },
+          "reviewNagMaxPings": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "reviewNagCooldownDays": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "reviewNagLabel": {
+            "type": "string"
+          },
+          "autoCloseExemptLogins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "contributorCapLabel": {
             "type": "string"
           }

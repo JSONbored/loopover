@@ -626,6 +626,31 @@ export type RepositorySettings = {
    *  disposition works regardless of the label a repo sets. Always populated by the DB layer; optional so
    *  existing settings fixtures/callers need not be touched. */
   contributorCapLabel?: string | undefined;
+  /** Review-request nagging cooldown (#2463, anti-abuse): throttle a contributor repeatedly pinging
+   *  `@gittensory` (any command) on this repo. `"off"` (default) is a no-op; `"hold"` posts a deterministic
+   *  cooldown reply and takes no further action; `"close"` additionally closes the thread (PR threads only in
+   *  v1 — a plain issue thread degrades to `"hold"` behavior until #2493's `closeIssue` primitive lands).
+   *  Always populated by the DB layer (default `"off"`); optional so existing settings fixtures/callers need
+   *  not be touched. */
+  reviewNagPolicy?: "off" | "hold" | "close" | undefined;
+  /** Review-nag cooldown (#2463): how many `@gittensory` pings a contributor may make on this repo within
+   *  {@link reviewNagCooldownDays} before the (N+1)th is throttled. Always populated by the DB layer (default
+   *  `3`); optional so existing settings fixtures/callers need not be touched. Only meaningful when
+   *  {@link reviewNagPolicy} is not `"off"`. */
+  reviewNagMaxPings?: number | undefined;
+  /** Review-nag cooldown (#2463): the rolling window (in days) {@link reviewNagMaxPings} counts against. Always
+   *  populated by the DB layer (default `5`); optional so existing settings fixtures/callers need not be
+   *  touched. */
+  reviewNagCooldownDays?: number | undefined;
+  /** The label applied to a thread closed for review-nag cooldown (#2463), mirroring {@link blacklistLabel}'s
+   *  configurable-with-fallback shape. Always populated by the DB layer (default `"review-nag-cooldown"`);
+   *  optional so existing settings fixtures/callers need not be touched. */
+  reviewNagLabel?: string | undefined;
+  /** Shared repo-scoped exemption list (#2463, anti-abuse): GitHub logins that are NEVER throttled or closed by
+   *  gittensory's deterministic anti-abuse mechanisms (review-nag and the per-contributor open-item cap above),
+   *  on top of the standing owner/admin/automation-bot exemption. Always populated by the DB layer (default
+   *  `[]`); optional so existing settings fixtures/callers need not be touched. */
+  autoCloseExemptLogins?: string[] | undefined;
   /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
    *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
    *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */
@@ -701,7 +726,7 @@ export type AgentPendingActionParams = {
   // (#2127), and the actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still
   // fires correctly once the row is replayed through pendingActionToPlanned, rather than silently skipping for
   // a lost discriminator.
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "heuristic";
   // For a CI-driven heuristic close, persist the CI state that must still hold when the staged action replays
   // (#2364). This is separate from closeKind because heuristic closes also cover non-CI adverse signals.
   // ALWAYS set (to "failed" or "not_required") for a freshly planned heuristic close (#2478) -- never omitted --

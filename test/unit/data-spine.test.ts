@@ -324,6 +324,38 @@ describe("data spine repositories", () => {
     expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("spam-cap");
     await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorCapLabel: "renamed-cap" });
     expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("renamed-cap"); // update persists
+    // #2463 review-nag cooldown + shared exemption list: no row and no override both default to off/3/5/the
+    // default label/empty exemption list.
+    expect(await getRepositorySettings(env, "missing/repo")).toMatchObject({
+      reviewNagPolicy: "off",
+      reviewNagMaxPings: 3,
+      reviewNagCooldownDays: 5,
+      reviewNagLabel: "review-nag-cooldown",
+      autoCloseExemptLogins: [],
+    });
+    expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ reviewNagPolicy: "off", autoCloseExemptLogins: [] });
+    // Round-trips on insert and persists on update.
+    await upsertRepositorySettings(env, {
+      repoFullName: "owner/nagrepo",
+      reviewNagPolicy: "close",
+      reviewNagMaxPings: 5,
+      reviewNagCooldownDays: 10,
+      reviewNagLabel: "too-many-pings",
+      autoCloseExemptLogins: ["Trusted-Regular"],
+    });
+    expect(await getRepositorySettings(env, "owner/nagrepo")).toMatchObject({
+      reviewNagPolicy: "close",
+      reviewNagMaxPings: 5,
+      reviewNagCooldownDays: 10,
+      reviewNagLabel: "too-many-pings",
+      autoCloseExemptLogins: ["Trusted-Regular"],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "owner/nagrepo", reviewNagPolicy: "hold", autoCloseExemptLogins: [] });
+    expect(await getRepositorySettings(env, "owner/nagrepo")).toMatchObject({ reviewNagPolicy: "hold", autoCloseExemptLogins: [] }); // update persists + can clear
+    // An invalid policy string is dropped to "off"; a non-positive/fractional ping count or cooldown falls
+    // back to its default rather than being silently coerced.
+    await upsertRepositorySettings(env, { repoFullName: "owner/badnagrepo", reviewNagPolicy: "delete-everything" as never, reviewNagMaxPings: -1, reviewNagCooldownDays: 2.5 as never });
+    expect(await getRepositorySettings(env, "owner/badnagrepo")).toMatchObject({ reviewNagPolicy: "off", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 });
     expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();

@@ -161,6 +161,7 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
+import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { errorMessage, jsonString, nowIso, parseJson, repoParts } from "../utils/json";
@@ -504,6 +505,11 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       contributorOpenPrCap: null,
       contributorOpenIssueCap: null,
       contributorCapLabel: "over-contributor-limit",
+      reviewNagPolicy: "off",
+      reviewNagMaxPings: 3,
+      reviewNagCooldownDays: 5,
+      reviewNagLabel: "review-nag-cooldown",
+      autoCloseExemptLogins: [],
     };
   }
   return {
@@ -551,6 +557,11 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     contributorOpenPrCap: normalizeOpenItemCap(row.contributorOpenPrCap),
     contributorOpenIssueCap: normalizeOpenItemCap(row.contributorOpenIssueCap),
     contributorCapLabel: row.contributorCapLabel,
+    reviewNagPolicy: normalizeReviewNagPolicy(row.reviewNagPolicy),
+    reviewNagMaxPings: normalizePositiveIntWithDefault(row.reviewNagMaxPings, 3),
+    reviewNagCooldownDays: normalizePositiveIntWithDefault(row.reviewNagCooldownDays, 5),
+    reviewNagLabel: row.reviewNagLabel,
+    autoCloseExemptLogins: parseAutoCloseExemptLogins(row.autoCloseExemptLoginsJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -630,6 +641,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     contributorOpenPrCap: normalizeOpenItemCap(settings.contributorOpenPrCap),
     contributorOpenIssueCap: normalizeOpenItemCap(settings.contributorOpenIssueCap),
     contributorCapLabel: settings.contributorCapLabel ?? "over-contributor-limit",
+    reviewNagPolicy: normalizeReviewNagPolicy(settings.reviewNagPolicy),
+    reviewNagMaxPings: normalizePositiveIntWithDefault(settings.reviewNagMaxPings, 3),
+    reviewNagCooldownDays: normalizePositiveIntWithDefault(settings.reviewNagCooldownDays, 5),
+    reviewNagLabel: settings.reviewNagLabel ?? "review-nag-cooldown",
+    autoCloseExemptLogins: normalizeAutoCloseExemptLogins(settings.autoCloseExemptLogins).logins,
   };
   const db = getDb(env.DB);
   await db
@@ -679,6 +695,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       contributorOpenPrCap: resolved.contributorOpenPrCap,
       contributorOpenIssueCap: resolved.contributorOpenIssueCap,
       contributorCapLabel: resolved.contributorCapLabel,
+      reviewNagPolicy: resolved.reviewNagPolicy,
+      reviewNagMaxPings: resolved.reviewNagMaxPings,
+      reviewNagCooldownDays: resolved.reviewNagCooldownDays,
+      reviewNagLabel: resolved.reviewNagLabel,
+      autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -729,6 +750,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         contributorOpenPrCap: resolved.contributorOpenPrCap,
         contributorOpenIssueCap: resolved.contributorOpenIssueCap,
         contributorCapLabel: resolved.contributorCapLabel,
+        reviewNagPolicy: resolved.reviewNagPolicy,
+        reviewNagMaxPings: resolved.reviewNagMaxPings,
+        reviewNagCooldownDays: resolved.reviewNagCooldownDays,
+        reviewNagLabel: resolved.reviewNagLabel,
+        autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
         updatedAt: nowIso(),
       },
     });
@@ -2181,6 +2207,21 @@ export async function hasRecentAuditEvent(env: Env, actor: string, eventType: st
     .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), gte(auditEvents.createdAt, sinceIso)))
     .limit(1);
   return rows.length > 0;
+}
+
+/** Count-returning variant of {@link hasRecentAuditEvent}, additionally scoped to one `targetKey` (e.g. a single
+ *  `owner/repo#123` PR/issue) rather than the actor's activity across the whole repo. Backs the review-request
+ *  nagging cooldown (#2463): counting how many `@gittensory` pings a contributor has sent on ONE thread within
+ *  the configured cooldown window. */
+export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: string, eventType: string, targetKey: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), eq(auditEvents.targetKey, targetKey), gte(auditEvents.createdAt, sinceIso)));
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return 0;
+  return row.count;
 }
 
 /** Observability for the queue dead-letter rate (#1276): how many jobs (across BOTH the maintenance and webhook
@@ -5640,6 +5681,22 @@ function parseCommandAuthorizationPolicy(value: string): RepositorySettings["com
 
 function parseContributorBlacklist(value: string): RepositorySettings["contributorBlacklist"] {
   return normalizeContributorBlacklist(parseJson<unknown>(value, null)).entries;
+}
+
+function parseAutoCloseExemptLogins(value: string): string[] {
+  return normalizeAutoCloseExemptLogins(parseJson<unknown>(value, null)).logins;
+}
+
+function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "hold" | "close" {
+  return value === "hold" || value === "close" ? value : "off";
+}
+
+// A review-nag threshold/window is a discrete positive count, not a score — reuses the same non-clamping,
+// non-rounding shape as contributorOpenPrCap's normalizeOpenItemCap (#2270): an invalid value (fractional,
+// non-positive, non-finite) falls back to the given default rather than being silently coerced.
+function normalizePositiveIntWithDefault(value: number | null | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return fallback;
+  return value;
 }
 
 function parseAutonomyPolicy(value: string): AutonomyPolicy {

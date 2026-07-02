@@ -3,6 +3,7 @@ import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
 import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
+import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { hasUnsafeWildcardCount } from "./change-guardrail";
 import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
@@ -128,6 +129,11 @@ export type FocusManifestSettings = Partial<
     | "contributorOpenPrCap"
     | "contributorOpenIssueCap"
     | "contributorCapLabel"
+    | "reviewNagPolicy"
+    | "reviewNagMaxPings"
+    | "reviewNagCooldownDays"
+    | "reviewNagLabel"
+    | "autoCloseExemptLogins"
   >
 >;
 
@@ -818,6 +824,22 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const contributorCapLabel = normalizeOptionalString(r.contributorCapLabel, "settings.contributorCapLabel", warnings);
   if (contributorCapLabel !== null) out.contributorCapLabel = contributorCapLabel;
+  // Review-request nagging cooldown (#2463): throttle a contributor repeatedly pinging @gittensory for review.
+  const reviewNagPolicy = normalizeOptionalEnum(r.reviewNagPolicy, "settings.reviewNagPolicy", ["off", "hold", "close"] as const, warnings);
+  if (reviewNagPolicy !== null) out.reviewNagPolicy = reviewNagPolicy;
+  const reviewNagMaxPings = normalizeOptionalPositiveInteger(r.reviewNagMaxPings, "settings.reviewNagMaxPings", warnings);
+  if (reviewNagMaxPings !== null) out.reviewNagMaxPings = reviewNagMaxPings;
+  const reviewNagCooldownDays = normalizeOptionalPositiveInteger(r.reviewNagCooldownDays, "settings.reviewNagCooldownDays", warnings);
+  if (reviewNagCooldownDays !== null) out.reviewNagCooldownDays = reviewNagCooldownDays;
+  const reviewNagLabel = normalizeOptionalString(r.reviewNagLabel, "settings.reviewNagLabel", warnings);
+  if (reviewNagLabel !== null) out.reviewNagLabel = reviewNagLabel;
+  // Shared repo-scoped exemption list (#2463): only set it when at least one VALID login survives
+  // normalization, so a malformed block never blanks the DB-configured list via the resolver's overlay.
+  if (r.autoCloseExemptLogins !== undefined) {
+    const { logins, warnings: exemptWarnings } = normalizeAutoCloseExemptLogins(r.autoCloseExemptLogins);
+    warnings.push(...exemptWarnings);
+    if (logins.length > 0) out.autoCloseExemptLogins = logins;
+  }
   return out;
 }
 

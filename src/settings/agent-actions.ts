@@ -27,6 +27,10 @@ export const DEFAULT_BLACKLIST_LABEL = "slop";
 // configurable-with-fallback shape as DEFAULT_BLACKLIST_LABEL — a repo can override it via
 // `.gittensory.yml` (`settings.contributorCapLabel`); this is only the fallback when unset.
 export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
+// Default label applied to a PR closed for review-nag cooldown (#2463). NOT hardcoded into the action — it is
+// configurable per-repo via `.gittensory.yml` (`settings.reviewNagLabel`); the planner uses the resolved label
+// and falls back to this default, mirroring DEFAULT_BLACKLIST_LABEL's shape.
+export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
 // A PR that PASSES the gate but touches a hard-guardrail path is NOT ready to auto-merge — it is withheld
 // for a human (the merge/approve/close dispositions are suppressed below). Labeling it `ready-to-merge`
 // would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets
@@ -65,7 +69,7 @@ export type PlannedAgentAction = {
   // duplicate / slop / CI). The breaker downgrades ONLY "heuristic" closes; the deterministic close is EXEMPT
   // (silently holding a close whose comment already promised closure would be incoherent). Absent on non-close
   // actions; treated as a heuristic close only when explicitly tagged "heuristic".
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "heuristic";
   // For a CI-driven heuristic close, the CI state that must still hold at actuation time. Other heuristic
   // closes (gate verdict, duplicate/slop, conflict) do not depend on red CI and must not be blocked by green CI.
   // ALWAYS set for a heuristic close (never omitted) -- see the field's doc comment on AgentPendingActionParams
@@ -162,6 +166,17 @@ export type AgentActionPlanInput = {
   // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.gittensory.yml`.
   // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit").
   contributorCapLabel?: string | undefined;
+  // Review-nag cooldown (#2463, anti-abuse): when the PR author has pinged `@gittensory` past the repo's
+  // configured threshold within the cooldown window AND the repo's `reviewNagPolicy` is `"close"`, the
+  // disposition SHORT-CIRCUITS to a deterministic label + close ahead of ALL merit/CI/AI analysis — same
+  // zero-hallucination shape as blacklistMatch, so its close is tagged `closeKind: "review_nag"`. Fires for a
+  // CONTRIBUTOR only (owner/admin/automation bots are never auto-closed). The comment-throttle decision itself
+  // (counting pings, choosing hold vs. close) happens at the webhook trigger, not here — this input is already
+  // the resolved "yes, close this PR" verdict. Absent / not-matched ⇒ no effect.
+  reviewNagMatch?: { matched: boolean; authorLogin: string; pingCount: number; maxPings: number } | undefined;
+  // The repo-configured label applied to a review-nag-closed PR (#2463), resolved from `.gittensory.yml`.
+  // Absent ⇒ the default (`DEFAULT_REVIEW_NAG_LABEL` = "review-nag-cooldown").
+  reviewNagLabel?: string | undefined;
   // Flag-then-close double-check for the linked-issue hard rule (#linked-issue-verify-before-close). When
   // `verifyBeforeClose` is true (the default), a violation FLAGS the PR (pending-closure label + warning comment)
   // on first detection and only CLOSES on a LATER evaluation when the violation STILL holds AND the PR already
@@ -282,6 +297,13 @@ function contributorCapCloseMessage(authorLogin: string, openCount: number, cap:
   return `Gittensory closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above this repository's configured limit of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
 }
 
+// The close comment for review-nag cooldown (#2463). DOES interpolate authorLogin/pingCount/maxPings — none of
+// that is private (the author's own login and their own public @gittensory ping count are already public/
+// derivable from the PR thread itself), mirroring the contributor-cap close message's same reasoning.
+function reviewNagCloseMessage(authorLogin: string, pingCount: number, maxPings: number): string {
+  return `Gittensory closed this because @${authorLogin} pinged @gittensory ${pingCount} times, above this repository's configured limit of ${maxPings}. Please wait for the cooldown window to pass before requesting review again. This is an automated maintenance action.`;
+}
+
 /**
  * Plan the maintainer auto-maintain actions for one PR. Returns a COHERENT set (never both approve and
  * request-changes; never both merge and close), each entry already filtered to an acting autonomy class.
@@ -342,6 +364,29 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         reason: "over the per-contributor open-item cap",
         closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, itemKind)),
         closeKind: "contributor_cap",
+      });
+    }
+    return actions;
+  }
+
+  // Review-nag cooldown (#2463): same zero-hallucination short-circuit shape as the blacklist above — fires
+  // ahead of ALL merit/CI/AI analysis, for a CONTRIBUTOR only. The webhook trigger has already decided "this
+  // ping crosses the threshold AND the repo's policy is close" before ever setting this input; the planner's
+  // only job is to build the deterministic label+close plan under the repo's normal autonomy/dry-run/kill-switch
+  // gates, exactly like every other action.
+  const reviewNagContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
+  if (input.reviewNagMatch?.matched === true && reviewNagContributor) {
+    const { authorLogin, pingCount, maxPings } = input.reviewNagMatch;
+    const label = input.reviewNagLabel ?? DEFAULT_REVIEW_NAG_LABEL;
+    if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "review-nag cooldown", label, labelOp: "add" });
+    if (acting("close")) {
+      actions.push({
+        actionClass: "close",
+        requiresApproval: approval("close"),
+        reason: "review-nag cooldown",
+        closeComment: sanitizePublicComment(reviewNagCloseMessage(authorLogin, pingCount, maxPings)),
+        closeKind: "review_nag",
+        ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
       });
     }
     return actions;

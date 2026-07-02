@@ -48,6 +48,7 @@ import {
   claimRegateFanoutSlot,
   recordAgentCommandFeedback,
   recordAuditEvent,
+  countRecentAuditEventsForActorAndTarget,
   recordGateBlockOutcome,
   getGateBlockOutcome,
   isGlobalAgentFrozen,
@@ -232,6 +233,7 @@ import {
   planAgentMaintenanceActions,
   type PlannedAgentAction,
 } from "../settings/agent-actions";
+import { isAutoCloseExempt } from "../settings/auto-close-exempt";
 import {
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
@@ -3878,6 +3880,24 @@ async function processGitHubWebhook(
     if (
       eventName === "issue_comment" &&
       (await maybeProcessPlanCommand(env, deliveryId, payload))
+    ) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
+    }
+
+    // Review-nag cooldown (#2463) runs BEFORE the mention-command dispatch below: a throttled ping must
+    // short-circuit ahead of the normal answer-card reply, not alongside it.
+    if (
+      eventName === "issue_comment" &&
+      (await maybeThrottleReviewNagPing(env, deliveryId, payload))
     ) {
       await recordWebhookEvent(env, {
         deliveryId,
@@ -8393,6 +8413,175 @@ async function recloseDisallowedReopenIfNeeded(
         : `FAILED to re-close a disallowed reopen by ${reopener} (originally closed by ${originallyClosedBy}) — the close API call did not succeed; the PR may still be open`,
     metadata: closeError === null ? { deliveryId, repoFullName } : { deliveryId, repoFullName, error: errorMessage(closeError) },
   }).catch(() => undefined);
+  return true;
+}
+
+// Audit eventType for one recorded @gittensory ping (#2463). Shared between the recorder below and the
+// cooldown-window count query so a naming drift can't silently under/over-count.
+const REVIEW_NAG_PING_EVENT_TYPE = "github_app.review_nag_ping";
+
+/**
+ * Review-request nagging cooldown (#2463, anti-abuse): throttle a thread's OWN author repeatedly pinging
+ * @gittensory for review on the SAME PR/issue. Runs BEFORE maybeProcessGittensoryMentionCommand below so a
+ * throttled ping short-circuits ahead of the normal answer-card dispatch — under the threshold this just
+ * records the ping (via the shared audit-events ledger, scoped by targetKey so the count never mixes threads)
+ * and falls through unchanged; only crossing the threshold applies the repo's configured policy.
+ *
+ * Deliberately scoped to the THREAD'S OWN author (`issue.user.login === commenter`): a third party pinging on
+ * someone else's PR/issue must never throttle or close the AUTHOR's unrelated work — this mirrors the standing
+ * "never punish someone for another actor's behavior" rule the blacklist/contributor-cap features already
+ * follow. Off (`reviewNagPolicy: "off"`, the default) is a complete no-op — no audit writes, no reads beyond
+ * the settings resolve.
+ */
+async function maybeThrottleReviewNagPing(
+  env: Env,
+  deliveryId: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  // Only a NEWLY-created comment counts as a ping (mirrors maybeProcessGittensoryMentionCommand) — an edited
+  // or deleted comment must not re-count or double-count.
+  if (payload.action !== "created") return false;
+  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  if (!command) return false; // not an @gittensory mention at all
+  const repoFullName = payload.repository?.full_name;
+  const issue = payload.issue;
+  const installationId = getInstallationId(payload);
+  const commenter = payload.comment?.user?.login;
+  if (!repoFullName || !issue || !installationId || !commenter) return false;
+  if (payload.comment?.user?.type === "Bot" || /\[bot\]$/i.test(commenter)) return false;
+
+  const settings = await resolveRepositorySettings(env, repoFullName);
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete "off"/"hold"/"close" (NOT NULL DEFAULT 'off'); the undefined side is defensive against the field's optional TS type. */
+  const policy = settings.reviewNagPolicy ?? "off";
+  if (policy === "off") return false;
+
+  const threadAuthor = issue.user?.login;
+  if (!threadAuthor || commenter.toLowerCase() !== threadAuthor.toLowerCase()) return false;
+
+  // repoFullName is always "owner/repo" for a real GitHub webhook; the empty-owner fallback only guards a
+  // malformed/synthetic payload from ever matching an empty commenter login as "the owner".
+  const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
+  if (commenter.toLowerCase() === repoOwner.toLowerCase()) return false;
+  if (parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(commenter.toLowerCase())) return false;
+  // NOTE: no separate isProtectedAutomationAuthor(commenter) check here — every entry in that set (e.g.
+  // "dependabot[bot]") already ends in "[bot]" and was rejected by the bot-suffix guard above, so it would be
+  // unreachable dead code at this point (unlike the PR-webhook maintenance path, which checks a PR's stored
+  // author rather than a live comment author already filtered for bot-ness).
+  if (isAutoCloseExempt(commenter, settings.autoCloseExemptLogins)) return false;
+
+  const targetKey = `${repoFullName}#${issue.number}`;
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
+  const maxPings = settings.reviewNagMaxPings ?? 3;
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
+  const cooldownDays = settings.reviewNagCooldownDays ?? 5;
+  const sinceIso = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000).toISOString();
+  const priorPings = await countRecentAuditEventsForActorAndTarget(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, targetKey, sinceIso);
+  const pingCount = priorPings + 1; // this ping counts too
+
+  // Always record the ping first so the running count reflects reality even when the rest of this handler
+  // short-circuits below (a failed recordAuditEvent must never block the mention-command fallthrough).
+  await recordAuditEvent(env, {
+    eventType: REVIEW_NAG_PING_EVENT_TYPE,
+    actor: commenter,
+    targetKey,
+    outcome: "completed",
+    detail: `ping ${pingCount}/${maxPings} within ${cooldownDays}d window`,
+    metadata: { deliveryId, repoFullName },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the mention-command fallthrough */
+    () => undefined,
+  );
+
+  if (pingCount <= maxPings) return false; // under threshold — normal command processing proceeds unchanged
+
+  const mode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+
+  // "close" only ever applies to a PR thread — an issue thread has no closeIssue primitive yet (tracked
+  // separately), so it degrades to "hold" with a comment explaining the v1 limit.
+  if (policy === "hold" || !issue.pull_request) {
+    if (mode === "live") {
+      await createIssueComment(
+        env,
+        installationId,
+        repoFullName,
+        issue.number,
+        `@${commenter} this thread has reached the review-request cooldown limit (${maxPings} pings within ${cooldownDays} days). Please wait for the cooldown window to pass before pinging @gittensory again. This is an automated maintenance action.`,
+      ).catch(
+        /* v8 ignore next -- fail-safe: a comment-post failure must not crash the throttle decision itself */
+        () => undefined,
+      );
+    }
+    await recordAuditEvent(env, {
+      eventType: "github_app.review_nag_cooldown_applied",
+      actor: "gittensory",
+      targetKey,
+      outcome: mode === "live" ? "completed" : "denied",
+      detail: `hold applied: ${commenter} pinged ${pingCount} times (limit ${maxPings})`,
+      metadata: { deliveryId, repoFullName, mode, policy },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+      () => undefined,
+    );
+    return true; // short-circuit — skip the normal @gittensory command dispatch
+  }
+
+  // policy === "close" on a PR thread: build the deterministic label+close plan through the SAME planner/
+  // executor gate stack (autonomy/dry-run/kill-switch/write-permission) as every other agent-driven mutation.
+  const pr = await getPullRequest(env, repoFullName, issue.number);
+  if (!pr || pr.state !== "open") return false; // nothing left to close — fall through harmlessly
+
+  const planned = planAgentMaintenanceActions({
+    conclusion: "skipped",
+    blockerTitles: [],
+    autonomy: settings.autonomy,
+    changedPaths: [],
+    hardGuardrailGlobs: [],
+    authorIsOwner: false,
+    authorIsAdmin: false,
+    authorIsAutomationBot: false,
+    ciState: "unverified",
+    reviewNagMatch: { matched: true, authorLogin: commenter, pingCount, maxPings },
+    // planAgentMaintenanceActions applies its own DEFAULT_REVIEW_NAG_LABEL fallback for an absent label —
+    // mirrors how blacklistLabel is threaded straight through without a second fallback layer here.
+    reviewNagLabel: settings.reviewNagLabel,
+    pr: { labels: pr.labels, headSha: pr.headSha },
+  });
+  if (planned.length === 0) {
+    // Autonomy is not currently acting for label/close — nothing to execute, but the policy still engaged.
+    await recordAuditEvent(env, {
+      eventType: "github_app.review_nag_cooldown_applied",
+      actor: "gittensory",
+      targetKey,
+      outcome: "denied",
+      detail: `close policy engaged but autonomy is not acting for label/close: ${commenter} pinged ${pingCount} times (limit ${maxPings})`,
+      metadata: { deliveryId, repoFullName, mode, policy },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+      () => undefined,
+    );
+    return true;
+  }
+
+  const installation = await getInstallation(env, installationId);
+  await executeAgentMaintenanceActions(
+    env,
+    {
+      installationId,
+      repoFullName,
+      pullNumber: pr.number,
+      headSha: pr.headSha,
+      autonomy: settings.autonomy,
+      agentPaused: settings.agentPaused,
+      agentDryRun: settings.agentDryRun,
+      installationPermissions: installation?.permissions ?? null,
+      authorLogin: pr.authorLogin,
+    },
+    planned,
+  );
   return true;
 }
 

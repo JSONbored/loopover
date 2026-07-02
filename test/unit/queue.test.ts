@@ -11010,6 +11010,416 @@ describe("queue processors", () => {
     expect(JSON.stringify(usageEvents)).not.toMatch(/deliveryId|wallet|hotkey|raw trust/i);
   });
 
+  describe("review-nag cooldown (#2463)", () => {
+    // Reusable stub covering everything the normal @gittensory Q&A dispatch needs (token, collaborator
+    // permission, comment GET/search + POST) PLUS the maintenance close path (label GET/POST, PR PATCH) —
+    // a superset so every scenario below (fall-through OR short-circuit) can share one fetch handler.
+    function stubReviewNagFetch(prNumber: number, seen: { comments: string[]; labels: string[]; closed: boolean }) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "none" });
+        if (url.endsWith(`/pulls/${prNumber}`) && method === "PATCH") {
+          seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed";
+          return Response.json({ number: prNumber, state: "closed" });
+        }
+        if (url.endsWith(`/pulls/${prNumber}`)) return Response.json({ number: prNumber, state: "open", head: { sha: `sha${prNumber}` }, mergeable_state: "clean" });
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "POST") {
+          seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[]));
+          return Response.json([]);
+        }
+        // Repo-level label definition (createMissingLabel: true probes/creates the label before applying it).
+        if (url.endsWith("/labels") && method === "POST") return Response.json({ name: JSON.parse(String(init?.body ?? "{}")).name }, { status: 201 });
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "POST") {
+          seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? ""));
+          return Response.json({ id: seen.comments.length }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+    }
+
+    it("is off by default — no ping is tracked and no cooldown action fires", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 200, title: "Off by default", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(200, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-off-default",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 200, title: "Off by default", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 1, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      expect(pings?.n).toBe(0);
+      expect(seen.closed).toBe(false);
+    });
+
+    it("records pings under the configured threshold without acting; the normal @gittensory reply still proceeds", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 201, title: "Under threshold", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(201, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-under-threshold",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 201, title: "Under threshold", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 1, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      expect(pings?.n).toBe(1); // the ping is recorded (1st of 3 allowed)
+      const applied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ n: number }>();
+      expect(applied?.n).toBe(0); // but no cooldown action — under threshold
+      expect(seen.closed).toBe(false);
+      // The review-nag hook returned false (fell through) — proven by the NORMAL mention-command dispatch
+      // making its own (here: unauthorized-skip) decision, rather than review-nag's short-circuit ever firing.
+      const skipped = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.agent_command_skipped'").first<{ n: number }>();
+      expect(skipped?.n).toBeGreaterThanOrEqual(1);
+    });
+
+    it("hold policy: posts a cooldown reply and short-circuits once the threshold is crossed", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 202, title: "Hold cooldown", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#202", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(202, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-hold",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 202, title: "Hold cooldown", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false);
+      expect(seen.comments.some((c) => c.includes("cooldown limit"))).toBe(true);
+      // Only ONE comment posted — the short-circuit skipped the normal answer-card dispatch.
+      expect(seen.comments).toHaveLength(1);
+      const applied = await env.DB.prepare("select outcome, detail from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ outcome: string; detail: string }>();
+      expect(applied?.outcome).toBe("completed");
+      expect(applied?.detail).toContain("hold applied");
+    });
+
+    it("close policy on a PR thread: labels + closes once the threshold is crossed, with no merit review", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: { close: "auto", label: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagLabel: "too-chatty" } }, "repo_file");
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 203, title: "Close cooldown", state: "open", user: { login: "chatty" }, head: { sha: "sha203" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#203", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(203, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-close",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 203, title: "Close cooldown", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(true);
+      expect(seen.labels).toContain("too-chatty"); // configurable label, not hardcoded
+      expect(seen.comments.some((c) => c.includes("chatty") && c.includes("4 times"))).toBe(true);
+      const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+      expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+    });
+
+    it("close policy degrades to hold on an ISSUE thread (no closeIssue primitive yet)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#204", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(204, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-issue-degrade",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 204, title: "Plain issue", state: "open", user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false); // no closeIssue primitive — degrades to hold
+      expect(seen.comments.some((c) => c.includes("cooldown limit"))).toBe(true);
+    });
+
+    it("never throttles an exempt login, even over threshold", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autoCloseExemptLogins: ["chatty"] });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 205, title: "Exempt author", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 5; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#205", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(205, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-exempt",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 205, title: "Exempt author", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false);
+      const applied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ n: number }>();
+      expect(applied?.n).toBe(0);
+    });
+
+    it("never throttles a third party pinging on someone else's PR — only the thread's OWN author is tracked", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 206, title: "Third party pinger", state: "open", user: { login: "pr-author" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(206, seen);
+      for (let i = 0; i < 5; i += 1) {
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `nag-third-party-${i}`,
+          eventName: "issue_comment",
+          payload: {
+            action: "created",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            issue: { number: 206, title: "Third party pinger", state: "open", pull_request: {}, user: { login: "pr-author" }, author_association: "NONE" },
+            comment: { id: i, body: "@gittensory help", user: { login: "bystander", type: "User" }, author_association: "NONE" },
+          },
+        });
+      }
+      const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      expect(pings?.n).toBe(0); // never even tracked — the commenter is not the thread's own author
+      expect(seen.closed).toBe(false);
+    });
+
+    it("no-op owner-exemption when repoFullName has no slash (repoOwner is empty — never wrongly matches the commenter)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, {
+        installation: { id: 123, account: { login: "", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
+        repositories: [{ name: "noslash", full_name: "noslash", private: false, owner: { login: "" } }],
+      });
+      await upsertRepositorySettings(env, { repoFullName: "noslash", reviewNagPolicy: "hold", reviewNagMaxPings: 3 });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "noslash#209", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(209, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-noslash",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "noslash", full_name: "noslash", private: false, owner: { login: "" } },
+          issue: { number: 209, title: "Slash-free repo", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      // repoOwner="" (branch false) → commenter "chatty" never equals "" → the owner-exemption is skipped and
+      // the throttle still engages normally (the comment post itself can't succeed for a slash-free repo — no
+      // owner/repo to target — but that failure is swallowed by design, same as every other best-effort notice
+      // in this file). Proven by reaching + completing the hold branch without the handler crashing.
+      const applied = await env.DB.prepare("select outcome from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ outcome: string }>();
+      expect(applied?.outcome).toBe("completed");
+    });
+
+    it("never throttles the literal repo owner self-pinging their own PR", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 1 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 207, title: "Owner PR", state: "open", user: { login: "JSONbored" }, author_association: "OWNER", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(207, seen);
+      for (let i = 0; i < 3; i += 1) {
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `nag-owner-${i}`,
+          eventName: "issue_comment",
+          payload: {
+            action: "created",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            issue: { number: 207, title: "Owner PR", state: "open", pull_request: {}, user: { login: "JSONbored" }, author_association: "OWNER" },
+            comment: { id: i, body: "@gittensory help", user: { login: "JSONbored", type: "User" }, author_association: "OWNER" },
+          },
+        });
+      }
+      const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      expect(pings?.n).toBe(0);
+      expect(seen.closed).toBe(false);
+    });
+
+    it("never throttles an ADMIN_GITHUB_LOGINS fleet-operator, even over threshold", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), ADMIN_GITHUB_LOGINS: "fleet-admin" });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 208, title: "Admin PR", state: "open", user: { login: "fleet-admin" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 5; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "fleet-admin", targetKey: "JSONbored/gittensory#208", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(208, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-admin",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 208, title: "Admin PR", state: "open", pull_request: {}, user: { login: "fleet-admin" }, author_association: "NONE" },
+          comment: { id: 6, body: "@gittensory help", user: { login: "fleet-admin", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false);
+      const applied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ n: number }>();
+      expect(applied?.n).toBe(0);
+    });
+
+    it("hold policy respects agentDryRun — records a denied cooldown-applied audit and never posts the reply live (#2258 parity)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3, agentDryRun: true });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 209, title: "Dry-run hold", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#209", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(209, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-hold-dryrun",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 209, title: "Dry-run hold", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.comments).toHaveLength(0); // dry-run — no live comment posted
+      const applied = await env.DB.prepare("select outcome from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ outcome: string }>();
+      expect(applied?.outcome).toBe("denied");
+    });
+
+    it("close policy falls through harmlessly when the PR is no longer open by the time the threshold fires", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 210, title: "Already closed", state: "closed", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#210", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(210, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-already-closed",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 210, title: "Already closed", state: "closed", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false);
+      const applied = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ n: number }>();
+      expect(applied?.n).toBe(0); // fell through silently — nothing left to act on
+    });
+
+    it("close policy records a denied cooldown-applied audit when autonomy is not acting for label/close (empty plan)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: {} });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 211, title: "Observe-only autonomy", state: "open", user: { login: "chatty" }, head: { sha: "sha211" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#211", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(211, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-observe-only",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 211, title: "Observe-only autonomy", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false);
+      const applied = await env.DB.prepare("select outcome, detail from audit_events where event_type = 'github_app.review_nag_cooldown_applied'").first<{ outcome: string; detail: string }>();
+      expect(applied?.outcome).toBe("denied");
+      expect(applied?.detail).toContain("autonomy is not acting");
+    });
+
+    it("close policy denies the mutation (never crashes) when no installation is on record — installationPermissions falls back to null", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: { close: "auto", label: "auto" } });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 212, title: "No installation row", state: "open", user: { login: "chatty" }, head: { sha: "sha212" }, author_association: "NONE", labels: [], body: "" });
+      for (let i = 0; i < 3; i += 1) {
+        await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#212", outcome: "completed" });
+      }
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(212, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-no-installation",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 212, title: "No installation row", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 4, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      expect(seen.closed).toBe(false); // no installation permissions on record — the write-permission gate denies it
+      const closeAudit = await env.DB.prepare("select outcome from audit_events where event_type = 'agent.action.close'").first<{ outcome: string }>();
+      expect(closeAudit?.outcome).toBe("denied");
+    });
+  });
+
   it("denies a maintainer Q&A command from an org member without real repo permission (#788)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {

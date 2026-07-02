@@ -92,6 +92,13 @@ export const repositorySettings = sqliteTable("repository_settings", {
   contributorOpenPrCap: integer("contributor_open_pr_cap"),
   contributorOpenIssueCap: integer("contributor_open_issue_cap"),
   contributorCapLabel: text("contributor_cap_label").notNull().default("over-contributor-limit"),
+  // Review-request nagging cooldown (#2463, anti-abuse): default 'off' (disabled).
+  reviewNagPolicy: text("review_nag_policy").notNull().default("off"),
+  reviewNagMaxPings: integer("review_nag_max_pings").notNull().default(3),
+  reviewNagCooldownDays: integer("review_nag_cooldown_days").notNull().default(5),
+  reviewNagLabel: text("review_nag_label").notNull().default("review-nag-cooldown"),
+  // Shared repo-scoped exemption list (#2463): a JSON array of GitHub logins.
+  autoCloseExemptLoginsJson: text("auto_close_exempt_logins_json").notNull().default("[]"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

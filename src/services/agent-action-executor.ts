@@ -2,7 +2,7 @@ import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNo
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
-import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../github/backfill";
+import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation, type LiveCiAggregate } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
@@ -47,6 +47,15 @@ export type AgentActionExecutionContext = {
   installationPermissions: Record<string, string> | null | undefined;
   // PR author login — surfaced as the "Submitter" in the per-repo Discord action notification.
   authorLogin?: string | null | undefined;
+  // #2539: an UNFILTERED live CI aggregate (same fetchLiveCiAggregate(..., requiredContexts: undefined, ...)
+  // shape this executor's own pre-mutation re-check below uses) the CALLER already fetched moments earlier in
+  // the SAME synchronous accept/execute pass — currently only decidePendingAgentAction's own merge re-check.
+  // Reused ONLY when its headSha exactly matches the action being executed; this is a same-pass coalescing
+  // shortcut, never a staleness-tolerant cache — a mismatched or absent headSha always falls back to a fresh
+  // fetch. Do NOT populate this from a required-context-FILTERED aggregate (e.g. processors.ts's
+  // refreshLiveCiAggregate/cachedLiveCiAggregate) — that would silently loosen this re-check's fold-all
+  // guarantee for repos with required-status-checks configured.
+  prefetchedLiveCi?: { headSha: string; aggregate: LiveCiAggregate } | undefined;
 };
 
 export type AgentActionOutcome = {
@@ -145,9 +154,17 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     //    after CI recovers (flagged by the gate's own review of #2478).
     const isAmbiguousLegacyHeuristicClose = action.actionClass === "close" && action.closeKind === "heuristic" && action.closeRequiresCiState === undefined;
     if (action.actionClass === "merge" || (action.actionClass === "close" && action.closeRequiresCiState === "failed") || isAmbiguousLegacyHeuristicClose) {
-      const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
-      const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
-      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, undefined, admissionKey);
+      // #2539: reuse the caller's already-fetched (moments earlier, SAME pass, matching unfiltered semantics)
+      // aggregate when its headSha still matches this exact action — a genuine same-instant coalesce, not a
+      // staleness shortcut (a mismatched headSha, e.g. a different action in this same plan, always re-fetches).
+      const liveCi =
+        ctx.prefetchedLiveCi && ctx.prefetchedLiveCi.headSha === expectedHeadSha
+          ? ctx.prefetchedLiveCi.aggregate
+          : await (async () => {
+              const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
+              const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
+              return fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, undefined, admissionKey);
+            })();
       // The planner itself only ever stages a merge when ciState === "passed" exactly (reviewGood in
       // agent-actions.ts; "pending" short-circuits to no actions at all upstream) -- the live re-check must
       // require the SAME exact state, not just "not failed". Otherwise a check that regressed to pending or

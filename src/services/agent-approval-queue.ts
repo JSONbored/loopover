@@ -5,7 +5,7 @@ import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, type LiveCiAggregate } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
@@ -174,6 +174,13 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // failed live read fails OPEN on that specific check (the executor's own mutation call independently needs a
   // valid token/state and will fail cleanly if something is actually wrong). (#2126)
   let liveParams: AgentPendingActionParams = pending.params;
+  // #2539: this accept-time re-check and the executor's own pre-mutation re-check (agent-action-executor.ts) ask
+  // the IDENTICAL question -- "is live CI still passed for this exact headSha" -- moments apart in this same
+  // synchronous accept pass, using the SAME unfiltered fetchLiveCiAggregate(..., undefined, ...) shape. Capture a
+  // fulfilled read here so the executor call below can reuse it instead of re-fetching. Left undefined on a
+  // rejected/skipped read (non-merge action, or this block never ran) — the executor then just fetches fresh,
+  // identical to today's behavior.
+  let prefetchedLiveCi: { headSha: string; aggregate: LiveCiAggregate } | undefined;
   if (pending.actionClass === "merge" && pr?.headSha) {
     const token = await createInstallationToken(env, pending.installationId).catch(() => undefined);
     const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, pending.installationId);
@@ -186,6 +193,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
       fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
     ]);
+    if (ciResult.status === "fulfilled") prefetchedLiveCi = { headSha: pr.headSha, aggregate: ciResult.value };
     // A REJECTED promise stays undefined (fail-open — the read itself failed, not a genuine CI signal); a
     // FULFILLED promise reporting anything other than "passed" (failed, pending, or unverified) is a real,
     // non-stale-tolerant signal that the staged merge's justification no longer holds (#2126).
@@ -293,6 +301,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation ? installation.permissions : null,
+      prefetchedLiveCi,
     },
     plan,
   );

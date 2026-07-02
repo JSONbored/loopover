@@ -535,6 +535,57 @@ describe("agent approval queue (#779)", () => {
     expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "merge", sha: "h7" });
   });
 
+  describe("prefetchedLiveCi coalescing (#2539)", () => {
+    it("a successful staged-merge accept fetches live CI exactly ONCE, not twice — the accept re-check's own read is reused by the executor's pre-mutation re-check", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+      await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+      await seedInstallation(env);
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+      const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+      const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+      expect(result.status).toBe("accepted");
+      expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+      expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(1);
+    });
+
+    it("a rejected (fail-open) accept-time CI read leaves the executor to fetch its OWN fresh value, still exactly once total", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+      await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+      await seedInstallation(env);
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+      const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+      // The accept-time read itself fails (fail-open, per #2126) -- prefetchedLiveCi stays undefined, so the
+      // executor's pre-mutation re-check must fall back to its OWN fresh fetch (the second mock resolution).
+      vi.mocked(fetchLiveCiAggregate)
+        .mockRejectedValueOnce(new Error("GitHub API transient 502"))
+        .mockResolvedValueOnce({ ciState: "passed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+
+      const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+      expect(result.status).toBe("accepted");
+      expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+      expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(2);
+    });
+
+    it("a non-merge staged action (approve) never populates a prefetch — the executor's own CI re-check (if any) still runs independently", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+      await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { approve: "auto_with_approval" } });
+      await seedInstallation(env);
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+      const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "approve", autonomyLevel: "auto_with_approval", params: { reviewBody: "lgtm", expectedHeadSha: "h7" }, reason: "gate passed" });
+
+      const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+      expect(result.status).toBe("accepted");
+      expect(createPullRequestReview).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "APPROVE", "lgtm", "h7");
+      // approve is not a CI-gated action class in the executor's own re-check (#2128), so it never calls
+      // fetchLiveCiAggregate at all -- confirming the merge-only branch above never runs for other action classes.
+      expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
+    });
+  });
+
   it("accept downgrades a staged merge to a needs-human-review label when the precision breaker engaged after staging (#2127)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", label: "auto" } });

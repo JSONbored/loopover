@@ -317,6 +317,67 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "sha7" });
   });
 
+  describe("prefetchedLiveCi coalescing (#2539)", () => {
+    it("reuses a matching-headSha prefetch for a merge instead of calling fetchLiveCiAggregate again", async () => {
+      const env = createTestEnv({});
+      const outcomes = await executeAgentMaintenanceActions(
+        env,
+        ctx({ prefetchedLiveCi: { headSha: "sha7", aggregate: { ciState: "passed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null } } }),
+        [merge],
+      );
+      expect(outcomes[0]?.outcome).toBe("completed");
+      expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "sha7" });
+      expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
+    });
+
+    it("a stale-failing prefetch still denies the merge — the coalescing shortcut carries the SAME staleness signal a fresh fetch would", async () => {
+      const env = createTestEnv({});
+      const outcomes = await executeAgentMaintenanceActions(
+        env,
+        ctx({ prefetchedLiveCi: { headSha: "sha7", aggregate: { ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null } } }),
+        [merge],
+      );
+      expect(outcomes[0]?.outcome).toBe("denied");
+      expect(outcomes[0]?.detail).toContain("live CI is no longer passing (now: failed)");
+      expect(mergePullRequest).not.toHaveBeenCalled();
+      expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
+    });
+
+    it("REGRESSION: a prefetch for a DIFFERENT headSha is ignored — always falls back to a fresh fetch, never silently acts on stale-SHA CI data", async () => {
+      const env = createTestEnv({});
+      vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "passed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+      const outcomes = await executeAgentMaintenanceActions(
+        env,
+        ctx({ prefetchedLiveCi: { headSha: "some-other-sha", aggregate: { ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null } } }),
+        [merge],
+      );
+      expect(outcomes[0]?.outcome).toBe("completed");
+      expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "sha7" });
+      expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(1);
+    });
+
+    it("reuses the prefetch for a CI-driven heuristic close too, not just merge", async () => {
+      const env = createTestEnv({});
+      const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "CI failed", closeComment: "closing", closeKind: "heuristic", closeRequiresCiState: "failed" };
+      const outcomes = await executeAgentMaintenanceActions(
+        env,
+        ctx({ prefetchedLiveCi: { headSha: "sha7", aggregate: { ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null } } }),
+        [heuristicClose],
+      );
+      expect(outcomes[0]?.outcome).toBe("completed");
+      expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+      expect(fetchLiveCiAggregate).not.toHaveBeenCalled();
+    });
+
+    it("no prefetch (default ctx()) behaves exactly as before — always fetches fresh", async () => {
+      const env = createTestEnv({});
+      vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "passed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+      const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
+      expect(outcomes[0]?.outcome).toBe("completed");
+      expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("LIVE label with labelOp=add + comment: adds the label AND posts the comment", async () => {
     const env = createTestEnv({});
     const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" };

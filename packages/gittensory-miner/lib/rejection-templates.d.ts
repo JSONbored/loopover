@@ -4,6 +4,6 @@ export type RejectionReasonBucket =
   | "superseded_by_duplicate"
   | "ci_failed";
 
-export function listRejectionTemplateReasons(): string[];
+export function listRejectionTemplateReasons(): RejectionReasonBucket[];
 export function renderRejectionTemplate(reason: RejectionReasonBucket): string;
 

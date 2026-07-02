@@ -209,6 +209,24 @@ describe("buildPreStartCheck", () => {
     assertPublicSafe(report);
   });
 
+  it("resolves title targets beyond the 300-issue title scan cap (regression for stale open issues)", () => {
+    const manyIssues = Array.from({ length: 301 }, (_, index) =>
+      issue(index + 1, `Cached maintenance task ${index + 1}`, {
+        updatedAt: new Date(Date.now() - index * 60_000).toISOString(),
+      }),
+    );
+    manyIssues[300] = issue(301, "Fix flaky retry backoff in queue worker pipeline", {
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+    const report = buildPreStartCheck(repo("owner/repo"), manyIssues, [], [], "owner/repo", {
+      title: "flaky retry backoff queue worker pipeline",
+    });
+    expect(report.target.matchedBy).toBe("title");
+    expect(report.target.resolvedIssueNumber).toBe(301);
+    expect(report.found).toBe(true);
+    assertPublicSafe(report);
+  });
+
   it("raises on a direct-PR-first repository", () => {
     const r = repo("owner/repo", { issueDiscoveryShare: 0 });
     const report = buildPreStartCheck(r, [issue(1, "Fix parser crash on empty input handling")], [], [], "owner/repo", { issueNumber: 1 });

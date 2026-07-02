@@ -3177,9 +3177,6 @@ export type PreStartCheckReport = {
 const DUPLICATE_RISK_RANK: Record<DuplicateClusterRisk, number> = { none: 0, low: 1, medium: 2, high: 3 };
 // Minimum Jaccard token overlap for a supplied title to resolve to a cached open issue.
 const TITLE_MATCH_MIN_JACCARD = 0.5;
-// Cap the title-matching scan so it stays cheap on repos with very large open-issue counts
-// (matches the bound used by the issue lifecycle report).
-const TITLE_MATCH_MAX_ISSUES = 300;
 
 /**
  * Pre-start duplicate/solvability check. Answers, before any branch exists, whether an issue is
@@ -3206,10 +3203,11 @@ export function buildPreStartCheck(
   } else if (target.title) {
     const wanted = new Set(tokenize(target.title));
     let best: { number: number; score: number } | undefined;
-    // An all-stopword/short title has no meaningful tokens to match against. Bound the scan to a
-    // fixed number of open issues so title matching stays cheap on repos with very large queues.
+    // An all-stopword/short title has no meaningful tokens to match against. Callers pass a bounded
+    // issue sample (listIssueSignalSample default 400); scan the full open set so stale issues beyond
+    // the old 300-cap are not invisible to title-only pre-start checks (#1920 pinned lifecycle by number only).
     if (wanted.size > 0) {
-      for (const issue of openIssues.slice(0, TITLE_MATCH_MAX_ISSUES)) {
+      for (const issue of openIssues) {
         const have = new Set(tokenize(issue.title));
         const shared = [...wanted].filter((term) => have.has(term)).length;
         const score = shared / new Set([...wanted, ...have]).size;

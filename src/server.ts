@@ -11,6 +11,7 @@ import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
+import packageJson from "../package.json";
 import worker from "./index";
 import { processJob } from "./queue/processors";
 import {
@@ -36,7 +37,9 @@ import { isOrbBrokerMode, registerOrbRelayTarget } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import {
+  buildHealthBody,
   readiness,
+  resolveHealthVersion,
   sqliteBackupAdvisory,
   type ReadinessProbe,
 } from "./selfhost/health";
@@ -325,10 +328,15 @@ async function main(): Promise<void> {
   const backend = usePostgres
     ? await buildPostgresBackend(databaseUrl as string, consume)
     : buildSqliteBackend(consume);
+  const dbBackend = usePostgres ? "postgres" : "sqlite";
+  const healthVersion = resolveHealthVersion(
+    { GITTENSORY_VERSION: process.env.GITTENSORY_VERSION },
+    packageJson.version,
+  );
   console.log(
     JSON.stringify({
       event: "selfhost_backend",
-      backend: usePostgres ? "postgres" : "sqlite",
+      backend: dbBackend,
     }),
   );
   // Data-safety advisory (#8): warn LOUDLY at boot if running on a single SQLite file with no acknowledged backup,
@@ -559,9 +567,10 @@ async function main(): Promise<void> {
       fetch: async (request: Request) => {
         const path = new URL(request.url).pathname;
         if (path === "/health")
-          return new Response(JSON.stringify({ status: "ok" }), {
-            headers: { "content-type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify(buildHealthBody({ version: healthVersion, startedAt, dbBackend })),
+            { headers: { "content-type": "application/json" } },
+          );
         if (path === "/ready") {
           const r = await readiness(backend.db, readinessProbes);
           return new Response(JSON.stringify(r), {

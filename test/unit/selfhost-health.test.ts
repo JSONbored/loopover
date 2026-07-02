@@ -1,7 +1,71 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
-import { readiness, sqliteBackupAdvisory } from "../../src/selfhost/health";
+import {
+  buildHealthBody,
+  readiness,
+  resolveHealthVersion,
+  sqliteBackupAdvisory,
+} from "../../src/selfhost/health";
+
+describe("buildHealthBody (#2077)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reports the configured version, rounded uptime, and Postgres backend", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-02T12:00:10.900Z"));
+
+    expect(
+      buildHealthBody({
+        version: "2026.7.2",
+        startedAt: Date.parse("2026-07-02T12:00:00.100Z"),
+        dbBackend: "postgres",
+      }),
+    ).toEqual({
+      status: "ok",
+      version: "2026.7.2",
+      uptimeSeconds: 10,
+      backend: "postgres",
+    });
+  });
+
+  it("falls back to unknown and never reports negative uptime", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-02T12:00:00.000Z"));
+
+    expect(
+      buildHealthBody({
+        startedAt: Date.parse("2026-07-02T12:00:02.000Z"),
+        dbBackend: "sqlite",
+      }),
+    ).toEqual({
+      status: "ok",
+      version: "unknown",
+      uptimeSeconds: 0,
+      backend: "sqlite",
+    });
+  });
+});
+
+describe("resolveHealthVersion (#2077)", () => {
+  it("prefers the image version over the package fallback", () => {
+    expect(resolveHealthVersion({ GITTENSORY_VERSION: "  image-2026.07.02  " }, "0.1.0")).toBe(
+      "image-2026.07.02",
+    );
+  });
+
+  it("uses the package fallback when the image version is absent or blank", () => {
+    expect(resolveHealthVersion({}, "0.1.0")).toBe("0.1.0");
+    expect(resolveHealthVersion({ GITTENSORY_VERSION: "   " }, "0.1.0")).toBe("0.1.0");
+  });
+
+  it("reports unknown when no nonblank version is available", () => {
+    expect(resolveHealthVersion({}, undefined)).toBe("unknown");
+    expect(resolveHealthVersion({ GITTENSORY_VERSION: "" }, "   ")).toBe("unknown");
+  });
+});
 
 describe("sqliteBackupAdvisory (#8 data-safety)", () => {
   it("warns on SQLite without an acknowledged backup, and is silent otherwise", () => {
@@ -28,7 +92,9 @@ describe("readiness (#982)", () => {
   it("reports db=false and migrations=false when the SELECT 1 probe throws (db down)", async () => {
     const throwingDb = {
       prepare: () => ({
-        bind: function() { return this; },
+        bind: function() {
+          return this;
+        },
         first: () => Promise.reject(new Error("sqlite_io_error")),
         all: () => Promise.reject(new Error("sqlite_io_error")),
         run: () => Promise.reject(new Error("sqlite_io_error")),
@@ -39,6 +105,26 @@ describe("readiness (#982)", () => {
       dump: () => Promise.resolve(new ArrayBuffer(0)),
     } as unknown as D1Database;
     expect(await readiness(throwingDb)).toEqual({ ok: false, checks: { db: false, migrations: false } });
+  });
+
+  it("treats an absent migration count row as not migrated", async () => {
+    const countlessDb = {
+      prepare: (sql: string) => ({
+        bind: function() { return this; },
+        first: () => Promise.resolve(sql.includes("SELECT 1") ? { one: 1 } : undefined),
+        all: () => Promise.resolve([]),
+        run: () => Promise.resolve({ success: true, meta: {} }),
+        raw: () => Promise.resolve([]),
+      }),
+      exec: () => Promise.resolve({ results: [], success: true, meta: {} }),
+      batch: () => Promise.resolve([]),
+      dump: () => Promise.resolve(new ArrayBuffer(0)),
+    } as unknown as D1Database;
+
+    expect(await readiness(countlessDb)).toEqual({
+      ok: false,
+      checks: { db: true, migrations: false },
+    });
   });
 
   it("gates readiness on configured backend probes (#4) and reports each in checks", async () => {

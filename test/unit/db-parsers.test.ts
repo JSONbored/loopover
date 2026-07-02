@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   claimRegateFanoutSlot,
   countRecentDeadLetters,
+  countRecentDeadLettersByType,
   countRecentAuditEventsForActorAndTarget,
   getLatestScorePreview,
   getRepoAuthorPullRequestHistory,
@@ -371,6 +372,101 @@ describe("database row parser hardening", () => {
     expect(await countRecentDeadLetters(env, "2026-06-24T09:00:00.000Z")).toBe(2); // both dead-letters in window
     expect(await countRecentDeadLetters(env, "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 one
     expect(await countRecentDeadLetters(env, "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
+  });
+
+  it("countRecentDeadLettersByType groups recent dead letters by job type in deterministic key order (#1208)", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:github-webhook:a",
+      outcome: "error",
+      createdAt: "2026-06-24T12:00:00.000Z",
+      metadata: { jobType: "github-webhook" },
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:backfill-repo-segment:b",
+      outcome: "error",
+      createdAt: "2026-06-24T10:00:00.000Z",
+      metadata: { jobType: "backfill-repo-segment" },
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:github-webhook:c",
+      outcome: "error",
+      createdAt: "2026-06-24T14:00:00.000Z",
+      metadata: { jobType: "github-webhook" },
+    });
+
+    const counts = await countRecentDeadLettersByType(env, "2026-06-24T09:00:00.000Z");
+    expect(counts).toEqual({
+      "backfill-repo-segment": 1,
+      "github-webhook": 2,
+    });
+    expect(Object.keys(counts)).toEqual(["backfill-repo-segment", "github-webhook"]);
+  });
+
+  it("countRecentDeadLettersByType returns a single grouped key when only one job type is present", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:refresh-registry:a",
+      outcome: "error",
+      createdAt: "2026-06-24T10:00:00.000Z",
+      metadata: { jobType: "refresh-registry" },
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:refresh-registry:b",
+      outcome: "error",
+      createdAt: "2026-06-24T11:00:00.000Z",
+      metadata: { jobType: "refresh-registry" },
+    });
+
+    expect(await countRecentDeadLettersByType(env, "2026-06-24T09:00:00.000Z")).toEqual({
+      "refresh-registry": 2,
+    });
+  });
+
+  it("countRecentDeadLettersByType returns an empty object when no recent dead letters exist", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.regate",
+      actor: "gittensory",
+      targetKey: "owner/repo",
+      outcome: "completed",
+      createdAt: "2026-06-24T12:00:00.000Z",
+    });
+
+    expect(await countRecentDeadLettersByType(env, "2026-06-24T09:00:00.000Z")).toEqual({});
+  });
+
+  it("countRecentDeadLettersByType falls back missing or blank job types to unknown", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:unknown:a",
+      outcome: "error",
+      createdAt: "2026-06-24T10:00:00.000Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.dlq_dead_lettered",
+      actor: "gittensory",
+      targetKey: "dlq:unknown:b",
+      outcome: "error",
+      createdAt: "2026-06-24T11:00:00.000Z",
+      metadata: { jobType: "   " },
+    });
+
+    expect(await countRecentDeadLettersByType(env, "2026-06-24T09:00:00.000Z")).toEqual({
+      unknown: 2,
+    });
   });
 
   it("countRecentAuditEventsForActorAndTarget counts events scoped to ONE actor+eventType+targetKey since a cutoff (#2463)", async () => {

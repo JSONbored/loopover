@@ -14,7 +14,6 @@ import {
   getContributorEvidence,
   getAgentRun,
   getContributorScoringProfile,
-  upsertPullRequestDetailSyncState,
   getWebhookEvent,
   getInstallation,
   getLatestUpstreamRulesetSnapshot,

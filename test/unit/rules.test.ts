@@ -10,6 +10,7 @@ import {
   formatCheckRunOutput,
   formatGateCheckOutput,
   isAiJudgmentOnlyFailure,
+  isDuplicateOnlyFailure,
   reconcileGateEvaluationForGreenCi,
 } from "../../src/rules/advisory";
 import type { CollisionReport } from "../../src/signals/engine";
@@ -1179,6 +1180,26 @@ describe("green-CI compatibility reconciliation of the public comment gate", () 
     expect(isAiJudgmentOnlyFailure({ ...failure([]), conclusion: "failure" })).toBe(false);
     // A non-failure conclusion is never AI-only-failure.
     expect(isAiJudgmentOnlyFailure({ ...failure(["ai_consensus_defect"]), conclusion: "success" })).toBe(false);
+  });
+
+  it("isDuplicateOnlyFailure: true only when EVERY blocker is EXACTLY duplicate_pr_risk", () => {
+    expect(isDuplicateOnlyFailure(failure(["duplicate_pr_risk"]))).toBe(true);
+    // An empty blocker list is not a duplicate-only failure.
+    expect(isDuplicateOnlyFailure({ ...failure([]), conclusion: "failure" })).toBe(false);
+    // A non-failure conclusion is never a duplicate-only failure.
+    expect(isDuplicateOnlyFailure({ ...failure(["duplicate_pr_risk"]), conclusion: "success" })).toBe(false);
+    // A single genuinely critical blocker (e.g. a committed secret) disqualifies the whole set, mixed or alone.
+    expect(isDuplicateOnlyFailure(failure(["secret_leak"]))).toBe(false);
+    expect(isDuplicateOnlyFailure(failure(["duplicate_pr_risk", "secret_leak"]))).toBe(false);
+    // REGRESSION: other findings are ALSO severity "warning" and ALSO block-mode-escalatable via their own
+    // independent maintainer-configured gate (linkedIssueGateMode / selfAuthoredLinkedIssueGateMode /
+    // manifestPolicyGateMode) — a scope-creep bug would let applySurfaceGate silently downgrade THOSE deliberate
+    // block-mode opt-ins to a hold too. None of them may ever satisfy isDuplicateOnlyFailure, alone or mixed with
+    // duplicate_pr_risk.
+    for (const code of ["missing_linked_issue", "self_authored_linked_issue", "manifest_linked_issue_required", "manifest_missing_tests"]) {
+      expect(isDuplicateOnlyFailure(failure([code]))).toBe(false);
+      expect(isDuplicateOnlyFailure(failure(["duplicate_pr_risk", code]))).toBe(false);
+    }
   });
 
   it("enabled + green CI + AI-judgment-only failure stays a failure", () => {

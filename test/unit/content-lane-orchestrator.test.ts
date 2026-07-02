@@ -94,21 +94,124 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     expect(r?.verdict).toBe("merge");
   });
 
-  it("routes companion provider or artifact changes to manual review without trusting the entry verdict", async () => {
-    const calls: string[] = [];
+  // Bug #1 (confirmed live on metagraphed PR #2654): a genuine "entry + its debut provider in the same PR"
+  // companion is already APPROVED by classifyRegistryPrScope (isAllowed matches providerFilePattern), but this
+  // used to be thrown away and routed to manual regardless. It must now be validated via assessProviderEntry and
+  // combined with the entry's own assessment: merge only when BOTH sides are clean.
+  const ARTIFACT = "public/metagraph/index.json";
+  const validProviderDoc = JSON.stringify({ provider: { id: "acme", name: "Acme", website_url: "https://acme.example" } });
+  const invalidProviderDoc = JSON.stringify({ provider: { name: "Acme", website_url: "https://acme.example" } }); // missing id
+
+  it("[test 1] merges an entry submission whose companion is a genuine, valid debut provider", async () => {
     const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
       changedFiles: [SUBNET, PROVIDER],
+      loadFile: (path, ref) =>
+        Promise.resolve(path === PROVIDER ? (ref === "head" ? validProviderDoc : null) : ref === "head" ? doc([existing, newEntry]) : doc([existing])),
+    });
+    expect(r?.verdict).toBe("merge");
+  });
+
+  it("[test 2a] closes when the entry is valid but its debut-provider companion is invalid", async () => {
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, PROVIDER],
+      loadFile: (path, ref) =>
+        Promise.resolve(path === PROVIDER ? (ref === "head" ? invalidProviderDoc : null) : ref === "head" ? doc([existing, newEntry]) : doc([existing])),
+    });
+    expect(r?.verdict).toBe("close");
+  });
+
+  it("routes to MANUAL when the entry needs manual review (auth_required) and its debut-provider companion is valid", async () => {
+    const authEntry = { ...newEntry, auth_required: true };
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, PROVIDER],
+      loadFile: (path, ref) =>
+        Promise.resolve(path === PROVIDER ? (ref === "head" ? validProviderDoc : null) : ref === "head" ? doc([existing, authEntry]) : doc([existing])),
+    });
+    expect(r?.verdict).toBe("manual");
+    expect(r?.summary).toBe(
+      "Authenticated interface — routing to review to confirm the declared auth scheme is documented publicly (verifiable without any secret) before it can be accepted.",
+    );
+  });
+
+  it("[test 2b] closes when the debut-provider companion is valid but the entry itself is invalid", async () => {
+    const badEntry = { ...newEntry, public_safe: false };
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, PROVIDER],
+      loadFile: (path, ref) =>
+        Promise.resolve(path === PROVIDER ? (ref === "head" ? validProviderDoc : null) : ref === "head" ? doc([existing, badEntry]) : doc([existing])),
+    });
+    expect(r?.verdict).toBe("close");
+  });
+
+  it("[test 3] merges an entry submission accompanied ONLY by an artifactPattern companion, without validating it as a provider", async () => {
+    const calls: string[] = [];
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, ARTIFACT],
       loadFile: (path, ref) => {
         calls.push(`${ref}:${path}`);
+        if (path === ARTIFACT) return Promise.resolve("<<not even valid json>>"); // garbage content, never read
         return Promise.resolve(ref === "head" ? doc([existing, newEntry]) : doc([existing]));
       },
     });
+    expect(r?.verdict).toBe("merge");
+    // The artifact companion is allowed as-is (generated build output) — never loaded/validated.
+    expect(calls.some((c) => c.includes(ARTIFACT))).toBe(false);
+  });
 
+  it("[test 4] a companion file matching NEITHER providerFilePattern NOR artifactPattern is still mixed-files (close), unchanged", async () => {
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, { changedFiles: [SUBNET, "src/index.ts"], loadFile: () => Promise.resolve(null) });
+    expect(r?.verdict).toBe("close");
+    expect(r?.summary).toContain("must not bundle other file changes");
+  });
+
+  it("[test 5] an entry file always wins scope over an accompanying provider file — end to end, this still merges through the companion-validation path, not the old manual punt", async () => {
+    // registry order shouldn't matter: providerFile listed BEFORE the entry file still resolves to entry-submission
+    // scope with the provider as its companion (classifyRegistryPrScope's own invariant — see the registry-logic
+    // test suite for the scope-classification assertion itself).
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [PROVIDER, SUBNET],
+      loadFile: (path, ref) =>
+        Promise.resolve(path === PROVIDER ? (ref === "head" ? validProviderDoc : null) : ref === "head" ? doc([existing, newEntry]) : doc([existing])),
+    });
+    expect(r?.verdict).toBe("merge");
+  });
+
+  it("does not recognize a companion when more than one provider file rides along an entry — falls back to manual (ambiguous shape)", async () => {
+    const calls: string[] = [];
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, PROVIDER, "registry/providers/second.json"],
+      loadFile: (path, ref) => {
+        calls.push(`${ref}:${path}`);
+        return Promise.resolve(null);
+      },
+    });
     expect(r).toEqual({
       verdict: "manual",
       summary: "Registry submission includes companion file changes — routing to review.",
     });
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([]); // never even loads the direct file once an unrecognized companion trips the guard
+  });
+
+  it("routes a valid entry + companion provider file to MANUAL when the spec has no assessProviderEntry configured", async () => {
+    // A literal spec (rather than spreading METAGRAPHED_LANE_SPEC) so assessProviderEntry is simply OMITTED, not
+    // set to undefined — exactOptionalPropertyTypes rejects an explicit `undefined` for an optional field.
+    const spec: RegistryLaneSpec = {
+      entryFilePattern: SUBNET_ENTRY_PATTERN,
+      providerFilePattern: FLAT_PROVIDER_PATTERN,
+      artifactPattern: ARTIFACT_PATTERN,
+      collectionField: "surfaces",
+      maxAppendedEntries: Infinity,
+      duplicateKeyFields: ["url"],
+      assessAppendedEntry: assessSubnetDocument,
+    };
+    const r = await runSurfaceReview(spec, {
+      changedFiles: [SUBNET, PROVIDER],
+      loadFile: (path, ref) => Promise.resolve(ref === "head" ? (path === PROVIDER ? validProviderDoc : doc([existing, newEntry])) : doc([existing])),
+    });
+    expect(r).toEqual({
+      verdict: "manual",
+      summary: "No validator is configured for this registry's provider submissions — routing to review.",
+    });
   });
 
   it("ignores blank changed-file entries while enforcing the direct-file-only invariant", async () => {

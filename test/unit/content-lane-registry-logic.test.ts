@@ -281,10 +281,11 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(isRegistrySubmissionScope(r.scope)).toBe(true);
   });
 
-  it("recognizes an entry-submission whose flat debut provider is an allowed companion", () => {
+  it("recognizes an entry-submission whose flat debut provider is an allowed companion, and identifies it", () => {
     const r = classifyRegistryPrScope(spec, ["registry/subnets/allways.json", "registry/providers/allways.json"]);
     expect(r.scope).toBe("entry-submission");
     expect(r.directFile).toBe("registry/subnets/allways.json");
+    expect(r.providerCompanionFile).toBe("registry/providers/allways.json");
   });
 
   it("recognizes a standalone flat provider-submission (no subnet file)", () => {
@@ -292,6 +293,35 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(r.scope).toBe("provider-submission");
     expect(r.directFile).toBe("registry/providers/cacheon.json");
     expect(r.isProvider).toBe(true);
+    expect(r.providerCompanionFile).toBeNull();
+  });
+
+  it("has no provider companion when the entry submission travels alone", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/subnets/actual.json"]);
+    expect(r.scope).toBe("entry-submission");
+    expect(r.providerCompanionFile).toBeNull();
+  });
+
+  // Symmetric case explicitly documented: an entry file present alongside a provider file ALWAYS resolves to
+  // entry-submission scope with the provider file as its companion — there is no "provider-submission scope with
+  // a companion entry file" (the entry file's presence forecloses isProviderPr, which requires zero entry files).
+  it("an entry file always wins scope over an accompanying provider file — never provider-submission with an entry companion", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/providers/allways.json", "registry/subnets/allways.json"]);
+    expect(r.scope).toBe("entry-submission");
+    expect(r.isProvider).toBe(false);
+    expect(r.directFile).toBe("registry/subnets/allways.json");
+    expect(r.providerCompanionFile).toBe("registry/providers/allways.json");
+  });
+
+  it("does not recognize a companion when MORE THAN ONE provider file rides along an entry (ambiguous — which is 'the' debut provider?)", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "registry/providers/a.json", "registry/providers/b.json"]);
+    expect(r.scope).toBe("entry-submission");
+    expect(r.providerCompanionFile).toBeNull();
+  });
+
+  it("mixed-files and not-direct-submission never carry a provider companion", () => {
+    expect(classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "src/index.ts"]).providerCompanionFile).toBeNull();
+    expect(classifyRegistryPrScope(spec, ["README.md"]).providerCompanionFile).toBeNull();
   });
 
   it("is mixed-files when an out-of-scope file rides along", () => {

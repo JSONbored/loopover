@@ -109,6 +109,29 @@ export function isAiJudgmentOnlyFailure(evaluation: GateCheckEvaluation): boolea
   return evaluation.conclusion === "failure" && evaluation.blockers.length > 0 && evaluation.blockers.every((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
 }
 
+// DUPLICATE-ONLY blocker codes: findings whose own severity is always "warning" (advisory by nature — a
+// same-linked-issue overlap is a lead for a human, not proof of a defect) but that a per-repo gate-mode config
+// can still escalate into a hard blocker (`duplicate_pr_risk` under `duplicatePrGateMode: "block"`, its ONLY
+// escalation path — see isConfiguredGateBlocker). Kept to exactly this code, NOT "every warning-severity finding":
+// `missing_linked_issue`, `self_authored_linked_issue`, `manifest_linked_issue_required`, and
+// `manifest_missing_tests` are ALSO severity "warning" and ALSO block-mode-escalatable via their own maintainer-
+// configured gate (linkedIssueGateMode / selfAuthoredLinkedIssueGateMode / manifestPolicyGateMode), and a
+// maintainer who explicitly opted one of THOSE into "block" must have it still close a PR outright — only the
+// same-linked-issue overlap concern is meant to downgrade to a hold for a decisive surface-lane merge.
+export const DUPLICATE_ONLY_BLOCKER_CODES = new Set<string>(["duplicate_pr_risk"]);
+
+/** True when the gate FAILED *solely* because of duplicate-only blockers (every blocker is in
+ *  DUPLICATE_ONLY_BLOCKER_CODES) — i.e. the failure was produced entirely by a same-linked-issue overlap
+ *  escalated into blocker status by `duplicatePrGateMode: "block"`, never a genuinely critical finding (a
+ *  committed secret, an unsafe URL, ...) or another maintainer-configured block-mode gate. A caller merging this
+ *  evaluation against an independent, decisive, AI-free verdict (see `applySurfaceGate`) can use this to tell "a
+ *  real defect, or another gate the maintainer explicitly opted into blocking" apart from "an advisory-by-nature
+ *  overlap concern" before letting it override that verdict outright. An empty blocker list is NOT a
+ *  duplicate-only failure. PURE. */
+export function isDuplicateOnlyFailure(evaluation: GateCheckEvaluation): boolean {
+  return evaluation.conclusion === "failure" && evaluation.blockers.length > 0 && evaluation.blockers.every((blocker) => DUPLICATE_ONLY_BLOCKER_CODES.has(blocker.code));
+}
+
 /**
  * Historical compatibility shim for the old green-CI AI refutation path. The gate verdict is now authoritative:
  * if an AI review finding is configured as blocking, green CI cannot rewrite it to success. This keeps the public

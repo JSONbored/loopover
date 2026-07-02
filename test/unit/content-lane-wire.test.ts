@@ -139,6 +139,82 @@ describe("applySurfaceGate", () => {
     expect(out?.conclusion).toBe("failure"); // the real blocker means this is NOT an AI-judgment-only failure
     expect(out?.blockers).toEqual([aiConsensusDefect, secret]);
   });
+
+  // Bug #2 (confirmed live on metagraphed PR #2680): a duplicate_pr_risk finding (severity "warning"), escalated
+  // into a blocker by duplicatePrGateMode: "block", must not singlehandedly one-shot-close a PR whose OWN
+  // deterministic surface-lane result is a clean merge — it downgrades to a HOLD instead, same spirit as the
+  // AI-judgment-only carve-out above, but keyed on this EXACT finding code (isDuplicateOnlyFailure), not severity.
+  it("REGRESSION (#2680): a duplicate_pr_risk-only generic failure downgrades a clean surface merge to a HOLD, not a close — the finding stays visible with a held-for-review title/summary", () => {
+    const duplicatePrRisk: AdvisoryFinding = {
+      code: "duplicate_pr_risk",
+      title: "Linked issue overlaps another open PR",
+      severity: "warning",
+      detail: "Other open pull requests reference the same linked issue set: #2654.",
+    };
+    const genericDuplicateOnly = gate({ conclusion: "failure", blockers: [duplicatePrRisk], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericDuplicateOnly, surfaceMerge);
+    expect(out?.conclusion).toBe("neutral"); // held for review, not closed
+    expect(out?.blockers).toEqual([]); // no longer a hard blocker
+    expect(out?.warnings).toEqual([duplicatePrRisk]); // still visible to a human reviewer
+    // The posted title/summary must name the actual hold reason, not silently inherit the surface's clean-merge text.
+    expect(out?.title).toMatch(/held for review/i);
+    expect(out?.summary).toBe(duplicatePrRisk.detail);
+  });
+
+  it("the held-for-review summary falls back to the blocker's title when its detail is blank", () => {
+    const duplicatePrRisk: AdvisoryFinding = { code: "duplicate_pr_risk", title: "Linked issue overlaps another open PR", severity: "warning", detail: "" };
+    const genericDuplicateOnly = gate({ conclusion: "failure", blockers: [duplicatePrRisk], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericDuplicateOnly, surfaceMerge);
+    expect(out?.summary).toBe(duplicatePrRisk.title);
+  });
+
+  it("a duplicate-only generic failure downgrade preserves the generic gate's OTHER pre-existing warnings alongside the demoted blocker", () => {
+    const duplicatePrRisk: AdvisoryFinding = { code: "duplicate_pr_risk", title: "Duplicate", severity: "warning", detail: "Overlaps #99." };
+    const readiness: AdvisoryFinding = { code: "quality_readiness_low", title: "Readiness is low", severity: "warning", detail: "" };
+    const genericDuplicateOnly = gate({ conclusion: "failure", blockers: [duplicatePrRisk], warnings: [readiness] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry", warnings: [] });
+    const out = applySurfaceGate(genericDuplicateOnly, surfaceMerge);
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.warnings).toEqual([duplicatePrRisk, readiness]);
+  });
+
+  it("a MIXED generic failure (duplicate_pr_risk plus a genuinely critical finding) is NOT duplicate-only — still overrides a surface merge", () => {
+    const duplicatePrRisk: AdvisoryFinding = { code: "duplicate_pr_risk", title: "Duplicate", severity: "warning", detail: "" };
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked key" };
+    const genericMixed = gate({ conclusion: "failure", blockers: [duplicatePrRisk, secret], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericMixed, surfaceMerge);
+    expect(out?.conclusion).toBe("failure"); // the real secret means this is NOT a duplicate-only failure
+    expect(out?.blockers).toEqual([duplicatePrRisk, secret]);
+  });
+
+  it("a duplicate-only generic failure still fails when the surface ITSELF closes (the downgrade only applies to a surface MERGE)", () => {
+    const duplicatePrRisk: AdvisoryFinding = { code: "duplicate_pr_risk", title: "Duplicate", severity: "warning", detail: "" };
+    const genericDuplicateOnly = gate({ conclusion: "failure", blockers: [duplicatePrRisk], warnings: [] });
+    const out = applySurfaceGate(genericDuplicateOnly, surfaceClose);
+    expect(out?.conclusion).toBe("failure");
+    expect(out?.blockers).toEqual([duplicatePrRisk, ...surfaceClose.blockers]); // union — no downgrade without a surface merge
+  });
+
+  // REGRESSION (scope-creep guard): several OTHER findings are ALSO severity "warning" and ALSO block-mode-
+  // escalatable via their OWN independent maintainer-configured gate (linkedIssueGateMode /
+  // selfAuthoredLinkedIssueGateMode / manifestPolicyGateMode). Guard #4 must be scoped to EXACTLY duplicate_pr_risk
+  // — a maintainer who explicitly opted one of these into "block" must still have it close a clean-surface PR
+  // outright, not get silently downgraded to a hold just because the finding happens to share duplicate_pr_risk's
+  // "warning" severity.
+  it.each(["missing_linked_issue", "self_authored_linked_issue", "manifest_linked_issue_required", "manifest_missing_tests"])(
+    "REGRESSION: a %s-only generic failure (also severity warning, but a DIFFERENT maintainer-configured gate) still overrides a surface merge — not swept into the duplicate-only carve-out",
+    (code) => {
+      const otherWarningBlocker: AdvisoryFinding = { code, title: "t", severity: "warning", detail: "d" };
+      const genericOtherOnly = gate({ conclusion: "failure", blockers: [otherWarningBlocker], warnings: [] });
+      const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+      const out = applySurfaceGate(genericOtherOnly, surfaceMerge);
+      expect(out?.conclusion).toBe("failure");
+      expect(out?.blockers).toEqual([otherWarningBlocker]);
+    },
+  );
 });
 
 describe("runRegistrySurfaceGate (injected loader — adapter logic)", () => {

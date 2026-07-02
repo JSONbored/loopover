@@ -42,7 +42,9 @@ export interface CachedGitHubResponse {
 }
 export interface GitHubResponseCache {
   get(key: string): Promise<CachedGitHubResponse | null>;
-  set(key: string, value: CachedGitHubResponse, ttlSeconds?: number): Promise<void>;
+  // Required: every real call site resolves a per-class TTL (githubResponseCacheTtlSeconds /
+  // githubGraphQlCacheTtlSeconds) before calling set(), so there is no sensible cache-wide fallback (#2505).
+  set(key: string, value: CachedGitHubResponse, ttlSeconds: number): Promise<void>;
 }
 let responseCache: GitHubResponseCache | null = null;
 export function setGitHubResponseCache(cache: GitHubResponseCache | null): void {

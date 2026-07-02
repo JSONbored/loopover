@@ -442,11 +442,13 @@ async function main(): Promise<void> {
   const { createRedisTokenCache } = await import("./selfhost/redis-token-cache");
   const { setInstallationTokenStore, setGitHubResponseCache } = await import("./github/app");
   setInstallationTokenStore(createRedisTokenCache(redisClient));
-  // Short-TTL cache for safe GitHub GET responses (dedups the ~24 reads per review). Default 20s; 0 disables.
+  // Enable/disable gate for the GitHub GET-response cache (dedups the ~24 reads per review); NOT a per-entry
+  // TTL — each cached class (branch-protection/metadata/commit/GraphQL) resolves its own TTL env var, so the
+  // value here only matters as >0 (enabled) vs 0 (disabled) (#2505).
   const ghCacheTtl = Math.max(0, Number(process.env.GITHUB_CACHE_TTL_SECONDS ?? "20"));
   if (ghCacheTtl > 0) {
     const { createRedisResponseCache } = await import("./selfhost/redis-response-cache");
-    setGitHubResponseCache(createRedisResponseCache(redisClient, ghCacheTtl));
+    setGitHubResponseCache(createRedisResponseCache(redisClient));
   }
   readinessProbes.push({
     name: "redis",
@@ -456,7 +458,7 @@ async function main(): Promise<void> {
     JSON.stringify({
       event: "selfhost_redis_ready",
       backend: "redis",
-      githubResponseCacheTtl: ghCacheTtl,
+      githubResponseCacheEnabled: ghCacheTtl > 0,
     }),
   );
 

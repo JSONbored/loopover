@@ -30,24 +30,28 @@ afterEach(() => resetMetrics());
 describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
   it("get returns null for a missing url", async () => {
     expect(
-      await createRedisResponseCache(fakeRedis().redis, 20).get(URL_A),
+      await createRedisResponseCache(fakeRedis().redis).get(URL_A),
     ).toBeNull();
     expect(await renderMetrics()).toContain(
       'gittensory_redis_gh_response_cache_total{result="miss"} 1',
     );
   });
 
-  it("set then get round-trips status/body/content-type with the configured TTL", async () => {
+  it("set then get round-trips status/body/content-type at the caller-supplied TTL", async () => {
     const f = fakeRedis();
-    const cache = createRedisResponseCache(f.redis, 30);
-    await cache.set(URL_A, {
-      status: 200,
-      body: '{"x":1}',
-      contentType: "application/json",
-      link: '<https://api.github.com/repos/o/r/pulls?page=2>; rel="next"',
-      etag: '"abc123"',
-      lastModified: "Mon, 29 Jun 2026 20:00:00 GMT",
-    });
+    const cache = createRedisResponseCache(f.redis);
+    await cache.set(
+      URL_A,
+      {
+        status: 200,
+        body: '{"x":1}',
+        contentType: "application/json",
+        link: '<https://api.github.com/repos/o/r/pulls?page=2>; rel="next"',
+        etag: '"abc123"',
+        lastModified: "Mon, 29 Jun 2026 20:00:00 GMT",
+      },
+      30,
+    );
     expect(f.ttl()).toBe(30);
     expect(await cache.get(URL_A)).toEqual({
       status: 200,
@@ -68,7 +72,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
 
   it("replays cached branch-protection permission denials and missing resources", async () => {
     const f = fakeRedis();
-    const cache = createRedisResponseCache(f.redis, 30);
+    const cache = createRedisResponseCache(f.redis);
     const forbidden = {
       status: 403,
       body: '{"message":"Resource not accessible by integration"}',
@@ -90,9 +94,9 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     expect(await cache.get("branch-protection-missing")).toEqual(missing);
   });
 
-  it("honors a per-entry TTL override from the shared GitHub client", async () => {
+  it("uses the caller-supplied per-entry TTL from the shared GitHub client", async () => {
     const f = fakeRedis();
-    await createRedisResponseCache(f.redis, 30).set(
+    await createRedisResponseCache(f.redis).set(
       URL_A,
       {
         status: 200,
@@ -106,18 +110,22 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
 
   it("floors the TTL at 1s", async () => {
     const f = fakeRedis();
-    await createRedisResponseCache(f.redis, 0).set(URL_A, {
-      status: 200,
-      body: "{}",
-      contentType: "application/json",
-    });
+    await createRedisResponseCache(f.redis).set(
+      URL_A,
+      {
+        status: 200,
+        body: "{}",
+        contentType: "application/json",
+      },
+      0,
+    );
     expect(f.ttl()).toBe(1);
   });
 
   it("get returns null on malformed JSON", async () => {
     const f = fakeRedis();
     f.store.set("gh:resp:" + URL_A, "{nope");
-    expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
+    expect(await createRedisResponseCache(f.redis).get(URL_A)).toBeNull();
     expect(await renderMetrics()).toContain(
       'gittensory_redis_gh_response_cache_total{result="miss"} 1',
     );
@@ -126,7 +134,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
   it("get returns null when the stored shape is wrong", async () => {
     const f = fakeRedis();
     f.store.set("gh:resp:" + URL_A, JSON.stringify({ status: "200", body: 1 }));
-    expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
+    expect(await createRedisResponseCache(f.redis).get(URL_A)).toBeNull();
     expect(await renderMetrics()).toContain(
       'gittensory_redis_gh_response_cache_total{result="miss"} 1',
     );
@@ -142,12 +150,12 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
         contentType: "text/plain",
       }),
     );
-    expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toBeNull();
+    expect(await createRedisResponseCache(f.redis).get(URL_A)).toBeNull();
   });
 
   it("get returns null for malformed replayable status values", async () => {
     const f = fakeRedis();
-    const cache = createRedisResponseCache(f.redis, 20);
+    const cache = createRedisResponseCache(f.redis);
 
     f.store.set(
       "gh:resp:string-status",
@@ -192,7 +200,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
         lastModified: {},
       }),
     );
-    expect(await createRedisResponseCache(f.redis, 20).get(URL_A)).toEqual({
+    expect(await createRedisResponseCache(f.redis).get(URL_A)).toEqual({
       status: 200,
       body: "{}",
       contentType: "application/json",
@@ -209,7 +217,7 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
       },
     } as unknown as Redis;
 
-    await expect(createRedisResponseCache(redis, 20).get(URL_A)).rejects.toThrow(
+    await expect(createRedisResponseCache(redis).get(URL_A)).rejects.toThrow(
       "redis read failed",
     );
     expect(await renderMetrics()).toContain(
@@ -225,11 +233,15 @@ describe("createRedisResponseCache (#perf GitHub GET cache)", () => {
     } as unknown as Redis;
 
     await expect(
-      createRedisResponseCache(redis, 20).set(URL_A, {
-        status: 200,
-        body: "{}",
-        contentType: "application/json",
-      }),
+      createRedisResponseCache(redis).set(
+        URL_A,
+        {
+          status: 200,
+          body: "{}",
+          contentType: "application/json",
+        },
+        20,
+      ),
     ).rejects.toThrow("redis write failed");
     expect(await renderMetrics()).toContain(
       'gittensory_redis_gh_response_cache_total{result="error"} 1',

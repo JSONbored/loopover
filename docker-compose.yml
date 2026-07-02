@@ -62,6 +62,7 @@ services:
       # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@pgbouncer:5432/gittensory
       # Required shared transient state for review correctness, webhook dedup, and rate limiting.
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      # Enables the GitHub GET-response cache when >0 (0 disables); not a per-entry TTL, see .env.example.
       GITHUB_CACHE_TTL_SECONDS: "${GITHUB_CACHE_TTL_SECONDS:-20}"
       # Uncomment for Qdrant RAG vector store (--profile qdrant):
       # QDRANT_URL: http://qdrant:6333

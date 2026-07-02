@@ -931,11 +931,12 @@ export function labelMatchesPattern(label: string, pattern: string): boolean {
 // Keys come from a repo's registryConfig.labelMultipliers, sourced from the externally-fetched gittensor
 // registry (registry/sync.ts + registry/normalize.ts, not a value this repo's own maintainer directly controls
 // via .gittensory.yml) — so the pattern SET is small per repo, but individual pattern CONTENT is untrusted, not
-// literally attacker-supplied-per-request the way GitHub PR content is. The cache still needs no eviction bound
-// (the key set is bounded by real registry entries, not attacker-loop-controlled at request time), but the
-// wildcard-count cap below (#2456) matters regardless of that distinction. The compiled RegExp carries only the
-// "i" flag (no global/sticky `lastIndex` state), so sharing one instance across calls is safe and byte-identical
-// to recompiling on every call.
+// literally attacker-supplied-per-request the way GitHub PR content is. The wildcard-count cap below (#2456)
+// bounds a single pattern's compile cost; this cache is additionally bounded to a fixed max entry count and
+// evicted LRU, so a long-running isolate that observes many distinct registry snapshots over its life still
+// can't grow the cache unboundedly. The compiled RegExp carries only the "i" flag (no global/sticky `lastIndex`
+// state), so sharing one instance across calls is safe and byte-identical to recompiling on every call.
+export const LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES = 256;
 const labelPatternRegExpCache = new Map<string, RegExp>();
 
 // A RegExp that never matches any input — mirrors change-guardrail.ts's identical NEVER_MATCHES fallback for an
@@ -955,7 +956,13 @@ const LABEL_PATTERN_NEVER_MATCHES = /^(?!)$/;
 // pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
 function labelPatternToRegExp(pattern: string): RegExp {
   const cached = labelPatternRegExpCache.get(pattern);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    // Refresh recency on hit so the cache behaves as an LRU: the most-recently-matched patterns
+    // survive eviction, not just the most-recently-inserted ones.
+    labelPatternRegExpCache.delete(pattern);
+    labelPatternRegExpCache.set(pattern, cached);
+    return cached;
+  }
   // Reuses change-guardrail.ts's wildcard-GROUP counting (a `*` here matches the same "any run of chars"
   // semantics as that glob compiler's `*`, so the same catastrophic-backtracking risk and the same empirically-
   // safe threshold apply) — an over-complex registry-sourced label_multipliers key degrades to a safe never-match
@@ -963,7 +970,7 @@ function labelPatternToRegExp(pattern: string): RegExp {
   // score-preview API, the MCP tool, and the per-PR label-audit signal, so one bad registry entry could otherwise
   // hang scoring for every PR on that repo.
   if (hasUnsafeWildcardCount(pattern)) {
-    labelPatternRegExpCache.set(pattern, LABEL_PATTERN_NEVER_MATCHES);
+    setLabelPatternRegExpCacheEntry(pattern, LABEL_PATTERN_NEVER_MATCHES);
     return LABEL_PATTERN_NEVER_MATCHES;
   }
   let regex = "";
@@ -1004,8 +1011,33 @@ function labelPatternToRegExp(pattern: string): RegExp {
     }
   }
   const compiled = new RegExp(`^${regex}$`, "i");
-  labelPatternRegExpCache.set(pattern, compiled);
+  setLabelPatternRegExpCacheEntry(pattern, compiled);
   return compiled;
+}
+
+// Inserts a new (never-before-cached) entry, evicting the least-recently-used entry first if the
+// cache is already at its bound. Callers must only use this for keys not already present — refreshing
+// an existing key's recency on a cache hit is handled inline above via delete+set.
+function setLabelPatternRegExpCacheEntry(pattern: string, compiled: RegExp): void {
+  if (labelPatternRegExpCache.size >= LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES) {
+    // Map iteration order is insertion order, so the first key is always the least-recently-used
+    // one (recency is refreshed via delete+set on every hit/insert). The map is non-empty here
+    // because size >= LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES (a positive constant), so the loop body
+    // always runs exactly once.
+    for (const oldestPattern of labelPatternRegExpCache.keys()) {
+      labelPatternRegExpCache.delete(oldestPattern);
+      break;
+    }
+  }
+  labelPatternRegExpCache.set(pattern, compiled);
+}
+
+export function clearLabelPatternRegExpCacheForTest(): void {
+  labelPatternRegExpCache.clear();
+}
+
+export function labelPatternRegExpCacheKeysForTest(): string[] {
+  return [...labelPatternRegExpCache.keys()];
 }
 
 function escapeRegExpLiteral(value: string): string {

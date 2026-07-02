@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLatestScoringModelSnapshot, listUpstreamDriftReports, persistScoringModelSnapshot } from "../../src/db/repositories";
 import { DEFAULT_ISSUE_DISCOVERY_SHARE, DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, getOrCreateScoringModelSnapshot, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot, SCORING_SNAPSHOT_STALE_MS, scoringSnapshotStalenessWarning } from "../../src/scoring/model";
-import { buildScorePreview, calculateTimeDecay, labelMatchesPattern, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
+import { buildScorePreview, calculateTimeDecay, clearLabelPatternRegExpCacheForTest, LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES, labelMatchesPattern, labelPatternRegExpCacheKeysForTest, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
 import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { JsonValue, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
@@ -869,6 +869,24 @@ NOVELTY_BONUS_SCALAR = 3
     // Literal keys are unchanged — exact match, parity-preserving for every existing config.
     expect(labelMultiplierFor({ bug: 1.2 }, ["bug"])).toBe(1.2);
     expect(labelMultiplierFor({ bug: 1.2 }, ["feature"])).toBe(1);
+  });
+
+  it("bounds the memoized label pattern cache and evicts least-recently-used entries", () => {
+    clearLabelPatternRegExpCacheForTest();
+    for (let i = 0; i < LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES; i += 1) {
+      expect(labelMatchesPattern(`kind:${i}`, `kind:${i}`)).toBe(true);
+    }
+    expect(labelPatternRegExpCacheKeysForTest()).toHaveLength(LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES);
+
+    // A cache hit refreshes recency, so `kind:0` survives the next insertion and `kind:1` is evicted.
+    expect(labelMatchesPattern("kind:0", "kind:0")).toBe(true);
+    expect(labelMatchesPattern("kind:overflow", "kind:overflow")).toBe(true);
+
+    expect(labelPatternRegExpCacheKeysForTest()).toHaveLength(LABEL_PATTERN_REGEXP_CACHE_MAX_ENTRIES);
+    expect(labelPatternRegExpCacheKeysForTest()).toContain("kind:0");
+    expect(labelPatternRegExpCacheKeysForTest()).not.toContain("kind:1");
+    expect(labelPatternRegExpCacheKeysForTest()).toContain("kind:overflow");
+    clearLabelPatternRegExpCacheForTest();
   });
 
   it("gates linked-issue assumptions with branch eligibility evidence", () => {

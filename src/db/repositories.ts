@@ -511,6 +511,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       reviewNagLabel: "review-nag-cooldown",
       autoCloseExemptLogins: [],
       requireFreshRebaseWindowMinutes: null,
+      accountAgeThresholdDays: null,
+      newAccountLabel: "new-account",
     };
   }
   return {
@@ -564,6 +566,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     reviewNagLabel: row.reviewNagLabel,
     autoCloseExemptLogins: parseAutoCloseExemptLogins(row.autoCloseExemptLoginsJson),
     requireFreshRebaseWindowMinutes: normalizeOpenItemCap(row.requireFreshRebaseWindowMinutes),
+    accountAgeThresholdDays: normalizeOpenItemCap(row.accountAgeThresholdDays),
+    newAccountLabel: row.newAccountLabel,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -649,6 +653,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     reviewNagLabel: settings.reviewNagLabel ?? "review-nag-cooldown",
     autoCloseExemptLogins: normalizeAutoCloseExemptLogins(settings.autoCloseExemptLogins).logins,
     requireFreshRebaseWindowMinutes: normalizeOpenItemCap(settings.requireFreshRebaseWindowMinutes),
+    accountAgeThresholdDays: normalizeOpenItemCap(settings.accountAgeThresholdDays),
+    newAccountLabel: settings.newAccountLabel ?? "new-account",
   };
   const db = getDb(env.DB);
   await db
@@ -704,6 +710,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       reviewNagLabel: resolved.reviewNagLabel,
       autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
       requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
+      accountAgeThresholdDays: resolved.accountAgeThresholdDays,
+      newAccountLabel: resolved.newAccountLabel,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -760,6 +768,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         reviewNagLabel: resolved.reviewNagLabel,
         autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
         requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
+        accountAgeThresholdDays: resolved.accountAgeThresholdDays,
+        newAccountLabel: resolved.newAccountLabel,
         updatedAt: nowIso(),
       },
     });

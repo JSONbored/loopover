@@ -102,6 +102,10 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // Force-rebase-before-merge window in minutes (#2552): null = never force (default). Enforcement lands in
   // runAgentMaintenancePlanAndExecute, not here.
   requireFreshRebaseWindowMinutes: integer("require_fresh_rebase_window_minutes"),
+  // Account-age throttle (#2561, anti-abuse): null = off (default). Enforcement lands in
+  // runAgentMaintenancePlanAndExecute, not here.
+  accountAgeThresholdDays: integer("account_age_threshold_days"),
+  newAccountLabel: text("new_account_label").notNull().default("new-account"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

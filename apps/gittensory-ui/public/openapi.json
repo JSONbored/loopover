@@ -8688,6 +8688,15 @@
             "nullable": true,
             "minimum": 0,
             "exclusiveMinimum": true
+          },
+          "accountAgeThresholdDays": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "newAccountLabel": {
+            "type": "string"
           }
         },
         "required": [

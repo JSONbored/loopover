@@ -113,6 +113,7 @@ import {
   createOrUpdateOverriddenGateCheckRun,
   createOrUpdatePendingGateCheckRun,
   createOrUpdateSkippedGateCheckRun,
+  getGithubUserCreatedAt,
   getInstallationId,
   getRepositoryCollaboratorPermission,
   GITTENSORY_GATE_CHECK_NAME,
@@ -1978,6 +1979,37 @@ async function runAgentMaintenancePlanAndExecute(
     settings.contributorBlacklist,
   );
 
+  // Account-age throttle (#2561, anti-abuse): a friction/visibility signal for the classic ban-evasion pattern
+  // (a banned login gets a fresh account the same day) — NEVER an automatic close on account age alone. Off
+  // (null accountAgeThresholdDays, the default) ⇒ this block is a no-op, no extra GitHub API call at all.
+  // Fires for a CONTRIBUTOR only — same standing owner/admin/automation-bot exemption as every other
+  // anti-abuse mechanism above. The label is applied directly (fire-and-forget, matching mode gating) rather
+  // than threaded through the planner: this is advisory/visibility only, independent of the merit/CI/AI
+  // disposition the planner computes below.
+  let isNewAccount = false;
+  const accountAgeThresholdDays = settings.accountAgeThresholdDays;
+  if (typeof accountAgeThresholdDays === "number" && pr.authorLogin && !authorIsOwner && !authorIsAdmin && !authorIsAutomationBot) {
+    const createdAt = await getGithubUserCreatedAt(env, installationId, pr.authorLogin);
+    if (createdAt) {
+      const ageDays = (Date.now() - Date.parse(createdAt)) / (24 * 60 * 60 * 1000);
+      isNewAccount = ageDays < accountAgeThresholdDays;
+    }
+    if (isNewAccount) {
+      const newAccountMode = resolveAgentActionMode({
+        globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+        agentPaused: settings.agentPaused,
+        agentDryRun: settings.agentDryRun,
+      });
+      await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, settings.newAccountLabel ?? "new-account", {
+        createMissingLabel: settings.createMissingLabel,
+        mode: newAccountMode,
+      }).catch(
+        /* v8 ignore next -- fail-safe: a label-application failure must never block the rest of the handler */
+        () => undefined,
+      );
+    }
+  }
+
   // Per-contributor open-PR cap (#2270, anti-abuse): count this author's OTHER currently-open PRs on this repo
   // (otherOpenPullRequests already excludes the current PR — see reconcileLiveDuplicateSiblings) plus this one,
   // ranked by PR NUMBER (GitHub's own creation order, not webhook-arrival order) so a burst of near-simultaneous
@@ -1985,9 +2017,14 @@ async function runAgentMaintenancePlanAndExecute(
   // older sibling that was already under the cap when it was opened stays open. The owner/admin/automation-bot
   // exemption is applied by the planner itself (defense-in-depth, mirroring how blacklistEntry above is resolved
   // unconditionally and exempted only inside planAgentMaintenanceActions). Disabled (null/undefined cap, the
-  // default) ⇒ this block is a no-op.
+  // default) ⇒ this block is a no-op. A below-account-age-threshold author (#2561) gets a TIGHTER effective
+  // cap (half, rounded up, minimum 1) — visibility/friction, still never a close on account age by itself
+  // (the close, if any, is still tagged/reasoned as the ordinary contributor-cap close).
   let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" } | undefined;
-  const contributorOpenPrCap = settings.contributorOpenPrCap;
+  const contributorOpenPrCap =
+    isNewAccount && typeof settings.contributorOpenPrCap === "number"
+      ? Math.max(1, Math.ceil(settings.contributorOpenPrCap / 2))
+      : settings.contributorOpenPrCap;
   if (typeof contributorOpenPrCap === "number" && pr.authorLogin) {
     const authorLoginLower = pr.authorLogin.toLowerCase();
     const authorOpenPrNumbers = otherOpenPullRequests

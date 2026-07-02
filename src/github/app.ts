@@ -404,6 +404,35 @@ export async function getRepositoryCollaboratorPermission(
   return payload.permission ?? null;
 }
 
+/** Account-age throttle (#2561, anti-abuse): `GET /users/{login}` for `created_at`, so a repo can flag a
+ *  freshly-created account as friction/visibility for the classic ban-evasion pattern (a banned login gets a
+ *  fresh account the same day). `/users/{login}` is already classified "metadata" by `resolveGitHubCacheClass`
+ *  (src/github/client.ts), so this reuses the existing response cache with no new caching infra. Returns null
+ *  (fail-open) on any non-2xx/network error -- a lookup failure must never invent a "new account" finding. */
+export async function getGithubUserCreatedAt(
+  env: Env,
+  installationId: number,
+  login: string,
+): Promise<string | null> {
+  if (!login) return null;
+  try {
+    const token = await createInstallationToken(env, installationId);
+    const response = await timeoutFetch(
+      `https://api.github.com/users/${encodeURIComponent(login)}`,
+      {
+        headers: githubHeaders(`Bearer ${token}`),
+        githubRateLimitAdmission: true,
+        githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
+      },
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { created_at?: string };
+    return payload.created_at ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // The App JWT is valid ~9 min (iat backdated 60s, exp +540s). Re-signing (RS256) it on EVERY call is wasteful CPU
 // AND defeats response caching of App-level reads (/app/installations/{id}): the rotating JWT changes the
 // auth-scoped response-cache key on every call, so the metadata cache class never hits for its heaviest caller

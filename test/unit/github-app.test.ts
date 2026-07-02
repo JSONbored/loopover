@@ -9,6 +9,7 @@ import {
   createOrUpdatePendingGateCheckRun,
   createOrUpdateSkippedGateCheckRun,
   getAppInstallation,
+  getGithubUserCreatedAt,
   getInstallationId,
   getRepositoryCollaboratorPermission,
   isCacheableGithubUrl,
@@ -625,6 +626,34 @@ describe("GitHub check runs", () => {
         "error",
       ),
     ).rejects.toThrow(/Failed to fetch GitHub collaborator permission/);
+  });
+
+  it("getGithubUserCreatedAt fetches the account creation date, and fails OPEN (null) on any error (#2561)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    await expect(getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "")).resolves.toBeNull();
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/users/newbie")) return Response.json({ login: "newbie", created_at: "2026-06-01T00:00:00Z" });
+      if (url.includes("/users/missing-field")) return Response.json({ login: "missing-field" });
+      if (url.includes("/users/not-found")) return new Response("not found", { status: 404 });
+      if (url.includes("/users/network-error")) throw new Error("network down");
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "newbie"),
+    ).resolves.toBe("2026-06-01T00:00:00Z");
+    await expect(
+      getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "missing-field"),
+    ).resolves.toBeNull();
+    await expect(
+      getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "not-found"),
+    ).resolves.toBeNull();
+    await expect(
+      getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "network-error"),
+    ).resolves.toBeNull();
   });
 
   it("updates an existing Gittensory check run for the same head SHA", async () => {

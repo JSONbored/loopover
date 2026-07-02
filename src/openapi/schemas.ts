@@ -650,6 +650,8 @@ export const RepositorySettingsSchema = z
     reviewNagCooldownDays: z.number().int().positive().optional(),
     reviewNagLabel: z.string().optional(),
     autoCloseExemptLogins: z.array(z.string()).optional(),
+    accountAgeThresholdDays: z.number().int().positive().nullable().optional(),
+    newAccountLabel: z.string().optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })

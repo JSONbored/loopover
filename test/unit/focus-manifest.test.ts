@@ -1384,6 +1384,24 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(invalid.warnings.some((w) => /settings\.reviewNagCooldownDays/.test(w))).toBe(true);
   });
 
+  it("parses + resolves the account-age throttle settings from the settings: block, overlaying the DB (#2561)", () => {
+    const manifest = parseFocusManifest({ settings: { accountAgeThresholdDays: 14, newAccountLabel: "fresh-account" } });
+    expect(manifest.settings.accountAgeThresholdDays).toBe(14);
+    expect(manifest.settings.newAccountLabel).toBe("fresh-account");
+    const eff = resolveEffectiveSettings({ accountAgeThresholdDays: null, newAccountLabel: "new-account" } as unknown as RepositorySettings, manifest);
+    expect(eff.accountAgeThresholdDays).toBe(14);
+    // An explicit yml `null` clears a DB-configured threshold back to off (load-bearing null).
+    const cleared = resolveEffectiveSettings({ accountAgeThresholdDays: 30 } as unknown as RepositorySettings, parseFocusManifest({ settings: { accountAgeThresholdDays: null } }));
+    expect(cleared.accountAgeThresholdDays).toBeNull();
+    // Omitted in yml ⇒ the DB-configured threshold survives untouched.
+    const noOverride = resolveEffectiveSettings({ accountAgeThresholdDays: 7 } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(noOverride.accountAgeThresholdDays).toBe(7);
+    // A non-positive threshold is dropped with a warning rather than silently coerced.
+    const invalid = parseFocusManifest({ settings: { accountAgeThresholdDays: 0 } });
+    expect(invalid.settings.accountAgeThresholdDays).toBeUndefined();
+    expect(invalid.warnings.some((w) => /settings\.accountAgeThresholdDays/.test(w))).toBe(true);
+  });
+
   it("parses + resolves autoCloseExemptLogins from the settings: block, overlaying the DB (#2463)", () => {
     const manifest = parseFocusManifest({ settings: { autoCloseExemptLogins: ["Trusted-Regular", "another-one", "-bad", 42 as never] } });
     expect(manifest.settings.autoCloseExemptLogins).toEqual(["Trusted-Regular", "another-one"]); // invalid entries dropped

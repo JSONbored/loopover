@@ -6611,6 +6611,150 @@ describe("queue processors", () => {
     expect(seen.closed).toBe(true);
   });
 
+  function stubAccountAgeFetch(prNumber: number, createdAt: string, seen: { labels: string[]; closed: boolean }) {
+    return async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/users/")) return Response.json({ login: "newbie", created_at: createdAt });
+      if (url.includes(`/pulls/${prNumber}/files`)) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes(`/pulls/${prNumber}/reviews`)) return Response.json([]);
+      if (url.includes(`/pulls/${prNumber}/commits`)) return Response.json([]);
+      if (url.endsWith(`/pulls/${prNumber}`) && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: prNumber, state: "closed" }); }
+      if (url.endsWith(`/pulls/${prNumber}`)) return Response.json({ number: prNumber, state: "open", user: { login: "newbie" }, head: { sha: `s${prNumber}` }, mergeable_state: "clean" });
+      if (url.includes(`/commits/s${prNumber}/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes(`/commits/s${prNumber}/status`)) return Response.json({ state: "success", statuses: [] });
+      if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
+      if (url.includes(`/issues/${prNumber}/labels`) && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
+      if (url.endsWith("/labels") && method === "POST") return Response.json({ name: "x" }, { status: 201 });
+      if (url.includes(`/issues/${prNumber}/comments`)) return Response.json([]);
+      return Response.json({});
+    };
+  }
+
+  it("account-age throttle (#2561): a below-threshold-age account gets the new-account label AND a tighter effective cap", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    // Two pre-existing open PRs from the same new author — a cap of 4 (tightened to 2 for a new account)
+    // means the 3rd PR is already over the tightened cap, even though it's well under the CONFIGURED cap of 4.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 60, title: "Newbie PR one", state: "open", user: { login: "newbie" }, head: { sha: "s60" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 61, title: "Newbie PR two", state: "open", user: { login: "newbie" }, head: { sha: "s61" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      gateCheckMode: "enabled",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 4,
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { labels: [] as string[], closed: false };
+    // Account created 2 days ago — well under the 30-day threshold.
+    vi.stubGlobal("fetch", stubAccountAgeFetch(62, new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), seen));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-tighter-cap",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 62, title: "Newbie's 3rd PR", state: "open", user: { login: "newbie" }, head: { sha: "s62" }, labels: [], body: "x", mergeable_state: "clean" },
+      },
+    });
+
+    expect(seen.labels).toContain("new-account");
+    // The tightened cap (ceil(4/2)=2) is already exceeded by the 3rd PR — closed despite being under the raw cap of 4.
+    expect(seen.closed).toBe(true);
+  });
+
+  it("account-age throttle (#2561): an account OLDER than the threshold is unaffected — no label, no cap tightening", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 63, title: "Vet PR one", state: "open", user: { login: "newbie" }, head: { sha: "s63" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 64, title: "Vet PR two", state: "open", user: { login: "newbie" }, head: { sha: "s64" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      gateCheckMode: "enabled",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 4,
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { labels: [] as string[], closed: false };
+    // Account created 2 years ago — well over the 30-day threshold.
+    vi.stubGlobal("fetch", stubAccountAgeFetch(65, new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString(), seen));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-unaffected",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 65, title: "Vet's 3rd PR", state: "open", user: { login: "newbie" }, head: { sha: "s65" }, labels: [], body: "x", mergeable_state: "clean" },
+      },
+    });
+
+    expect(seen.labels).not.toContain("new-account");
+    // The RAW cap (4) is not yet exceeded by a 3rd PR — untouched.
+    expect(seen.closed).toBe(false);
+  });
+
+  it("account-age throttle (#2561): the repo OWNER's own PR is never labeled even on a brand-new account", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      gateCheckMode: "enabled",
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { labels: [] as string[], closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/users/")) return Response.json({ login: "JSONbored", created_at: new Date().toISOString() });
+      if (url.includes("/pulls/66/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/66/reviews")) return Response.json([]);
+      if (url.includes("/pulls/66/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/66")) return Response.json({ number: 66, state: "open", user: { login: "JSONbored" }, head: { sha: "s66" }, mergeable_state: "clean" });
+      if (url.includes("/commits/s66/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/s66/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/66/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/66/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
+      if (url.includes("/issues/66/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-owner-exempt",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 66, title: "Owner's own PR", state: "open", user: { login: "JSONbored" }, head: { sha: "s66" }, labels: [], body: "x", mergeable_state: "clean" },
+      },
+    });
+
+    expect(seen.labels).not.toContain("new-account");
+  });
+
   it("contributor open-PR cap (#2270): out-of-order webhook delivery wakes and self-corrects the missed sibling (regression, gate finding on #2479)", async () => {
     // PR56 (the NEWER PR) is delivered BEFORE PR55 exists in the DB — a real possibility under concurrent/
     // retried webhook delivery. At that moment PR56 only sees {54, 56} (2 total, AT the cap of 2, not over),

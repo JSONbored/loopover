@@ -150,6 +150,8 @@ export type FocusManifestSettings = Partial<
     | "reviewNagCooldownDays"
     | "reviewNagLabel"
     | "autoCloseExemptLogins"
+    | "accountAgeThresholdDays"
+    | "newAccountLabel"
   >
 >;
 
@@ -867,6 +869,16 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     warnings.push(...exemptWarnings);
     if (logins.length > 0) out.autoCloseExemptLogins = logins;
   }
+  // Account-age throttle (#2561): an explicit yml `null` is load-bearing (clears a DB-configured threshold
+  // back to "off"), matching contributorOpenPrCap's own null-vs-omitted distinction above.
+  if (r.accountAgeThresholdDays === null) {
+    out.accountAgeThresholdDays = null;
+  } else {
+    const accountAgeThresholdDays = normalizeOptionalPositiveInteger(r.accountAgeThresholdDays, "settings.accountAgeThresholdDays", warnings);
+    if (accountAgeThresholdDays !== null) out.accountAgeThresholdDays = accountAgeThresholdDays;
+  }
+  const newAccountLabel = normalizeOptionalString(r.newAccountLabel, "settings.newAccountLabel", warnings);
+  if (newAccountLabel !== null) out.newAccountLabel = newAccountLabel;
   return out;
 }
 

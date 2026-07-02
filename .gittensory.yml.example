@@ -333,3 +333,9 @@ settings:
   # above will reuse this list too), on top of the standing owner/admin/automation-bot exemption.
   # List of GitHub logins. Default: [] (no additional exemptions).
   # autoCloseExemptLogins: [some-trusted-regular]
+
+  # Account-age throttle (#2561, anti-abuse): a PR/issue from an account younger than this many days gets
+  # the newAccountLabel below -- friction/visibility only, NEVER an automatic close on account age alone.
+  # Never fires for the repo owner, admin logins, or automation bots. Off by default.
+  # accountAgeThresholdDays: null  # Positive integer, or null/omitted to disable. Default: null (off).
+  # newAccountLabel: new-account  # Label applied to a below-threshold-age account's PR/issue. Default: new-account.

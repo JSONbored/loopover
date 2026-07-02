@@ -86,6 +86,29 @@ export async function readiness(db: D1Database, probes: ReadinessProbe[] = []): 
   return { ok: Object.values(checks).every(Boolean), checks, durationsMs };
 }
 
+/** Decide whether the GitHub App auth readiness probe should be registered, and how its check() behaves, from
+ *  the two config vars (#2497). Registered whenever EITHER var is set -- gating registration on BOTH being set
+ *  would silently skip the probe entirely for a partial config (e.g. the App ID set but the private key unset
+ *  or a load failure), letting /ready report ready anyway even though GitHub App auth cannot mint a JWT. The
+ *  returned check() itself re-verifies both are present before minting, so a partial config fails closed
+ *  (false) in EITHER direction — not just the one a JWT-mint helper's own internal validation happens to catch.
+ *  Neither var set is the legitimate brokered-mode deployment (central Orb App, no own App credentials):
+ *  correctly returns null (no probe registered, since there is nothing of this instance's own to check). */
+export function githubAppReadinessProbe(
+  githubAppId: string | undefined,
+  githubAppPrivateKey: string | undefined,
+  mintAppJwt: () => Promise<unknown>,
+): ReadinessProbe | null {
+  if (!githubAppId && !githubAppPrivateKey) return null;
+  return {
+    name: "github_app",
+    check: () =>
+      githubAppId && githubAppPrivateKey
+        ? mintAppJwt().then(() => true).catch(() => false)
+        : Promise.resolve(false),
+  };
+}
+
 /** Boot-time DATA-SAFETY advisory. A single SQLite file with no acknowledged backup is a data-loss SPOF — yet
  *  `/ready` would still answer 200, so an operator can run with zero durability believing they're healthy. Returns
  *  the warning to log at boot (or null on Postgres, or once the operator sets `BACKUP_ACKNOWLEDGED=true` after

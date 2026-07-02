@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import {
   buildHealthBody,
+  githubAppReadinessProbe,
   readiness,
   resolveHealthVersion,
   sqliteBackupAdvisory,
@@ -75,6 +76,39 @@ function expectDurations(result: Awaited<ReturnType<typeof readiness>>, names: s
     expect(result.durationsMs[name]).toBeGreaterThanOrEqual(0);
   }
 }
+
+describe("githubAppReadinessProbe (#2497)", () => {
+  it("registers no probe when neither var is set (legitimate brokered-mode deployment)", () => {
+    expect(githubAppReadinessProbe(undefined, undefined, async () => "jwt")).toBeNull();
+  });
+
+  it("regression: registers a probe (and fails closed) when the App ID is set but the private key is not", async () => {
+    // The original bug: gating registration on `githubAppId && githubAppPrivateKey` skipped the probe
+    // entirely here, so /ready never reported this partial config as unhealthy.
+    const probe = githubAppReadinessProbe("app-123", undefined, async () => "jwt");
+    expect(probe).not.toBeNull();
+    expect(probe!.name).toBe("github_app");
+    await expect(probe!.check()).resolves.toBe(false);
+  });
+
+  it("fails closed when the private key is set but the App ID is not (the mirror partial config)", async () => {
+    const probe = githubAppReadinessProbe(undefined, "-----BEGIN PRIVATE KEY-----", async () => "jwt");
+    expect(probe).not.toBeNull();
+    await expect(probe!.check()).resolves.toBe(false);
+  });
+
+  it("reports healthy when both are set and the mint succeeds", async () => {
+    const probe = githubAppReadinessProbe("app-123", "-----BEGIN PRIVATE KEY-----", async () => "jwt");
+    await expect(probe!.check()).resolves.toBe(true);
+  });
+
+  it("reports unhealthy when both are set but the mint throws (an invalid/malformed key)", async () => {
+    const probe = githubAppReadinessProbe("app-123", "not-a-real-key", async () => {
+      throw new Error("invalid key");
+    });
+    await expect(probe!.check()).resolves.toBe(false);
+  });
+});
 
 describe("sqliteBackupAdvisory (#8 data-safety)", () => {
   it("warns on SQLite without an acknowledged backup, and is silent otherwise", () => {

@@ -203,6 +203,23 @@ export async function closePullRequest(env: Env, installationId: number, repoFul
   });
 }
 
+/** Close a plain issue (sets state=closed). #2270's first issue-side actuation: unlike closePullRequest, this
+ *  hits the generic Issues API (`PATCH /issues/{issue_number}`), not the Pulls API — a plain issue number is not
+ *  a valid `pull_number`, so closePullRequest cannot be reused here. */
+export async function closeIssue(env: Env, installationId: number, repoFullName: string, issueNumber: number): Promise<{ state: string }> {
+  const { owner, repo } = splitRepo(repoFullName);
+  return withInstallationTokenRetry(env, installationId, async (token) => {
+    const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
+    const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", {
+      owner,
+      repo,
+      issue_number: issueNumber,
+      state: "closed",
+    });
+    return { state: (response.data as { state: string }).state };
+  });
+}
+
 /** The last-closer lookup result. `coveredAllPages` is false when the bounded newest-events window did NOT reach
  *  back to page 1 (a very long timeline), so a `login: null` may mean "no close found" OR "a close exists beyond
  *  the inspected window". The reopen guard uses this to fail CLOSED rather than allow a window-evasion bypass. */

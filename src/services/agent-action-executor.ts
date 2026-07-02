@@ -5,7 +5,7 @@ import { createInstallationToken, githubErrorStatus } from "../github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
-import { closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
+import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
@@ -191,6 +191,83 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       if (PR_WRITE_CLASSES.has(action.actionClass) && githubErrorStatus(error) === 403) {
         await refreshInstallationHealthForInstallation(env, ctx.installationId).catch(() => undefined);
       }
+    }
+  }
+
+  return outcomes;
+}
+
+export type IssueActionExecutionContext = {
+  installationId: number;
+  repoFullName: string;
+  issueNumber: number;
+  autonomy: AutonomyPolicy | null | undefined;
+  agentPaused?: boolean | undefined;
+  agentDryRun?: boolean | undefined;
+};
+
+/**
+ * Execute (or dry-run) a planned label/close action set on an ISSUE — #2270's first issue-side actuation
+ * (`planAgentMaintenanceActions`'s `contributor_cap` short-circuit is currently the only source of an
+ * issue-targeted plan). Deliberately NARROWER than {@link executeAgentMaintenanceActions}:
+ *   - Only `label` (add) and `close` are handled — the only classes the contributor_cap short-circuit ever
+ *     produces. Any other class is denied defensively rather than mis-executed against an issue.
+ *   - No freshness/live-CI-re-verification/pull_requests:write gate: none of those PR concepts apply to a
+ *     plain issue (no head SHA, no CI, and a close needs `issues: write`, a different permission than the PR
+ *     executor's write-readiness check covers).
+ *   - `requiresApproval` (`auto_with_approval`) is DENIED, not staged: the pending-action queue is PR-shaped
+ *     (pullNumber-typed staging + a `/pull/{n}` notification deeplink); extending it to issues is out of scope
+ *     here. Denying — rather than silently executing or silently skipping the approval gate — keeps the
+ *     configured autonomy honest: an operator who set `auto_with_approval` never gets an un-approved action.
+ */
+export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {
+  const outcomes: AgentActionOutcome[] = [];
+  const targetKey = `${ctx.repoFullName}#${ctx.issueNumber}`;
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
+
+  for (const action of planned) {
+    const autonomyLevel = resolveAutonomy(ctx.autonomy, action.actionClass);
+    const audit = (outcome: AgentActionOutcome["outcome"], detail: string) => {
+      const auditOutcome = outcome === "dry_run" ? "completed" : outcome;
+      outcomes.push({ actionClass: action.actionClass, outcome, detail });
+      return recordAuditEvent(
+        env,
+        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: detail }),
+      );
+    };
+
+    if (mode === "paused") {
+      await audit("denied", "agent actions paused");
+      continue;
+    }
+    if (!isActingAutonomyLevel(autonomyLevel)) {
+      await audit("denied", `autonomy for ${action.actionClass} is ${autonomyLevel} — action not currently enabled`);
+      continue;
+    }
+    if (mode === "dry_run") {
+      await audit("dry_run", `dry-run: would ${action.actionClass} — ${action.reason}`);
+      continue;
+    }
+    if (action.requiresApproval) {
+      await audit("denied", `awaiting maintainer approval — issue-side staging is not yet supported (${action.reason})`);
+      continue;
+    }
+    if (action.actionClass !== "label" && action.actionClass !== "close") {
+      /* v8 ignore next -- defensive: planAgentMaintenanceActions's contributor_cap short-circuit (this
+       * executor's only caller today) never produces any class besides label/close. */
+      await audit("denied", `unsupported action class for an issue: ${action.actionClass}`);
+      continue;
+    }
+    try {
+      if (action.actionClass === "label") {
+        await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.issueNumber, action.label ?? "", { createMissingLabel: true });
+      } else {
+        if (action.closeComment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.issueNumber, action.closeComment);
+        await closeIssue(env, ctx.installationId, ctx.repoFullName, ctx.issueNumber);
+      }
+      await audit("completed", action.reason);
+    } catch (error) {
+      await audit("error", errorMessage(error));
     }
   }
 

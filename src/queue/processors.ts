@@ -26,6 +26,7 @@ import {
   listSignalSnapshots,
   listRepoGithubTotalsSnapshotHistory,
   listOtherOpenPullRequests,
+  listOpenIssues,
   listOpenPullRequests,
   listPullRequests,
   listPullRequestFiles,
@@ -232,6 +233,7 @@ import {
 } from "../settings/agent-actions";
 import {
   executeAgentMaintenanceActions,
+  executeIssueMaintenanceActions,
   pendingClosureLabelApplied,
 } from "../services/agent-action-executor";
 import { processSubmitDraft } from "../services/draft";
@@ -1869,7 +1871,7 @@ async function runAgentMaintenancePlanAndExecute(
   // exemption is applied by the planner itself (defense-in-depth, mirroring how blacklistEntry above is resolved
   // unconditionally and exempted only inside planAgentMaintenanceActions). Disabled (null/undefined cap, the
   // default) ⇒ this block is a no-op.
-  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number } | undefined;
+  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" } | undefined;
   const contributorOpenPrCap = settings.contributorOpenPrCap;
   if (typeof contributorOpenPrCap === "number" && pr.authorLogin) {
     const authorLoginLower = pr.authorLogin.toLowerCase();
@@ -1880,7 +1882,7 @@ async function runAgentMaintenancePlanAndExecute(
       .sort((a, b) => a - b);
     const overCapNumbers = new Set(authorOpenPrNumbers.slice(contributorOpenPrCap));
     if (overCapNumbers.has(pr.number)) {
-      contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: authorOpenPrNumbers.length, cap: contributorOpenPrCap };
+      contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: authorOpenPrNumbers.length, cap: contributorOpenPrCap, itemKind: "pull requests" };
     }
     // Webhook-delivery-order guard (#2479 gate finding): delivery order is not guaranteed to match PR creation
     // order, so a sibling PR's own webhook can process before THIS PR exists in the DB and wrongly conclude the
@@ -3565,6 +3567,64 @@ async function loadOpenQueueCounts(
   };
 }
 
+/**
+ * Per-contributor open-ISSUE cap (#2270, anti-abuse): the first `eventName === "issues"` actuation branch —
+ * issues have no other auto-close path today. Mirrors the PR-path cap in runAgentMaintenancePlanAndExecute:
+ * counts the author's OTHER currently-open issues on this repo plus this one, ranked by issue NUMBER (GitHub's
+ * own creation order, not webhook-arrival order), and only matches when THIS issue's number is among the ones
+ * over the cap. Reuses planAgentMaintenanceActions to build the SAME label+close plan the PR path uses
+ * (identical closeKind/label/close-comment construction): passing `conclusion: "skipped"` and no
+ * `blacklistMatch` guarantees the function returns at the contributor_cap short-circuit (the very next check in
+ * the planner) before ever touching any PR/CI-specific field, so building a plan for an issue this way is safe.
+ */
+async function maybeCloseIssueOverContributorCap(
+  env: Env,
+  args: { installationId: number; repoFullName: string; issue: IssueRecord; settings: RepositorySettings },
+): Promise<void> {
+  const { installationId, repoFullName, issue, settings } = args;
+  const cap = settings.contributorOpenIssueCap;
+  const authorLogin = issue.authorLogin;
+  if (typeof cap !== "number" || !authorLogin) return;
+
+  const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
+  const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
+  const authorIsAdmin = parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
+  const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
+  if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return;
+
+  const otherOpenIssues = await listOpenIssues(env, repoFullName);
+  const authorLoginLower = authorLogin.toLowerCase();
+  const authorOpenIssueNumbers = otherOpenIssues
+    .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower && other.number !== issue.number)
+    .map((other) => other.number)
+    .concat(issue.number)
+    .sort((a, b) => a - b);
+  const overCapNumbers = new Set(authorOpenIssueNumbers.slice(cap));
+  if (!overCapNumbers.has(issue.number)) return;
+
+  const planned = planAgentMaintenanceActions({
+    conclusion: "skipped",
+    blockerTitles: [],
+    autonomy: settings.autonomy,
+    changedPaths: [],
+    hardGuardrailGlobs: [],
+    authorIsOwner,
+    authorIsAdmin,
+    authorIsAutomationBot,
+    ciState: "unverified",
+    contributorCapMatch: { matched: true, authorLogin, openCount: authorOpenIssueNumbers.length, cap, itemKind: "issues" },
+    contributorCapLabel: settings.contributorCapLabel,
+    pr: { labels: [] },
+  });
+  if (planned.length === 0) return;
+
+  await executeIssueMaintenanceActions(
+    env,
+    { installationId, repoFullName, issueNumber: issue.number, autonomy: settings.autonomy, agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun },
+    planned,
+  );
+}
+
 async function processGitHubWebhook(
   env: Env,
   deliveryId: string,
@@ -4141,6 +4201,28 @@ async function processGitHubWebhook(
         );
       }
       await persistAdvisory(env, advisory);
+      // Per-contributor open-issue cap (#2270, anti-abuse): the first issue-side auto-close path. Best-effort —
+      // a failure here must never affect the advisory/notification handling above or the webhook overall.
+      if (payload.action === "opened" && installationId) {
+        await maybeCloseIssueOverContributorCap(env, {
+          installationId,
+          repoFullName: payload.repository.full_name,
+          issue,
+          settings: issueSettings,
+        }).catch((error) => {
+          /* v8 ignore next -- best-effort: an issue-cap enforcement failure is logged, never surfaced to the webhook. */
+          console.error(
+            JSON.stringify({
+              level: "warn",
+              event: "contributor_issue_cap_failed",
+              deliveryId,
+              repository: payload.repository?.full_name,
+              issueNumber: issue.number,
+              error: errorMessage(error),
+            }),
+          );
+        });
+      }
       // #699 path B: a newly opened grabbable, high-multiplier issue notifies the miners watching this repo
       // (fanned out through the same #535 pipeline below).
       if (payload.action === "opened")

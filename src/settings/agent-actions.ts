@@ -151,7 +151,9 @@ export type AgentActionPlanInput = {
   // Fires for a CONTRIBUTOR only (owner/admin/automation bots are NEVER auto-closed by this). `openCount` and
   // `cap` are PUBLIC (the author's own open-item count on a public repo, and the repo's own configured limit),
   // so — unlike the blacklist's private-reason close — they ARE interpolated into the public close comment.
-  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number } | undefined;
+  // `itemKind` selects the close-comment noun ("pull requests" for the PR-path caller, "issues" for the
+  // issue-path caller, #2270) — REQUIRED (not defaulted) so a caller can't silently mislabel the other kind.
+  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" } | undefined;
   // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.gittensory.yml`.
   // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit").
   contributorCapLabel?: string | undefined;
@@ -315,7 +317,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // independently of the caller (defense-in-depth, matching the blacklist block's own redundant check above).
   const capContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
   if (input.contributorCapMatch?.matched === true && capContributor) {
-    const { authorLogin, openCount, cap } = input.contributorCapMatch;
+    const { authorLogin, openCount, cap, itemKind } = input.contributorCapMatch;
     const label = input.contributorCapLabel ?? DEFAULT_CONTRIBUTOR_CAP_LABEL;
     if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "over the per-contributor open-item cap", label, labelOp: "add" });
     if (acting("close")) {
@@ -323,7 +325,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         actionClass: "close",
         requiresApproval: approval("close"),
         reason: "over the per-contributor open-item cap",
-        closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, "pull requests")),
+        closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, itemKind)),
         closeKind: "contributor_cap",
       });
     }

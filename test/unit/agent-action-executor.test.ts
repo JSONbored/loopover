@@ -4,6 +4,7 @@ vi.mock("../../src/github/pr-actions", () => ({
   createPullRequestReview: vi.fn(async () => ({ id: 1 })),
   mergePullRequest: vi.fn(async () => ({ merged: true, sha: "merged-sha" })),
   closePullRequest: vi.fn(async () => ({ state: "closed" })),
+  closeIssue: vi.fn(async () => ({ state: "closed" })),
   createIssueComment: vi.fn(async () => ({ id: 2 })),
   updatePullRequestBranch: vi.fn(async () => undefined),
   dismissLatestBotApproval: vi.fn(async () => ({ dismissed: true })),
@@ -35,12 +36,21 @@ vi.mock("../../src/github/backfill", async (importOriginal) => ({
   refreshInstallationHealthForInstallation: vi.fn(async () => null),
 }));
 
-import { closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
+import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
-import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
+import {
+  actionParams,
+  executeAgentMaintenanceActions,
+  executeIssueMaintenanceActions,
+  pendingActionToPlanned,
+  pendingClosureLabelApplied,
+  type AgentActionExecutionContext,
+  type AgentActionOutcome,
+  type IssueActionExecutionContext,
+} from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { isGlobalAgentFrozen, setGlobalAgentFrozen, upsertPullRequestFromGitHub } from "../../src/db/repositories";
@@ -524,6 +534,112 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     vi.mocked(closePullRequest).mockRejectedValueOnce(Object.assign(new Error("Resource not accessible by integration"), { status: 403 }));
     vi.mocked(refreshInstallationHealthForInstallation).mockRejectedValueOnce(new Error("refresh boom"));
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
+    expect(outcomes[0]?.outcome).toBe("error");
+    expect((await auditFor(env, "close"))?.outcome).toBe("error");
+  });
+});
+
+function issueCtx(over: Partial<IssueActionExecutionContext> = {}): IssueActionExecutionContext {
+  return {
+    installationId: 123,
+    repoFullName: "owner/repo",
+    issueNumber: 42,
+    autonomy: { label: "auto", close: "auto" },
+    agentPaused: false,
+    agentDryRun: false,
+    ...over,
+  };
+}
+
+const issueLabel: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "over the per-contributor open-item cap", label: "over-contributor-limit", labelOp: "add" };
+const issueClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", closeComment: "closing this issue", closeKind: "contributor_cap" };
+
+describe("executeIssueMaintenanceActions (#2270 issue-side actuation)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("LIVE: labels + closes an issue via the issues-endpoint primitives and audits completed", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx(), [issueLabel, issueClose]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["completed", "completed"]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 42, "over-contributor-limit", { createMissingLabel: true });
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 42, "closing this issue");
+    expect(closeIssue).toHaveBeenCalledWith(env, 123, "owner/repo", 42);
+    expect(closePullRequest).not.toHaveBeenCalled(); // the PR endpoint must never be hit for an issue number
+    expect((await auditFor(env, "close"))?.outcome).toBe("completed");
+  });
+
+  it("a close with no closeComment posts no comment (defensive — the contributor_cap planner always sets one)", async () => {
+    const env = createTestEnv({});
+    const { closeComment: _closeComment, ...closeWithoutComment } = issueClose;
+    await executeIssueMaintenanceActions(env, issueCtx(), [closeWithoutComment]);
+    expect(createIssueComment).not.toHaveBeenCalled();
+    expect(closeIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("PAUSED (per-repo): mutates nothing and audits denied", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx({ agentPaused: true }), [issueLabel, issueClose]);
+    expect(outcomes.every((o) => o.outcome === "denied")).toBe(true);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(closeIssue).not.toHaveBeenCalled();
+    expect(JSON.parse((await auditFor(env, "close"))?.metadata_json ?? "{}")).toMatchObject({ mode: "paused" });
+  });
+
+  it("GLOBAL kill-switch halts everything regardless of per-repo config", async () => {
+    const env = createTestEnv({ AGENT_ACTIONS_PAUSED: "true" });
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx({ agentPaused: false }), [issueClose]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(closeIssue).not.toHaveBeenCalled();
+  });
+
+  it("denies when current per-action autonomy is no longer acting", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx({ autonomy: { label: "observe", close: "observe" } }), [issueLabel, issueClose]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["denied", "denied"]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(closeIssue).not.toHaveBeenCalled();
+  });
+
+  it("DRY-RUN: records the intent without any GitHub call, audited with mode=dry_run", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx({ agentDryRun: true }), [issueLabel, issueClose]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["dry_run", "dry_run"]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(closeIssue).not.toHaveBeenCalled();
+    const audit = await auditFor(env, "close");
+    expect(audit?.outcome).toBe("completed");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ mode: "dry_run" });
+  });
+
+  it("auto_with_approval is DENIED, not staged — issue-side staging is not implemented (#2270 known scope limit)", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx({ autonomy: { label: "auto_with_approval", close: "auto_with_approval" } }), [
+      { ...issueLabel, requiresApproval: true },
+      { ...issueClose, requiresApproval: true },
+    ]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["denied", "denied"]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(closeIssue).not.toHaveBeenCalled();
+    const detail = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.close' order by created_at desc limit 1").first<{ detail: string }>();
+    expect(detail?.detail).toMatch(/issue-side staging is not yet supported/);
+  });
+
+  it("denies an unsupported action class defensively (this executor only handles label/close)", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx({ autonomy: { merge: "auto" } }), [
+      { actionClass: "merge", requiresApproval: false, reason: "n/a", mergeMethod: "squash" },
+    ]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    const detail = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.merge' order by created_at desc limit 1").first<{ detail: string }>();
+    expect(detail?.detail).toMatch(/unsupported action class for an issue/);
+  });
+
+  it("records a failed mutation as error rather than swallowing it", async () => {
+    const env = createTestEnv({});
+    vi.mocked(closeIssue).mockRejectedValueOnce(new Error("github 500"));
+    const outcomes = await executeIssueMaintenanceActions(env, issueCtx(), [issueClose]);
     expect(outcomes[0]?.outcome).toBe("error");
     expect((await auditFor(env, "close"))?.outcome).toBe("error");
   });

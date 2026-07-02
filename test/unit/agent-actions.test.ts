@@ -844,7 +844,7 @@ describe("per-contributor open-item cap short-circuit (#2270)", () => {
     input({
       conclusion: "success",
       autonomy: { label: "auto", close: "auto", approve: "auto", merge: "auto" },
-      contributorCapMatch: { matched: true, authorLogin: "farmer99", openCount: 3, cap: 2 },
+      contributorCapMatch: { matched: true, authorLogin: "farmer99", openCount: 3, cap: 2, itemKind: "pull requests" },
       ...extra,
     });
 
@@ -860,6 +860,14 @@ describe("per-contributor open-item cap short-circuit (#2270)", () => {
     expect(plan[1]?.closeComment).toContain("@farmer99");
     expect(plan[1]?.closeComment).toContain("3 open pull requests");
     expect(plan[1]?.closeComment).toContain("limit of 2");
+  });
+
+  it("itemKind selects the close-comment noun — 'issues' for the issue-path caller, not hardcoded to PRs (regression, gate finding on #2467/#2479)", () => {
+    const plan = planAgentMaintenanceActions(
+      overCap({ contributorCapMatch: { matched: true, authorLogin: "farmer99", openCount: 3, cap: 2, itemKind: "issues" } }),
+    );
+    expect(plan[1]?.closeComment).toContain("3 open issues");
+    expect(plan[1]?.closeComment).not.toContain("pull requests");
   });
 
   it("uses the repo-configured contributorCapLabel, defaulting to 'over-contributor-limit' when unset", () => {
@@ -879,7 +887,7 @@ describe("per-contributor open-item cap short-circuit (#2270)", () => {
   });
 
   it("no-ops when the author is not matched (normal disposition runs)", () => {
-    expect(classes(planAgentMaintenanceActions(overCap({ contributorCapMatch: { matched: false, authorLogin: "farmer99", openCount: 1, cap: 2 } })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(overCap({ contributorCapMatch: { matched: false, authorLogin: "farmer99", openCount: 1, cap: 2, itemKind: "pull requests" } })))).not.toContain("close");
   });
 
   it("respects autonomy: observe plans nothing (still short-circuits); label-only labels but does not close", () => {

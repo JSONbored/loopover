@@ -491,6 +491,17 @@ export function createSqliteQueue(
       while (await processOne()) {
         /* keep draining due jobs */
       }
+    } catch (error) {
+      const message = errorMessageWithCause(error);
+      captureError(error, { kind: "queue_pump_crash", backend: "sqlite" });
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_queue_pump_failed",
+          backend: "sqlite",
+          error: message,
+        }),
+      );
     } finally {
       active--;
     }

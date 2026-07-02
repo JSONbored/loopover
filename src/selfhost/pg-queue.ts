@@ -548,6 +548,17 @@ export function createPgQueue(
       while (await processOne()) {
         /* drain due jobs */
       }
+    } catch (error) {
+      const message = errorMessageWithCause(error);
+      captureError(error, { kind: "queue_pump_crash", backend: "postgres" });
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_queue_pump_failed",
+          backend: "postgres",
+          error: message,
+        }),
+      );
     } finally {
       active--;
     }

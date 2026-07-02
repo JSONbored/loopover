@@ -1846,4 +1846,29 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.stop(); // waits for the in-flight consume to finish
     expect(done).toBe(true);
   });
+
+  it("logs and swallows pump failures from claim/reclaim paths so drain does not reject", async () => {
+    const base = makeDriver();
+    const query = vi.fn((sql: string, params: unknown[]) => {
+      if (sql.includes("UPDATE _selfhost_jobs SET status='processing'")) {
+        throw new Error("claim failed");
+      }
+      return base.query(sql, params);
+    });
+    const driver = {
+      exec: base.exec.bind(base),
+      query,
+    } as ReturnType<typeof nodeSqliteDriver>;
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const q = createSqliteQueue(driver, async () => undefined);
+
+    await q.binding.send(msg("pump-failure"));
+    await expect(q.drain()).resolves.toBeUndefined();
+    expect(err).toHaveBeenCalledWith(
+      expect.stringContaining("\"event\":\"selfhost_queue_pump_failed\""),
+    );
+    expect(err).toHaveBeenCalledWith(
+      expect.stringContaining("\"backend\":\"sqlite\""),
+    );
+  });
 });

@@ -1348,6 +1348,29 @@ describe("createPgQueue (durable #977)", () => {
     expect(seen.sort()).toEqual(["x", "y"]);
   });
 
+  it("logs and swallows pump failures from claim/reclaim paths so drain does not reject", async () => {
+    const claimSql = "UPDATE _selfhost_jobs SET status='processing'";
+    const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q.includes("SELECT id, payload, priority")) return { rows: [], rowCount: 0 };
+      if (q.includes("SELECT id, payload, job_key") && q.includes("status IN")) return { rows: [], rowCount: 0 };
+      if (q.includes("WHERE status='processing'")) return { rows: [], rowCount: 0 };
+      if (q.includes(claimSql)) throw new Error("claim failed");
+      return { rows: [], rowCount: 0 };
+    });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const q = createPgQueue({ query: fn } as unknown as Pool, async () => undefined);
+    await q.init();
+
+    await expect(q.drain()).resolves.toBeUndefined();
+    expect(err).toHaveBeenCalledWith(
+      expect.stringContaining("\"event\":\"selfhost_queue_pump_failed\""),
+    );
+    expect(err).toHaveBeenCalledWith(
+      expect.stringContaining("\"backend\":\"postgres\""),
+    );
+  });
+
   it("uses default backoff lambda when backoffMs is not provided", async () => {
     // Trigger a retry without providing backoffMs so the default (attempt) => Math.min(60_000, 1000 * 2**attempt)
     // is actually called — covering the function body that would otherwise be created but never invoked.

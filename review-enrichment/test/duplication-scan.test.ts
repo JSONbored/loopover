@@ -129,6 +129,23 @@ test("extractAddedBlocks: groups consecutive added lines, breaks on context/remo
   assert.deepEqual(blocks[2].lineNos, [9]);
 });
 
+test("extractAddedBlocks: keeps an added line whose content starts with `++` (patch line `+++…`) and keeps line numbers aligned", () => {
+  // A pre-increment statement `++counterValueForLoop;` becomes the patch line `+++counterValueForLoop;`. The
+  // `+++` file-header marker only appears in the preamble (before the first `@@`), so inside a hunk this is a
+  // real added line — it must not be dropped, and it must not shift the following lines' numbers.
+  const patch = [
+    "@@ -1,0 +10,3 @@",
+    "+++counterValueForLoop;",
+    "+const secondSignificantLineHere = makeValue(2)",
+    "+const thirdSignificantLineHere = makeValue(3)",
+  ].join("\n");
+  const blocks = extractAddedBlocks(patch);
+  assert.equal(blocks.length, 1);
+  assert.deepEqual(blocks[0].lineNos, [10, 11, 12]); // not [10, 11] with the ++ line dropped
+  assert.equal(blocks[0].norm.length, 3);
+  assert.ok(blocks[0].norm[0].includes("counterValueForLoop")); // the ++ line survived
+});
+
 test("decodeBase64Utf8: decodes UTF-8 blob content without globalThis.Buffer (Cloudflare Worker deployment path)", () => {
   // The production decode must not depend on Node's Buffer. Encode while Buffer exists, then remove it and decode.
   const text = "const computedScore = weight * factor + base\nconst total = computedScore + bonusAmount + café";

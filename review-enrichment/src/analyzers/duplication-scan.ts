@@ -184,7 +184,10 @@ export function extractAddedBlocks(patch: string | undefined): NormBlock[] {
       continue;
     }
     if (!inHunk) continue;
-    if (line.startsWith("+++")) continue; // file header inside the patch, not an added line
+    // NOTE: no `+++` skip here — the `+++ b/file` header only appears in the patch preamble (before the first
+    // `@@`), which the `!inHunk` guard above already drops. Inside a hunk a line starting with `+++` is an
+    // added line whose content begins with `++` (e.g. a pre-increment `++x;`); skipping it dropped real code
+    // and shifted every following added line's number down by one.
     if (line.startsWith("+")) {
       const norm = normalizeLine(line.slice(1));
       if (norm === null) {

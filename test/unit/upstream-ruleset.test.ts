@@ -977,6 +977,19 @@ describe("upstream ruleset drift tracking", () => {
     );
     await expect(fileUpstreamDriftIssues(objectLabelLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
 
+    // GitHub labels are case-insensitive: a repo whose "signals" label is stored with different casing
+    // (e.g. "Signals") must still be recognized as the recorded drift issue, so it is updated, not duplicated.
+    const caseVariantLabelEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(caseVariantLabelEnv, driftReport("case-variant-label-linked", { issueNumber: 139, issueUrl: "https://github.com/JSONbored/gittensory/issues/139" }));
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: { number: 139, url: "https://github.com/JSONbored/gittensory/issues/139", fingerprint: "case-variant-label-linked", labels: [{ name: "Signals" }] },
+        update: { number: 139, url: "https://github.com/JSONbored/gittensory/issues/139" },
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(caseVariantLabelEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+
     const staleLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "victim/current-repo" });
     await upsertUpstreamDriftReport(staleLinkedEnv, driftReport("stale-linked", { issueNumber: 123, issueUrl: "https://github.com/other-owner/old-repo/issues/123" }));
     const staleLinkedCalls: GitHubIssueFetchCall[] = [];
@@ -1012,6 +1025,7 @@ describe("upstream ruleset drift tracking", () => {
       { fingerprint: "closed-linked", issueNumber: 135, issueUrl: "https://github.com/JSONbored/gittensory/issues/135", issue: { number: 135, url: "https://github.com/JSONbored/gittensory/issues/135", fingerprint: "closed-linked", state: "closed" } },
       { fingerprint: "missing-body-linked", issueNumber: 136, issueUrl: "https://github.com/JSONbored/gittensory/issues/136", issue: { number: 136, url: "https://github.com/JSONbored/gittensory/issues/136", fingerprint: "missing-body-linked", body: null } },
       { fingerprint: "missing-label-linked", issueNumber: 137, issueUrl: "https://github.com/JSONbored/gittensory/issues/137", issue: { number: 137, url: "https://github.com/JSONbored/gittensory/issues/137", fingerprint: "missing-label-linked", labels: [{ name: "triage" }] } },
+      { fingerprint: "nameless-label-linked", issueNumber: 141, issueUrl: "https://github.com/JSONbored/gittensory/issues/141", issue: { number: 141, url: "https://github.com/JSONbored/gittensory/issues/141", fingerprint: "nameless-label-linked", labels: [{}] } },
       { fingerprint: "returned-url-linked", issueNumber: 138, issueUrl: "https://github.com/JSONbored/gittensory/issues/138", issue: { number: 138, url: "https://github.com/other/repo/issues/138", fingerprint: "returned-url-linked" } },
     ]) {
       const rejectedLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });

@@ -475,7 +475,7 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
         status: "complete",
         headSha: "head-101-old",
         filesSyncedAt: "2026-05-20T00:00:00.000Z",
-        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+        reviewsSyncedAt: new Date().toISOString(),
       });
       const urls = stubFetchTracking((url) => {
         if (url.includes("/pulls/101/reviews")) return new Response("must not be called", { status: 500 });
@@ -490,6 +490,91 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
       expect(urls.some((url) => url.includes("/pulls/101/reviews"))).toBe(false);
       // Files: DID refetch — the head SHA changed, so the file cache (head-scoped) correctly missed.
       expect(urls.some((url) => url.includes("/pulls/101/files"))).toBe(true);
+    });
+
+    it("REGRESSION (gate-flagged follow-up): a reviewsSyncedAt older than PR_REVIEWS_CACHE_MAX_AGE_MS is treated as a cache miss, so a dropped invalidation webhook still self-heals", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 110,
+        title: "Open PR, stale review marker",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-110" },
+        labels: [],
+        body: "",
+      });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 110,
+        status: "complete",
+        headSha: "head-110",
+        filesSyncedAt: new Date().toISOString(),
+        reviewsSyncedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      });
+      const urls = stubFetchTracking((url) =>
+        url.includes("/pulls/110/reviews") ? Response.json([{ id: 4, user: { login: "reviewer4" }, state: "APPROVED", submitted_at: "2026-06-01T00:00:00.000Z" }]) : Response.json([]),
+      );
+
+      await refreshPullRequestDetails(env, "JSONbored/gittensory", 110);
+
+      expect(urls.some((url) => url.includes("/pulls/110/reviews"))).toBe(true);
+    });
+
+    it("a reviewsSyncedAt just within PR_REVIEWS_CACHE_MAX_AGE_MS is still treated as a cache hit", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 111,
+        title: "Open PR, review marker just inside the TTL",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-111" },
+        labels: [],
+        body: "",
+      });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 111,
+        status: "complete",
+        headSha: "head-111",
+        filesSyncedAt: new Date().toISOString(),
+        reviewsSyncedAt: new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString(),
+      });
+      const urls = stubFetchTracking((url) => (url.includes("/pulls/111/reviews") ? new Response("must not be called", { status: 500 }) : Response.json([])));
+
+      await refreshPullRequestDetails(env, "JSONbored/gittensory", 111);
+
+      expect(urls.some((url) => url.includes("/pulls/111/reviews"))).toBe(false);
+    });
+
+    it("an unparseable reviewsSyncedAt string is treated as stale (NaN branch, miss) rather than throwing", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 112,
+        title: "Open PR, unparseable review marker",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-112" },
+        labels: [],
+        body: "",
+      });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 112,
+        status: "complete",
+        headSha: "head-112",
+        filesSyncedAt: new Date().toISOString(),
+        reviewsSyncedAt: "not-a-date",
+      });
+      const urls = stubFetchTracking((url) =>
+        url.includes("/pulls/112/reviews") ? Response.json([{ id: 5, user: { login: "reviewer5" }, state: "APPROVED", submitted_at: "2026-06-01T00:00:00.000Z" }]) : Response.json([]),
+      );
+
+      await refreshPullRequestDetails(env, "JSONbored/gittensory", 112);
+
+      expect(urls.some((url) => url.includes("/pulls/112/reviews"))).toBe(true);
     });
 
     it("fetches fresh reviews when reviewsSyncedAt is null (invalidated)", async () => {

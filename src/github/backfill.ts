@@ -333,6 +333,14 @@ const PR_REVIEWS_CACHE_METRIC = "gittensory_pr_reviews_cache_total";
 // Safety-net max age for a webhook-invalidated PR-state cache row (a dropped/missed webhook must not pin a stale
 // value forever). Short enough that a missed synchronize/closed/reopened event self-heals within one sweep tick.
 const PR_STATE_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+// Safety-net max age for the review cache's reviewsSyncedAt marker (flagged by the gate's own review of #2537):
+// unlike the PR-state cache above, review invalidation (invalidatePrReviewsCache, processors.ts) is called
+// best-effort on a pull_request_review webhook (and now, separately, on a synchronize event) -- a failed
+// invalidation write leaves the marker in place indefinitely with no other fallback, since reviews have no
+// head-SHA comparison to fall back on either. Much longer than the PR-state TTL (reviews don't need
+// minute-level freshness, just an eventual-consistency bound on the worst case of a transient DB write
+// failure), but still bounded rather than permanent.
+const PR_REVIEWS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
 const FRESH_TOTALS_SNAPSHOT_MS = 10 * 60 * 1000;
 const TOTALS_SNAPSHOT_LOOKBACK = 8;
@@ -2003,11 +2011,13 @@ async function fetchAndStorePullRequestDetails(
   const existingState = !options.forceFiles && pr.headSha ? await getPullRequestDetailSyncState(env, repoFullName, pr.number) : null;
   const filesUpToDate = Boolean(existingState?.headSha) && existingState?.headSha === pr.headSha && Boolean(existingState?.filesSyncedAt);
   // Durable review cache (#2537): reviews are independent of head SHA (a force-push doesn't change who
-  // approved/requested-changes), so — unlike files — this is gated purely on reviewsSyncedAt being set, not a
-  // head comparison. reviewsSyncedAt is explicitly cleared (set to null, PARTIAL-UPDATE CONTRACT) by the
-  // pull_request_review webhook handler (processors.ts) on submitted/edited/dismissed, which is the ONLY thing
-  // that invalidates it — a head-SHA change alone does NOT invalidate reviews.
-  const reviewsUpToDate = !options.forceFiles && Boolean(existingState?.reviewsSyncedAt);
+  // approved/requested-changes), so — unlike files — this is gated on reviewsSyncedAt being set AND still
+  // within PR_REVIEWS_CACHE_MAX_AGE_MS, not a head comparison. reviewsSyncedAt is explicitly cleared (set to
+  // null, PARTIAL-UPDATE CONTRACT) by the webhook handler (processors.ts) on a pull_request_review
+  // submitted/edited/dismissed action or a pull_request synchronize action — but that invalidation write is
+  // best-effort, so isPrReviewsCacheFresh is the safety net for a dropped one (a head-SHA change ALONE does not
+  // invalidate reviews; only that explicit clear, or this TTL expiring, does).
+  const reviewsUpToDate = !options.forceFiles && isPrReviewsCacheFresh(existingState?.reviewsSyncedAt);
   incr(PR_REVIEWS_CACHE_METRIC, { result: reviewsUpToDate ? "hit" : "miss" });
   const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([
@@ -2755,15 +2765,27 @@ export async function fetchLivePullRequest(
 
 // #2537: durable, webhook-invalidated cache for the bare PR-state read (GET /pulls/{n}). Unlike the request-local
 // LiveGithubFacts memo (queue/processors.ts), this survives ACROSS webhook deliveries / sweep ticks, cutting
-// repeat /pulls/{n} calls for an unchanged PR at the freshness-guard/readiness/dup-winner/gate-override call
-// sites. NEVER used by the act-boundary merge/close decision (planAgentMaintenanceActions's liveMergeState read,
-// or its unified-comment mirror) — those force-refetch via refreshLiveMergeState by design (the #4220 fix) and
-// must keep doing so; this cache exists purely for the OTHER, non-authoritative reads.
+// repeat /pulls/{n} calls for an unchanged PR at the freshness-guard/readiness/dup-winner call sites. NEVER used
+// by the act-boundary merge/close decision (planAgentMaintenanceActions's liveMergeState read, or its
+// unified-comment mirror) or by resolveOverrideHeadSha (gate-override, queue/processors.ts) — those force-
+// refetch by design (the #4220 fix; the gate-override race respectively) and must keep doing so; this cache
+// exists purely for the OTHER, non-authoritative reads.
 function isPrStateCacheFresh(fetchedAt: string | null | undefined): boolean {
   if (!fetchedAt) return false;
   const fetchedAtMs = Date.parse(fetchedAt);
   if (!Number.isFinite(fetchedAtMs)) return false;
   return Date.now() - fetchedAtMs < PR_STATE_CACHE_MAX_AGE_MS;
+}
+
+// #2537 follow-up (flagged by the gate's own review): a failed invalidatePrReviewsCache write (processors.ts)
+// leaves reviewsSyncedAt stamped forever with nothing else to catch it -- reviews have no head-SHA comparison
+// to fall back on the way files do. Bound reviewsUpToDate's trust in an old marker to PR_REVIEWS_CACHE_MAX_AGE_MS
+// so a missed invalidation self-heals eventually instead of permanently pinning a stale review set.
+function isPrReviewsCacheFresh(reviewsSyncedAt: string | null | undefined): boolean {
+  if (!reviewsSyncedAt) return false;
+  const syncedAtMs = Date.parse(reviewsSyncedAt);
+  if (!Number.isFinite(syncedAtMs)) return false;
+  return Date.now() - syncedAtMs < PR_REVIEWS_CACHE_MAX_AGE_MS;
 }
 
 /** Best-effort write-through for the PR-state cache fields. Always stamps prStateFetchedAt = now on a successful

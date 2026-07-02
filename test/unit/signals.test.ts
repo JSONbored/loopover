@@ -178,6 +178,34 @@ describe("world-class backend signals", () => {
     expect(opportunities[0]?.score).toBeGreaterThanOrEqual(70);
   });
 
+  it("matches contributor label history case-insensitively when scoring opportunities", () => {
+    const profile = buildContributorProfile(
+      "oktofeesh1",
+      { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" },
+      [],
+      [],
+      [{ login: "oktofeesh1", repoFullName: repo.fullName, pullRequests: 3, mergedPullRequests: 2, openPullRequests: 1, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["Bug", "CI"], lastActivityAt: "2026-05-25T00:00:00.000Z" }],
+    );
+    const caseVariantIssue: IssueRecord = {
+      ...issues[0]!,
+      number: 88,
+      title: "Crash on duplicate webhook delivery",
+      labels: ["bug"],
+      linkedPrs: [],
+    };
+    const unrelatedIssue: IssueRecord = {
+      ...issues[0]!,
+      number: 89,
+      title: "Polish contributor onboarding docs",
+      labels: ["docs"],
+      linkedPrs: [],
+    };
+    const opportunities = buildContributorOpportunities(profile, [repo], [unrelatedIssue, caseVariantIssue], []);
+    expect(opportunities[0]?.issueNumber).toBe(88);
+    expect(opportunities[0]?.reasons).toEqual(expect.arrayContaining([expect.stringMatching(/labels overlap contributor history: bug/i)]));
+    expect(opportunities[0]?.score).toBeGreaterThan(opportunities.find((entry) => entry.issueNumber === 89)?.score ?? 0);
+  });
+
   it("ranks grabbable maintainer-created issues above community issues and downgrades maintainer WIP (#699/#186)", () => {
     const profile = buildContributorProfile("scout", { login: "scout", topLanguages: ["TypeScript"], source: "github" }, [], []);
     const maintainerOpen: IssueRecord = {

@@ -686,11 +686,16 @@ function reviveEligibleDeadJobs(driver: SqliteDriver, maxRetries: number): numbe
   const maxJitter = queueRecoveryJitterMs();
   for (const row of rows as Array<{ id: number; payload: string; job_key?: string | null }>) {
     const runAfter = now + deterministicJitterMs(`revive:${row.job_key ?? ""}:${row.id}:${row.payload}`, maxJitter);
-    driver.query(
-      `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=NULL WHERE id=?`,
+    // AND status='dead' re-checks the row is STILL dead at UPDATE time (mirrors deferPendingJobsForRateLimit /
+    // the processing-lease reclaim below) — the SELECT above is a stale snapshot, and without this predicate an
+    // overlapping revive (a slow prior revive tick still running when the next one fires) could flip a row
+    // that's already been claimed into 'processing' back to 'pending', letting it run a second time concurrently.
+    // `changes` is 0 (not counted as revived) when the row already moved out of 'dead'.
+    const { changes } = driver.query(
+      `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=NULL WHERE id=? AND status='dead'`,
       [runAfter, row.id],
     );
-    revived += 1;
+    revived += changes;
   }
   return revived;
 }

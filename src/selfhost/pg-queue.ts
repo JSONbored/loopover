@@ -229,11 +229,16 @@ export function createPgQueue(
     const maxJitter = queueRecoveryJitterMs();
     for (const row of res.rows as Array<{ id: string; payload: string; job_key?: string | null }>) {
       const runAfter = now + deterministicJitterMs(`revive:${row.job_key ?? ""}:${row.id}:${row.payload}`, maxJitter);
-      await pool.query(`UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=NULL WHERE id=$2`, [
-        runAfter,
-        row.id,
-      ]);
-      revived += 1;
+      // AND status='dead' re-checks the row is STILL dead at UPDATE time (mirrors reclaimExpiredProcessingJobs /
+      // deferPendingJobsForRateLimit above) — the SELECT above is a stale snapshot, and without this predicate an
+      // overlapping reviver (another self-host instance, or a slow prior revive tick still running when the next
+      // one fires) could flip a row that's already been claimed into 'processing' back to 'pending', letting it
+      // run a second time concurrently. rowCount is 0 (not counted as revived) when another reviver won the race.
+      const update = await pool.query(
+        `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=NULL WHERE id=$2 AND status='dead'`,
+        [runAfter, row.id],
+      );
+      revived += update.rowCount ?? 0;
     }
     return revived;
   }

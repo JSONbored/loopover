@@ -1257,6 +1257,34 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(q.reviveDeadLetterJobs()).toBe(0);
     });
 
+    // REGRESSION (#2581 review defect, parity with the same fix in pg-queue.ts): the SELECT that finds eligible
+    // dead jobs is a stale snapshot. Without an "AND status='dead'" re-check on the UPDATE, a row that stops
+    // being 'dead' between the SELECT and this row's own UPDATE (e.g. claimed by an overlapping revive/process)
+    // would get silently flipped back to 'pending' regardless of its CURRENT status, letting it run a second
+    // time concurrently. Engineered here via a driver.query spy that injects the status change at the exact
+    // point the real revive UPDATE would otherwise race against it.
+    it("does not flip a row back to pending if it stops being 'dead' between the SELECT and its own UPDATE", async () => {
+      const driver = makeDriver();
+      const realQuery = driver.query.bind(driver);
+      const q = createSqliteQueue(driver, async () => { throw new Error("boom"); }, { maxRetries: 1, backoffMs: () => 0 });
+      await q.binding.send(msg("x"));
+      await q.drain(); // dies at attempts=1 (maxRetries=1)
+      expect(q.deadCount()).toBe(1);
+
+      vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+        if (sql.includes("SET status='pending', run_after=?, last_error=NULL")) {
+          realQuery(`UPDATE _selfhost_jobs SET status='processing' WHERE id=?`, [params[1] as number]);
+        }
+        return realQuery(sql, params);
+      });
+
+      const revived = q.reviveDeadLetterJobs();
+
+      expect(revived).toBe(0); // the UPDATE's "AND status='dead'" matched zero rows -- not counted as revived
+      const { rows } = driver.query("SELECT status FROM _selfhost_jobs", []);
+      expect((rows[0] as { status: string }).status).toBe("processing"); // untouched, NOT reverted to pending
+    });
+
     it("runs automatically on the configured revive interval while the queue is running", async () => {
       process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
       vi.useFakeTimers();

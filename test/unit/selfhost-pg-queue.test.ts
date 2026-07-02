@@ -58,12 +58,17 @@ interface MockPool {
   /** Pre-load a job to be returned by the next RETURNING claim query. */
   enqueueJob(id: string, payload: object, attempts?: number, jobKey?: string | null): void;
   setDeferUpdateRowCount(rowCount: number): void;
+  /** Queues per-call rowCounts for the "AND status='dead'" revive UPDATE, one entry consumed per call in order
+   *  (default 1 when the queue is empty) — lets a test simulate an overlapping reviver already winning the race
+   *  on a specific row (rowCount 0) while another succeeds (rowCount 1). */
+  setReviveUpdateRowCounts(rowCounts: number[]): void;
   setRateLimitRows(rows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }>): void;
 }
 
 function makePool(): MockPool {
   const results: Partial<QueryResult>[] = [];
   let deferUpdateRowCount = 1;
+  const reviveUpdateRowCounts: number[] = [];
   let rateLimitRows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }> = [];
   const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
     const q = String(sql);
@@ -83,6 +88,10 @@ function makePool(): MockPool {
     }
     if (q.includes("SET status='pending', run_after=GREATEST")) {
       return { rows: [], rowCount: deferUpdateRowCount };
+    }
+    if (q.includes("SET status='pending', run_after=$1, last_error=NULL")) {
+      const rowCount = reviveUpdateRowCounts.length > 0 ? (reviveUpdateRowCounts.shift() ?? 1) : 1;
+      return { rows: [], rowCount };
     }
     // Claim queries use RETURNING — pop from queue; fall through to empty default otherwise.
     if (q.includes("RETURNING")) {
@@ -104,6 +113,10 @@ function makePool(): MockPool {
     },
     setDeferUpdateRowCount(rowCount) {
       deferUpdateRowCount = rowCount;
+    },
+    setReviveUpdateRowCounts(rowCounts) {
+      reviveUpdateRowCounts.length = 0;
+      reviveUpdateRowCounts.push(...rowCounts);
     },
     setRateLimitRows(rows) {
       rateLimitRows = rows;
@@ -958,6 +971,40 @@ describe("createPgQueue (durable #977)", () => {
 
       expect(revived).toBe(0);
       expect(await renderMetrics()).not.toContain("gittensory_jobs_dead_letter_revived_total");
+    });
+
+    // REGRESSION (#2581 review defect): the SELECT is a stale snapshot. Without an "AND status='dead'" re-check on
+    // the UPDATE, an overlapping reviver (another self-host instance, or a slow prior tick still running when the
+    // next one fires) that already moved a row out of 'dead' -- e.g. into 'processing' via a normal claim -- would
+    // get silently flipped back to 'pending' by this stale UPDATE, letting the job run a second time concurrently.
+    it("does NOT count a row as revived when another reviver already moved it out of 'dead' (rowCount 0) -- only the row that actually changed status counts", async () => {
+      const m = makePool();
+      m.fn.mockResolvedValueOnce({
+        rows: [
+          { id: "1", payload: JSON.stringify({ type: "t" }), job_key: null },
+          { id: "2", payload: JSON.stringify({ type: "t" }), job_key: "k" },
+        ],
+        rowCount: 2,
+      }); // SELECT status='dead' AND attempts<ceiling -- a stale snapshot of both rows
+      // Row "1" lost the race (another reviver/claim already moved it out of 'dead' -- UPDATE affects 0 rows);
+      // row "2" is still genuinely dead and gets revived.
+      m.setReviveUpdateRowCounts([0, 1]);
+      const q = createPgQueue(m.pool, async () => undefined, { maxRetries: 1 });
+
+      const revived = await q.reviveDeadLetterJobs();
+
+      // Only the ONE row whose UPDATE actually matched (still 'dead' at UPDATE time) counts -- not the raw SELECT
+      // count of 2, which would have double-counted the row another reviver already claimed.
+      expect(revived).toBe(1);
+      expect(m.fn).toHaveBeenCalledWith(
+        expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL WHERE id=$2 AND status='dead'"),
+        expect.arrayContaining(["1"]),
+      );
+      expect(m.fn).toHaveBeenCalledWith(
+        expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL WHERE id=$2 AND status='dead'"),
+        expect.arrayContaining(["2"]),
+      );
+      expect(await renderMetrics()).toContain("gittensory_jobs_dead_letter_revived_total 1");
     });
   });
 

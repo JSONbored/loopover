@@ -13301,7 +13301,7 @@ describe("queue processors", () => {
         await seedWarmPrStateCache(env, "JSONbored/gittensory", 200);
         vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
           const url = input.toString();
-          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
           return Response.json({});
         });
 
@@ -13333,7 +13333,7 @@ describe("queue processors", () => {
       await seedWarmPrStateCache(env, "JSONbored/gittensory", 201);
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         return Response.json({});
       });
 
@@ -13370,7 +13370,7 @@ describe("queue processors", () => {
         });
         vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
           const url = input.toString();
-          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
           if (url.includes("/pulls/202/files")) return Response.json([]);
           if (url.includes("/pulls/202/reviews")) return Response.json([]);
           return Response.json({});
@@ -13411,7 +13411,7 @@ describe("queue processors", () => {
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         return Response.json({});
       });
 
@@ -13472,7 +13472,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = (init?.method ?? "GET").toUpperCase();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.endsWith("/pulls/8") && method === "PATCH") {
           closedViaPatch = JSON.parse(String(init?.body ?? "{}")).state === "closed";
           return Response.json({ number: 8, state: "closed" });
@@ -13555,7 +13555,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
         if (url.includes("/pulls/9/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
         // ALWAYS live-dirty — the seeded durable cache above claims "clean".
         if (/\/pulls\/9(?:\?|$)/.test(url)) return Response.json({ number: 9, mergeable_state: "dirty" });

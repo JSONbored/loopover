@@ -53,6 +53,37 @@ describe("durable PR-state cache (#2537)", () => {
     };
   }
 
+  // REGRESSION (#2595 review defect): the three cached readers below share ONE prStateFetchedAt column as their
+  // freshness stamp. Before this fix, each reader wrote through ONLY the one field it cared about, so a write
+  // from reader A would make reader B's UN-fetched field look "fresh" to a subsequent call -- silently returning
+  // undefined for a field that was simply never populated, not confirmed empty on GitHub. The fix fetches the
+  // full PR payload (all three narrow fetchers already hit the exact same endpoint) and writes all three fields
+  // through together on every live fetch, so this cross-field false-freshness can no longer happen.
+  it("REGRESSION (#2595): a live fetch from ONE cached reader also warms the OTHER TWO, since they share one fetchedAt stamp", async () => {
+    const env = createTestEnv();
+    let fetchCount = 0;
+    stubFetchTracking((url) => {
+      if (url.includes("/pulls/40")) {
+        fetchCount += 1;
+        return Response.json({ number: 40, mergeable_state: "clean", state: "open", head: { sha: "shared-sha" } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    // Only the mergeable_state reader is called...
+    const mergeableState = await cachedFetchLivePullRequestMergeState(env, "owner/repo", 40, "tok");
+    expect(mergeableState).toBe("clean");
+    expect(fetchCount).toBe(1);
+
+    // ...yet the OTHER two fields are now cache HITS too, without a second GitHub call, and return the REAL
+    // fetched values -- not a false "confirmed fresh, but never actually fetched" undefined.
+    const state = await cachedFetchLivePullRequestState(env, "owner/repo", 40, "tok");
+    const headSha = await cachedFetchLivePullRequestHeadSha(env, "owner/repo", 40, "tok");
+    expect(state).toBe("open");
+    expect(headSha).toBe("shared-sha");
+    expect(fetchCount).toBe(1); // no additional GitHub calls were needed
+  });
+
   describe("cachedFetchLivePullRequestMergeState", () => {
     it("cache miss on first read — fetches live and writes the row through", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
@@ -196,14 +227,44 @@ describe("durable PR-state cache (#2537)", () => {
       expect(fetchCount).toBe(1);
     });
 
-    it("does not write through when the live head SHA is undefined (never clears a prior headSha)", async () => {
+    // REGRESSION (#2595 review defect): the three cached readers share ONE prStateFetchedAt stamp, so a live
+    // fetch triggered by ANY of them must write through ALL THREE fields together -- otherwise a field this
+    // reader doesn't care about (mergeable_state/state) would look "fresh" to a later, different reader despite
+    // never having been fetched. A fresh full-payload fetch that carries no head.sha still writes the OTHER two
+    // fields through (and still never CLEARS a prior headSha -- the PARTIAL-UPDATE CONTRACT is preserved).
+    it("writes mergeable_state/state through even when the live head SHA is undefined, and never clears a prior headSha", async () => {
       const env = createTestEnv();
-      stubFetchTracking(() => Response.json({ number: 31 })); // no head.sha
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "owner/repo",
+        pullNumber: 31,
+        status: "never_synced",
+        headSha: "prior-sha",
+        prStateFetchedAt: "2020-01-01T00:00:00.000Z", // stale -- forces a live re-fetch
+      });
+      stubFetchTracking(() => Response.json({ number: 31, mergeable_state: "clean", state: "open" })); // no head.sha
 
       const result = await cachedFetchLivePullRequestHeadSha(env, "owner/repo", 31, "tok");
 
+      expect(result).toBeUndefined(); // no head.sha in the live payload
+      const row = await getPullRequestDetailSyncState(env, "owner/repo", 31);
+      expect(row?.headSha).toBe("prior-sha"); // NOT cleared -- omitted, not written as null
+      expect(row?.prMergeableState).toBe("clean"); // written through together with this call's own fetch
+      expect(row?.prState).toBe("open");
+      expect(row?.prStateFetchedAt).not.toBe("2020-01-01T00:00:00.000Z"); // the shared stamp advanced
+    });
+
+    it("still creates a row (with the other fields null) on a fresh PR whose live payload carries no head.sha at all", async () => {
+      const env = createTestEnv();
+      stubFetchTracking(() => Response.json({ number: 32 })); // no head.sha, no mergeable_state, no state
+
+      const result = await cachedFetchLivePullRequestHeadSha(env, "owner/repo", 32, "tok");
+
       expect(result).toBeUndefined();
-      expect(await getPullRequestDetailSyncState(env, "owner/repo", 31)).toBeNull();
+      const row = await getPullRequestDetailSyncState(env, "owner/repo", 32);
+      expect(row?.headSha).toBeNull(); // never had one to preserve
+      expect(row?.prMergeableState).toBeNull();
+      expect(row?.prState).toBeNull();
+      expect(row?.prStateFetchedAt).not.toBeNull(); // the fetch DID succeed (confirmed-empty, not "never fetched")
     });
   });
 

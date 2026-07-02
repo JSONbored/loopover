@@ -185,6 +185,10 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
     return { verdict: "close", summary: "A registry submission must not bundle other file changes — resubmit the entry on its own." };
   }
   // A submission scope (entry/provider) always carries a directFile (classifier invariant; see classifyRegistryPrScope).
+  // NOTE the deliberate asymmetry documented on classifyRegistryPrScope's own doc comment: an entry submission
+  // with an ambiguous companion shape (e.g. 2+ provider files riding along) lands HERE as a manual-review HOLD,
+  // not a close — unlike the entry-FREE "2+ provider files" case, which the classifier itself closes outright as
+  // mixed-files, since there's nothing else in that diff worth preserving.
   const directFile = scope.directFile as string;
   const companionProviderFile = scope.providerCompanionFile;
   // Anything besides the direct file must be a companion the classifier already approved: the recognized debut-

@@ -208,6 +208,10 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     expect(r?.verdict).toBe("merge");
   });
 
+  // Deliberate asymmetry (documented on classifyRegistryPrScope's own doc comment in registry-logic.ts): this is
+  // a manual-review HOLD, not a close, unlike the entry-FREE "2+ provider files" case (which IS mixed-files/close
+  // — see content-lane-registry-logic.test.ts) — the entry itself may still be a legitimate submission even when
+  // its companion shape is ambiguous.
   it("does not recognize a companion when more than one provider file rides along an entry — falls back to manual (ambiguous shape)", async () => {
     const calls: string[] = [];
     const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {

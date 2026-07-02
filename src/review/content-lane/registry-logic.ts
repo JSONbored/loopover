@@ -718,14 +718,28 @@ export interface RegistryScopeResult {
 /**
  * Generic surface-model scope classifier: in scope when the PR edits exactly ONE entry file (or, entry-free,
  * one flat provider file); the spec's provider + artifact files are allowed companions. A registry-looking
- * submission with too many entry/provider files is malformed and stays in the lane as mixed-files; an unrelated
- * PR with no direct registry files remains not-direct-submission.
+ * submission with too many entry files, OR too many provider files with NO entry file at all, is malformed and
+ * stays in the lane as mixed-files (a hard close — there is no salvageable single submission in the diff at all);
+ * an unrelated PR with no direct registry files remains not-direct-submission.
+ *
+ * DELIBERATE ASYMMETRY: too many provider files ALONGSIDE a single well-formed entry file does NOT hit this early
+ * mixed-files guard, even though it's the same underlying "which provider file is the real companion?" ambiguity
+ * as the entry-free case. That's intentional, not an oversight: with zero entry files there is nothing else in
+ * the diff worth preserving, so a decisive close is correct; with one entry file present, the entry itself may
+ * still be a perfectly legitimate, valid submission — only its companion shape is unclear — so classification
+ * lets it through as "entry-submission", and the orchestrator's own companion-file handling (runSurfaceReview)
+ * routes it to a manual-review HOLD rather than throwing away potentially-good entry content with an outright
+ * close. If a future spec's needs change this trade-off, tighten THIS guard to `entryFiles.length > 1 ||
+ * providerFiles.length > 1` (dropping the `entryFiles.length === 0` qualifier) rather than special-casing it
+ * downstream.
  */
 export function classifyRegistryPrScope(spec: RegistryLaneSpec, changedFiles: string[]): RegistryScopeResult {
   const files = (changedFiles ?? []).map((f) => String(f || "").trim()).filter(Boolean);
   const entryFiles = files.filter((f) => spec.entryFilePattern.test(f));
   const providerFiles = spec.providerFilePattern ? files.filter((f) => spec.providerFilePattern!.test(f)) : [];
-  if (entryFiles.length > 1 || (entryFiles.length === 0 && providerFiles.length > 1)) {
+  const tooManyEntryFiles = entryFiles.length > 1;
+  const tooManyProviderFilesWithNoEntry = entryFiles.length === 0 && providerFiles.length > 1;
+  if (tooManyEntryFiles || tooManyProviderFilesWithNoEntry) {
     return { scope: "mixed-files", directFile: null, isProvider: false, providerCompanionFile: null };
   }
   const isEntryPr = entryFiles.length === 1;

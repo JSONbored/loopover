@@ -344,6 +344,22 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(isRegistrySubmissionScope("not-direct-submission")).toBe(false);
   });
 
+  // DELIBERATE ASYMMETRY (documented on classifyRegistryPrScope's own doc comment): 2+ provider files with NO
+  // entry file present is a hard mixed-files close (nothing else in the diff is worth preserving), but the SAME
+  // "which provider is the real companion?" ambiguity ALONGSIDE a single well-formed entry file is NOT mixed-
+  // files — the entry itself may still be a legitimate submission, so it classifies as entry-submission (the
+  // orchestrator then routes the ambiguous companion shape to a manual-review HOLD rather than an outright close
+  // — see content-lane-orchestrator.test.ts's own coverage of that downstream routing).
+  it("2+ provider companions alongside a single entry file is NOT mixed-files (unlike the entry-free case) — the entry's own scope still resolves", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "registry/providers/a.json", "registry/providers/b.json"]);
+    expect(r.scope).toBe("entry-submission");
+    expect(r.directFile).toBe("registry/subnets/actual.json");
+  });
+
+  it("2+ provider companions with NO entry file present IS mixed-files (nothing salvageable in the diff at all)", () => {
+    expect(classifyRegistryPrScope(spec, ["registry/providers/a.json", "registry/providers/b.json", "registry/providers/c.json"]).scope).toBe("mixed-files");
+  });
+
   it("tolerates a nullish file list and falsy entries (the ?? [] / || '' guards)", () => {
     expect(classifyRegistryPrScope(spec, undefined as unknown as string[]).scope).toBe("not-direct-submission");
     expect(classifyRegistryPrScope(spec, [null as unknown as string, "registry/subnets/actual.json"]).scope).toBe("entry-submission");

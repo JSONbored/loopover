@@ -200,10 +200,17 @@ export type ColumnCollision = { table: string; column: string; files: string[] }
  * individually-valid migrations (#2551). `orderedFileContents` must already be sorted ascending by migration
  * number (the same order `scripts/check-migrations.mjs` reads the directory in); a `drop_table` event clears
  * every column tracked for that table so far, so a documented DROP+CREATE recreate never reads as a
- * collision with the table it replaces. Pure, no I/O.
+ * collision with the table it replaces.
+ *
+ * A collision is recorded PERMANENTLY the moment it's detected, before any later `drop_table` event can
+ * clear the tracking map -- real migration execution runs statements strictly in order, so
+ * `CREATE TABLE t (c INT); ALTER TABLE t ADD COLUMN c INT; DROP TABLE t;` already fails at the ADD COLUMN
+ * (duplicate column) and the DROP TABLE is never reached; a later DROP can never retroactively make an
+ * already-fatal duplicate definition safe. Pure, no I/O.
  */
 export function detectColumnCollisions(orderedFileContents: ReadonlyArray<readonly [string, string]>): ColumnCollision[] {
   const tracked = new Map<string, { table: string; column: string; files: Set<string> }>();
+  const collisions = new Map<string, ColumnCollision>();
 
   for (const [filename, sql] of orderedFileContents) {
     for (const statement of splitSqlStatements(sql)) {
@@ -220,15 +227,15 @@ export function detectColumnCollisions(orderedFileContents: ReadonlyArray<readon
           continue;
         }
         const entry = tracked.get(key);
-        if (entry) entry.files.add(filename);
-        else tracked.set(key, { table: event.table, column: event.column, files: new Set([filename]) });
+        if (entry) {
+          entry.files.add(filename);
+          collisions.set(key, { table: event.table, column: event.column, files: [...entry.files].sort() });
+        } else {
+          tracked.set(key, { table: event.table, column: event.column, files: new Set([filename]) });
+        }
       }
     }
   }
 
-  const collisions: ColumnCollision[] = [];
-  for (const { table, column, files } of tracked.values()) {
-    if (files.size > 1) collisions.push({ table, column, files: [...files].sort() });
-  }
-  return collisions.sort((a, b) => (a.table === b.table ? a.column.localeCompare(b.column) : a.table.localeCompare(b.table)));
+  return [...collisions.values()].sort((a, b) => (a.table === b.table ? a.column.localeCompare(b.column) : a.table.localeCompare(b.table)));
 }

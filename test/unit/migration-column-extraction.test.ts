@@ -170,6 +170,14 @@ describe("detectColumnCollisions (#2551)", () => {
     expect(detectColumnCollisions(files)).toEqual([{ table: "t", column: "fresh_col", files: ["0002_b.sql", "0003_c.sql"] }]);
   });
 
+  it("STILL flags a collision even when a DROP TABLE for that table comes later in the SAME file (#2607 gate finding)", () => {
+    // Real migration execution runs statements strictly in order: `CREATE TABLE t (c INT); ALTER TABLE t
+    // ADD COLUMN c INT; DROP TABLE t;` already fails at the duplicate ADD COLUMN, so the DROP TABLE is
+    // never reached -- it must not retroactively erase the collision that already happened before it.
+    const files: Array<[string, string]> = [["0001_x.sql", "CREATE TABLE t (c INTEGER); ALTER TABLE t ADD COLUMN c INTEGER; DROP TABLE t;"]];
+    expect(detectColumnCollisions(files)).toEqual([{ table: "t", column: "c", files: ["0001_x.sql"] }]);
+  });
+
   it("does not flag a genuine column rename as a collision with its old or new name", () => {
     const files: Array<[string, string]> = [
       ["0001_a.sql", "CREATE TABLE t (id INTEGER, old_name TEXT);"],

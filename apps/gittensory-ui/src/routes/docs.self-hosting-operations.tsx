@@ -121,6 +121,30 @@ docker compose --profile postgres --profile observability --profile backup up -d
         <code>Dead jobs stay at zero</code> routine check below is watching for.
       </p>
 
+      <h2>Docker resource hygiene</h2>
+      <p>
+        Every service in <code>docker-compose.yml</code> caps its own container logs (10MB × 3
+        rotated files) out of the box, so log growth alone won&apos;t fill your disk. Unused Docker
+        images and build cache are a separate, larger disk-growth vector on a host that rebuilds or
+        pulls images repeatedly over months — Docker does not reclaim either automatically.
+      </p>
+      <p>
+        Install the provided host-level timer to reclaim both on a schedule (anything unused for
+        less than 7 days is left alone, so a recent deploy is never at risk):
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`sudo cp systemd/gittensory-docker-prune.service.example /etc/systemd/system/gittensory-docker-prune.service
+sudo cp systemd/gittensory-docker-prune.timer.example /etc/systemd/system/gittensory-docker-prune.timer
+sudo $EDITOR /etc/systemd/system/gittensory-docker-prune.service   # set WorkingDirectory / ExecStart to your path
+sudo systemctl daemon-reload
+sudo systemctl enable --now gittensory-docker-prune.timer`}
+      />
+      <p>
+        Run it manually at any time with <code>docker system df</code> before and after to see what
+        it reclaimed: <code>sh scripts/selfhost-docker-prune.sh</code>.
+      </p>
+
       <h2>Sentry tracing</h2>
       <p>
         Leave <code>SENTRY_TRACES_SAMPLE_RATE</code> unset or blank to disable trace export, or set

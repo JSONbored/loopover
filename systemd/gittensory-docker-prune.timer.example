@@ -1,0 +1,13 @@
+# Pairs with gittensory-docker-prune.service.example. See that file for install instructions.
+
+[Unit]
+Description=Run gittensory-docker-prune.service daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+# Spread the run over a window instead of firing at exactly midnight on every host.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

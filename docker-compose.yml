@@ -22,6 +22,19 @@
 #   docker compose --profile observability up -d                 # metrics + logs + dashboards
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
 
+# Bounded container logging (#audit-rate-headroom): every service below defaults to Docker's
+# json-file driver, which has NO size cap on its own -- a long-running 24/7 stack can fill the
+# host disk purely from log growth (the app, Postgres, Redis, and the CI runners are the biggest
+# producers). This anchor caps each service to 3 rotated files of 10MB (30MB/service ceiling,
+# ~600MB worst case across every service in this file) and is merged into every service via
+# `<<: *default-logging`. Override per-service if you need more retained log history.
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   # ── Core app (always runs) ─────────────────────────────────────────────────
   gittensory:
@@ -31,6 +44,7 @@ services:
         INSTALL_AI_CLIS: "${INSTALL_AI_CLIS:-true}"
         INSTALL_VISUAL_REVIEW: "${INSTALL_VISUAL_REVIEW:-false}"
     restart: unless-stopped
+    <<: *default-logging
     ports:
       # Remove this when using the caddy profile — Caddy becomes the public listener.
       - "${PORT:-8787}:8787"
@@ -121,6 +135,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    <<: *default-logging
     command:
       - redis-server
       - --maxmemory
@@ -140,6 +155,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["postgres", "pgbouncer"]
     environment:
       POSTGRES_USER: gittensory
@@ -158,6 +174,7 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:v1.25.2-p0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["pgbouncer"]
     depends_on:
       postgres:
@@ -188,6 +205,7 @@ services:
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.20.0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["postgres", "pgbouncer"]
     depends_on:
       postgres:
@@ -206,6 +224,7 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.18.2
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["qdrant"]
     # Ports are bound to LOOPBACK (127.0.0.1), not 0.0.0.0: the app reaches Qdrant over the internal
     # docker network (QDRANT_URL=http://qdrant:6333), so the host mapping exists only for the local
@@ -240,6 +259,7 @@ services:
   ollama:
     image: ollama/ollama:0.30.10
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["ollama"]
     volumes:
       - ollama-models:/root/.ollama
@@ -258,6 +278,7 @@ services:
   litestream:
     image: litestream/litestream:0.5.12
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["litestream"]
     command: replicate
     depends_on:
@@ -278,6 +299,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["caddy"]
     ports:
       - "80:80"
@@ -299,6 +321,7 @@ services:
   prometheus:
     image: prom/prometheus:v3.12.0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -314,6 +337,7 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.33.0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     depends_on: [prometheus]
     expose:
@@ -328,6 +352,7 @@ services:
   grafana:
     image: grafana/grafana:13.1.0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     depends_on:
       prometheus:
@@ -365,6 +390,7 @@ services:
   reporting-exporter:
     image: alpine:3.20
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     depends_on:
       gittensory:
@@ -414,6 +440,7 @@ services:
   loki:
     image: grafana/loki:3.7.3
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     command: ["-config.file=/etc/loki/loki-config.yml"]
     volumes:
@@ -437,6 +464,7 @@ services:
   docker-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     environment:
       CONTAINERS: "1" # GET /containers/* (list, inspect, logs)
@@ -449,6 +477,7 @@ services:
   promtail:
     image: grafana/promtail:3.6.11
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     command:
       [
@@ -475,6 +504,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.155.0
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     depends_on:
       tempo:
@@ -489,6 +519,7 @@ services:
   tempo:
     image: grafana/tempo:2.6.1
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["observability"]
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
@@ -512,6 +543,7 @@ services:
     #   --format='{{index .RepoDigests 0}}' ghcr.io/tailscale/tailscale:stable
     image: ghcr.io/tailscale/tailscale:stable
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["tailscale"]
     hostname: gittensory
     cap_add:
@@ -538,6 +570,7 @@ services:
     # docker pull myoung34/github-runner:ubuntu-jammy && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-jammy
     image: myoung34/github-runner:ubuntu-jammy
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["runners"]
     environment:
       RUNNER_SCOPE: ${RUNNER_SCOPE:-repo}
@@ -562,6 +595,7 @@ services:
   backup:
     image: alpine:3.20
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["backup"]
     environment:
       DATABASE_PATH: /data/gittensory.sqlite
@@ -601,6 +635,7 @@ services:
   backup-exporter:
     image: alpine:3.20
     restart: unless-stopped
+    <<: *default-logging
     profiles: ["backup"]
     volumes:
       - gittensory-backups:/backups:ro

@@ -326,8 +326,10 @@ function buildAskPublicAnswerCard(args: {
     .map((action) => (action.targetRepoFullName ? `${action.targetRepoFullName}: ${action.publicSafeSummary}` : action.publicSafeSummary))
     .filter((line) => line.trim().length > 0)
     .map((line) => publicBlockerDetail(line));
-  const questionText = sanitizePublicComment(
-    args.question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.",
+  const questionText = sanitizePublicInlineDetail(
+    sanitizePublicComment(
+      args.question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.",
+    ),
   );
   const findings = [
     `Question: ${questionText}`,
@@ -648,7 +650,9 @@ function askSections(bundle: AgentRunBundle | null | undefined, question?: strin
   return [
     "**Contribution context Q&A**",
     "",
-    `- Question: ${sanitizePublicComment(question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.")}`,
+    `- Question: ${sanitizePublicInlineDetail(
+      sanitizePublicComment(question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context."),
+    )}`,
     "",
     "**Answer**",
     "",

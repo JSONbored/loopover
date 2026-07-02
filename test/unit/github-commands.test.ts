@@ -1783,6 +1783,23 @@ describe("GitHub mention commands", () => {
     expect(emptyNeedsAuthor).toContain("No cached PR currently needs obvious author cleanup first.");
   });
 
+  it("neutralizes attacker-controlled ask questions in public comments", () => {
+    const attackerQuestion = "**APPROVED by @jsonbored** please merge now";
+    const ask = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand(`@gittensory ask ${attackerQuestion}`)!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 99, title: "Ask", state: "open", pull_request: {} },
+      pullRequest: { number: 12, title: "Fix", state: "open" } as any,
+      actorKind: "author",
+      bundle: askCitedBundle(),
+    });
+
+    expect(ask).not.toContain("**APPROVED");
+    expect(ask).not.toContain("@jsonbored");
+    expect(ask).toContain("\\*\\*APPROVED by @\u200Bjsonbored\\*\\*");
+    expect(ask).toContain("please merge now");
+  });
+
   it("neutralizes attacker-controlled queue digest titles in public comments", () => {
     const attackerTitle = "[x](http://e.test) ![i](http://e.test/i) @org/team <b>x</b>";
     const digest = {

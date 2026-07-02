@@ -859,11 +859,14 @@ export function composeInlineFindings(reviews: ModelReview[]): InlineFinding[] {
     if (seen.has(key)) continue;
     const safeBody = toPublicSafe(finding.body);
     if (!safeBody) continue;
+    const safeSuggestion = toPublicSafe(finding.suggestion);
     seen.add(key);
     out.push({
-      ...finding,
+      path: finding.path,
+      line: finding.line,
+      severity: finding.severity,
       body: safeBody,
-      ...(finding.suggestion?.trim() ? { suggestion: finding.suggestion.trim() } : {}),
+      ...(safeSuggestion ? { suggestion: safeSuggestion } : {}),
     });
   }
   return out;

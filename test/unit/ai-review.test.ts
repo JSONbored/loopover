@@ -1506,7 +1506,7 @@ describe("pure helpers", () => {
     ).toEqual([]);
   });
 
-  it("composeInlineFindings dedupes by path+line (first wins) and drops public-unsafe bodies (#inline-comments)", () => {
+  it("composeInlineFindings dedupes by path+line (first wins) and keeps safe suggestions (#inline-comments)", () => {
     const out = composeInlineFindings([
       reviewWithFindings([
         {
@@ -1541,6 +1541,31 @@ describe("pure helpers", () => {
         suggestion: "const renamed = first;",
       },
       { path: "src/b.ts", line: 9, severity: "blocker", body: "Keep me." },
+    ]);
+  });
+
+  it("composeInlineFindings drops blank or public-unsafe suggestions while keeping safe findings (#2138)", () => {
+    const out = composeInlineFindings([
+      reviewWithFindings([
+        {
+          path: "src/a.ts",
+          line: 1,
+          severity: "nit",
+          body: "Keep this finding.",
+          suggestion: "   ",
+        },
+        {
+          path: "src/b.ts",
+          line: 2,
+          severity: "blocker",
+          body: "Still safe.",
+          suggestion: "reward payout farming",
+        },
+      ]),
+    ]);
+    expect(out).toEqual([
+      { path: "src/a.ts", line: 1, severity: "nit", body: "Keep this finding." },
+      { path: "src/b.ts", line: 2, severity: "blocker", body: "Still safe." },
     ]);
   });
 
@@ -1593,7 +1618,7 @@ describe("pure helpers", () => {
           line: 3,
           severity: "nit",
           body: "Guard the empty case.",
-          suggestion: "if (!items.length) return;",
+          suggestion: "if \\(\\!items.length\\) return;",
         },
       ]);
   });

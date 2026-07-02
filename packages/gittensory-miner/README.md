@@ -11,6 +11,7 @@ Current scope is intentionally small:
 - workspace package wiring
 - CLI entry point
 - `--help` and `version` commands
+- `init` and `doctor` laptop-mode bootstrap commands
 - startup npm version nudge (override with `--no-update-check` or `GITTENSORY_MINER_NO_UPDATE_CHECK=1`)
 
 Real miner commands land in follow-up issues.
@@ -31,7 +32,23 @@ gittensory-miner --help
 gittensory-miner help
 gittensory-miner --version
 gittensory-miner version
+gittensory-miner init
+gittensory-miner doctor
+gittensory-miner doctor --json
 ```
+
+## Laptop Mode Quickstart
+
+```sh
+npm install -g @jsonbored/gittensory-miner
+gittensory-miner init
+gittensory-miner doctor
+```
+
+The CLI uses a local SQLite state file with no Docker/Redis/Postgres requirement:
+
+- config dir: `GITTENSORY_MINER_CONFIG_DIR`, else `XDG_CONFIG_HOME/gittensory-miner`, else `~/.config/gittensory-miner`
+- state file: `<config-dir>/state.sqlite3`
 
 ## Version check
 

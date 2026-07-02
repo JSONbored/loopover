@@ -1,4 +1,14 @@
 import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   bin,
@@ -13,6 +23,10 @@ type MinerUpdateCheck =
 
 let printHelp: MinerCli["printHelp"];
 let printVersion: MinerCli["printVersion"];
+let resolveMinerConfigDir: MinerCli["resolveMinerConfigDir"];
+let resolveMinerStatePath: MinerCli["resolveMinerStatePath"];
+let initMinerState: MinerCli["initMinerState"];
+let inspectDoctor: MinerCli["inspectDoctor"];
 let runCli: MinerCli["runCli"];
 let compareSemver: MinerUpdateCheck["compareSemver"];
 let fetchLatestPackageVersion: MinerUpdateCheck["fetchLatestPackageVersion"];
@@ -27,7 +41,15 @@ beforeAll(async () => {
   const cli = await import("../../packages/gittensory-miner/lib/cli.js");
   const updateCheck =
     await import("../../packages/gittensory-miner/lib/update-check.js");
-  ({ printHelp, printVersion, runCli } = cli);
+  ({
+    printHelp,
+    printVersion,
+    resolveMinerConfigDir,
+    resolveMinerStatePath,
+    initMinerState,
+    inspectDoctor,
+    runCli,
+  } = cli);
   ({
     compareSemver,
     fetchLatestPackageVersion,
@@ -77,6 +99,62 @@ describe("gittensory-miner CLI helpers", () => {
     expect(error).toHaveBeenCalledWith(
       "Unknown command: mystery. Run @jsonbored/gittensory-miner --help.",
     );
+  });
+
+  it("resolves laptop-mode config/state paths with the mcp-style fallback chain (#2329)", () => {
+    const home = mkdtempSync(join(tmpdir(), "miner-home-"));
+    const xdg = mkdtempSync(join(tmpdir(), "miner-xdg-"));
+    expect(resolveMinerConfigDir({ GITTENSORY_MINER_CONFIG_DIR: "C:/custom/miner" })).toBe(
+      "C:/custom/miner",
+    );
+    expect(resolveMinerConfigDir({ XDG_CONFIG_HOME: xdg, HOME: home })).toBe(
+      join(xdg, "gittensory-miner"),
+    );
+    expect(resolveMinerStatePath({ XDG_CONFIG_HOME: xdg })).toBe(
+      join(xdg, "gittensory-miner", "state.sqlite3"),
+    );
+  });
+
+  it("init creates a local state file and stays idempotent (#2329)", () => {
+    const root = mkdtempSync(join(tmpdir(), "miner-init-"));
+    const configDir = join(root, "cfg");
+    const env = { GITTENSORY_MINER_CONFIG_DIR: configDir };
+    const first = initMinerState(env);
+    expect(first.createdConfigDir).toBe(true);
+    expect(first.createdStateFile).toBe(true);
+    expect(existsSync(first.statePath)).toBe(true);
+
+    writeFileSync(first.statePath, "sentinel");
+    const second = initMinerState(env);
+    expect(second.createdConfigDir).toBe(false);
+    expect(second.createdStateFile).toBe(false);
+    expect(readFileSync(second.statePath, "utf8")).toBe("sentinel");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("doctor reports local state and absent Docker gracefully (#2329)", () => {
+    const root = mkdtempSync(join(tmpdir(), "miner-doctor-"));
+    const configDir = join(root, "cfg");
+    mkdirSync(configDir, { recursive: true });
+    const statePath = join(configDir, "state.sqlite3");
+    writeFileSync(statePath, "");
+    const doctor = inspectDoctor({ GITTENSORY_MINER_CONFIG_DIR: configDir });
+    expect(doctor.stateExists).toBe(true);
+    expect(doctor.stateWritable).toBe(true);
+    expect(typeof doctor.dockerPresent).toBe("boolean");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("bin init + doctor --json work end-to-end (#2329)", () => {
+    const root = mkdtempSync(join(tmpdir(), "miner-bin-"));
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "cfg") };
+    const initOutput = runCapture(["init", "--no-update-check"], env);
+    expect(initOutput).toContain("state initialized");
+    const doctorOutput = runCapture(["doctor", "--json", "--no-update-check"], env);
+    const parsed = JSON.parse(doctorOutput);
+    expect(parsed.stateExists).toBe(true);
+    expect(parsed.stateWritable).toBe(true);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("keeps the CLI version source aligned with package metadata", async () => {

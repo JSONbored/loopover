@@ -1339,6 +1339,34 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("REGRESSION: resuming from a whole-page cap fetches exactly the remaining items, never replaying an already-consumed page", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", issuesOffsetFetch(250));
+
+    // First pass caps mid-crawl at cursor "3" (see the previous test) having consumed pages 1-2 (issues 1-200).
+    const first = await backfillRegisteredRepositories(env, {
+      mode: "full",
+      limits: { issues: 150, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 },
+    });
+    expect(first.repos[0]).toMatchObject({ openIssues: 200 });
+
+    // Resume: the old (buggy) code saved a SAME-page cursor on a truncated final page, so a resume would
+    // re-fetch that same page and re-count its already-stored prefix, inflating fetchedCount past the true
+    // total. The fix consumes pages atomically and only advances the cursor to the NEXT page, so resuming
+    // must fetch exactly the 50 remaining issues (201-250) and land on the true total with no overcount.
+    const second = await backfillRegisteredRepositories(env, {
+      mode: "resume",
+      force: true,
+      limits: { issues: 100, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 },
+    });
+
+    expect(second.repos[0]).toMatchObject({ openIssues: 250 });
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "open_issues", status: "complete", fetchedCount: 250, nextCursor: null })]),
+    );
+  });
+
   it("runs a targeted labels segment refresh", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

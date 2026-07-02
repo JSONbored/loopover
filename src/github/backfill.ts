@@ -3240,7 +3240,9 @@ async function githubPaged<T>(
       if (items.length >= limit && hasNext) {
         nextCursor = String(page + 1);
         status = "capped";
-        warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path}; next page cursor is ${nextCursor}.`);
+        // `items.length` (not `limit`) is the actual count: page consumption is atomic, so a whole final page
+        // can overrun the requested `limit` — `limit` is a page-boundary threshold, not a strict maximum.
+        warnings.push(`GitHub sync reached local cap of ${limit} item(s) for ${path} (fetched ${items.length} after completing page ${page}); next page cursor is ${nextCursor}.`);
         break;
       }
       if (result.data.length < perPage || !hasNext) break;

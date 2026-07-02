@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { ensurePullRequestLabel } from "../../src/github/labels";
+import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
 import { createTestEnv } from "../helpers/d1";
 
 describe("GitHub PR labels", () => {
@@ -32,6 +32,45 @@ describe("GitHub PR labels", () => {
       ),
     ).rejects.toThrow(/Invalid repository full name/);
     expect(called).toBe(false);
+  });
+
+  it("removePullRequestLabel: skips malformed repository names without calling GitHub", async () => {
+    let called = false;
+    vi.stubGlobal("fetch", async () => {
+      called = true;
+      return Response.json({ token: "t" });
+    });
+    for (const repoFullName of ["invalid", "owner/repo/extra", " owner/repo "]) {
+      await expect(
+        removePullRequestLabel(
+          createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }),
+          123,
+          repoFullName,
+          4,
+          "gittensor",
+        ),
+      ).resolves.toBeUndefined();
+    }
+    expect(called).toBe(false);
+  });
+
+  it("removePullRequestLabel: deletes a label on a valid owner/repo slug", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/labels/gittensor") && (init?.method ?? "GET") === "DELETE") return new Response(null, { status: 204 });
+      return new Response("unexpected", { status: 500 });
+    });
+    await removePullRequestLabel(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }),
+      123,
+      "JSONbored/gittensory",
+      4,
+      "gittensor",
+    );
+    expect(calls.some((call) => call.startsWith("DELETE ") && call.includes("/labels/gittensor"))).toBe(true);
   });
 
   it("does nothing when the label is already applied", async () => {

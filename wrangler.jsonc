@@ -124,6 +124,11 @@
     // reviewed repos. Flag-OFF the endpoint 404s and the homepage band renders nothing (counts only, no PR
     // content/authors/scores/rewards). See src/review/public-stats.ts.
     "GITTENSORY_PUBLIC_STATS": "true",
+    // Proof of Power (#1059): the own-ledger allowlist for the public stats counter (DELIBERATELY separate from
+    // GITTENSORY_REVIEW_REPOS above, which went empty when these repos' LIVE processing moved to self-host — see
+    // src/env.d.ts for the full split rationale). These three repos' historical audit_events rows remain real and
+    // safe to publish even though the cutover allowlist above no longer lists them.
+    "GITTENSORY_PUBLIC_STATS_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
     // Duplicate-winner adjudication (#dup-winner): when a same-issue cluster of OPEN PRs forms, spare exactly
     // ONE winner — the lowest-numbered (earliest opened) open PR — instead of blocking/closing every sibling.
     // Only the LOSERS get the duplicate blocker + close reason + slop penalty + panel block; the winner is

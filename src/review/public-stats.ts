@@ -18,9 +18,17 @@
 //
 // PRIVACY: counts only — no PR content, authors, scores, or reward internals. Safe to serve publicly.
 //
-// GLOBAL: the homepage total folds in every EXTERNAL registered Orb installation's outcomes (getOrbGlobalStats),
-// so the counter is worldwide, not just gittensory's own repos. JSONbored is counted here via the cloud ledger,
-// so it's excluded from the Orb side to avoid double-counting.
+// GLOBAL: the homepage total folds in every REGISTERED Orb installation's outcomes (getOrbGlobalStats) on top of
+// the own-ledger side, so the counter reflects the whole fleet, not just gittensory's own repos. The own-ledger
+// side (audit_events) is a FROZEN snapshot as of the self-host cutover -- it stops growing the day each repo's
+// live processing moved off this worker -- while orb_pr_outcomes keeps growing in realtime for any repo with the
+// central Orb App installed (including JSONbored's own, which still runs the Orb App for telemetry alongside its
+// self-hosted review engine). The two sources are NOT mutually exclusive by account: JSONbored appears in both,
+// but only overlaps for the few-day window before the cutover froze the own-ledger side, so no excludeAccount is
+// applied here -- a small, bounded double-count for that historical window is preferable to silently dropping
+// all of JSONbored's live post-cutover Orb data (which excluding "jsonbored" used to do, since every REGISTERED
+// installation currently happens to be a JSONbored account). See getOrbGlobalStats for the general-purpose
+// excludeAccount dedup this call deliberately does not use.
 import { getOrbGlobalStats } from "../orb/outcomes";
 
 /** Estimate of maintainer review/triage time saved per reviewed PR. Dial this to taste — it is the single knob
@@ -82,13 +90,19 @@ function accuracyPct(
   return Math.round((1 - reversed / decided) * 1000) / 10;
 }
 
-/** Public stats are intentionally constrained to the reviewed-repo allowlist. Empty allowlist => publish nothing. */
+/** The own-ledger side of public stats is intentionally constrained to an explicit allowlist (privacy: publish
+ *  only what's deliberately opted in). Deliberately reads GITTENSORY_PUBLIC_STATS_REPOS, NOT
+ *  GITTENSORY_REVIEW_REPOS (the live per-PR-feature cutover allowlist) -- the two once held the same value, but
+ *  diverged once gittensory/awesome-claude/metagraphed moved their LIVE processing to self-host: the cutover
+ *  allowlist correctly went empty, while the historical rows this worker already wrote for them remain real and
+ *  safe to publish. Empty allowlist => the own-ledger side reports zero (still fails safe), but does NOT
+ *  suppress the separately-gated Orb cross-fleet aggregate (see getPublicStats below). */
 function publicStatsProjects(env: {
-  GITTENSORY_REVIEW_REPOS?: string | undefined;
+  GITTENSORY_PUBLIC_STATS_REPOS?: string | undefined;
 }): string[] {
   const seen = new Set<string>();
   const projects: string[] = [];
-  for (const entry of (env.GITTENSORY_REVIEW_REPOS ?? "").split(",")) {
+  for (const entry of (env.GITTENSORY_PUBLIC_STATS_REPOS ?? "").split(",")) {
     const project = entry.trim().toLowerCase();
     if (!project || seen.has(project)) continue;
     seen.add(project);
@@ -158,30 +172,16 @@ export async function getPublicStats(
   const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString();
   const projects = publicStatsProjects(env);
   const generatedAt = new Date(nowMs).toISOString();
-  const empty = (): PublicStatsPayload => ({
-    generatedAt,
-    updatedAt: generatedAt,
-    totals: {
-      handled: 0,
-      reviewed: 0,
-      merged: 0,
-      closed: 0,
-      commented: 0,
-      ignored: 0,
-      manual: 0,
-      error: 0,
-      reversed: 0,
-      filteredPct: null,
-      accuracyPct: null,
-      minutesSaved: 0,
-    },
-    weekly: { reviewed: 0, merged: 0 },
-    byProject: [],
-  });
-  if (projects.length === 0) return empty();
-
+  // The own-ledger side needs at least one allowlisted project to query; an empty allowlist skips these three
+  // queries entirely (own-ledger totals stay zero) but still lets the Orb aggregate below run.
   const inList = projects.map(() => "?").join(", ");
-  const [dispositions, reversalRows, weeklyRows] = await Promise.all([
+  const [dispositions, reversalRows, weeklyRows] = projects.length === 0
+    ? await Promise.all([
+        Promise.resolve<DispositionRow[]>([]),
+        Promise.resolve<{ project: string; reversed: number }[]>([]),
+        Promise.resolve<{ reviewed: number; merged: number }[]>([]),
+      ])
+    : await Promise.all([
     safeAll<DispositionRow>(
       env,
       `SELECT ev.repo AS project,
@@ -273,11 +273,11 @@ export async function getPublicStats(
     .filter((r) => r.reviewed > 0)
     .sort((a, b) => b.reviewed - a.reviewed);
 
-  // Global counter: fold in every EXTERNAL registered Orb install's outcomes so the homepage shows the worldwide
-  // total, not just gittensory's own repos. JSONbored is already counted above via cloud review_audit, so exclude
-  // that account to avoid double-counting; reversals/weekly stay cloud-only (the Orb captures merged/closed). The
-  // total grows automatically as external maintainers install + are registered.
-  const orb = await getOrbGlobalStats(env, { excludeAccount: "jsonbored" });
+  // Global counter: fold in every REGISTERED Orb install's outcomes on top of the own-ledger totals above, so the
+  // homepage reflects the whole fleet. No excludeAccount here (see the file header) -- reversals/weekly stay
+  // own-ledger-only (the Orb aggregate only captures merged/closed, not reversals or a trailing-7-day split). The
+  // total grows automatically as more installations register, self-hosted or otherwise.
+  const orb = await getOrbGlobalStats(env);
   totals.merged += orb.merged;
   totals.closed += orb.closed;
   totals.handled += orb.total;

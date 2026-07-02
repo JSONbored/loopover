@@ -49,7 +49,7 @@ describe("GET /v1/public/stats (#1059)", () => {
   it("serves public-safe aggregates with no auth + a cache header when enabled", async () => {
     const env = createTestEnv({
       GITTENSORY_PUBLIC_STATS: "1",
-      GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,JSONbored/awesome-claude",
+      GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory,JSONbored/awesome-claude",
     });
     await seed(env);
     const res = await createApp().request("/v1/public/stats", {}, env);

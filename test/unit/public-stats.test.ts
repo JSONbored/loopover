@@ -20,7 +20,7 @@ function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
   });
   return {
     DB: { prepare: (sql: string) => make(sql, []) },
-    GITTENSORY_REVIEW_REPOS:
+    GITTENSORY_PUBLIC_STATS_REPOS:
       "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
   } as unknown as Env;
 }
@@ -117,14 +117,27 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.updatedAt).toBe(out.generatedAt);
   });
 
-  it("folds external Orb installs into the global totals (cloud + Orb, de-duped)", async () => {
+  it("folds Orb installs into the global totals on top of the own-ledger totals", async () => {
     const withOrb = (sql: string): Row[] =>
       sql.includes("orb_pr_outcomes") ? [{ merged: 50, closed: 30, total: 80 }] : ledger(sql);
     const out = await getPublicStats(stubEnv(withOrb), NOW);
-    expect(out.totals.merged).toBe(1392 + 50); // cloud + external Orb
+    expect(out.totals.merged).toBe(1392 + 50); // own-ledger + Orb
     expect(out.totals.closed).toBe(724 + 30);
     expect(out.totals.handled).toBe(2742 + 80);
     expect(out.totals.reviewed).toBe(1442 + 754 + 626); // reviewedOf = merged + closed + commented + manual
+  });
+
+  it("does not exclude any account from the Orb aggregate (own-ledger side is a frozen snapshot, not live-overlapping)", async () => {
+    let excludeBindArg: unknown;
+    const captureExclude = (sql: string, args: unknown[]): Row[] => {
+      if (sql.includes("orb_pr_outcomes")) {
+        excludeBindArg = args[0];
+        return [{ merged: 0, closed: 0, total: 0 }];
+      }
+      return ledger(sql);
+    };
+    await getPublicStats(stubEnv(captureExclude), NOW);
+    expect(excludeBindArg).toBe("");
   });
 
   it("publishes only projects from the reviewed-repo allowlist", async () => {
@@ -187,7 +200,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   });
 
   it("excludes dry-run terminal actions from live reversal counts", async () => {
-    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const db = env.DB;
 
     await db
@@ -247,19 +260,46 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.accuracyPct).toBe(100);
   });
 
-  it("publishes no ledger data when the reviewed-repo allowlist is empty", async () => {
+  it("skips the own-ledger queries but still queries the Orb aggregate when the allowlist is empty", async () => {
     const env = {
       DB: {
-        prepare: () => {
-          throw new Error("public stats must not query an unscoped ledger");
+        prepare: (sql: string) => {
+          if (sql.includes("orb_pr_outcomes")) {
+            return {
+              bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }),
+            };
+          }
+          throw new Error("public stats must not query an unscoped own-ledger");
         },
       },
-      GITTENSORY_REVIEW_REPOS: "",
+      GITTENSORY_PUBLIC_STATS_REPOS: "",
     } as unknown as Env;
     const out = await getPublicStats(env, NOW);
     expect(out.totals.handled).toBe(0);
     expect(out.totals.reviewed).toBe(0);
     expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
+    expect(out.byProject).toEqual([]);
+  });
+
+  it("reports Orb-only totals when the own-ledger allowlist is empty but Orb has data", async () => {
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("orb_pr_outcomes")) {
+            return {
+              bind: () => ({ first: async () => ({ merged: 12, closed: 8, total: 20 }) }),
+            };
+          }
+          throw new Error("public stats must not query an unscoped own-ledger");
+        },
+      },
+      GITTENSORY_PUBLIC_STATS_REPOS: "",
+    } as unknown as Env;
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.merged).toBe(12);
+    expect(out.totals.closed).toBe(8);
+    expect(out.totals.handled).toBe(20);
+    expect(out.totals.reviewed).toBe(20);
     expect(out.byProject).toEqual([]);
   });
 
@@ -330,10 +370,11 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   it("degrades a no-results D1 response to [] (safeAll `res.results ?? []`)", async () => {
     // .all() returns an object with no `results` key (defensive arm), so every safeAll yields [].
+    // .first() (the Orb aggregate's own no-results shape) likewise returns undefined.
     const env = {
       DB: {
         prepare: () => {
-          const stmt = { bind: () => stmt, all: async () => ({}) };
+          const stmt = { bind: () => stmt, all: async () => ({}), first: async () => undefined };
           return stmt;
         },
       },

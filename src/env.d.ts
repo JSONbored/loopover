@@ -260,6 +260,17 @@ declare global {
      *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
      *  See review/public-stats.ts. */
     GITTENSORY_PUBLIC_STATS?: string;
+    /** Proof of Power (#1059): comma-separated allowlist of repo full-names ("owner/repo") whose OWN historical
+     *  review ledger (audit_events "published a review surface" + pull_requests terminal state) counts toward
+     *  the public stats counter. DELIBERATELY SEPARATE from GITTENSORY_REVIEW_REPOS (the live per-PR-feature
+     *  cutover allowlist) even though both once held the same value: after the repos below moved to self-host,
+     *  GITTENSORY_REVIEW_REPOS correctly went empty (the central worker no longer live-reviews them), but the
+     *  historical rows this worker already wrote for them are still real and still safe to publish — a bug once
+     *  reused GITTENSORY_REVIEW_REPOS for this too, so an empty cutover allowlist silently zeroed the ENTIRE
+     *  public counter, including the unrelated cross-fleet self-hoster aggregate (getOrbGlobalStats), which does
+     *  not depend on this var at all. Default "" (unset) → the own-ledger side reports zero (fails safe, same
+     *  privacy stance as before) but the Orb aggregate still reports normally. See review/public-stats.ts. */
+    GITTENSORY_PUBLIC_STATS_REPOS?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */

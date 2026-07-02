@@ -3,6 +3,7 @@ import { createInstallationToken } from "../github/app";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
+import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
@@ -60,20 +61,23 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     });
     return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "head_moved" };
   }
-  // An unpinned staged approve or merge (no expectedHeadSha) cannot be safety-verified against a force-push that
-  // happened during the queue wait. For a PINNED merge, GitHub's `sha` param 409s on mismatch -- a real backstop.
-  // But that backstop only exists because there's something to compare against; an UNPINNED merge falls back to
-  // performAction's `mergeSha = action.expectedHeadSha ?? ctx.headSha`, which by construction substitutes
-  // whatever head is live right now, so it trivially "matches" and no 409 is possible. The reviews API's
-  // `commit_id` has no server-side staleness rejection at all, pinned or not (#2377). Either way, the check above
-  // only fires when a pin EXISTS and disagrees with the live head; a row staged with no pin at all (e.g. by code
-  // predating this head-pinning fix, or a planning pass that ran against a transiently-null stored head SHA)
-  // would otherwise fall through to the executor's `ctx.headSha` fallback and silently ratify whatever commit is
-  // live NOW, under the authority of a review/merge that was never actually performed against it (#2422).
+  // An unpinned staged approve, merge, or close (no expectedHeadSha) cannot be safety-verified against a
+  // force-push that happened during the queue wait. For a PINNED merge, GitHub's `sha` param 409s on mismatch --
+  // a real backstop. But that backstop only exists because there's something to compare against; an UNPINNED
+  // merge falls back to performAction's `mergeSha = action.expectedHeadSha ?? ctx.headSha`, which by construction
+  // substitutes whatever head is live right now, so it trivially "matches" and no 409 is possible. The reviews
+  // API's `commit_id` has no server-side staleness rejection at all, pinned or not (#2377). close has no
+  // server-side commit target at all -- its OWN freshness relies entirely on this application-level pin, since
+  // closePullRequest doesn't take a sha the way merge/reviews do. Either way, the check above only fires when a
+  // pin EXISTS and disagrees with the live head; a row staged with no pin at all (e.g. by code predating this
+  // head-pinning fix, or a planning pass that ran against a transiently-null stored head SHA) would otherwise
+  // fall through to the executor's `ctx.headSha` fallback and silently ratify whatever commit is live NOW, under
+  // the authority of a review/merge/close that was never actually performed against it (#2422, #2452).
   // dismissStaleApproval is exempt: it RETRACTS the bot's existing approval rather than granting a new one at a
   // specific commit, so it carries no "ratify unreviewed code" risk and is safe to replay unpinned.
   const isUnpinnedRatifyingAction =
-    !stagedHead && ((pending.actionClass === "approve" && !pending.params.dismissStaleApproval) || pending.actionClass === "merge");
+    !stagedHead &&
+    ((pending.actionClass === "approve" && !pending.params.dismissStaleApproval) || pending.actionClass === "merge" || pending.actionClass === "close");
   if (isUnpinnedRatifyingAction) {
     await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
     await recordAuditEvent(env, {
@@ -85,6 +89,27 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       metadata: baseMetadata,
     });
     return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "unpinned_legacy_action" };
+  }
+
+  // Re-resolve blacklist membership live at accept time (#2452). The head-SHA pin above only catches a
+  // FORCE-PUSH; it says nothing about whether the contributor is STILL blacklisted, and a blacklist close is a
+  // sticky auto_with_approval row with no expiry -- a maintainer can remove the entry (or edit .gittensory.yml)
+  // at any point while it sits waiting. `settings` was fetched fresh at the top of this function, so this
+  // mirrors the exact same pure check the planner uses (processors.ts), just re-run against CURRENT config.
+  if (pending.actionClass === "close" && pending.params.closeKind === "blacklist" && pr) {
+    const stillBlacklisted = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist) !== null;
+    if (!stillBlacklisted) {
+      await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
+      await recordAuditEvent(env, {
+        eventType: "agent.pending_action.superseded",
+        actor: input.decidedBy,
+        targetKey,
+        outcome: "denied",
+        detail: "superseded blacklist close: contributor is no longer on the blacklist",
+        metadata: baseMetadata,
+      });
+      return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "no_longer_blacklisted" };
+    }
   }
 
   // Re-derive live justification for a staged MERGE at accept time. auto_with_approval rows have no expiry, so

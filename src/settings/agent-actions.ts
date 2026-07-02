@@ -282,7 +282,17 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     const label = input.blacklistLabel ?? DEFAULT_BLACKLIST_LABEL;
     if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "blacklisted contributor", label, labelOp: "add" });
     if (acting("close")) {
-      actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: "blacklisted contributor", closeComment: sanitizePublicComment(blacklistCloseMessage()), closeKind: "blacklist" });
+      actions.push({
+        actionClass: "close",
+        requiresApproval: approval("close"),
+        reason: "blacklisted contributor",
+        closeComment: sanitizePublicComment(blacklistCloseMessage()),
+        closeKind: "blacklist",
+        // Pin like merge/approve (#2452): for an auto_with_approval stage this travels into the pending row so
+        // the accept-time supersede check (agent-approval-queue.ts) can detect a force-push after staging, and
+        // decidePendingAgentAction separately re-resolves live blacklist membership for this closeKind.
+        ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
+      });
     }
     return actions;
   }
@@ -507,7 +517,15 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     const reason = linkedIssueHardRule?.reason ?? "the linked issue is not eligible for a community PR";
     // Tagged "linked-issue-hard-rule": the close-precision breaker EXEMPTS this deterministic close (it is not
     // verdict-driven, and the verify path may already have promised closure in a comment).
-    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason, closeComment: closeMessage([reason]), closeKind: "linked-issue-hard-rule" });
+    actions.push({
+      actionClass: "close",
+      requiresApproval: approval("close"),
+      reason,
+      closeComment: closeMessage([reason]),
+      closeKind: "linked-issue-hard-rule",
+      // Pin like merge/approve (#2452): lets the accept-time supersede check detect a force-push after staging.
+      ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
+    });
   } else if (canMerge) {
     actions.push({
       actionClass: "merge",
@@ -532,7 +550,16 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     if (closeReasons.length === 0) closeReasons.push("the review gate is not satisfied");
     // Tagged "heuristic": a verdict-driven close (gate-verdict / duplicate / slop / CI). This is the ONLY close
     // the close-precision breaker downgrades to a hold when close precision has dropped.
-    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: closeReasons.join("; "), closeComment: closeMessage(closeReasons), closeKind: "heuristic" });
+    actions.push({
+      actionClass: "close",
+      requiresApproval: approval("close"),
+      reason: closeReasons.join("; "),
+      closeComment: closeMessage(closeReasons),
+      closeKind: "heuristic",
+      // Pin like merge/approve (#2452): lets the accept-time supersede check detect a force-push after staging;
+      // the executor's own step-6 live-CI re-check (#2128) separately covers the CI-driven reason above.
+      ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
+    });
   }
   // else: guarded → manual (needs-human/changes label above); not-good OWNER/automation → held
   // (request-changes above); review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).

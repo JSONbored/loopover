@@ -240,6 +240,78 @@ describe("agent approval queue (#779)", () => {
     expect(audit?.detail).toContain("no reviewed-head pin");
   });
 
+  it("REGRESSION (#2452): accept denies a close staged with NO reviewed-head pin, rather than silently comparing the live head to itself", async () => {
+    // Unlike merge's `sha` param or approve's `commit_id`, close has NO server-side commit target at all -- the
+    // executor's step-5 freshness guard falls back to `action.expectedHeadSha ?? ctx.headSha`, and ctx.headSha is
+    // fetched fresh from the SAME DB row this function just re-read, so an unpinned close's freshness check
+    // trivially compares the live head against itself and can never catch a force-push after staging.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-UNREVIEWED" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "noise", closeKind: "heuristic" }, reason: "ci-failed" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("unpinned_legacy_action");
+    const { closePullRequest: closeUnpinned } = await import("../../src/github/pr-actions");
+    expect(closeUnpinned).not.toHaveBeenCalled();
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+  });
+
+  it("accept supersedes a staged close when the live head moved after staging (force-push fail-safe, #2452)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-NEW" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "noise", closeKind: "heuristic", expectedHeadSha: "h-OLD" }, reason: "ci-failed" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("head_moved");
+    const { closePullRequest: closeMoved } = await import("../../src/github/pr-actions");
+    expect(closeMoved).not.toHaveBeenCalled();
+  });
+
+  it("accept executes a staged blacklist close when the contributor is STILL blacklisted at accept time (#2452)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "owner/repo",
+      autonomy: { close: "auto_with_approval" },
+      contributorBlacklist: [{ login: "plagiarist", reason: "plagiarism" }],
+    });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "plagiarist" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "blocked", closeKind: "blacklist", expectedHeadSha: "h7" }, reason: "blacklisted contributor" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest: closeStillBlacklisted } = await import("../../src/github/pr-actions");
+    expect(closeStillBlacklisted).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("REGRESSION (#2452): accept supersedes a staged blacklist close when the contributor is NO LONGER blacklisted at accept time", async () => {
+    // The head-SHA pin alone cannot catch this: the contributor never force-pushed, so the freshness check above
+    // passes cleanly -- only re-resolving blacklist membership against the CURRENT repo settings (not the
+    // plan-time snapshot baked into the sticky pending row) detects that the maintainer removed the entry.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" }, contributorBlacklist: [] });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "reformed" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "blocked", closeKind: "blacklist", expectedHeadSha: "h7" }, reason: "blacklisted contributor" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("no_longer_blacklisted");
+    const { closePullRequest: closeNoLonger } = await import("../../src/github/pr-actions");
+    expect(closeNoLonger).not.toHaveBeenCalled();
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("no longer on the blacklist");
+  });
+
   it("accept does NOT deny an unpinned dismissStaleApproval retraction — retracting an approval carries no ratify-unreviewed-code risk (#2377)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { approve: "auto_with_approval" } });
@@ -491,7 +563,7 @@ describe("agent approval queue (#779)", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval", label: "auto" } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 8, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h8" }, labels: [], body: "x" });
-    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "noise", closeKind: "heuristic" }, reason: "ci-failed" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "noise", closeKind: "heuristic", expectedHeadSha: "h8" }, reason: "ci-failed" });
     await env.DB.prepare("INSERT INTO system_flags (key, value) VALUES (?, ?)").bind("closehold:owner/repo", "true").run();
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });

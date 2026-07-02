@@ -217,6 +217,11 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, pr: { labels: [], slopRisk: 90 } })))).not.toContain("close");
   });
 
+  it("pins the heuristic close to the reviewed head, mirroring merge/approve (#2452)", () => {
+    const close = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], headSha: "h-reviewed" } })).find((a) => a.actionClass === "close");
+    expect(close).toMatchObject({ closeKind: "heuristic", expectedHeadSha: "h-reviewed" });
+  });
+
   it("#dup-winner disposition seam: the close reason includes the duplicate cause only when linkedDuplicateCount > 0", () => {
     // Loser path (count > 0, the caller's real count): the duplicate cause IS cited in the close reason.
     const loser = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 2 } }));
@@ -556,6 +561,11 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(close?.closeComment).toContain(violation.reason);
     });
 
+    it("pins the linked-issue hard-rule close to the reviewed head, mirroring merge/approve (#2452)", () => {
+      const close = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "passed", linkedIssueHardRule: violation, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED", headSha: "h-reviewed" } })).find((a) => a.actionClass === "close");
+      expect(close).toMatchObject({ closeKind: "linked-issue-hard-rule", expectedHeadSha: "h-reviewed" });
+    });
+
     it("does NOT close the same violation on an OWNER PR (the isContributor guard)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "passed", authorIsOwner: true, linkedIssueHardRule: violation, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
       expect(plan).not.toContain("close");
@@ -795,6 +805,16 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     expect(plan[1]).toMatchObject({ actionClass: "close", closeKind: "blacklist" });
     expect(plan[1]?.closeComment).not.toContain("plagiarism");
     expect(plan[1]?.closeComment).toContain("blocked from contributing");
+  });
+
+  it("pins the blacklist close to the reviewed head, mirroring merge/approve (#2452)", () => {
+    const plan = planAgentMaintenanceActions(blacklisted({ pr: { labels: [], headSha: "h-reviewed" } }));
+    expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeKind: "blacklist", expectedHeadSha: "h-reviewed" });
+  });
+
+  it("omits expectedHeadSha on the blacklist close when the PR record has no headSha (defensive fallback, #2452)", () => {
+    const plan = planAgentMaintenanceActions(blacklisted());
+    expect(plan.find((a) => a.actionClass === "close")?.expectedHeadSha).toBeUndefined();
   });
 
   it("uses the repo-configured blacklistLabel, defaulting to 'slop' when unset", () => {

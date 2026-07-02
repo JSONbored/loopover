@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 
 extendZodWithOpenApi(z);
@@ -647,7 +648,7 @@ export const RepositorySettingsSchema = z
     contributorCapLabel: z.string().optional(),
     reviewNagPolicy: z.enum(["off", "hold", "close"]).optional(),
     reviewNagMaxPings: z.number().int().positive().optional(),
-    reviewNagCooldownDays: z.number().int().positive().optional(),
+    reviewNagCooldownDays: z.number().int().positive().max(MAX_REVIEW_NAG_COOLDOWN_DAYS).optional(),
     reviewNagLabel: z.string().optional(),
     autoCloseExemptLogins: z.array(z.string()).optional(),
     accountAgeThresholdDays: z.number().int().positive().nullable().optional(),

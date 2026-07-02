@@ -1382,6 +1382,9 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(invalid.warnings.some((w) => /settings\.reviewNagPolicy/.test(w))).toBe(true);
     expect(invalid.warnings.some((w) => /settings\.reviewNagMaxPings/.test(w))).toBe(true);
     expect(invalid.warnings.some((w) => /settings\.reviewNagCooldownDays/.test(w))).toBe(true);
+    const tooLarge = parseFocusManifest({ settings: { reviewNagCooldownDays: 366 } });
+    expect(tooLarge.settings.reviewNagCooldownDays).toBeUndefined();
+    expect(tooLarge.warnings.some((w) => /settings\.reviewNagCooldownDays/.test(w) && /365/.test(w))).toBe(true);
   });
 
   it("parses + resolves the account-age throttle settings from the settings: block, overlaying the DB (#2561)", () => {

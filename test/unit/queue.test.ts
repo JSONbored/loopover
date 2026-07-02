@@ -11976,6 +11976,29 @@ describe("queue processors", () => {
       expect(seen.closed).toBe(false);
     });
 
+    it("caps an oversized review-nag cooldown before Date arithmetic (regression)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3, reviewNagCooldownDays: 1_000_000_000 });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 206, title: "Huge cooldown", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
+      const seen = { comments: [] as string[], labels: [] as string[], closed: false };
+      stubReviewNagFetch(206, seen);
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "nag-huge-cooldown",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 206, title: "Huge cooldown", state: "open", pull_request: {}, user: { login: "chatty" }, author_association: "NONE" },
+          comment: { id: 1, body: "@gittensory help", user: { login: "chatty", type: "User" }, author_association: "NONE" },
+        },
+      });
+      const pings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      expect(pings?.n).toBe(1);
+      expect(seen.closed).toBe(false);
+    });
+
     it("records pings under the configured threshold without acting; the normal @gittensory reply still proceeds", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });

@@ -366,6 +366,10 @@ describe("data spine repositories", () => {
     // back to its default rather than being silently coerced.
     await upsertRepositorySettings(env, { repoFullName: "owner/badnagrepo", reviewNagPolicy: "delete-everything" as never, reviewNagMaxPings: -1, reviewNagCooldownDays: 2.5 as never });
     expect(await getRepositorySettings(env, "owner/badnagrepo")).toMatchObject({ reviewNagPolicy: "off", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 });
+    await upsertRepositorySettings(env, { repoFullName: "owner/bigwindowrepo", reviewNagMaxPings: 1_000, reviewNagCooldownDays: 1_000_000_000 });
+    expect(await getRepositorySettings(env, "owner/bigwindowrepo")).toMatchObject({ reviewNagMaxPings: 1_000, reviewNagCooldownDays: 365 });
+    await env.DB.prepare("update repository_settings set review_nag_cooldown_days = ? where repo_full_name = ?").bind(1_000_000_000, "owner/bigwindowrepo").run();
+    expect(await getRepositorySettings(env, "owner/bigwindowrepo")).toMatchObject({ reviewNagMaxPings: 1_000, reviewNagCooldownDays: 365 });
     expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();

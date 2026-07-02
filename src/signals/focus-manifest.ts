@@ -4,6 +4,7 @@ import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../setting
 import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
+import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import { hasUnsafeWildcardCount } from "./change-guardrail";
 import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
@@ -859,7 +860,10 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   const reviewNagMaxPings = normalizeOptionalPositiveInteger(r.reviewNagMaxPings, "settings.reviewNagMaxPings", warnings);
   if (reviewNagMaxPings !== null) out.reviewNagMaxPings = reviewNagMaxPings;
   const reviewNagCooldownDays = normalizeOptionalPositiveInteger(r.reviewNagCooldownDays, "settings.reviewNagCooldownDays", warnings);
-  if (reviewNagCooldownDays !== null) out.reviewNagCooldownDays = reviewNagCooldownDays;
+  if (reviewNagCooldownDays !== null && reviewNagCooldownDays <= MAX_REVIEW_NAG_COOLDOWN_DAYS) out.reviewNagCooldownDays = reviewNagCooldownDays;
+  if (reviewNagCooldownDays !== null && reviewNagCooldownDays > MAX_REVIEW_NAG_COOLDOWN_DAYS) {
+    warnings.push(`Manifest field "settings.reviewNagCooldownDays" must be at most ${MAX_REVIEW_NAG_COOLDOWN_DAYS}; ignoring it.`);
+  }
   const reviewNagLabel = normalizeOptionalString(r.reviewNagLabel, "settings.reviewNagLabel", warnings);
   if (reviewNagLabel !== null) out.reviewNagLabel = reviewNagLabel;
   // Shared repo-scoped exemption list (#2463): only set it when at least one VALID login survives

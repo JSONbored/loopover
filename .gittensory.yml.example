@@ -325,7 +325,7 @@ settings:
   # a dedicated closeIssue primitive lands) with a clear reason. Off by default.
   # reviewNagPolicy: off      # off | hold | close. Default: off.
   # reviewNagMaxPings: 3      # Positive integer. Pings above this within the cooldown window trigger the policy. Default: 3.
-  # reviewNagCooldownDays: 5  # Positive integer. Window the ping count is measured over. Default: 5.
+  # reviewNagCooldownDays: 5  # Positive integer up to 365. Window the ping count is measured over. Default: 5.
   # reviewNagLabel: review-nag-cooldown  # Label applied alongside the hold/close action. Default: review-nag-cooldown.
 
   # Shared repo-scoped exemption list (#2463): GitHub logins never throttled/closed by gittensory's

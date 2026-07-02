@@ -235,6 +235,7 @@ import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import {
   downgradeCloseToHold,
   downgradeMergeToHold,
+  MAX_REVIEW_NAG_COOLDOWN_DAYS,
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
   type PlannedAgentAction,
@@ -8814,7 +8815,7 @@ async function maybeThrottleReviewNagPing(
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 3); the undefined side is defensive against the field's optional TS type. */
   const maxPings = settings.reviewNagMaxPings ?? 3;
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
-  const cooldownDays = settings.reviewNagCooldownDays ?? 5;
+  const cooldownDays = Math.min(settings.reviewNagCooldownDays ?? 5, MAX_REVIEW_NAG_COOLDOWN_DAYS);
   const sinceIso = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000).toISOString();
   const priorPings = await countRecentAuditEventsForActorAndTarget(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, targetKey, sinceIso);
   const pingCount = priorPings + 1; // this ping counts too

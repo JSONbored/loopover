@@ -31,6 +31,8 @@ export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
 // configurable per-repo via `.gittensory.yml` (`settings.reviewNagLabel`); the planner uses the resolved label
 // and falls back to this default, mirroring DEFAULT_BLACKLIST_LABEL's shape.
 export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
+// Keep the review-nag lookback operationally bounded so repo-controlled config cannot overflow Date arithmetic.
+export const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
 // A PR that PASSES the gate but touches a hard-guardrail path is NOT ready to auto-merge — it is withheld
 // for a human (the merge/approve/close dispositions are suppressed below). Labeling it `ready-to-merge`
 // would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets

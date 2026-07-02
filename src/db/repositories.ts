@@ -57,6 +57,7 @@ import {
   upstreamSourceSnapshots,
   webhookEvents,
 } from "./schema";
+import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import type {
   Advisory,
   AdvisoryFinding,
@@ -562,7 +563,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     contributorCapLabel: row.contributorCapLabel,
     reviewNagPolicy: normalizeReviewNagPolicy(row.reviewNagPolicy),
     reviewNagMaxPings: normalizePositiveIntWithDefault(row.reviewNagMaxPings, 3),
-    reviewNagCooldownDays: normalizePositiveIntWithDefault(row.reviewNagCooldownDays, 5),
+    reviewNagCooldownDays: normalizeReviewNagCooldownDays(row.reviewNagCooldownDays, 5),
     reviewNagLabel: row.reviewNagLabel,
     autoCloseExemptLogins: parseAutoCloseExemptLogins(row.autoCloseExemptLoginsJson),
     requireFreshRebaseWindowMinutes: normalizeOpenItemCap(row.requireFreshRebaseWindowMinutes),
@@ -649,7 +650,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     contributorCapLabel: settings.contributorCapLabel ?? "over-contributor-limit",
     reviewNagPolicy: normalizeReviewNagPolicy(settings.reviewNagPolicy),
     reviewNagMaxPings: normalizePositiveIntWithDefault(settings.reviewNagMaxPings, 3),
-    reviewNagCooldownDays: normalizePositiveIntWithDefault(settings.reviewNagCooldownDays, 5),
+    reviewNagCooldownDays: normalizeReviewNagCooldownDays(settings.reviewNagCooldownDays, 5),
     reviewNagLabel: settings.reviewNagLabel ?? "review-nag-cooldown",
     autoCloseExemptLogins: normalizeAutoCloseExemptLogins(settings.autoCloseExemptLogins).logins,
     requireFreshRebaseWindowMinutes: normalizeOpenItemCap(settings.requireFreshRebaseWindowMinutes),
@@ -5796,6 +5797,11 @@ function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "ho
 function normalizePositiveIntWithDefault(value: number | null | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return fallback;
   return value;
+}
+
+function normalizeReviewNagCooldownDays(value: number | null | undefined, fallback: number): number {
+  const normalized = normalizePositiveIntWithDefault(value, fallback);
+  return Math.min(normalized, MAX_REVIEW_NAG_COOLDOWN_DAYS);
 }
 
 function parseAutonomyPolicy(value: string): AutonomyPolicy {

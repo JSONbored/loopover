@@ -8618,7 +8618,8 @@
           "reviewNagCooldownDays": {
             "type": "integer",
             "minimum": 0,
-            "exclusiveMinimum": true
+            "exclusiveMinimum": true,
+            "maximum": 365
           },
           "reviewNagLabel": {
             "type": "string"

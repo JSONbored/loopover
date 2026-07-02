@@ -37,7 +37,7 @@ export function buildHealthBody(opts: {
 }): HealthBody {
   return {
     status: "ok",
-    version: opts.version ?? "unknown",
+    version: nonBlank(opts.version) ?? "unknown",
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - opts.startedAt) / 1000)),
     backend: opts.dbBackend,
   };
@@ -63,8 +63,8 @@ export async function readiness(db: D1Database, probes: ReadinessProbe[] = []): 
   }
   try {
     const row = await db.prepare("SELECT COUNT(*) AS c FROM _selfhost_migrations").first<{ c: number }>();
-    /* v8 ignore next */ // COUNT(*) always returns exactly one row, so the row?./?? 0 guards never fire
-    migrations = Number(row?.c ?? 0) > 0;
+    // COUNT(*) always returns one row on D1/SQLite; if an adapter violates that, this try/catch fails closed.
+    migrations = Number(row!.c) > 0;
   } catch {
     /* migrations table missing */
   }

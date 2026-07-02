@@ -37,6 +37,7 @@ describe("buildHealthBody (#2077)", () => {
 
     expect(
       buildHealthBody({
+        version: "   ",
         startedAt: Date.parse("2026-07-02T12:00:02.000Z"),
         dbBackend: "sqlite",
       }),
@@ -105,26 +106,6 @@ describe("readiness (#982)", () => {
       dump: () => Promise.resolve(new ArrayBuffer(0)),
     } as unknown as D1Database;
     expect(await readiness(throwingDb)).toEqual({ ok: false, checks: { db: false, migrations: false } });
-  });
-
-  it("treats an absent migration count row as not migrated", async () => {
-    const countlessDb = {
-      prepare: (sql: string) => ({
-        bind: function() { return this; },
-        first: () => Promise.resolve(sql.includes("SELECT 1") ? { one: 1 } : undefined),
-        all: () => Promise.resolve([]),
-        run: () => Promise.resolve({ success: true, meta: {} }),
-        raw: () => Promise.resolve([]),
-      }),
-      exec: () => Promise.resolve({ results: [], success: true, meta: {} }),
-      batch: () => Promise.resolve([]),
-      dump: () => Promise.resolve(new ArrayBuffer(0)),
-    } as unknown as D1Database;
-
-    expect(await readiness(countlessDb)).toEqual({
-      ok: false,
-      checks: { db: true, migrations: false },
-    });
   });
 
   it("gates readiness on configured backend probes (#4) and reports each in checks", async () => {

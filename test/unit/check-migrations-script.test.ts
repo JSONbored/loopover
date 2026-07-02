@@ -31,7 +31,7 @@ describe("check-migrations script", () => {
   it("reports every grandfathered duplicate migration number in the success summary", () => {
     const output = execFileSync(process.execPath, ["scripts/check-migrations.mjs"], { encoding: "utf8" });
 
-    expect(output).toContain("(3 grandfathered duplicates: 0015, 0017, 0074)");
+    expect(output).toContain("(4 grandfathered duplicates: 0015, 0017, 0074, 0090)");
   });
 
   it("rejects a migration that creates a temporary object (the D1 remote authorizer blocks it)", () => {

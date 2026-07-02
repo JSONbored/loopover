@@ -42,7 +42,7 @@ const fail = (message) => {
 // The anchored patterns use a variable-length lookbehind (`(?<=(?:^|;)\s*)`, supported by V8/Node) so the
 // match starts on the keyword itself — reported line numbers point at the statement, not the preceding `;`.
 const D1_FORBIDDEN = [
-  [/create\s+(?:temp(?:orary)?\b|(?:table|index|view|trigger)\s+(?:if\s+not\s+exists\s+)?temp\s*\.)/gi, "temporary object (CREATE TEMP/TEMPORARY or temp schema) — D1 rejects temp tables/triggers/views/indexes; rewrite without one (e.g. DELETE the losers, then UPDATE the survivors)"],
+  [/create\s+(?:temp(?:orary)?\b|(?:unique\s+)?(?:table|index|view|trigger)\s+(?:if\s+not\s+exists\s+)?temp\s*\.)/gi, "temporary object (CREATE TEMP/TEMPORARY or temp schema) — D1 rejects temp tables/triggers/views/indexes; rewrite without one (e.g. DELETE the losers, then UPDATE the survivors)"],
   [/(?<=(?:^|;)\s*)attach\b/gi, "ATTACH is not supported on D1"],
   [/(?<=(?:^|;)\s*)detach\b/gi, "DETACH is not supported on D1"],
   [/(?<=(?:^|;)\s*)vacuum\b/gi, "VACUUM is not supported on D1"],

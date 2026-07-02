@@ -39,6 +39,7 @@ describe("check-migrations script", () => {
     ["TEMPORARY keyword", "CREATE TEMPORARY VIEW scratch AS SELECT 1;"],
     ["temp schema table", "CREATE TABLE temp.scratch AS SELECT 1;"],
     ["temp schema index", "CREATE INDEX IF NOT EXISTS temp.scratch_idx ON scratch(id);"],
+    ["temp schema unique index", "CREATE UNIQUE INDEX temp.scratch_idx ON scratch(id);"],
   ])("rejects a migration that creates a temporary object via %s (the D1 remote authorizer blocks it)", (_name, sql) => {
     const r = runCheck({ "0001_temp.sql": `${sql}\n` });
 
@@ -73,6 +74,13 @@ describe("check-migrations script", () => {
         "CREATE TABLE t (note TEXT DEFAULT 'please COMMIT and ATTACH nothing');\n" +
         "CREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE t SET note = 'x'; END;\n",
     });
+
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("1 migrations OK");
+  });
+
+  it("does not flag a CREATE UNIQUE INDEX that is not in the temp schema", () => {
+    const r = runCheck({ "0001_ok.sql": "CREATE UNIQUE INDEX idx_t_id ON t(id);\n" });
 
     expect(r.status).toBe(0);
     expect(r.out).toContain("1 migrations OK");

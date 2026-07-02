@@ -264,10 +264,12 @@ settings:
 
   # Per-contributor open-PR/open-issue caps (#2270, anti-abuse): the max PRs/issues a single
   # non-owner/non-admin/non-bot contributor may have open on this repo at once. Uncomment and set a
-  # number to opt in — a contributor's newest item(s) above the cap are closed with a clear reason;
-  # their oldest items up to the cap stay open and reviewable. Positive whole number, or omit/null for
-  # no cap. Default: null (disabled) for both. Set explicitly to `null` (not just omitted) to
-  # force-clear a cap that a dashboard/DB write previously set.
+  # number to opt in — a contributor's newest item above the cap is closed with a clear reason on the
+  # PR-opened webhook; their oldest items up to the cap stay open and reviewable.
+  # contributorOpenPrCap IS ENFORCED. contributorOpenIssueCap is currently INERT (stored and parsed, not
+  # yet enforced) — issue-side enforcement lands in a follow-up PR; see #2270 for status. Positive whole
+  # number, or omit/null for no cap. Default: null (disabled) for both. Set explicitly to `null` (not
+  # just omitted) to force-clear a cap that a dashboard/DB write previously set.
   # contributorOpenPrCap: 2
   # contributorOpenIssueCap: 5
 

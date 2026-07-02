@@ -1943,7 +1943,10 @@ async function reReviewStoredPullRequest(
   // visible output — re-reviewing a PR that can no longer produce a valid outcome. Fail-open: only a live NON-open
   // state early-exits (a fetch hiccup leaves `live` undefined → proceed with the stored open PR).
   if (live && live.state !== "open") {
-    await upsertPullRequestFromGitHub(env, repoFullName, live).catch(() => undefined);
+    const current = await getPullRequest(env, repoFullName, prNumber);
+    if (current?.state === "open" && current.updatedAt === pr.updatedAt) {
+      await upsertPullRequestFromGitHub(env, repoFullName, live).catch(() => undefined);
+    }
     return;
   }
   if (live?.head?.sha && live.head.sha !== pr.headSha) {

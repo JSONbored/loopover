@@ -957,6 +957,34 @@ describe("queue processors", () => {
     expect(ciFetched).toBe(false);
   });
 
+  it("#regate-terminal-exit: skips a stale terminal upsert when a concurrent webhook already reopened the PR", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Open PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+    let webhookReplayApplied = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/pulls/7")) {
+        vi.setSystemTime(new Date("2026-05-28T02:00:01.000Z"));
+        await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Reopened PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "Closes #1" });
+        webhookReplayApplied = true;
+        return Response.json({ number: 7, title: "Stale closed PR", state: "closed", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      }
+      return Response.json({});
+    });
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "resync-stale-closed", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+    expect(webhookReplayApplied).toBe(true);
+    const stored = await getPullRequest(env, "owner/agent-repo", 7);
+    expect(stored?.state).toBe("open");
+    expect(stored?.headSha).toBe("b8");
+  });
+
   // REST-budget dedup (#audit-rate-headroom): one per-PR re-review threads request-local live GitHub facts through
   // readiness and auto-maintain, while post-gate planning refreshes facts that can change after the bot publishes
   // review/check state. Mergeability can advance to clean; CI can flip red and must still suppress merge.

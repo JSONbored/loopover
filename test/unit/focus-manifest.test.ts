@@ -1344,6 +1344,18 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(nonNumber.settings.contributorOpenPrCap).toBeUndefined();
   });
 
+  it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {
+    // Omitted key preserves the DB value (already covered above); an explicit `null` must ALSO be able to
+    // override a DB-configured cap back to "no cap" — the documented `yml > DB > null` precedence otherwise
+    // has no way to un-set a cap without a separate dashboard/DB write, which contradicts config-as-code.
+    const explicitNull = parseFocusManifest({ settings: { contributorOpenPrCap: null, contributorOpenIssueCap: null } });
+    expect(explicitNull.settings.contributorOpenPrCap).toBeNull();
+    expect(explicitNull.settings.contributorOpenIssueCap).toBeNull();
+    const eff = resolveEffectiveSettings({ contributorOpenPrCap: 4, contributorOpenIssueCap: 4 } as unknown as RepositorySettings, explicitNull);
+    expect(eff.contributorOpenPrCap).toBeNull();
+    expect(eff.contributorOpenIssueCap).toBeNull();
+  });
+
   it("resolves contributor blacklist by unioning the shared/global list with effective per-repo settings", () => {
     const manifest = parseFocusManifest({ settings: { contributorBlacklist: [{ login: "repo-only", reason: "manifest" }, { login: "Global-Repo", reason: "manifest-overrides-global" }] } });
     const eff = resolveEffectiveSettings(

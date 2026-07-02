@@ -7,7 +7,10 @@ import { isWorkflowPath } from "../workflow-path.js";
 
 const USES_RE = /^\s*-?\s*["']?uses["']?\s*:\s*["']?([\w.-]+\/[\w./-]+)@([^\s"'#]+)/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const OFFICIAL = /^(actions|github)\//;
+// GitHub org/user names are case-insensitive (mirrors isWorkflowPath's case-insensitive path match), so the
+// official-action exclusion matches case-insensitively — otherwise `Actions/checkout` would be mis-flagged as a
+// mutable third-party action. GitHub reserves the `actions`/`github` orgs, so this can never over-match a real one.
+const OFFICIAL = /^(actions|github)\//i;
 
 /** Scan one workflow patch's added lines for unpinned third-party `uses:` refs, line-cited via hunk headers. Pure. */
 export function scanWorkflowPins(

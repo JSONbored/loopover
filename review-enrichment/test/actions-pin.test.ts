@@ -36,6 +36,25 @@ test("scanWorkflowPins flags mutable third-party action refs with line citations
   ]);
 });
 
+test("scanWorkflowPins excludes official actions/github refs case-insensitively", () => {
+  const findings = scanWorkflowPins(
+    workflowPath,
+    [
+      "@@ -1,0 +5,4 @@",
+      "+    - uses: Actions/checkout@v4",
+      "+    - uses: GitHub/codeql-action/init@v3",
+      "+    - uses: ACTIONS/setup-node@v4",
+      "+    - uses: pnpm/action-setup@v3",
+    ].join("\n"),
+  );
+
+  // GitHub org names are case-insensitive, so official actions/* and github/* refs are excluded regardless of
+  // casing; only the genuine mutable third-party ref is flagged.
+  assert.deepEqual(findings, [
+    { file: workflowPath, line: 8, action: "pnpm/action-setup", ref: "v3" },
+  ]);
+});
+
 test("scanWorkflowPins accepts quoted uses keys and ignores unchanged uses lines", () => {
   const findings = scanWorkflowPins(
     workflowPath,

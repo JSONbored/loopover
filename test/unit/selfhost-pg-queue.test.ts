@@ -1184,6 +1184,45 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
+  it("pump absorbs a claimNext() pool failure instead of crashing the process (regression for #2498)", async () => {
+    const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+      if (String(sql).includes("RETURNING id, payload, attempts, job_key, priority")) throw new Error("connection terminated unexpectedly");
+      return { rows: [], rowCount: 0 };
+    });
+    const pool = { query: fn } as unknown as Pool;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const q = createPgQueue(pool, async () => undefined);
+    await q.init();
+
+    await expect(q.drain()).resolves.toBeUndefined();
+
+    const logged = errorSpy.mock.calls.map(([line]) => String(line));
+    expect(logged.some((line) => line.includes("selfhost_queue_pump_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
+  });
+
+  it("pump absorbs a reclaimExpiredProcessingJobs() pool failure instead of crashing the process (regression for #2498)", async () => {
+    const oldTimeout = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+    process.env.QUEUE_PROCESSING_TIMEOUT_MS = "1";
+    try {
+      const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+        if (String(sql).includes("WHERE status='processing' AND run_after<=$1")) throw new Error("connection terminated unexpectedly");
+        return { rows: [], rowCount: 0 };
+      });
+      const pool = { query: fn } as unknown as Pool;
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const q = createPgQueue(pool, async () => undefined);
+      await q.init();
+
+      await expect(q.drain()).resolves.toBeUndefined();
+
+      const logged = errorSpy.mock.calls.map(([line]) => String(line));
+      expect(logged.some((line) => line.includes("selfhost_queue_pump_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
+    } finally {
+      if (oldTimeout === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      else process.env.QUEUE_PROCESSING_TIMEOUT_MS = oldTimeout;
+    }
+  });
+
   it("reschedules retryable incomplete review jobs while consuming attempts", async () => {
     const m = makePool();
     m.enqueueJob("1", { type: "agent-regate-pr" }, 0);

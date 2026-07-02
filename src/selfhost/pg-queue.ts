@@ -553,6 +553,19 @@ export function createPgQueue(
       while (await processOne()) {
         /* drain due jobs */
       }
+    } catch (error) {
+      // claimNext()/reclaimExpiredProcessingJobs() run OUTSIDE processOne's own try/finally, so a raw pool
+      // failure (a dropped connection, a lock timeout) lands here. Every `void pump()` call site (kickOne/kickAll)
+      // is fire-and-forget, so an uncaught rejection here would surface as an unhandled promise rejection — fatal
+      // when SENTRY_DSN is unset (server.ts only installs the handler when Sentry is configured) (#2498).
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_queue_pump_crashed",
+          error: errorMessageWithCause(error),
+        }),
+      );
+      captureError(error, { kind: "queue_pump_crashed" });
     } finally {
       active--;
     }

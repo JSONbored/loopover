@@ -1757,6 +1757,47 @@ describe("createSqliteQueue (durable #980)", () => {
     }
   });
 
+  it("pump absorbs a claimNext() driver failure instead of crashing the process (regression for #2498)", async () => {
+    const driver = makeDriver();
+    const realQuery = driver.query.bind(driver);
+    const q = createSqliteQueue(driver, async () => undefined);
+    // Only claimNextWhere's SELECT starts with this exact column list — spreadDueJobsOnStartup (which already
+    // ran during construction above) selects a different column set, so this doesn't clobber setup.
+    vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes("SELECT id, payload, attempts, job_key, priority")) throw new Error("database is locked");
+      return realQuery(sql, params);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(q.drain()).resolves.toBeUndefined();
+
+    const logged = errorSpy.mock.calls.map(([line]) => String(line));
+    expect(logged.some((line) => line.includes("selfhost_queue_pump_crashed") && line.includes("database is locked"))).toBe(true);
+  });
+
+  it("pump absorbs a reclaimExpiredProcessingJobs() driver failure instead of crashing the process (regression for #2498)", async () => {
+    const oldTimeout = process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+    process.env.QUEUE_PROCESSING_TIMEOUT_MS = "1";
+    try {
+      const driver = makeDriver();
+      const realQuery = driver.query.bind(driver);
+      vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+        if (sql.includes("WHERE status='processing' AND run_after<=?")) throw new Error("disk I/O error");
+        return realQuery(sql, params);
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const q = createSqliteQueue(driver, async () => undefined);
+
+      await expect(q.drain()).resolves.toBeUndefined();
+
+      const logged = errorSpy.mock.calls.map(([line]) => String(line));
+      expect(logged.some((line) => line.includes("selfhost_queue_pump_crashed") && line.includes("disk I/O error"))).toBe(true);
+    } finally {
+      if (oldTimeout === undefined) delete process.env.QUEUE_PROCESSING_TIMEOUT_MS;
+      else process.env.QUEUE_PROCESSING_TIMEOUT_MS = oldTimeout;
+    }
+  });
+
   it("records 'unknown error' when a consumer throws a non-Error", async () => {
     const q = createSqliteQueue(
       makeDriver(),

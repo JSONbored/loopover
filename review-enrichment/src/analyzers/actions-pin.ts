@@ -9,6 +9,10 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const OFFICIAL = /^(actions|github)\//;
 const WORKFLOW_PATH = /^\.github\/workflows\/.+\.ya?ml$/;
 
+function isWorkflowPath(path: string): boolean {
+  return WORKFLOW_PATH.test(path.replace(/\\/g, "/").toLowerCase());
+}
+
 /** Scan one workflow patch's added lines for unpinned third-party `uses:` refs, line-cited via hunk headers. Pure. */
 export function scanWorkflowPins(
   path: string,
@@ -46,7 +50,7 @@ export async function scanActionPins(
 ): Promise<ActionPinFinding[]> {
   const findings: ActionPinFinding[] = [];
   for (const file of req.files ?? []) {
-    if (WORKFLOW_PATH.test(file.path) && file.patch) {
+    if (isWorkflowPath(file.path) && file.patch) {
       findings.push(...scanWorkflowPins(file.path, file.patch));
     }
   }

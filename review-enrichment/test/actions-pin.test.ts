@@ -118,3 +118,29 @@ test("scanActionPins scans only changed workflow YAML files with patches", async
     },
   ]);
 });
+
+test("scanActionPins matches workflow paths case-insensitively", async () => {
+  const findings = await scanActionPins({
+    repoFullName: "o/r",
+    prNumber: 1,
+    files: [
+      {
+        path: ".github/Workflows/CI.YML",
+        patch: "@@ -1,0 +5,1 @@\n+    - uses: pnpm/action-setup@v3",
+      },
+      {
+        path: "docs/workflow.yml",
+        patch: "@@ -1,0 +1,1 @@\n+    - uses: vendor/not-a-workflow@main",
+      },
+    ],
+  });
+
+  assert.deepEqual(findings, [
+    {
+      file: ".github/Workflows/CI.YML",
+      line: 5,
+      action: "pnpm/action-setup",
+      ref: "v3",
+    },
+  ]);
+});

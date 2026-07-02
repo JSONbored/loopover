@@ -133,4 +133,39 @@ describe("check-migrations script", () => {
       expect(r.out).toContain("1 migrations OK");
     },
   );
+
+  // #2551: two DIFFERENT, individually-valid migration numbers adding the SAME column to the SAME table.
+  it("rejects two migrations that independently add the same column to the same table", () => {
+    const r = runCheck({
+      "0001_a.sql": "CREATE TABLE widgets (id INTEGER PRIMARY KEY);\n",
+      "0002_b.sql": "ALTER TABLE widgets ADD COLUMN color TEXT;\n",
+      "0003_c.sql": "ALTER TABLE widgets ADD COLUMN color TEXT;\n",
+    });
+
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("duplicate column widgets.color");
+    expect(r.out).toContain('"0002_b.sql"');
+    expect(r.out).toContain('"0003_c.sql"');
+  });
+
+  it("does not flag a DROP TABLE + CREATE TABLE recreate as colliding with the table it replaces", () => {
+    const r = runCheck({
+      "0001_a.sql": "CREATE TABLE widgets (id INTEGER, old_col TEXT);\n",
+      "0002_b.sql": "DROP TABLE IF EXISTS widgets;\nCREATE TABLE widgets (id INTEGER, new_col TEXT);\n",
+    });
+
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("2 migrations OK");
+  });
+
+  it("passes cleanly when two migrations touch the same table with different columns", () => {
+    const r = runCheck({
+      "0001_a.sql": "CREATE TABLE widgets (id INTEGER PRIMARY KEY);\n",
+      "0002_b.sql": "ALTER TABLE widgets ADD COLUMN color TEXT;\n",
+      "0003_c.sql": "ALTER TABLE widgets ADD COLUMN size TEXT;\n",
+    });
+
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("3 migrations OK");
+  });
 });

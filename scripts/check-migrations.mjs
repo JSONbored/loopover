@@ -28,6 +28,7 @@
 //     replay either ALTER under a new migration name.
 import { readdirSync, readFileSync } from "node:fs";
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.ts";
+import { detectColumnCollisions } from "../src/db/migration-column-extraction.ts";
 
 const DIR = process.env.CHECK_MIGRATIONS_DIR || "migrations";
 const NAME = MIGRATION_FILENAME_PATTERN;
@@ -184,6 +185,21 @@ for (const file of files) {
 if (sqlViolations.length > 0) {
   fail(
     `D1-incompatible SQL — the remote D1 authorizer rejects these at deploy (SQLITE_AUTH [code: 7500]), even though the local SQLite used by CI accepts them:\n  ${sqlViolations.join("\n  ")}`,
+  );
+}
+
+// #2551: two DIFFERENT, individually-valid migration numbers can each add the SAME column to the SAME
+// table — different files, no git conflict, both pass the number-collision check above, and both show
+// `mergeable_state: clean` — only failing at actual `wrangler d1 migrations apply` deploy time, after merge,
+// with zero prior CI signal. `files` is already numerically sorted (4-digit zero-padded lexicographic sort),
+// which detectColumnCollisions requires so a documented DROP TABLE + CREATE TABLE recreate (e.g.
+// migrations/0060_orb_fleet_collector.sql's orb_signals) correctly clears the table it replaces instead of
+// reading as a collision with it.
+const columnCollisions = detectColumnCollisions(files.map((file) => [file, readFileSync(`${DIR}/${file}`, "utf8")]));
+if (columnCollisions.length > 0) {
+  const { table, column, files: group } = columnCollisions[0];
+  fail(
+    `duplicate column ${table}.${column} defined by more than one migration: ${group.map((f) => `"${f}"`).join(", ")}. Two migrations independently added the same column under different numbers — this passes CI and shows a clean merge state, but fails at "wrangler d1 migrations apply" deploy time. Rename or remove the newer migration's column (or confirm the table is DROPped and recreated before it).`,
   );
 }
 

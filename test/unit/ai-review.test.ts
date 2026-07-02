@@ -1785,3 +1785,32 @@ describe("pure helpers", () => {
     expect(system).toContain("untrusted advisory context");
   });
 });
+
+describe("REVIEW_SYSTEM_PROMPT performance-regression instruction (#2559)", () => {
+  it("instructs the model to treat a genuine algorithmic/performance regression as a blocker category", async () => {
+    const run = vi.fn(
+      async (
+        _model: string,
+        _options: { messages: Array<{ content: string }> },
+      ) => ({ response: reviewJson() }),
+    );
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, baseInput);
+    expect(result.status).toBe("ok");
+    const opts = run.mock.calls[0]?.[1] as {
+      messages: Array<{ role?: string; content: string }>;
+    };
+    const system =
+      opts.messages.find((m) => m.role === "system")?.content ??
+      String(opts.messages[0]?.content);
+    expect(system).toContain("N+1");
+    expect(system).toContain("PERFORMANCE SEVERITY");
+    // Severity discipline: a micro-optimization/style preference must still be steered toward a nit, not a blocker.
+    expect(system).toContain("micro-optimization preference");
+  });
+});

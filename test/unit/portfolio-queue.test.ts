@@ -50,6 +50,12 @@ describe("portfolio queue primitives", () => {
     });
   });
 
+  it("treats repo full names case-insensitively when bucketing", () => {
+    expect(queueOf(item("a-1", "Owner/Repo"), item("a-2", "owner/repo"))).toEqual({
+      buckets: [{ repoFullName: "owner/repo", items: [item("a-1", "owner/repo"), item("a-2", "owner/repo")] }],
+    });
+  });
+
   it("treats prebuilt queues with untrimmed ids as already containing the logical item", () => {
     const queue: PortfolioQueue = {
       buckets: [{ repoFullName: "acme/alpha", items: [{ id: "  a-1  ", repoFullName: "acme/alpha", state: "queued" }] }],
@@ -114,6 +120,19 @@ describe("portfolio queue primitives", () => {
       "b-queued-1",
     ]);
     expect(nextEligibleItems(queue, { globalWipCap: Number.NaN, perRepoWipCap: 2 })).toEqual([]);
+  });
+
+  it("applies one per-repo cap across case-variant prebuilt buckets", () => {
+    const queue: PortfolioQueue = {
+      buckets: [
+        { repoFullName: "Owner/Repo", items: [item("a-queued-1", "Owner/Repo")] },
+        { repoFullName: "owner/repo", items: [item("a-queued-2", "owner/repo")] },
+      ],
+    };
+
+    expect(nextEligibleItems(queue, { globalWipCap: 2, perRepoWipCap: 1 }).map((entry) => entry.id)).toEqual([
+      "a-queued-1",
+    ]);
   });
 
   it("diversifies multi-repo selection and prefers the least represented repos first", () => {

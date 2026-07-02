@@ -40,8 +40,20 @@ function cleanId(value: string): string {
   return value.trim();
 }
 
+function cleanRepoFullName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function normalizeState(value: PortfolioQueueItemState): PortfolioQueueItemState {
   return value === ACTIVE_STATE ? ACTIVE_STATE : QUEUED_STATE;
+}
+
+function normalizeItem(item: PortfolioQueueItem): PortfolioQueueItem {
+  return {
+    id: cleanId(item.id),
+    repoFullName: cleanRepoFullName(item.repoFullName),
+    state: normalizeState(item.state),
+  };
 }
 
 function finiteNonNegativeInt(value: number): number {
@@ -94,17 +106,22 @@ function queueHasItem(queue: PortfolioQueue, itemId: string): boolean {
 
 /** Append one item to the queue, creating its repo bucket if needed. Duplicate/blank ids are ignored. Pure. */
 export function enqueueItem(queue: PortfolioQueue, item: PortfolioQueueItem): PortfolioQueue {
-  const id = cleanId(item.id);
-  const repoFullName = cleanId(item.repoFullName);
-  if (!id || !repoFullName || queueHasItem(queue, id)) return queue;
-  const normalizedItem: PortfolioQueueItem = { id, repoFullName, state: normalizeState(item.state) };
-  const bucketIndex = queue.buckets.findIndex((bucket) => bucket.repoFullName === repoFullName);
+  const normalizedItem = normalizeItem(item);
+  if (!normalizedItem.id || !normalizedItem.repoFullName || queueHasItem(queue, normalizedItem.id)) return queue;
+  const bucketIndex = queue.buckets.findIndex(
+    (bucket) => cleanRepoFullName(bucket.repoFullName) === normalizedItem.repoFullName,
+  );
   if (bucketIndex === -1) {
-    return { buckets: [...queue.buckets, { repoFullName, items: [normalizedItem] }] };
+    return { buckets: [...queue.buckets, { repoFullName: normalizedItem.repoFullName, items: [normalizedItem] }] };
   }
   return {
     buckets: queue.buckets.map((bucket, index) =>
-      index === bucketIndex ? { ...bucket, items: [...bucket.items, normalizedItem] } : bucket,
+      index === bucketIndex
+        ? {
+            repoFullName: normalizedItem.repoFullName,
+            items: [...bucket.items.map(normalizeItem), normalizedItem],
+          }
+        : bucket,
     ),
   };
 }
@@ -132,24 +149,37 @@ export function nextEligibleItems(queue: PortfolioQueue, caps: PortfolioCaps): P
   const normalizedCaps = normalizeCaps(caps);
   if (normalizedCaps.globalWipCap === 0 || normalizedCaps.perRepoWipCap === 0) return [];
 
-  const totalActiveCount = queue.buckets.reduce(
-    (sum, bucket) => sum + bucket.items.filter(isActiveItem).length,
-    0,
-  );
-  const remainingGlobalSlots = normalizedCaps.globalWipCap - totalActiveCount;
-  if (remainingGlobalSlots <= 0) return [];
-
-  const selectionBuckets = queue.buckets.map((bucket) => {
-    const activeCount = bucket.items.filter(isActiveItem).length;
-    const queuedItems = bucket.items.filter(isQueuedItem);
-    const remainingPerRepoCapacity = normalizedCaps.perRepoWipCap - activeCount;
-    return {
-      repoFullName: bucket.repoFullName,
+  const selectionBucketsByRepo = new Map<string, QueueSelectionBucket>();
+  for (const bucket of queue.buckets) {
+    const normalizedItems = bucket.items.map(normalizeItem);
+    const repoFullName = cleanRepoFullName(bucket.repoFullName);
+    const activeCount = normalizedItems.filter(isActiveItem).length;
+    const queuedItems = normalizedItems.filter(isQueuedItem);
+    const existing = selectionBucketsByRepo.get(repoFullName);
+    if (existing) {
+      existing.activeCount += activeCount;
+      existing.queuedItems.push(...queuedItems);
+      continue;
+    }
+    selectionBucketsByRepo.set(repoFullName, {
+      repoFullName,
       activeCount,
-      queuedItems: remainingPerRepoCapacity > 0 ? queuedItems.slice(0, remainingPerRepoCapacity) : [],
+      queuedItems: [...queuedItems],
       selectedCount: 0,
+    });
+  }
+
+  const selectionBuckets = Array.from(selectionBucketsByRepo.values()).map((bucket) => {
+    const remainingPerRepoCapacity = normalizedCaps.perRepoWipCap - bucket.activeCount;
+    return {
+      ...bucket,
+      queuedItems: remainingPerRepoCapacity > 0 ? bucket.queuedItems.slice(0, remainingPerRepoCapacity) : [],
     };
   });
+
+  const totalActiveCount = selectionBuckets.reduce((sum, bucket) => sum + bucket.activeCount, 0);
+  const remainingGlobalSlots = normalizedCaps.globalWipCap - totalActiveCount;
+  if (remainingGlobalSlots <= 0) return [];
 
   const selected: PortfolioQueueItem[] = [];
   let lastRepoFullName: string | null = null;

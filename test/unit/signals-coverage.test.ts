@@ -718,6 +718,28 @@ describe("signal coverage edge cases", () => {
     expect(preflight.status).toBe("needs_work");
   });
 
+  it("warns when local-diff commit metadata links more closing issues than the gate cap", () => {
+    const directRepo = repo("owner/direct");
+    const overflowCommit = Array.from({ length: MAX_LINKED_ISSUE_NUMBERS + 3 }, (_, index) => `Fixes #${index + 1}`).join("\n");
+    const local = buildLocalDiffPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bulk close from commit",
+        commitMessage: overflowCommit,
+        changedFiles: ["src/cache.ts"],
+        testFiles: ["test/cache.test.ts"],
+        changedLineCount: 12,
+      },
+      directRepo,
+      [],
+      [],
+    );
+
+    expect(local.localDiff.inferredLinkedIssues).toHaveLength(MAX_LINKED_ISSUE_NUMBERS);
+    expect(local.findings.map((finding) => finding.code)).toContain("linked_issue_overflow");
+    expect(local.status).toBe("needs_work");
+  });
+
   it("sanitizes public PR comments and supports minimal public signal level", () => {
     const directRepo = repo("owner/direct");
     const prRecord = pr(directRepo.fullName, 55, "Fix cache", { authorLogin: "miner", linkedIssues: [] });

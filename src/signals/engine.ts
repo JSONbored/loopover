@@ -26,7 +26,7 @@ import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
-import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
+import { hasLocalTestEvidence } from "./test-evidence";
 import { isFailingCheckSummary } from "./local-branch";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
@@ -2139,7 +2139,7 @@ export function buildRepoOutcomePatterns(args: {
   };
   for (const pr of outsideDecided) {
     for (const bucket of new Set(pr.filePaths.map(pathBucket))) addToGroup("path", bucket, pr);
-    if (pr.filePaths.length > 0) addToGroup("test_evidence", pr.filePaths.some(isTestPath) ? "with_tests" : "without_tests", pr);
+    if (pr.filePaths.length > 0) addToGroup("test_evidence", pr.filePaths.some(isTestFile) ? "with_tests" : "without_tests", pr);
     for (const label of pr.labels) addToGroup("label", label, pr);
     const size = sizeBucket(pr);
     if (size) addToGroup("size", size, pr);
@@ -2582,7 +2582,7 @@ export function buildPreflightResult(
   findings.push(...issueQualityFindings(linkedIssues, issueQuality));
   const changedFiles = input.changedFiles ?? [];
   const tests = input.tests ?? [];
-  if (changedFiles.some((file) => isCodeFile(file)) && tests.length === 0 && !changedFiles.some((file) => isTestPath(file))) {
+  if (changedFiles.some((file) => isCodeFile(file)) && tests.length === 0 && !changedFiles.some((file) => isTestFile(file))) {
     findings.push({
       code: "missing_test_evidence",
       severity: "warning",
@@ -2645,7 +2645,7 @@ export function buildLocalDiffPreflightResult(
     }
   }
   const codeFileCount = changedFiles.filter(isCodeFile).length;
-  const testFileCount = changedFiles.filter(isTestPath).length;
+  const testFileCount = changedFiles.filter(isTestFile).length;
   /* v8 ignore next -- Sparse local-git adapters omit changed-line totals; aggregate local diff behavior covers the zero fallback. */
   const changedLineCount = input.changedLineCount ?? 0;
   const findings = [...base.findings];
@@ -2747,7 +2747,7 @@ export function buildPullRequestMaintainerPacket(args: {
     ? collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number)).length
     : 0;
   const codeFiles = args.files.filter((file) => isCodeFile(file.path));
-  const testFiles = args.files.filter((file) => isTestPath(file.path));
+  const testFiles = args.files.filter((file) => isTestFile(file.path));
   const additions = args.files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = args.files.reduce((sum, file) => sum + file.deletions, 0);
   const approvalCount = args.reviews.filter((review) => review.state.toUpperCase() === "APPROVED").length;
@@ -5505,7 +5505,17 @@ function sanitizeOutcomeDimensionKey(key: string): string {
 }
 
 function isCodeFile(file: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestPath(file);
+  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
+}
+
+function isTestFile(file: string): boolean {
+  return (
+    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
+    /(^|\/)src\/test\//i.test(file) ||
+    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
+    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
+    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
+  );
 }
 
 function riskRank(risk: CollisionCluster["risk"]): number {

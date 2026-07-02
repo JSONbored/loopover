@@ -246,3 +246,30 @@ test("added-line analyzers run when patch scan is capped before additions", asyn
   assert.equal(brief.telemetry.skippedWorkByCategory.analyzer_no_added_lines, undefined);
   assert.ok(brief.telemetry.cappedWorkByCategory.has_added_lines_patch_bytes > 0);
 });
+
+test("actionPin runs for mixed-case workflow paths", async () => {
+  let actionPinRan = false;
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 2516,
+      analyzers: ["actionPin"],
+      files: [
+        {
+          path: ".github/Workflows/CI.YML",
+          patch: "@@ -1,0 +5,1 @@\n+    - uses: pnpm/action-setup@v3",
+        },
+      ],
+    },
+    {
+      actionPin: async () => {
+        actionPinRan = true;
+        return [{ file: ".github/Workflows/CI.YML", line: 5, action: "pnpm/action-setup", ref: "v3" }];
+      },
+    },
+  );
+
+  assert.equal(actionPinRan, true);
+  assert.equal(brief.analyzerStatus.actionPin, "ok");
+  assert.notEqual(brief.telemetry.analyzers.actionPin.skipReason, "no_workflow");
+});

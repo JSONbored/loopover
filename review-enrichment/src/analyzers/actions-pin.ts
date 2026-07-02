@@ -3,15 +3,11 @@
 // where a compromised upstream tag silently re-points and runs in your CI with your secrets. Pure compute, no network.
 // Official actions/* + github/* are excluded (lowest risk, extremely common) to keep the signal high. Line-cited.
 import type { EnrichRequest, ActionPinFinding } from "../types.js";
+import { isWorkflowPath } from "../workflow-path.js";
 
 const USES_RE = /^\s*-?\s*["']?uses["']?\s*:\s*["']?([\w.-]+\/[\w./-]+)@([^\s"'#]+)/;
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const OFFICIAL = /^(actions|github)\//;
-const WORKFLOW_PATH = /^\.github\/workflows\/.+\.ya?ml$/;
-
-function isWorkflowPath(path: string): boolean {
-  return WORKFLOW_PATH.test(path.replace(/\\/g, "/").toLowerCase());
-}
 
 /** Scan one workflow patch's added lines for unpinned third-party `uses:` refs, line-cited via hunk headers. Pure. */
 export function scanWorkflowPins(

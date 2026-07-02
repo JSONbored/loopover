@@ -1426,6 +1426,18 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.linkedIssueGateMode).toBe("block"); // gate: wins over settings:
   });
 
+  it("wires settings.badgeEnabled into the manifest parser and lets it override the DB value (#2555)", () => {
+    const parsedTrue = parseFocusManifest({ settings: { badgeEnabled: true } });
+    expect(parsedTrue.settings.badgeEnabled).toBe(true);
+    expect(parsedTrue.warnings).toEqual([]);
+    const parsedFalse = parseFocusManifest({ settings: { badgeEnabled: false } });
+    expect(parsedFalse.settings.badgeEnabled).toBe(false);
+
+    const db = { badgeEnabled: false } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { badgeEnabled: true } }));
+    expect(eff.badgeEnabled).toBe(true); // settings: override wins over the DB-stored value
+  });
+
   it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {
     const parsed = parseFocusManifest({ settings: { aiReviewMode: "advisory", aiReviewByok: true } });
     expect(parsed.settings.aiReviewMode).toBe("advisory");

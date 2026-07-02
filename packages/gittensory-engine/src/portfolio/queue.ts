@@ -151,22 +151,24 @@ export function nextEligibleItems(queue: PortfolioQueue, caps: PortfolioCaps): P
 
   const selectionBucketsByRepo = new Map<string, QueueSelectionBucket>();
   for (const bucket of queue.buckets) {
-    const normalizedItems = bucket.items.map(normalizeItem);
-    const repoFullName = cleanRepoFullName(bucket.repoFullName);
-    const activeCount = normalizedItems.filter(isActiveItem).length;
-    const queuedItems = normalizedItems.filter(isQueuedItem);
-    const existing = selectionBucketsByRepo.get(repoFullName);
-    if (existing) {
-      existing.activeCount += activeCount;
-      existing.queuedItems.push(...queuedItems);
-      continue;
+    for (const normalizedItem of bucket.items.map(normalizeItem)) {
+      const repoFullName = normalizedItem.repoFullName;
+      const existing = selectionBucketsByRepo.get(repoFullName);
+      if (existing) {
+        if (isActiveItem(normalizedItem)) {
+          existing.activeCount += 1;
+        } else {
+          existing.queuedItems.push(normalizedItem);
+        }
+        continue;
+      }
+      selectionBucketsByRepo.set(repoFullName, {
+        repoFullName,
+        activeCount: isActiveItem(normalizedItem) ? 1 : 0,
+        queuedItems: isQueuedItem(normalizedItem) ? [normalizedItem] : [],
+        selectedCount: 0,
+      });
     }
-    selectionBucketsByRepo.set(repoFullName, {
-      repoFullName,
-      activeCount,
-      queuedItems: [...queuedItems],
-      selectedCount: 0,
-    });
   }
 
   const selectionBuckets = Array.from(selectionBucketsByRepo.values()).map((bucket) => {

@@ -135,6 +135,31 @@ describe("portfolio queue primitives", () => {
     ]);
   });
 
+  it("enforces repo caps from each item's repo even when a prebuilt bucket label is wrong", () => {
+    const queue: PortfolioQueue = {
+      buckets: [
+        { repoFullName: "acme/alpha", items: [item("b-running", "acme/beta", "in_progress")] },
+        { repoFullName: "acme/beta", items: [item("b-queued-1", "acme/beta")] },
+      ],
+    };
+
+    expect(nextEligibleItems(queue, { globalWipCap: 3, perRepoWipCap: 1 })).toEqual([]);
+  });
+
+  it("aggregates active counts across repeated prebuilt buckets for the same logical repo", () => {
+    const queue: PortfolioQueue = {
+      buckets: [
+        { repoFullName: "acme/alpha", items: [item("a-running-1", "acme/alpha", "in_progress")] },
+        {
+          repoFullName: "ACME/ALPHA",
+          items: [item("a-running-2", "acme/alpha", "in_progress"), item("a-queued-1", "acme/alpha")],
+        },
+      ],
+    };
+
+    expect(nextEligibleItems(queue, { globalWipCap: 3, perRepoWipCap: 2 })).toEqual([]);
+  });
+
   it("diversifies multi-repo selection and prefers the least represented repos first", () => {
     const queue = queueOf(
       item("a-running", "acme/alpha", "in_progress"),

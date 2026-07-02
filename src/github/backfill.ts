@@ -3190,6 +3190,12 @@ async function syncLabels(
   }
 }
 
+/**
+ * `limit` is a page-boundary threshold, not a strict maximum: page consumption is atomic (see the loop body),
+ * so the crawl always finishes the page it's on once `items.length` reaches `limit`, which can return up to
+ * `perPage - 1` more items than requested. Callers that need an exact cap must trim the returned `items`
+ * themselves; `fetchedCount`/`items.length` always reflect the true (possibly over-`limit`) count.
+ */
 async function githubPaged<T>(
   env: Env,
   repo: RepositoryRecord,

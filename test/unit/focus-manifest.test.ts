@@ -19,6 +19,7 @@ import {
   settingsOverrideToJson,
   type FocusManifest,
 } from "../../src/signals/focus-manifest";
+import { DEFAULT_COMMAND_AUTHORIZATION_POLICY } from "../../src/settings/command-authorization";
 import type { RepositorySettings } from "../../src/types";
 
 const FULL_MANIFEST = {
@@ -780,9 +781,11 @@ describe("public-safe invariant", () => {
 
 describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
-    const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
+    // readiness.mode uses "advisory" here (not "block") — readiness/quality can never hard-block (#2267);
+    // the block→advisory deprecation-downgrade behavior itself is covered separately below.
+    const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -795,6 +798,19 @@ describe("parseFocusManifest gate config", () => {
     expect(bad.gate.mergeReadiness).toBeNull();
     expect(bad.gate.firstTimeContributorGrace).toBeNull();
     expect(bad.gate.present).toBe(false);
+  });
+
+  it("warns that gate.firstTimeContributorGrace is reserved/inert when explicitly set true (#2266)", () => {
+    const m = parseFocusManifest({ gate: { firstTimeContributorGrace: true } });
+    expect(m.gate.firstTimeContributorGrace).toBe(true);
+    expect(m.warnings.some((w) => /gate\.firstTimeContributorGrace.*reserved\/inert/i.test(w))).toBe(true);
+  });
+
+  it("does not warn about firstTimeContributorGrace when left unset or explicitly false (matches the inert default)", () => {
+    const unset = parseFocusManifest({ gate: { linkedIssue: "block" } });
+    expect(unset.warnings.some((w) => /firstTimeContributorGrace/i.test(w))).toBe(false);
+    const explicitFalse = parseFocusManifest({ gate: { firstTimeContributorGrace: false } });
+    expect(explicitFalse.warnings.some((w) => /firstTimeContributorGrace/i.test(w))).toBe(false);
   });
 
   it("parses gate.selfAuthoredLinkedIssue + settings.selfAuthoredLinkedIssueGateMode, round-trips + resolves them (the gate alias wins)", () => {
@@ -892,6 +908,21 @@ describe("parseFocusManifest gate config", () => {
     expect(m.warnings.some((w) => /gate\.readiness\.mode/.test(w))).toBe(true);
   });
 
+  it("downgrades gate.readiness.mode: block to advisory with a deprecation warning (#2267)", () => {
+    // readiness/quality is informational-only (buildQualityGateWarning always produces a warning-severity
+    // finding; isConfiguredGateBlocker has no branch for it) — a config that says "block" is downgraded
+    // rather than silently accepted, so the parsed config always matches what the gate actually does.
+    const m = parseFocusManifest({ gate: { readiness: { mode: "block" } } });
+    expect(m.gate.readinessMode).toBe("advisory");
+    expect(m.gate.present).toBe(true);
+    expect(m.warnings.some((w) => /gate\.readiness\.mode.*no longer accepts "block"/.test(w))).toBe(true);
+    // Genuinely invalid values still take the ORIGINAL "must be one of" warning path, unchanged.
+    const bad = parseFocusManifest({ gate: { readiness: { mode: "sometimes" } } });
+    expect(bad.gate.readinessMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.readiness\.mode.*must be one of/.test(w))).toBe(true);
+    expect(bad.warnings.some((w) => /no longer accepts "block"/.test(w))).toBe(false);
+  });
+
   it("clamps and rounds the readiness minScore to 0-100", () => {
     expect(parseFocusManifest({ gate: { readiness: { minScore: 250 } } }).gate.readinessMinScore).toBe(100);
     expect(parseFocusManifest({ gate: { readiness: { minScore: -10 } } }).gate.readinessMinScore).toBe(0);
@@ -915,9 +946,9 @@ describe("parseFocusManifest gate config", () => {
   });
 
   it("parses the gate section from YAML content", () => {
-    const m = parseFocusManifestContent("gate:\n  duplicates: block\n  readiness:\n    mode: block\n    minScore: 80\n", "repo_file");
+    const m = parseFocusManifestContent("gate:\n  duplicates: block\n  readiness:\n    mode: advisory\n    minScore: 80\n", "repo_file");
     expect(m.gate.duplicates).toBe("block");
-    expect(m.gate.readinessMode).toBe("block");
+    expect(m.gate.readinessMode).toBe("advisory");
     expect(m.gate.readinessMinScore).toBe(80);
   });
 
@@ -1072,6 +1103,20 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(parseFocusManifest({ settings: { commentMode: "off" } }).present).toBe(true);
   });
 
+  it("downgrades settings.qualityGateMode: block to advisory with a deprecation warning, same as gate.readiness.mode (#2267)", () => {
+    // The generic settings: override is the SAME dashboard/API-facing qualityGateMode field, read through a
+    // different manifest path than gate.readiness.mode — it must get the identical downgrade, not just a
+    // "must be one of" pass-through, or a maintainer using this path keeps the false-enforcement belief.
+    const m = parseFocusManifest({ settings: { qualityGateMode: "block" } });
+    expect(m.settings.qualityGateMode).toBe("advisory");
+    expect(m.warnings.some((w) => /settings\.qualityGateMode.*no longer accepts "block"/.test(w))).toBe(true);
+    // Genuinely invalid values still take the ORIGINAL "must be one of" warning path, unchanged.
+    const bad = parseFocusManifest({ settings: { qualityGateMode: "sometimes" } });
+    expect(bad.settings.qualityGateMode).toBeUndefined();
+    expect(bad.warnings.some((w) => /settings\.qualityGateMode.*must be one of/.test(w))).toBe(true);
+    expect(bad.warnings.some((w) => /no longer accepts "block"/.test(w))).toBe(false);
+  });
+
   it("round-trips settings through settingsOverrideToJson and serializes empty as null", () => {
     const original = parseFocusManifest({ settings: { commentMode: "all_prs", qualityGateMinScore: 40 } });
     const reparsed = parseFocusManifest({ settings: settingsOverrideToJson(original.settings) });
@@ -1097,6 +1142,51 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     // A non-mapping autoMaintain is ignored, leaving the DB policy intact.
     const ignored = resolveEffectiveSettings({ autoMaintain: { requireApprovals: 2, mergeMethod: "merge" } } as unknown as RepositorySettings, parseFocusManifest({ settings: { autoMaintain: "nope" } }));
     expect(ignored.autoMaintain).toEqual({ requireApprovals: 2, mergeMethod: "merge" });
+  });
+
+  it("parses + resolves commandAuthorization from the settings: block, overlaying the DB (#2268)", () => {
+    const manifest = parseFocusManifest({ settings: { commandAuthorization: { commands: { "gate-override": ["maintainer"] } } } });
+    expect(manifest.settings.commandAuthorization).toEqual({
+      ...DEFAULT_COMMAND_AUTHORIZATION_POLICY,
+      commands: { ...DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands, "gate-override": ["maintainer"] },
+    });
+    expect(manifest.warnings.some((w) => /commandAuthorization/.test(w))).toBe(false);
+
+    const dbPolicy = { default: ["maintainer", "collaborator", "confirmed_miner", "pr_author"], commands: {} } as RepositorySettings["commandAuthorization"];
+    const eff = resolveEffectiveSettings({ commandAuthorization: dbPolicy } as unknown as RepositorySettings, manifest);
+    expect(eff.commandAuthorization?.commands["gate-override"]).toEqual(["maintainer"]); // yml overlays DB
+
+    // Unset key means "no opinion" and must leave the DB-stored policy untouched — never reset to defaults.
+    const noOverride = resolveEffectiveSettings({ commandAuthorization: dbPolicy } as unknown as RepositorySettings, parseFocusManifest({ settings: { commentMode: "off" } }));
+    expect(noOverride.commandAuthorization).toEqual(dbPolicy);
+  });
+
+  it("ignores an invalid top-level commandAuthorization shape with a visible warning, never overwriting the DB policy (#2268)", () => {
+    const manifest = parseFocusManifest({ settings: { commandAuthorization: "nope" } });
+    expect(manifest.settings.commandAuthorization).toBeUndefined();
+    expect(manifest.warnings.some((w) => /commandAuthorization.*must be an object/.test(w))).toBe(true);
+
+    // A malformed shape must leave the DB-persisted policy intact via the resolver overlay — never reset to
+    // the built-in default, which could be less restrictive than what the DB has on record.
+    const dbPolicy = { default: ["maintainer"], commands: { "gate-override": ["maintainer"] } } as RepositorySettings["commandAuthorization"];
+    const eff = resolveEffectiveSettings({ commandAuthorization: dbPolicy } as unknown as RepositorySettings, manifest);
+    expect(eff.commandAuthorization).toEqual(dbPolicy);
+
+    // A null value is likewise rejected (typeof null === "object" but it is not a valid mapping).
+    const nullShape = parseFocusManifest({ settings: { commandAuthorization: null } });
+    expect(nullShape.settings.commandAuthorization).toBeUndefined();
+    expect(nullShape.warnings.some((w) => /commandAuthorization.*must be an object/.test(w))).toBe(true);
+
+    // An array is likewise rejected, not treated as a mapping.
+    const arrayShape = parseFocusManifest({ settings: { commandAuthorization: ["nope"] } });
+    expect(arrayShape.settings.commandAuthorization).toBeUndefined();
+    expect(arrayShape.warnings.some((w) => /commandAuthorization.*must be an object/.test(w))).toBe(true);
+
+    // A spoofable role on a maintainer-only command is clamped back to the default for that command, not
+    // dropped silently — the maintainer-only invariant holds even inside a partially-valid override.
+    const badRole = parseFocusManifest({ settings: { commandAuthorization: { commands: { "gate-override": ["pr_author"] } } } });
+    expect(badRole.settings.commandAuthorization?.commands["gate-override"]).toEqual(["maintainer", "collaborator"]);
+    expect(badRole.warnings.some((w) => /maintainer-only command/.test(w))).toBe(true);
   });
 
   it("parses + resolves contributorBlacklist + blacklistLabel from the settings: block, overlaying the DB (#1425)", () => {
@@ -1151,6 +1241,17 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       parseFocusManifest(null),
     );
     expect(eff.linkedIssueGateMode).toBe("block");
+  });
+
+  it("REGRESSION: downgrades a pre-existing DB qualityGateMode: block to advisory, even with no gate.readiness.mode override (#2267)", () => {
+    // Simulates a repo whose DB row already has quality_gate_mode = "block" from before the write-time guards
+    // (the settings.qualityGateMode parser, the settings-write API routes) existed — the dashboard/API path's
+    // "still survives" loophole this resolver-level guard closes for good, regardless of source or vintage.
+    const db = { qualityGateMode: "block" } as unknown as RepositorySettings;
+    expect(resolveEffectiveSettings(db, parseFocusManifest(null)).qualityGateMode).toBe("advisory");
+    // A non-"block" value is untouched — the downgrade only ever fires for "block".
+    const dbAdvisory = { qualityGateMode: "advisory" } as unknown as RepositorySettings;
+    expect(resolveEffectiveSettings(dbAdvisory, parseFocusManifest(null)).qualityGateMode).toBe("advisory");
   });
 });
 

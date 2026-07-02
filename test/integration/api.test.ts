@@ -269,6 +269,20 @@ describe("api routes", () => {
     await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/badged", badgeEnabled: true });
   });
 
+  it("downgrades qualityGateMode: block to advisory through the internal settings write endpoint too (#2267)", async () => {
+    // Readiness/quality can never hard-block a PR — the internal full-settings write path (used by tooling,
+    // not just the maintainer dashboard) gets the identical downgrade so it can't persist "block" either.
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request(
+      "/v1/internal/repos/acme/readiness-block/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ qualityGateMode: "block" }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/readiness-block", qualityGateMode: "advisory" });
+  });
+
   it("rejects invalid public GitHub repo stats paths before calling GitHub", async () => {
     const app = createApp();
     const env = createTestEnv();
@@ -2274,7 +2288,10 @@ describe("api routes", () => {
         method: "PUT",
         headers: ownerHeaders,
         // #773/#774/#776: the agent-layer config is settable here; the DB layer drops an unknown action class.
-        body: JSON.stringify({ gateCheckMode: "enabled", slopGateMode: "block", slopGateMinScore: 55, autonomy: { merge: "auto_with_approval", deploy: "auto" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" }, agentPaused: true, agentDryRun: true }),
+        // #2267: qualityGateMode: "block" is downgraded to "advisory" on write — readiness/quality can never
+        // hard-block a PR, so the dashboard/API save path can't persist a value implying enforcement it doesn't
+        // have. slopGateMode: "block" is a DIFFERENT, legitimately-blockable dimension and is left untouched.
+        body: JSON.stringify({ gateCheckMode: "enabled", slopGateMode: "block", slopGateMinScore: 55, qualityGateMode: "block", autonomy: { merge: "auto_with_approval", deploy: "auto" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" }, agentPaused: true, agentDryRun: true }),
       },
       ownerEnv,
     );
@@ -2283,6 +2300,7 @@ describe("api routes", () => {
       gateCheckMode: "enabled",
       slopGateMode: "block",
       slopGateMinScore: 55,
+      qualityGateMode: "advisory", // #2267: downgraded, not persisted as "block"
       autonomy: { merge: "auto_with_approval" }, // unknown action class dropped by the DB normalizer
       autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" },
       agentPaused: true, // #776 kill-switch

@@ -19,6 +19,16 @@ describe("classifyMergeFailure", () => {
     expect(result.reason).toMatch(/405/);
   });
 
+  it("treats a 401 (installation token rejected) as terminal, distinct from a generic rejection (#2264)", () => {
+    // withInstallationTokenRetry already evicts-and-retries once on a 401 inside the merge call itself, so a 401
+    // reaching classifyMergeFailure means that retry also failed — a persistently unauthorized installation, not
+    // a one-off stale-token race. Must fail fast (terminal) rather than burn the full MERGE_RETRY_CAP.
+    const result = classifyMergeFailure(httpError(401, "Bad credentials"));
+    expect(result.terminal).toBe(true);
+    expect(result.reason).toMatch(/installation token rejected/i);
+    expect(result.reason).toMatch(/suspended or key rotated/i);
+  });
+
   it("treats 403, 409, and real merge-conflict text as terminal", () => {
     expect(classifyMergeFailure(httpError(403, "Resource not accessible by integration")).terminal).toBe(true);
     expect(classifyMergeFailure(httpError(409, "Required status check is expected.")).terminal).toBe(true);

@@ -587,17 +587,24 @@ function firstCommitTitle(messages) {
   return messages.find((message) => message.trim().length > 0)?.split("\n")[0]?.trim();
 }
 
-function isTestFile(file) {
+// Must mirror the canonical server-side matcher in src/signals/test-evidence.ts (isTestPath); the
+// server local-branch analysis delegates to it, so this client copy classifies the same diff and must
+// agree. The last two branches (Cypress/e2e `*.cy.*`/`*.e2e.*` and `__snapshots__/`) were missing here,
+// so a changed `Button.cy.ts` / snapshot file was misclassified as source (isCodeFile) and dropped from
+// testFiles, inflating source-line/token counts and under-reporting test evidence in the local packet.
+export function isTestFile(file) {
   return (
     /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
     /(^|\/)src\/test\//i.test(file) ||
     /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
+    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file) ||
+    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|js|jsx)$/i.test(file) ||
+    /(^|\/)__snapshots__\//i.test(file)
   );
 }
 
-function isCodeFile(file) {
+export function isCodeFile(file) {
   return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
 }
 

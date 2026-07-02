@@ -63,6 +63,11 @@ export type PlannedAgentAction = {
   // actions; treated as a heuristic close only when explicitly tagged "heuristic".
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
   expectedHeadSha?: string;
+  // For an `approve` action: retract the bot's own prior approval instead of posting a new one — a later commit
+  // no longer qualifies for approval, but the PR isn't merging or closing this pass, so the stale APPROVE
+  // (which still counts toward a "require approving reviews" branch-protection rule) must not be left in place.
+  // (#2254)
+  dismissStaleApproval?: boolean;
 };
 
 export type AgentActionPlanInput = {
@@ -86,13 +91,20 @@ export type AgentActionPlanInput = {
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
+  // True when the PR author is a fleet-operator login (env ADMIN_GITHUB_LOGINS) that is NOT the literal repo
+  // owner (#2133). This is the same trusted-operator identity already honored by the reopen-reclose path's
+  // hasMaintainerPermission — folded in here so it isn't a second, drifting definition of "maintainer". Treated
+  // identically to authorIsOwner throughout this planner (never auto-closed by default; auto-close only when
+  // closeOwnerAuthors is on).
+  authorIsAdmin: boolean;
   // True when the PR author is a maintainer-managed automation account (e.g. github-actions[bot] opening an
   // accumulator like automation/readme-refresh, or dependabot/renovate). These are NEVER auto-closed — a noise
   // heuristic (duplicate/slop) must not kill a recurring maintainer-managed PR. They may still auto-merge.
   authorIsAutomationBot: boolean;
-  // Per-repo toggle (#configurable-owner-close): when TRUE, the repo OWNER's own PRs are eligible for auto-close
-  // like a contributor's (still gated by the `close` autonomy class + adverse-signal conditions). Default/undefined
-  // ⇒ owner PRs are exempt (merge or manual-hold only). Automation-bot PRs stay exempt regardless.
+  // Per-repo toggle (#configurable-owner-close): when TRUE, the repo OWNER's own PRs (and admin-authored PRs,
+  // #2133) are eligible for auto-close like a contributor's (still gated by the `close` autonomy class +
+  // adverse-signal conditions). Default/undefined ⇒ owner/admin PRs are exempt (merge or manual-hold only).
+  // Automation-bot PRs stay exempt regardless.
   closeOwnerAuthors?: boolean | undefined;
   // Live CI aggregate over ALL of the PR's checks — required OR not, including non-required ones like
   // codecov/patch and every commit-status (reviewbot parity). "passed" = every check completed and none
@@ -102,6 +114,9 @@ export type AgentActionPlanInput = {
   // failing checks) / HOLDS the owner's, and DEFERS every action while "pending" (settle-before-decide — the
   // check-completion webhook re-runs this planner once CI settles).
   ciState: "passed" | "failed" | "pending" | "unverified";
+  // True when any visible CI check/status is still queued or in progress, even when branch protection lets
+  // ciState stay "passed" because the pending context is non-required. The planner must still settle first.
+  ciHasPending?: boolean | undefined;
   // The names of the failing checks, surfaced in the close/request-changes reason so the contributor knows
   // WHY (e.g. "codecov/patch"). Empty unless ciState === "failed".
   failingCheckNames?: string[] | undefined;
@@ -256,12 +271,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
 
   // Contributor blacklist (#1425): a banned author's PR is a DETERMINISTIC short-circuit — it SHORT-CIRCUITS to a
   // label + close AHEAD of all merit/CI/gate/AI analysis (this returns before any of it), so a blocked account is
-  // never merit-reviewed or auto-merged. Fires for a CONTRIBUTOR only (owner/automation bots are NEVER auto-closed,
-  // the standing rule). Zero-hallucination, so its close is `closeKind: "blacklist"`, separate from heuristic
+  // never merit-reviewed or auto-merged. Fires for a CONTRIBUTOR only (owner/admin/automation bots are NEVER
+  // auto-closed, the standing rule — #2133 folds the fleet-operator admin allowlist into the same exemption).
+  // Zero-hallucination, so its close is `closeKind: "blacklist"`, separate from heuristic
   // closes. The `acting`/`approval` gates here + the executor's pause/dry-run/
   // kill-switch gate make it dry-run-able and approval-gated exactly like every other action. The close comment is
   // static by construction so private maintainer metadata from the blacklist entry cannot leak.
-  const blacklistContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
+  const blacklistContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
   if (input.blacklistMatch?.matched === true && blacklistContributor) {
     const label = input.blacklistLabel ?? DEFAULT_BLACKLIST_LABEL;
     if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "blacklisted contributor", label, labelOp: "add" });
@@ -282,7 +298,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const ciPassed = input.ciState === "passed";
   const ciFailed = input.ciState === "failed";
   // Settle-before-decide: never approve / merge / close on a half-finished CI run.
-  if (input.ciState === "pending") return actions;
+  if (input.ciState === "pending" || input.ciHasPending === true) return actions;
 
   // The gate verdict is authoritative. Green CI is still required for merge/approve, but it does not rewrite an AI
   // or review-thread blocker into success once the gate has classified it as blocking.
@@ -312,12 +328,14 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // would-approve/would-merge dispositions into a manual hold.
   const ciUnverified = input.ciState === "unverified";
   const reviewGood = gatePassing && ciPassed;
-  const isContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
+  const isContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
   // The owner-close exemption is PER-REPO CONFIGURABLE (#configurable-owner-close): by default the repo owner's
   // own PRs are exempt from auto-close (closeOwnerAuthors !== true ⇒ merge or manual-hold only), but a maintainer
-  // can opt in to closing them like a contributor's. Automation bots stay exempt regardless (a noise heuristic
-  // must not kill a recurring maintainer-managed accumulator).
-  const closeEligible = isContributor || (input.authorIsOwner && input.closeOwnerAuthors === true);
+  // can opt in to closing them like a contributor's. #2133 folds the fleet-operator admin allowlist into the same
+  // trusted-identity exemption (a login honored as a maintainer everywhere else in the codebase must not be
+  // treated as an ordinary contributor here). Automation bots stay exempt regardless (a noise heuristic must not
+  // kill a recurring maintainer-managed accumulator).
+  const closeEligible = isContributor || ((input.authorIsOwner || input.authorIsAdmin) && input.closeOwnerAuthors === true);
   const mergeableClean = input.pr.mergeableState === "clean";
   const isConflict = input.pr.mergeableState === "dirty"; // conflicts with base — can't merge as-is
   // RC3: a prior merge attempt failed terminally for THIS exact head SHA (403/405/409/conflict) → never re-plan
@@ -436,6 +454,39 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       requiresApproval: approval("approve"),
       reason: "gate passed, CI green",
       reviewBody: "Gittensory approves — the gate is satisfied and CI is green.",
+      // Pin the approve to the EXACT reviewed head (#2262), matching the merge action's existing pin. For an
+      // auto_with_approval stage this travels into the pending row (actionParams persists expectedHeadSha), so
+      // the accept-time supersede check — which only fires when expectedHeadSha is truthy — actually engages: a
+      // force-push after staging is detected and denied instead of the accept silently approving the NEW,
+      // unreviewed commit. The executor also pins createPullRequestReview's commit_id to this SHA.
+      ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
+    });
+  } else if (
+    // A prior bot approval is now STALE: a later commit landed (approvedHeadSha !== the current head) and this
+    // pass isn't posting a fresh approve (the branch above didn't fire). GitHub's reviewDecision is derived from
+    // the LATEST review per reviewer, so leaving the old APPROVE in place can still satisfy a "require approving
+    // reviews" rule and let a human merge the new, un-reviewed commit directly on GitHub. Only matters when the
+    // PR stays open under review this pass — canMerge/willClose/willCloseForLinkedIssue each make it moot (a
+    // merge doesn't care about the stale review, and a close removes the PR from mergeable consideration
+    // entirely). (#2254)
+    input.pr.approvedHeadSha != null &&
+    input.pr.headSha != null &&
+    input.pr.approvedHeadSha !== input.pr.headSha &&
+    acting("approve") &&
+    !canMerge &&
+    !willClose &&
+    !willCloseForLinkedIssue
+  ) {
+    actions.push({
+      actionClass: "approve",
+      requiresApproval: approval("approve"),
+      reason: "stale approval retracted — a newer commit no longer qualifies for approval",
+      dismissStaleApproval: true,
+      // Pin to the head that was actually evaluated as stale (mirrors the merge action's head pinning above) so
+      // a queued (auto_with_approval) dismissal replayed later can't retract a DIFFERENT, newer bot approval if
+      // the head moved again while this row waited for a maintainer (#2361). input.pr.headSha is already
+      // narrowed non-null by the `else if` condition above (line ~454), so no fallback branch is needed here.
+      expectedHeadSha: input.pr.headSha,
     });
   }
 

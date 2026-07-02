@@ -28,6 +28,12 @@ declare global {
       get(key: string): Promise<string | null>;
       set(key: string, value: string, ttlSeconds: number): Promise<void>;
       del?(key: string): Promise<void>;
+      /** Atomic "set only if absent": returns true when this call newly claimed the key, false when it was
+       *  already held by someone else. Unlike a get-then-set pair, there is no window where two concurrent
+       *  callers can both observe an absent key and both claim it — the store (e.g. Redis SET NX) performs the
+       *  check-and-set as one operation. Optional so a cache adapter that hasn't implemented it yet still
+       *  type-checks; callers fall back to the non-atomic get/set pair when absent (#2129). */
+      claim?(key: string, value: string, ttlSeconds: number): Promise<boolean>;
     };
     /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
      *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
@@ -210,6 +216,7 @@ declare global {
     REES_SHARED_SECRET?: string;
     REES_TIMEOUT_MS?: string;
     REES_ANALYZERS?: string;
+    REES_PROFILE?: string;
     REES_FORWARD_GITHUB_TOKEN?: string;
     /** Convergence flag: the deterministic content/registry SURFACE LANE drives the gate for registry-submission
      *  PRs (metagraphed surfaces[]/providers/candidates). Truthy ON *AND* the repo in GITTENSORY_REVIEW_REPOS —

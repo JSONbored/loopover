@@ -288,9 +288,36 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), body: null, linkedIssues: [] }))).toBeUndefined();
   });
 
-  it("is fail-open: undefined when every fetch fails (404), with no CI token → public-token fallback", async () => {
+  it("treats a confirmed-nonexistent linked issue as a violation, not a silent pass (#2136)", async () => {
+    // Every reference 404s with a GENUINE installation token (proven repo access) — CONFIRMED not-found, not a
+    // transient error — a contributor citing a fabricated issue number must not silently satisfy the hard rule
+    // the same way a genuine fetch outage fails open.
     vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
-    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, linkedIssues: [1, 2] }))).toBeUndefined();
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", linkedIssues: [1, 2] }));
+    expect(r?.violated).toBe(true);
+    expect(r?.reason).toMatch(/could not be found/i);
+  });
+
+  it("REGRESSION: does NOT violate when every reference 404s but ciToken is unavailable (falls back to the public token) — a 404 without proven repo access is not confirmed absence", async () => {
+    // GitHub also returns 404 for a real-but-inaccessible private issue, not just a genuinely nonexistent one.
+    // Without a genuine ciToken, this call falls back to env.GITHUB_PUBLIC_TOKEN, which proves nothing about
+    // repo access — closing the PR here would risk punishing a contributor for a real linked issue our token
+    // just can't see.
+    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, linkedIssues: [1, 2] }));
+    expect(r).toBeUndefined();
+  });
+
+  it("still fails open (undefined) when a linked-issue fetch fails transiently (5xx), not confirmed-nonexistent", async () => {
+    vi.stubGlobal("fetch", async () => new Response("server error", { status: 500 }));
+    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", linkedIssues: [1, 2] }))).toBeUndefined();
+  });
+
+  it("fails open when the linked issues are a MIX of confirmed-not-found and a transient fetch error", async () => {
+    // Cannot rule out a real, rule-violating issue behind the transient failure — must not treat this the same
+    // as an all-confirmed-not-found set.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => (input.toString().endsWith("/issues/1") ? new Response("missing", { status: 404 }) : new Response("server error", { status: 500 })));
+    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", linkedIssues: [1, 2] }))).toBeUndefined();
   });
 
   it("fetches with the CI token and runs the deterministic evaluator over the facts", async () => {
@@ -305,7 +332,7 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
   });
 
   it("derives the installation admission key from the ci token + installation id so installation reads attribute to the installation bucket, not 'unknown' (#1951 blocker)", async () => {
-    const spy = vi.spyOn(backfillModule, "fetchLinkedIssueFacts").mockResolvedValue(undefined);
+    const spy = vi.spyOn(backfillModule, "fetchLinkedIssueFacts").mockResolvedValue({ status: "fetch_error" });
     await resolveLinkedIssueHardRule(
       args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", installationId: 143010787, linkedIssues: [7] }),
     );

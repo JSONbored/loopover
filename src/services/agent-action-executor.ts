@@ -1,8 +1,11 @@
 import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, isGlobalAgentFrozen, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
+import { createInstallationToken } from "../github/app";
+import { fetchLiveCiAggregate } from "../github/backfill";
+import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
-import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
@@ -114,12 +117,42 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
       continue;
     }
-    // 6) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
+    // 6) Live CI re-verification for a merge or a heuristic close (#2128): the CI aggregate that drove either
+    //    decision was read seconds-to-tens-of-seconds earlier, in the planning pass, and the freshness guard
+    //    above only re-checks head SHA/state, not CI. GitHub's own merge endpoint enforces branch-protection
+    //    REQUIRED checks server-side, but only as a backstop when a repo actually configures them; a heuristic
+    //    close has no server-side check at all. Re-read live CI right before the mutation so a check that
+    //    flipped in this narrow window is never acted on from stale information. Deterministic closes
+    //    (linked-issue hard-rule, blacklist) are exempt — they are zero-hallucination facts that do not depend
+    //    on CI, and the linked-issue rule already has its own flag-then-verify pass.
+    if (action.actionClass === "merge" || (action.actionClass === "close" && action.closeKind === "heuristic")) {
+      const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
+      const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
+      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, undefined, admissionKey);
+      // The planner itself only ever stages a merge when ciState === "passed" exactly (reviewGood in
+      // agent-actions.ts; "pending" short-circuits to no actions at all upstream) -- the live re-check must
+      // require the SAME exact state, not just "not failed". Otherwise a check that regressed to pending or
+      // became unreadable (unverified) between planning and actuation would still merge, on the assumption
+      // that only an explicit failure invalidates the plan.
+      const staleReason =
+        action.actionClass === "merge"
+          ? liveCi.ciState !== "passed"
+            ? `live CI is no longer passing (now: ${liveCi.ciState})`
+            : null
+          : liveCi.ciState !== "failed"
+            ? `CI state changed since planning (now: ${liveCi.ciState})`
+            : null;
+      if (staleReason) {
+        await audit("denied", `${staleReason} — action not executed`);
+        continue;
+      }
+    }
+    // 7) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
       await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
       continue;
     }
-    // 7) live — perform the real mutation, recording success or the error.
+    // 8) live — perform the real mutation, recording success or the error.
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);
@@ -127,7 +160,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
       // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
       // Best-effort: a failed persist only risks one redundant re-approval, never a wrong disposition.
-      if (action.actionClass === "approve" && ctx.headSha) {
+      if (action.actionClass === "approve" && !action.dismissStaleApproval && ctx.headSha) {
         await markPullRequestApproved(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha).catch(() => undefined);
       }
       // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,
@@ -202,9 +235,23 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
     case "request_changes":
       await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "REQUEST_CHANGES", action.reviewBody ?? "");
       return;
-    case "approve":
-      await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "APPROVE", action.reviewBody ?? "");
+    case "approve": {
+      if (action.dismissStaleApproval) {
+        await dismissLatestBotApproval(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "Gittensory retracted this approval — a newer commit no longer qualifies.");
+        return;
+      }
+      // Pin the approve to the REVIEWED head (#2262), mirroring the merge case's identical pattern immediately
+      // below: for an approval-queue replay this is the commit the maintainer reviewed, not necessarily the
+      // current head, so GitHub's own commit_id targeting keeps a force-push after staging from silently
+      // landing on the new, unreviewed commit. A live sweep plans expectedHeadSha == ctx.headSha, so its
+      // behavior is unchanged; the fallback covers any unpinned plan.
+      const approveSha = action.expectedHeadSha ?? ctx.headSha;
+      /* v8 ignore next -- the step-5 freshness guard above already denies the action when
+       * action.expectedHeadSha ?? ctx.headSha is falsy, so approveSha (the same expression) is always a
+       * truthy string here; the ?? undefined only satisfies createPullRequestReview's string|undefined type. */
+      await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "APPROVE", action.reviewBody ?? "", approveSha ?? undefined);
       return;
+    }
     case "merge": {
       // Pin the merge to the REVIEWED head (action.expectedHeadSha) when present — for an approval-queue replay
       // this is the commit the maintainer reviewed, not necessarily the current head, so a force-push after
@@ -218,9 +265,23 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       if (action.closeComment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment);
       await closePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber);
       return;
-    case "update_branch":
-      await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.expectedHeadSha);
+    case "update_branch": {
+      // update_branch does NOT need the accept-flow-level "unpinned → deny" gate that #2377/#2422 added for
+      // approve/merge: it only merges the current BASE into the head (never contributor-controlled content), so
+      // it cannot itself ratify unreviewed code the way an approval or a merge does -- the worst case is a
+      // premature rebase that fires a fresh synchronize and gets re-reviewed on the next pass (#2424). It's also
+      // already covered by the generic guards that run before ANY action class reaches this switch: step 5's
+      // freshness check (`expectedHeadSha ?? ctx.headSha`) denies on a moved head, and the approval-queue
+      // accept-flow's supersede check (agent-approval-queue.ts) is actionClass-agnostic. The `?? ctx.headSha`
+      // fallback below is pure parity/defense-in-depth for the tiny window between that freshness read and this
+      // call, matching the same pattern used by approve/merge immediately above.
+      const updateSha = action.expectedHeadSha ?? ctx.headSha;
+      /* v8 ignore next -- the step-5 freshness guard above already denies the action when
+       * action.expectedHeadSha ?? ctx.headSha is falsy, so updateSha (the same expression) is always a
+       * truthy string here; the ?? undefined only satisfies updatePullRequestBranch's string|undefined type. */
+      await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, updateSha ?? undefined);
       return;
+    }
   }
 }
 
@@ -234,9 +295,12 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
+    ...(action.dismissStaleApproval !== undefined ? { dismissStaleApproval: action.dismissStaleApproval } : {}),
     // Round-trip closeKind so a staged close's kind survives to accept-time — without it, the close-precision
     // breaker's isHeuristicClose check (which matches on closeKind === "heuristic") could never fire for any
-    // staged close, silently defeating the breaker for the entire approval-queue accept path (#2127).
+    // staged close, silently defeating the breaker for the entire approval-queue accept path (#2127), and the
+    // actuation-time live-CI re-check above (#2364) — which only applies to a heuristic close — would be
+    // silently skipped for a lost discriminator.
     ...(action.closeKind !== undefined ? { closeKind: action.closeKind } : {}),
   };
 }

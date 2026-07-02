@@ -56,6 +56,29 @@ describe("resolveConvergedFeature — env kill-switch → per-repo override → 
   });
 });
 
+describe("resolveConvergedFeature — safety is force-on-only, never force-off (#2269)", () => {
+  it("ignores a repo override that tries to force safety OFF, falling through to the allowlist default", () => {
+    // Operator enabled safety globally AND allowlisted this repo — a repo-controlled override must not defeat it.
+    const allowlisted = env({ GITTENSORY_REVIEW_SAFETY: "true", GITTENSORY_REVIEW_REPOS: REPO });
+    expect(resolveConvergedFeature(allowlisted, manifestWith({ safety: false }), "safety", REPO)).toBe(true);
+
+    // Not allowlisted: the override is still ignored (treated as "no opinion"), so the allowlist default (off) applies.
+    // This is off for the same reason a bare `manifestWith({})` would be off here — not because the override "worked".
+    const notAllowlisted = env({ GITTENSORY_REVIEW_SAFETY: "true", GITTENSORY_REVIEW_REPOS: "other/repo" });
+    expect(resolveConvergedFeature(notAllowlisted, manifestWith({ safety: false }), "safety", REPO)).toBe(false);
+  });
+
+  it("still honors a repo override that forces safety ON, even when the repo is not allowlisted", () => {
+    const e = env({ GITTENSORY_REVIEW_SAFETY: "true", GITTENSORY_REVIEW_REPOS: "other/repo" });
+    expect(resolveConvergedFeature(e, manifestWith({ safety: true }), "safety", REPO)).toBe(true);
+  });
+
+  it("still respects the master kill-switch — a true override cannot turn safety on when the global flag is off", () => {
+    const e = env({ GITTENSORY_REVIEW_REPOS: REPO }); // GITTENSORY_REVIEW_SAFETY unset
+    expect(resolveConvergedFeature(e, manifestWith({ safety: true }), "safety", REPO)).toBe(false);
+  });
+});
+
 describe("convergedFeatureActive — async (loads the cached manifest)", () => {
   it("short-circuits to false WITHOUT loading the manifest when the env flag is off", async () => {
     // DB-less env: if it tried to load the manifest it would throw; returning false proves the short-circuit.
@@ -72,5 +95,11 @@ describe("convergedFeatureActive — async (loads the cached manifest)", () => {
   it("falls back to the allowlist default when no manifest is published", async () => {
     const e = createTestEnv({ GITTENSORY_REVIEW_RAG: "true", GITTENSORY_REVIEW_REPOS: REPO });
     expect(await convergedFeatureActive(e, REPO, "rag")).toBe(true);
+  });
+
+  it("applies the safety force-on-only exception through the async DB-backed path too (#2269)", async () => {
+    const e = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true", GITTENSORY_REVIEW_REPOS: REPO });
+    await upsertRepoFocusManifest(e, REPO, { features: { safety: false } });
+    expect(await convergedFeatureActive(e, REPO, "safety")).toBe(true); // override ignored, allowlist wins
   });
 });

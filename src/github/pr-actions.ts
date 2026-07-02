@@ -5,6 +5,11 @@ import type { AutoMergeMethod } from "../types";
 
 const ISSUE_EVENTS_PAGE_SIZE = 100;
 const ISSUE_EVENTS_RECENT_PAGE_LIMIT = 10;
+// Reviews are returned oldest-first with no sort override, so finding the LATEST bot approval means walking
+// every page rather than stopping at the first — a single per_page:100 fetch would only see the bot's
+// earliest reviews on a PR with a long review history and could dismiss (or miss) the wrong one.
+const REVIEW_PAGE_SIZE = 100;
+const REVIEW_PAGE_LIMIT = 10;
 
 // The GitHub write primitives the maintainer auto-maintain layer (#778) uses to act on a PR's STATE — never
 // its source. Thin wrappers over the installation-scoped REST API, mirroring labels.ts / comments.ts. Each
@@ -19,7 +24,10 @@ function splitRepo(repoFullName: string): { owner: string; repo: string } {
 
 export type PullRequestReviewEvent = "REQUEST_CHANGES" | "APPROVE" | "COMMENT";
 
-/** Post a pull-request review (request-changes / approve / comment). `body` is required for REQUEST_CHANGES. */
+/** Post a pull-request review (request-changes / approve / comment). `body` is required for REQUEST_CHANGES.
+ *  `commitId`, when given, pins the review to that exact commit (GitHub's `commit_id`) instead of defaulting to
+ *  the PR's CURRENT head — so a review staged/reviewed against one commit can never silently land on a
+ *  force-pushed, unreviewed later commit (#2262). */
 export async function createPullRequestReview(
   env: Env,
   installationId: number,
@@ -27,6 +35,7 @@ export async function createPullRequestReview(
   pullNumber: number,
   event: PullRequestReviewEvent,
   body: string,
+  commitId?: string,
 ): Promise<{ id: number }> {
   const { owner, repo } = splitRepo(repoFullName);
   return withInstallationTokenRetry(env, installationId, async (token) => {
@@ -37,6 +46,7 @@ export async function createPullRequestReview(
       pull_number: pullNumber,
       event,
       body,
+      ...(commitId ? { commit_id: commitId } : {}),
     });
     return { id: (response.data as { id: number }).id };
   });
@@ -92,6 +102,44 @@ export async function mergePullRequest(
     const data = response.data as { merged?: boolean; sha?: string };
     return { merged: data.merged ?? true, sha: data.sha ?? null };
   });
+}
+
+/** Dismiss the bot's own most recent APPROVE review (#2254). GitHub's `reviewDecision` is derived from the
+ *  LATEST review per reviewer, so a stale bot approval left in place after a later commit no longer qualifies
+ *  can still satisfy a "require approving reviews" branch-protection rule and let a human merge un-reviewed
+ *  code directly on GitHub, bypassing this gate entirely. Best-effort: any failure (no bot review found, the
+ *  review already dismissed, a transient API error) returns `dismissed: false` rather than throwing — this is
+ *  a cleanup action, not the primary mutation, and must never crash the maintenance pass it runs alongside. */
+export async function dismissLatestBotApproval(env: Env, installationId: number, repoFullName: string, pullNumber: number, message: string): Promise<{ dismissed: boolean }> {
+  try {
+    const { owner, repo } = splitRepo(repoFullName);
+    const token = await createInstallationToken(env, installationId);
+    const octokit = makeInstallationOctokit(env, token, "live", githubRateLimitAdmissionKeyForInstallation(installationId));
+    const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
+    // Reviews are returned oldest-first; the LAST matching entry across ALL pages is the bot's most recent
+    // APPROVE. Stopping at page 1 would find (or miss) the wrong review on a PR with >100 total reviews.
+    let latestApprovalId: number | undefined;
+    for (let page = 1; page <= REVIEW_PAGE_LIMIT; page += 1) {
+      const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner, repo, pull_number: pullNumber, per_page: REVIEW_PAGE_SIZE, page });
+      const batch = response.data as Array<{ id: number; state?: string; user?: { login?: string | null } | null }>;
+      for (const review of batch) {
+        if (review.user?.login === botLogin && review.state === "APPROVED") latestApprovalId = review.id;
+      }
+      if (batch.length < REVIEW_PAGE_SIZE) break;
+    }
+    if (latestApprovalId === undefined) return { dismissed: false };
+    await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals", {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      review_id: latestApprovalId,
+      message,
+      event: "DISMISS",
+    });
+    return { dismissed: true };
+  } catch {
+    return { dismissed: false };
+  }
 }
 
 /** Rebase a PR onto its base via GitHub's update-branch (merges the current base into the PR head). Keeps a
@@ -153,11 +201,34 @@ export async function closePullRequest(env: Env, installationId: number, repoFul
  *  the inspected window". The reopen guard uses this to fail CLOSED rather than allow a window-evasion bypass. */
 export type LastCloserResult = { login: string | null; coveredAllPages: boolean };
 
+/** Event-agnostic alias for {@link LastCloserResult} — the shape is identical for any single timeline-event-type
+ *  lookup (e.g. "closed" or "reopened"); kept as an alias rather than a rename so existing importers of
+ *  `LastCloserResult` are unaffected. */
+export type LastTimelineActorResult = LastCloserResult;
+
 /** Reopen-prevention (#one-shot-reopen): the login of whoever LAST closed this PR (most recent `closed` event in
  *  the issue-events timeline), or null if none / on error. Lets the reopen handler distinguish a maintainer/bot
  *  close (one-shot — a contributor may not reopen) from a contributor self-close (which they MAY reopen).
  *  `coveredAllPages` reports whether the bounded scan inspected the entire timeline (#audit-2.4). */
 export async function getLastCloserLogin(env: Env, installationId: number, repoFullName: string, issueNumber: number): Promise<LastCloserResult> {
+  return getLastActorForEvent(env, installationId, repoFullName, issueNumber, "closed");
+}
+
+/** Reopen-race guard (#2369): the login of whoever most recently REOPENED this PR (most recent `reopened` event in
+ *  the issue-events timeline), or null if none / on error. Lets `maybeRecloseDisallowedReopen` re-verify — right
+ *  before it re-closes a disallowed reopen — that the reopen it is reacting to is still the CURRENT reason the PR
+ *  is open, rather than blindly undoing a DIFFERENT, later, legitimately-authorized reopen (e.g. a maintainer
+ *  reopening again after the original disallowed reopen). Same pagination/fail-conservative semantics as
+ *  {@link getLastCloserLogin}. */
+export async function getLastReopenerLogin(env: Env, installationId: number, repoFullName: string, issueNumber: number): Promise<LastTimelineActorResult> {
+  return getLastActorForEvent(env, installationId, repoFullName, issueNumber, "reopened");
+}
+
+/** Shared timeline-scan engine behind {@link getLastCloserLogin} and {@link getLastReopenerLogin}: finds the actor
+ *  of the most recent issue-event matching `eventType`, scanning the newest bounded page window rather than the
+ *  oldest prefix (see the pagination comments below — identical for either event type). Factored out so the two
+ *  callers do not duplicate the pagination/fail-conservative logic. */
+async function getLastActorForEvent(env: Env, installationId: number, repoFullName: string, issueNumber: number, eventType: string): Promise<LastTimelineActorResult> {
   try {
     const { owner, repo } = splitRepo(repoFullName);
     return await withInstallationTokenRetry(env, installationId, async (token) => {
@@ -170,37 +241,37 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
       if (lastPage === null) {
         // No rel="last" in the Link header. A genuine single page has no rel="next" either — return page 1 directly.
         // But GitHub can paginate WITHOUT emitting rel="last" (only rel="next"); then trusting page 1 alone would let
-        // a later maintainer/bot close hide behind the un-enumerated tail and the reopen guard would fail OPEN. So
-        // follow rel="next" forward, tracking the latest close across pages (events are oldest-first → a later page's
-        // close supersedes), bounded by the same page budget. coveredAllPages holds ONLY if we reached the tail within
-        // budget; otherwise report not-covered so the caller fails closed. (#audit-rel-last)
+        // a later maintainer/bot event hide behind the un-enumerated tail and the reopen guard would fail OPEN. So
+        // follow rel="next" forward, tracking the latest matching event across pages (events are oldest-first → a
+        // later page's event supersedes), bounded by the same page budget. coveredAllPages holds ONLY if we reached
+        // the tail within budget; otherwise report not-covered so the caller fails closed. (#audit-rel-last)
         if (!issueEventsHasNextPage(firstResponse.headers.link)) {
-          return { login: latestCloserInPage(firstEvents) ?? null, coveredAllPages: true };
+          return { login: latestActorInPage(firstEvents, eventType) ?? null, coveredAllPages: true };
         }
-        let latestCloser = latestCloserInPage(firstEvents);
+        let latestActor = latestActorInPage(firstEvents, eventType);
         let hasNext = true;
         for (let page = 2; hasNext && page <= ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1; page += 1) {
           const response = await requestPage(page);
-          const closer = latestCloserInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>);
-          if (closer !== undefined) latestCloser = closer;
+          const actor = latestActorInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>, eventType);
+          if (actor !== undefined) latestActor = actor;
           hasNext = issueEventsHasNextPage(response.headers.link);
         }
         const coveredAllPages = !hasNext;
-        return { login: coveredAllPages ? (latestCloser ?? null) : null, coveredAllPages };
+        return { login: coveredAllPages ? (latestActor ?? null) : null, coveredAllPages };
       }
-      if (lastPage <= 1) return { login: latestCloserInPage(firstEvents) ?? null, coveredAllPages: true };
+      if (lastPage <= 1) return { login: latestActorInPage(firstEvents, eventType) ?? null, coveredAllPages: true };
 
       // GitHub returns issue-events oldest-first. Use the Link header to inspect the newest bounded window instead
-      // of the oldest prefix, so a long self-generated timeline cannot hide a later maintainer/bot close.
+      // of the oldest prefix, so a long self-generated timeline cannot hide a later maintainer/bot event.
       const firstPageToRead = Math.max(2, lastPage - ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1);
       // We inspected the entire timeline only when the window reached page 2 (page 1 is read separately above).
       const coveredAllPages = firstPageToRead === 2;
       for (let page = lastPage; page >= firstPageToRead; page -= 1) {
         const response = await requestPage(page);
-        const closer = latestCloserInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>);
-        if (closer !== undefined) return { login: closer, coveredAllPages };
+        const actor = latestActorInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>, eventType);
+        if (actor !== undefined) return { login: actor, coveredAllPages };
       }
-      return { login: coveredAllPages ? (latestCloserInPage(firstEvents) ?? null) : null, coveredAllPages };
+      return { login: coveredAllPages ? (latestActorInPage(firstEvents, eventType) ?? null) : null, coveredAllPages };
     });
   } catch {
     // On error we cannot prove we read the whole timeline — report not-covered so the caller decides conservatively.
@@ -208,10 +279,10 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
   }
 }
 
-function latestCloserInPage(events: Array<{ event?: string; actor?: { login?: string | null } | null }>): string | null | undefined {
+function latestActorInPage(events: Array<{ event?: string; actor?: { login?: string | null } | null }>, eventType: string): string | null | undefined {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const entry = events[i];
-    if (entry?.event === "closed") return entry.actor?.login ?? null;
+    if (entry?.event === eventType) return entry.actor?.login ?? null;
   }
   return undefined;
 }

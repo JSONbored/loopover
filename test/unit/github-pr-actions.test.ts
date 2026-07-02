@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, getLastCloserLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, dismissLatestBotApproval, getLastCloserLogin, getLastReopenerLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
 
@@ -29,7 +29,22 @@ describe("GitHub PR action primitives (#778)", () => {
     const result = await createPullRequestReview(envWithKey(), 123, "owner/repo", 7, "REQUEST_CHANGES", "please fix");
     expect(result).toEqual({ id: 99 });
     expect(calls[0]).toMatchObject({ method: "POST", body: { event: "REQUEST_CHANGES", body: "please fix" } });
+    expect(calls[0]?.body).not.toHaveProperty("commit_id"); // no commitId passed → no commit_id sent
     expect(calls[0]?.url).toMatch(/\/repos\/owner\/repo\/pulls\/7\/reviews$/);
+  });
+
+  it("pins an approve review to the reviewed commit via commit_id when provided (#2262)", async () => {
+    const calls: Array<{ method: string; url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      calls.push({ method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (url.endsWith("/pulls/7/reviews")) return Response.json({ id: 100 });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await createPullRequestReview(envWithKey(), 123, "owner/repo", 7, "APPROVE", "lgtm", "reviewed-sha");
+    expect(result).toEqual({ id: 100 });
+    expect(calls[0]).toMatchObject({ method: "POST", body: { event: "APPROVE", body: "lgtm", commit_id: "reviewed-sha" } });
   });
 
   it("posts a quiet COMMENT review with inline comments anchored to the head SHA (#inline-comments)", async () => {
@@ -299,6 +314,177 @@ describe("GitHub PR action primitives (#778)", () => {
       return new Response("unexpected", { status: 500 });
     });
     await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 24)).resolves.toEqual({ login: null, coveredAllPages: true });
+  });
+
+  it("getLastReopenerLogin: walks paginated issue events to find the true most recent reopener (#2369)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      calls.push(url);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/117/events")) {
+        const page = new URL(url).searchParams.get("page");
+        if (page === "1") {
+          return Response.json([
+            ...Array.from({ length: 99 }, (_, index) => ({ event: "labeled", actor: { login: `labeler-${index}` } })),
+            { event: "reopened", actor: { login: "contributor" } },
+          ], { headers: { link: '<https://api.github.test/issues/117/events?per_page=100&page=2>; rel="last"' } });
+        }
+        if (page === "2") return Response.json([{ event: "reopened", actor: { login: "maintainer" } }]);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 117)).resolves.toEqual({ login: "maintainer", coveredAllPages: true });
+    expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=1"))).toBe(true);
+    expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=2"))).toBe(true);
+  });
+
+  it("getLastReopenerLogin: a single page with an EXPLICIT rel=\"last\" pointing at page 1 is read directly, no forward scan (#2369)", async () => {
+    // Distinct from the "no Link header at all" case above: here GitHub DOES emit rel="last", it just already
+    // points at page 1 (a genuinely single-page timeline), exercising the lastPage<=1 branch rather than the
+    // lastPage===null branch.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/121/events")) {
+        return Response.json([{ event: "reopened", actor: { login: "contributor" } }], {
+          headers: { link: '<https://api.github.test/issues/121/events?per_page=100&page=1>; rel="last"' },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 121)).resolves.toEqual({ login: "contributor", coveredAllPages: true });
+  });
+
+  it("getLastReopenerLogin: a single (lastPage<=1) page with no matching event falls back to null (#2369)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/122/events")) {
+        return Response.json([{ event: "labeled", actor: { login: "someone" } }], {
+          headers: { link: '<https://api.github.test/issues/122/events?per_page=100&page=1>; rel="last"' },
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 122)).resolves.toEqual({ login: null, coveredAllPages: true });
+  });
+
+  it("getLastReopenerLogin: returns null when the events API throws (catch path, #2369)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      throw new Error("network failure");
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 118)).resolves.toEqual({ login: null, coveredAllPages: false });
+  });
+
+  it("getLastReopenerLogin: reads the newest bounded event pages instead of the oldest prefix (#2369)", async () => {
+    const fetchedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/119/events")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        fetchedPages.push(page);
+        if (page === 1) {
+          return Response.json([{ event: "reopened", actor: { login: "stale-contributor" } }], {
+            headers: { link: '<https://api.github.test/issues/119/events?per_page=100&page=12>; rel="last"' },
+          });
+        }
+        const events = Array.from({ length: 100 }, (_, i) =>
+          page === 11 && i === 40 ? { event: "reopened", actor: { login: "maintainer" } } : { event: "labeled" },
+        );
+        return Response.json(events);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 119)).resolves.toEqual({ login: "maintainer", coveredAllPages: false });
+    expect(fetchedPages).toEqual([1, 12, 11]);
+    expect(fetchedPages).not.toContain(2);
+  });
+
+  it("getLastReopenerLogin: records null when a reopened event has a null actor (#2369)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      if (input.toString().includes("/issues/120/events")) return Response.json([{ event: "reopened", actor: null }]);
+      return new Response("not found", { status: 404 });
+    });
+    await expect(getLastReopenerLogin(envWithKey(), 123, "owner/repo", 120)).resolves.toEqual({ login: null, coveredAllPages: true });
+  });
+
+  it("dismisses the bot's own LATEST approve review, ignoring other reviewers and earlier bot reviews (#2254)", async () => {
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/pulls/7/reviews") && !url.includes("/dismissals") && method === "GET") {
+        return Response.json([
+          { id: 1, state: "COMMENTED", user: { login: "human-reviewer" } },
+          { id: 2, state: "APPROVED", user: { login: "gittensory[bot]" } }, // an EARLIER bot approve
+          { id: 3, state: "CHANGES_REQUESTED", user: { login: "gittensory[bot]" } },
+          { id: 4, state: "APPROVED", user: { login: "gittensory[bot]" } }, // the LATEST bot approve — this one
+        ]);
+      }
+      if (url.includes("/pulls/7/reviews/4/dismissals") && method === "PUT") {
+        calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+        return Response.json({ id: 4, state: "DISMISSED" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await dismissLatestBotApproval(envWithKey(), 123, "owner/repo", 7, "stale approval retracted");
+    expect(result).toEqual({ dismissed: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toMatchObject({ message: "stale approval retracted", event: "DISMISS" });
+  });
+
+  it("is a no-op when the bot never approved this PR", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/pulls/8/reviews")) return Response.json([{ id: 1, state: "APPROVED", user: { login: "human-reviewer" } }]);
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(dismissLatestBotApproval(envWithKey(), 123, "owner/repo", 8, "retract")).resolves.toEqual({ dismissed: false });
+  });
+
+  it("finds the bot's LATEST approve on a second page, not an earlier one from page 1 (#2361)", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    // Page 1 is a full 100-row page (forces pagination to continue) whose only bot review is an EARLIER
+    // approve; the actual latest bot approve is review id 999 on page 2 — a single-page fetch would wrongly
+    // dismiss the page-1 review (or miss the real latest one) instead.
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, state: "COMMENTED", user: { login: "human-reviewer" } }));
+    page1[0] = { id: 1, state: "APPROVED", user: { login: "gittensory[bot]" } };
+    const page2 = [
+      { id: 998, state: "CHANGES_REQUESTED", user: { login: "gittensory[bot]" } },
+      { id: 999, state: "APPROVED", user: { login: "gittensory[bot]" } },
+    ];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/pulls/10/reviews") && !url.includes("/dismissals") && method === "GET") {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        return Response.json(page === 1 ? page1 : page === 2 ? page2 : []);
+      }
+      if (url.includes("/pulls/10/reviews/999/dismissals") && method === "PUT") {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+        return Response.json({ id: 999, state: "DISMISSED" });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await dismissLatestBotApproval(envWithKey(), 123, "owner/repo", 10, "stale approval retracted");
+    expect(result).toEqual({ dismissed: true });
+    expect(calls).toHaveLength(1); // page 1's review 1 was never dismissed
+  });
+
+  it("is best-effort — an API error returns dismissed:false instead of throwing", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      throw new Error("network failure");
+    });
+    await expect(dismissLatestBotApproval(envWithKey(), 123, "owner/repo", 9, "retract")).resolves.toEqual({ dismissed: false });
   });
 
   it("updates branch without an expected head sha (omits expected_head_sha — FALSE branch of the spread ternary)", async () => {

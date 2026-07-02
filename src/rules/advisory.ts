@@ -50,13 +50,15 @@ export type GateCheckPolicy = {
    *  the PR author also filed the linked issue — becomes a hard blocker. Defaults to `advisory` — the
    *  finding is surfaced but never blocks unless the maintainer opts in. */
   selfAuthoredLinkedIssueGateMode?: GateRuleMode | undefined;
-  /** First-time-contributor grace (#552). When true AND the author is a genuine newcomer (0 merged PRs in
-   *  this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs), a would-be BLOCK is softened to a
-   *  neutral/advisory gate. `undefined`/false = the grace rule does not apply and blockers gate normally. */
+  /** First-time-contributor grace (#552). RESERVED / currently INERT (#2266): threaded through from config,
+   *  but evaluateGateCheckCore never reads it (see the removal note below) — a would-be blocker gates a
+   *  genuine newcomer exactly like a repeat contributor. Kept for potential future use. */
   firstTimeContributorGrace?: boolean | undefined;
-  /** The PR author's merged PR count in THIS repo (newcomer = 0). Used only by the grace rule. */
+  /** The PR author's merged PR count in THIS repo. RESERVED / currently INERT (#2266) alongside
+   *  firstTimeContributorGrace above — populated but never read by the gate evaluator today. */
   authorMergedPrCount?: number | undefined;
-  /** The PR author's closed-unmerged PR count in THIS repo (repeat offender = >= 3). Used only by grace. */
+  /** The PR author's closed-unmerged PR count in THIS repo. RESERVED / currently INERT (#2266) alongside
+   *  firstTimeContributorGrace above — populated but never read by the gate evaluator today. */
   authorClosedUnmergedPrCount?: number | undefined;
   /** The PR author's confirmed-Gittensor status. Carried for context/telemetry only — it no longer
    *  changes the gate verdict (every author is gated identically; a configured blocker fails the gate

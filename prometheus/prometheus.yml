@@ -33,6 +33,9 @@ scrape_configs:
   # Backup freshness from the read-only backup-exporter sidecar. The metrics exist only when the backup
   # profile is active, which keeps backup alerts opt-in with the backup feature.
   - job_name: gittensory-backup
+    # The exporter is a tiny BusyBox httpd wrapper around Prometheus text output. Prometheus v3 rejects
+    # blank Content-Type responses unless the scrape protocol is explicit.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
       - targets: ["backup-exporter:9101"]
     scrape_interval: 60s

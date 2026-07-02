@@ -50,12 +50,19 @@ const D1_FORBIDDEN = [
   [/(?<=(?:^|;)\s*)(?:begin|commit|rollback|savepoint|release)\b/gi, "explicit transaction control — wrangler wraps each migration in its own transaction"],
 ];
 
-// Blank out comments and string literals (preserving newlines for accurate line numbers) so a forbidden
-// keyword inside a comment or a quoted VALUE can never trip a false positive. Quoted IDENTIFIERS (`"..."`,
-// `` `...` ``, `[...]`) are different: that text names a real schema/table/column, so blanking it would hide
-// a genuine forbidden reference — `"temp".scratch` is exactly as much a temp-schema object as unquoted
-// `temp.scratch` — from D1_FORBIDDEN below. Those three delimiter forms strip only the quote characters
-// themselves and keep the identifier text intact for the scan.
+// Blank out comments and quoted VALUES (preserving newlines for accurate line numbers) so a forbidden
+// keyword inside a comment or a quoted value can never trip a false positive. A quoted token used as a
+// schema-qualifying IDENTIFIER is different: `"temp".scratch`, `` `temp`.scratch ``, `[temp].scratch`, and
+// even `'temp'.scratch` (SQLite's documented single-quote-as-identifier fallback) are exactly as much a
+// temp-schema object as unquoted `temp.scratch` and must not be hidden from D1_FORBIDDEN below. But the
+// temp-schema pattern is deliberately UNANCHORED (it must match anywhere a statement can start), so
+// preserving a quoted token's content unconditionally — merely because ITS quote style is capable of
+// being an identifier — would leak an ordinary column/table NAME's text into that scan too, e.g. a column
+// literally named "create temp note" is not a temp-schema reference. An identifier is only ever
+// schema-qualifying something when its closing quote is immediately followed (past optional whitespace)
+// by a `.`; an ordinary name or value never is. Peeking past the closing quote for one, uniformly across
+// all four quoting styles, distinguishes "used as a schema qualifier" from "used as a name or value"
+// without a real SQL parser.
 function cleanSql(sql) {
   let out = "";
   for (let i = 0; i < sql.length; ) {
@@ -83,20 +90,14 @@ function cleanSql(sql) {
       }
       continue;
     }
-    if (c === "'") {
-      // SQLite's documented "single-quote misfeature": a single-quoted token used where an identifier is
-      // expected (i.e. immediately schema-qualifying a `.`) is treated as an IDENTIFIER, not a string
-      // value — `'temp'.scratch` genuinely creates a temp-schema object exactly like `"temp".scratch`
-      // does. An ordinary string VALUE is never immediately followed (past optional whitespace) by a bare
-      // `.` in valid SQL, so peeking past the closing quote for one distinguishes the two without a real
-      // SQL parser, while still blanking the overwhelmingly common case (a value) so forbidden-looking
-      // text inside it can't trip a false positive on the unanchored temp-schema pattern below.
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
+      const close = c === "[" ? "]" : c;
       let j = i + 1;
       let content = "";
       while (j < sql.length) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            content += "'";
+        if (sql[j] === close) {
+          if (close !== "]" && sql[j + 1] === close) {
+            content += close;
             j += 2;
             continue;
           }
@@ -107,31 +108,11 @@ function cleanSql(sql) {
       }
       let k = j + 1;
       while (k < sql.length && /\s/.test(sql[k])) k += 1;
-      const usedAsIdentifier = k < sql.length && sql[k] === ".";
+      const usedAsSchemaQualifier = k < sql.length && sql[k] === ".";
       out += " ";
-      for (const ch of content) out += usedAsIdentifier ? ch : ch === "\n" ? "\n" : " ";
+      for (const ch of content) out += usedAsSchemaQualifier ? ch : ch === "\n" ? "\n" : " ";
       if (j < sql.length) out += " ";
       i = j < sql.length ? j + 1 : j;
-      continue;
-    }
-    if (c === '"' || c === "`" || c === "[") {
-      const close = c === "[" ? "]" : c;
-      out += " ";
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === close) {
-          if (close !== "]" && sql[i + 1] === close) {
-            out += close + close;
-            i += 2;
-            continue;
-          }
-          out += " ";
-          i += 1;
-          break;
-        }
-        out += sql[i];
-        i += 1;
-      }
       continue;
     }
     out += c;

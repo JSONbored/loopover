@@ -113,4 +113,18 @@ describe("check-migrations script", () => {
     expect(r.status).toBe(0);
     expect(r.out).toContain("1 migrations OK");
   });
+
+  it.each([
+    ["double-quoted column name", 'CREATE TABLE t ("create temp note" TEXT);'],
+    ["backtick-quoted column name", "CREATE TABLE t (`create temp note` TEXT);"],
+    ["bracket-quoted column name", "CREATE TABLE t ([create temp note] TEXT);"],
+  ])(
+    "does not flag a %s that merely spells out the forbidden phrase, since the temp-schema pattern is unanchored and only a schema-qualifying dot should expose quoted identifier text to it",
+    (_name, sql) => {
+      const r = runCheck({ "0001_ok.sql": `${sql}\n` });
+
+      expect(r.status).toBe(0);
+      expect(r.out).toContain("1 migrations OK");
+    },
+  );
 });

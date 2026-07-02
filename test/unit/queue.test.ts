@@ -13398,6 +13398,47 @@ describe("queue processors", () => {
       },
     );
 
+    it("pull_request synchronize action ALSO invalidates the durable review cache (branch protection can dismiss approvals on a new push, #2537)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 204,
+        status: "complete",
+        prMergeableState: "clean",
+        prState: "open",
+        prStateFetchedAt: new Date().toISOString(),
+        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/204/files")) return Response.json([]);
+        if (url.includes("/pulls/204/reviews")) return Response.json([]);
+        return Response.json({});
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "invalidate-reviews-on-synchronize",
+        eventName: "pull_request",
+        payload: {
+          action: "synchronize",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 204, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "a204" }, labels: [], body: "" },
+        },
+      });
+
+      // Same reasoning as the pull_request_review case above: a subsequent refreshPullRequestDetails MAY
+      // re-stamp reviewsSyncedAt within this same pass — assert the invalidating write happened by checking
+      // the stale seeded value is gone, not that the field is null.
+      const state = await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 204);
+      expect(state?.reviewsSyncedAt).not.toBe("2026-05-20T00:00:00.000Z");
+    });
+
     it("a pull_request_review_comment event (sibling of pull_request_review) does NOT invalidate the durable review cache", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });

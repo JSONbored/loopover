@@ -4251,6 +4251,15 @@ async function processGitHubWebhook(
       // to avoid spurious cache churn / extra writes on high-frequency low-signal actions.
       if (eventName === "pull_request" && (payload.action === "synchronize" || payload.action === "closed" || payload.action === "reopened")) {
         await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
+        if (payload.action === "synchronize") {
+          // A new push can dismiss existing approvals server-side when the repo's branch protection has
+          // "dismiss stale pull request approvals" enabled -- GitHub recomputes review state on synchronize
+          // the same way it recomputes mergeable_state, but the durable review cache (reviewsSyncedAt,
+          // invalidated below only for actual pull_request_review actions) has no independent signal for
+          // this. Treat every synchronize as a review-cache miss too rather than trusting stale approvals
+          // indefinitely (#2537).
+          await invalidatePrReviewsCache(env, repoFullName, pr.number).catch(() => undefined);
+        }
       }
       // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
       // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
@@ -4349,11 +4358,11 @@ async function processGitHubWebhook(
         installationId &&
         shouldProcessPullRequestPublicSurface(eventName, payload.action)
       ) {
-        // #2537: reviews only actually change on a pull_request_review webhook (submitted/edited/dismissed) — not
-        // on every sweep tick / unrelated pull_request action — so invalidate the durable review cache HERE,
-        // before the refreshPullRequestDetails call below reads it, rather than on head-SHA change (reviews are
-        // independent of head). shouldProcessPullRequestPublicSurface already gates pull_request_review to
-        // exactly these 3 actions.
+        // #2537: reviews change on a pull_request_review webhook (submitted/edited/dismissed) -- not on every
+        // sweep tick / unrelated pull_request action -- so invalidate the durable review cache HERE, before the
+        // refreshPullRequestDetails call below reads it. (synchronize is handled separately above, since GitHub
+        // can also dismiss approvals server-side on a new push.) shouldProcessPullRequestPublicSurface already
+        // gates pull_request_review to exactly these 3 actions.
         if (eventName === "pull_request_review") {
           await invalidatePrReviewsCache(env, repoFullName, pr.number).catch(() => undefined);
         }

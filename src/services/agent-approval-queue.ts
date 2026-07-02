@@ -112,6 +112,46 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     }
   }
 
+  // Re-validate a staged CLOSE tagged "linked-issue-hard-rule" against the CURRENT hard-rule state (flagged by
+  // the gate's own review of #2452). Mirrors the blacklist re-check above: the head-SHA pin only catches a
+  // force-push, not a maintainer relabeling/reassigning the linked issue (or editing hard-rule config) while the
+  // close sits waiting in the queue -- head SHA unchanged, so the pin doesn't catch it. Unlike the merge re-check
+  // below (which supersedes a merge when the rule BECOMES violated), this close was staged BECAUSE the rule WAS
+  // violated, so this supersedes it when the rule is NO LONGER violated -- the close's own justification
+  // evaporated. No owner/automation-bot re-check needed: a row only reaches closeKind "linked-issue-hard-rule" in
+  // the first place because the planner already confirmed close-eligibility before staging it (#pendingActionToPlanned).
+  if (pending.actionClass === "close" && pending.params.closeKind === "linked-issue-hard-rule" && pr) {
+    const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
+    const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, pending.repoFullName);
+    // Best-effort mint, same fail-open contract as the merge re-check below (#2126/#2132): a failed mint or a
+    // resolution that can't gather issue facts falls back to resolveLinkedIssueHardRule's own "not violated"
+    // default, which this check then treats as "the close is no longer justified" -- the SAFE direction for an
+    // irreversible close (superseding it re-stages from a fresh sweep instead of risking a wrongful auto-close).
+    const ciToken = await createInstallationToken(env, pending.installationId).catch(() => undefined);
+    const linkedIssueHardRule = await resolveLinkedIssueHardRule({
+      env,
+      repoFullName: pending.repoFullName,
+      repoOwner,
+      config: linkedIssueRulesConfig,
+      body: pr.body,
+      linkedIssues: pr.linkedIssues,
+      ciToken,
+      installationId: pending.installationId,
+    });
+    if (!linkedIssueHardRule?.violated) {
+      await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
+      await recordAuditEvent(env, {
+        eventType: "agent.pending_action.superseded",
+        actor: input.decidedBy,
+        targetKey,
+        outcome: "denied",
+        detail: "superseded linked-issue hard-rule close: the linked issue is no longer ineligible",
+        metadata: baseMetadata,
+      });
+      return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "linked_issue_no_longer_violated" };
+    }
+  }
+
   // Re-derive live justification for a staged MERGE at accept time. auto_with_approval rows have no expiry, so
   // CI can flip red, the base can go dirty, or a reviewer can request changes while the row just sits waiting for
   // a maintainer — none of which move the head SHA, so the check above alone would not catch it. Best-effort: a

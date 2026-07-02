@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { GLOBAL_CONFIG_CANDIDATES, localConfigCandidates, makeLocalManifestReader, makeLocalReviewContextReader, parseReviewSkill } from "../../src/selfhost/private-config";
+import { GLOBAL_CONFIG_CANDIDATES, isReviewSkillEnabled, localConfigCandidates, makeLocalManifestReader, makeLocalReviewContextReader, parseReviewSkill } from "../../src/selfhost/private-config";
 import { loadRepoReviewContext, setLocalReviewContextReader } from "../../src/signals/focus-manifest-loader";
 
 describe("localConfigCandidates (container-private config paths)", () => {
@@ -125,6 +125,18 @@ describe("parseReviewSkill (#review-skills)", () => {
   });
 });
 
+describe("isReviewSkillEnabled (#review-skills)", () => {
+  it("keeps a skill by default and honors an explicit enabled directive", () => {
+    expect(isReviewSkillEnabled("no frontmatter at all")).toBe(true); // no frontmatter → enabled
+    expect(isReviewSkillEnabled("---\nname: x\n---\nbody")).toBe(true); // frontmatter without `enabled` → enabled
+    expect(isReviewSkillEnabled("---\nenabled: true\n---\nbody")).toBe(true);
+    expect(isReviewSkillEnabled('---\nenabled: "on"\n---\nbody')).toBe(true); // quoted truthy stripped
+    expect(isReviewSkillEnabled("---\nenabled: false\n---\nbody")).toBe(false);
+    expect(isReviewSkillEnabled("---\nname: x\nenabled: no\n---\nbody")).toBe(false);
+    expect(isReviewSkillEnabled("---\nenabled: 0\n---\nbody")).toBe(false); // any non-truthy value disables
+  });
+});
+
 describe("makeLocalReviewContextReader (#review-skills)", () => {
   it("returns null when the dir is unset/blank", () => {
     expect(makeLocalReviewContextReader(undefined)).toBeNull();
@@ -145,6 +157,16 @@ describe("makeLocalReviewContextReader (#review-skills)", () => {
     expect(ctx.guide).toContain("Review gittensory carefully.");
     expect(ctx.guide).not.toContain("Legacy guide should not win.");
     expect(ctx.skills.map((s) => s.name)).toEqual(["a-first", "second"]); // sorted by filename; .txt ignored
+  });
+
+  it("omits a skill whose frontmatter sets enabled: false", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-review-"));
+    const rev = join(dir, "jsonbored__gittensory", "review");
+    mkdirSync(join(rev, "skills"), { recursive: true });
+    writeFileSync(join(rev, "skills", "a-active.md"), "---\nname: active\nwhen: always\n---\nActive rubric.\n");
+    writeFileSync(join(rev, "skills", "b-disabled.md"), "---\nname: disabled\nenabled: false\n---\nParked rubric.\n");
+    const ctx = await makeLocalReviewContextReader(dir)!("JSONbored/gittensory");
+    expect(ctx.skills.map((s) => s.name)).toEqual(["active"]); // the disabled skill is dropped, not deleted
   });
 
   it("falls back to legacy CLAUDE.md in the bare repo-name folder; returns empty for a missing or invalid repo", async () => {

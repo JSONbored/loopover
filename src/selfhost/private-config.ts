@@ -110,10 +110,20 @@ export function parseReviewSkill(filename: string, text: string): RepoReviewSkil
   return { name, when, body };
 }
 
+/** True unless a skill's frontmatter explicitly disables it with `enabled: false` (or `no`/`off`/`0`). Absent or
+ *  truthy `enabled` keeps the skill, so existing skills are unaffected — this only lets an operator turn a rubric
+ *  OFF without deleting the file. Truthy vocabulary matches the codebase flag convention. (#review-skills) */
+export function isReviewSkillEnabled(text: string): boolean {
+  const head = /^---\s*\n([\s\S]*?)\n---\s*\n?/.exec(text)?.[1] ?? "";
+  const raw = /(?:^|\n)enabled:\s*(.+)/.exec(head)?.[1]?.trim().replace(/^["']|["']$/g, "");
+  return raw === undefined ? true : /^(1|true|yes|on)$/i.test(raw);
+}
+
 /** Build the container-local review-context reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset. Per
  *  repo (first existing folder wins) reads `review/AGENTS.md` (Codex) or `review/CLAUDE.md` (Claude Code) as the
- *  guide + every `review/skills/*.md` rubric module, sorted. Missing files/dir degrade to nulls/empty; a per-file
- *  read error skips that file. (#review-skills) */
+ *  guide + every `review/skills/*.md` rubric module, sorted. A skill whose frontmatter sets `enabled: false` is
+ *  omitted (turned off without deleting the file). Missing files/dir degrade to nulls/empty; a per-file read
+ *  error skips that file. (#review-skills) */
 export function makeLocalReviewContextReader(dir: string | undefined): RepoReviewContextReader | null {
   const trimmed = (dir ?? "").trim();
   if (!trimmed) return null;
@@ -135,7 +145,9 @@ export function makeLocalReviewContextReader(dir: string | undefined): RepoRevie
         const entries = (await readdir(resolve(abs, "skills"))).filter((f) => f.toLowerCase().endsWith(".md")).sort();
         for (const f of entries) {
           try {
-            skills.push(parseReviewSkill(f, await readFile(resolve(abs, "skills", f), "utf8")));
+            const text = await readFile(resolve(abs, "skills", f), "utf8");
+            if (!isReviewSkillEnabled(text)) continue; // `enabled: false` frontmatter disables a skill without deleting it
+            skills.push(parseReviewSkill(f, text));
           } catch {
             // unreadable skill file → skip it
           }

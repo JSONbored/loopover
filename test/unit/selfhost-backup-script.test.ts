@@ -170,6 +170,50 @@ describe("self-host backup script", () => {
     expect(args).toContain("postgresql:///gittensory?host=/var/run/postgresql");
   });
 
+  it("does not mistake a literal '@'/':' inside the query string for userinfo", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const argsFile = join(root, "pg-dump.args");
+    const envFile = join(root, "pg-dump.env");
+
+    // No userinfo here at all -- the '@' and ':' both belong to a query parameter VALUE. Userinfo can
+    // only appear in the authority (before the first '/', '?', or '#'); scanning the whole remaining
+    // string for the first '@' would wrongly treat "gittensory?application_name=a:b" as userinfo and
+    // strip ":b" out as a fake password, corrupting the URL passed to pg_dump.
+    const url = "postgresql://db.example/gittensory?application_name=a:b@worker";
+    runBackup(root, {
+      DATABASE_URL: url,
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ARGS_FILE: argsFile,
+      PG_DUMP_ENV_FILE: envFile,
+    });
+
+    const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
+    const [passfilePath] = execFileSync("cat", [envFile], { encoding: "utf8" }).trim().split("|");
+    expect(args).toContain(url);
+    expect(passfilePath).toBe("");
+  });
+
+  it("extracts a real password even when the query string separately contains '@'/':'", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const argsFile = join(root, "pg-dump.args");
+    const envFile = join(root, "pg-dump.env");
+
+    runBackup(root, {
+      DATABASE_URL: "postgres://user:realpass@host/db?application_name=a:b@worker",
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ARGS_FILE: argsFile,
+      PG_DUMP_ENV_FILE: envFile,
+    });
+
+    const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
+    const [, passfileContent] = execFileSync("cat", [envFile], { encoding: "utf8" }).trim().split("|");
+    expect(args).not.toContain("realpass");
+    expect(args).toContain("postgresql://user@host/db?application_name=a:b@worker");
+    expect(passfileContent).toBe("*:*:*:*:realpass");
+  });
+
   it("keeps a literal '+' in the password as '+', not a decoded space", () => {
     const root = tmpRoot();
     const pgBin = fakePgDump(root);

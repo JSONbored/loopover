@@ -60,20 +60,34 @@ prepare_pg_env() {
   pg_rest=${PG_DB#postgres://}
   pg_rest=${pg_rest#postgresql://}
 
-  PG_SANITIZED_URL="postgresql://$pg_rest"
+  # Userinfo (user:password@) can ONLY appear in the authority component -- everything before the first
+  # '/', '?', or '#' -- never later in the URI. Find that boundary FIRST and never look for '@'/':' past
+  # it, or a literal '@'/':' inside a query-string value (e.g. ?application_name=a:b@worker) gets
+  # misread as credentials, corrupting an otherwise-untouched query string. POSIX parameter expansion has
+  # no single "find the first of several delimiters" primitive: compute the substring before each
+  # candidate delimiter and keep whichever is shortest, since the delimiter that occurs earliest produces
+  # the shortest "before" substring.
+  pg_authority=${pg_rest%%/*}
+  pg_before_query=${pg_rest%%\?*}
+  pg_before_frag=${pg_rest%%#*}
+  if [ ${#pg_before_query} -lt ${#pg_authority} ]; then pg_authority=$pg_before_query; fi
+  if [ ${#pg_before_frag} -lt ${#pg_authority} ]; then pg_authority=$pg_before_frag; fi
+  pg_suffix=${pg_rest#"$pg_authority"}
+
+  PG_SANITIZED_URL="postgresql://$pg_authority$pg_suffix"
   PGPASSWORD_VALUE=""
-  case "$pg_rest" in
+  case "$pg_authority" in
     *@*)
-      pg_userinfo=${pg_rest%%@*}
-      pg_after_at=${pg_rest#*@}
+      pg_userinfo=${pg_authority%%@*}
+      pg_after_at=${pg_authority#*@}
       case "$pg_userinfo" in
         *:*)
           pg_user_part=${pg_userinfo%%:*}
           PGPASSWORD_VALUE=$(url_decode "${pg_userinfo#*:}")
-          PG_SANITIZED_URL="postgresql://${pg_user_part}@${pg_after_at}"
+          PG_SANITIZED_URL="postgresql://${pg_user_part}@${pg_after_at}$pg_suffix"
           ;;
         *)
-          PG_SANITIZED_URL="postgresql://${pg_userinfo}@${pg_after_at}"
+          PG_SANITIZED_URL="postgresql://${pg_userinfo}@${pg_after_at}$pg_suffix"
           ;;
       esac
       ;;

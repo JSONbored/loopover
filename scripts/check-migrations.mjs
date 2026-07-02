@@ -36,12 +36,13 @@ const fail = (message) => {
 // migrations to, but the REMOTE D1 authorizer rejects them at `wrangler d1 migrations apply --remote` with
 // `not authorized: SQLITE_AUTH [code: 7500]` — which breaks the deploy AFTER merge, where pre-merge CI can't
 // see it (a `CREATE TEMP TABLE` in 0083 did exactly this). This scan is the only pre-merge gate for that class.
-// `CREATE TEMP` matches anywhere (it always starts a statement); the rest anchor to a statement boundary
-// (start-of-file or after a `;`) so a trigger body's own `BEGIN`/`END` and mid-statement words don't trip.
+// `CREATE TEMP` and `CREATE <object> temp.<name>` match anywhere (they always start a statement);
+// the rest anchor to a statement boundary (start-of-file or after a `;`) so a trigger body's own
+// `BEGIN`/`END` and mid-statement words don't trip.
 // The anchored patterns use a variable-length lookbehind (`(?<=(?:^|;)\s*)`, supported by V8/Node) so the
 // match starts on the keyword itself — reported line numbers point at the statement, not the preceding `;`.
 const D1_FORBIDDEN = [
-  [/create\s+temp(?:orary)?\b/gi, "temporary object (CREATE TEMP/TEMPORARY) — D1 rejects temp tables/triggers/views/indexes; rewrite without one (e.g. DELETE the losers, then UPDATE the survivors)"],
+  [/create\s+(?:temp(?:orary)?\b|(?:table|index|view|trigger)\s+(?:if\s+not\s+exists\s+)?temp\s*\.)/gi, "temporary object (CREATE TEMP/TEMPORARY or temp schema) — D1 rejects temp tables/triggers/views/indexes; rewrite without one (e.g. DELETE the losers, then UPDATE the survivors)"],
   [/(?<=(?:^|;)\s*)attach\b/gi, "ATTACH is not supported on D1"],
   [/(?<=(?:^|;)\s*)detach\b/gi, "DETACH is not supported on D1"],
   [/(?<=(?:^|;)\s*)vacuum\b/gi, "VACUUM is not supported on D1"],

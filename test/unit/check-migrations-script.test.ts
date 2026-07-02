@@ -34,8 +34,13 @@ describe("check-migrations script", () => {
     expect(output).toContain("(3 grandfathered duplicates: 0015, 0017, 0074)");
   });
 
-  it("rejects a migration that creates a temporary object (the D1 remote authorizer blocks it)", () => {
-    const r = runCheck({ "0001_temp.sql": "CREATE TEMP TABLE scratch AS SELECT 1;\n" });
+  it.each([
+    ["TEMP keyword", "CREATE TEMP TABLE scratch AS SELECT 1;"],
+    ["TEMPORARY keyword", "CREATE TEMPORARY VIEW scratch AS SELECT 1;"],
+    ["temp schema table", "CREATE TABLE temp.scratch AS SELECT 1;"],
+    ["temp schema index", "CREATE INDEX IF NOT EXISTS temp.scratch_idx ON scratch(id);"],
+  ])("rejects a migration that creates a temporary object via %s (the D1 remote authorizer blocks it)", (_name, sql) => {
+    const r = runCheck({ "0001_temp.sql": `${sql}\n` });
 
     expect(r.status).toBe(1);
     expect(r.out).toContain("0001_temp.sql:1");

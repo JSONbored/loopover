@@ -19,6 +19,10 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$OUT/postgres" "$OUT/sqlite" "$OUT/qdrant"
 
+# Percent-decodes a URI userinfo component (RFC 3986). Deliberately does NOT treat '+' as a space -- that
+# convention is specific to application/x-www-form-urlencoded query values, not URI userinfo, where '+' is
+# an ordinary sub-delims character allowed unencoded; the only caller of this function decodes a password
+# extracted from the userinfo section, and a literal '+' there must stay a '+', not become a space.
 url_decode() {
   printf '%s' "$1" | awk '
     BEGIN { for (i = 0; i < 256; i++) hex[sprintf("%02X", i)] = sprintf("%c", i); }
@@ -29,8 +33,6 @@ url_decode() {
         if (c == "%" && i + 2 <= length($0)) {
           h = toupper(substr($0, i + 1, 2));
           if (h in hex) { out = out hex[h]; i += 2; } else { out = out c; }
-        } else if (c == "+") {
-          out = out " ";
         } else {
           out = out c;
         }
@@ -43,55 +45,44 @@ pgpass_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/:/\\:/g'
 }
 
+# Strips only the password from a postgres(ql):// URI and hands pg_dump the rest untouched (host, port,
+# dbname, and the FULL query string) as its connection argument, instead of re-parsing those pieces
+# ourselves. libpq's own URI parser already handles every form it needs to (query-string-only host, as in
+# `postgresql:///db?host=/var/run/postgresql`, IPv6 literals, multi-host strings, sslmode, etc.) -- an
+# earlier version of this function extracted host/port/dbname manually and discarded the query string
+# entirely, silently breaking any URL that relied on it. Sets $PG_SANITIZED_URL (the password-free URI to
+# pass to pg_dump) and, if a password was present, a $PGPASSFILE_CREATED wildcard passfile (host/port/
+# dbname/user are wildcarded: this file exists only to supply the ONE password for the single connection
+# this script makes, and is deleted immediately after via the `cleanup` trap, so there's no scoped value
+# in re-deriving the exact host/port/dbname libpq will resolve -- which the query string can override
+# anyway -- just to match them precisely).
 prepare_pg_env() {
-  pg_url_no_scheme=${PG_DB#postgres://}
-  pg_url_no_scheme=${pg_url_no_scheme#postgresql://}
-  pg_without_query=${pg_url_no_scheme%%\?*}
+  pg_rest=${PG_DB#postgres://}
+  pg_rest=${pg_rest#postgresql://}
 
-  pg_auth=""
-  pg_host_path=$pg_without_query
-  case "$pg_without_query" in
+  PG_SANITIZED_URL="postgresql://$pg_rest"
+  PGPASSWORD_VALUE=""
+  case "$pg_rest" in
     *@*)
-      pg_auth=${pg_without_query%%@*}
-      pg_host_path=${pg_without_query#*@}
+      pg_userinfo=${pg_rest%%@*}
+      pg_after_at=${pg_rest#*@}
+      case "$pg_userinfo" in
+        *:*)
+          pg_user_part=${pg_userinfo%%:*}
+          PGPASSWORD_VALUE=$(url_decode "${pg_userinfo#*:}")
+          PG_SANITIZED_URL="postgresql://${pg_user_part}@${pg_after_at}"
+          ;;
+        *)
+          PG_SANITIZED_URL="postgresql://${pg_userinfo}@${pg_after_at}"
+          ;;
+      esac
       ;;
   esac
-
-  PGUSER_VALUE=""
-  PGPASSWORD_VALUE=""
-  if [ -n "$pg_auth" ]; then
-    PGUSER_VALUE=$(url_decode "${pg_auth%%:*}")
-    if [ "$pg_auth" != "${pg_auth#*:}" ]; then
-      PGPASSWORD_VALUE=$(url_decode "${pg_auth#*:}")
-    fi
-  fi
-
-  pg_host_port=${pg_host_path%%/*}
-  PGDATABASE_VALUE=$(url_decode "${pg_host_path#*/}")
-  if [ "$PGDATABASE_VALUE" = "$pg_host_path" ] || [ -z "$PGDATABASE_VALUE" ]; then
-    PGDATABASE_VALUE=postgres
-  fi
-
-  PGHOST_VALUE=${pg_host_port%%:*}
-  PGPORT_VALUE=${pg_host_port#*:}
-  if [ "$PGPORT_VALUE" = "$pg_host_port" ]; then
-    PGPORT_VALUE=5432
-  fi
-
-  export PGHOST="$PGHOST_VALUE" PGPORT="$PGPORT_VALUE" PGDATABASE="$PGDATABASE_VALUE"
-  if [ -n "$PGUSER_VALUE" ]; then
-    export PGUSER="$PGUSER_VALUE"
-  fi
 
   if [ -n "$PGPASSWORD_VALUE" ]; then
     PGPASSFILE_CREATED=$(mktemp "${TMPDIR:-/tmp}/gittensory-pgpass.XXXXXX")
     chmod 600 "$PGPASSFILE_CREATED"
-    printf '%s:%s:%s:%s:%s\n' \
-      "$(pgpass_escape "$PGHOST_VALUE")" \
-      "$(pgpass_escape "$PGPORT_VALUE")" \
-      "$(pgpass_escape "$PGDATABASE_VALUE")" \
-      "$(pgpass_escape "${PGUSER_VALUE:-*}")" \
-      "$(pgpass_escape "$PGPASSWORD_VALUE")" > "$PGPASSFILE_CREATED"
+    printf '*:*:*:*:%s\n' "$(pgpass_escape "$PGPASSWORD_VALUE")" > "$PGPASSFILE_CREATED"
     export PGPASSFILE="$PGPASSFILE_CREATED"
   fi
 }
@@ -104,7 +95,7 @@ case "$PG_DB" in
       exit 1
     fi
     prepare_pg_env
-    pg_dump -Fc -f "$OUT/postgres/gittensory-$TS.dump"
+    pg_dump -Fc -f "$OUT/postgres/gittensory-$TS.dump" "$PG_SANITIZED_URL"
     echo "[backup] postgres -> $OUT/postgres/gittensory-$TS.dump"
     ;;
   *)

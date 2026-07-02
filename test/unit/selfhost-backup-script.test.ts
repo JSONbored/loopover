@@ -48,7 +48,12 @@ if [ -n "\${PG_DUMP_ARGS_FILE:-}" ]; then
   printf '%s\\n' "$original_args" > "$PG_DUMP_ARGS_FILE"
 fi
 if [ -n "\${PG_DUMP_ENV_FILE:-}" ]; then
-  printf '%s\\n' "$PGHOST|$PGPORT|$PGDATABASE|\${PGUSER:-}|\${PGPASSFILE:-}" > "$PG_DUMP_ENV_FILE"
+  passfile_path="\${PGPASSFILE:-}"
+  passfile_content=""
+  if [ -n "$passfile_path" ] && [ -f "$passfile_path" ]; then
+    passfile_content="$(cat "$passfile_path")"
+  fi
+  printf '%s|%s\\n' "$passfile_path" "$passfile_content" > "$PG_DUMP_ENV_FILE"
 fi
 printf 'postgres dump\\n' > "$out"
 `,
@@ -111,7 +116,7 @@ describe("self-host backup script", () => {
     expect(readdirSync(join(root, "backups", "sqlite"))).toEqual([]);
   });
 
-  it("does not pass Postgres credentials in pg_dump arguments", () => {
+  it("does not pass the Postgres password in pg_dump arguments, but keeps host/port/dbname/user reachable via a sanitized URL", () => {
     const root = tmpRoot();
     const pgBin = fakePgDump(root);
     const argsFile = join(root, "pg-dump.args");
@@ -126,9 +131,55 @@ describe("self-host backup script", () => {
 
     const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
     const pgEnv = execFileSync("cat", [envFile], { encoding: "utf8" }).trim();
+    const [passfilePath, passfileContent] = pgEnv.split("|");
+
+    // The password (percent-encoded or decoded) must never appear on argv.
     expect(args).not.toContain("SuperSecret123");
-    expect(args).not.toContain("postgresql://");
-    expect(pgEnv).toMatch(/^db\.example\|6543\|gittensory\|app_user\|\/tmp\/gittensory-pgpass\./);
+    expect(args).not.toContain("app_user:");
+    // Host/port/dbname/user are pg_dump's connection info, not secrets -- libpq resolves them from this
+    // sanitized (password-free) URL exactly as it would have from the original.
+    expect(args).toContain("postgresql://app_user@db.example:6543/gittensory");
+    // The password reaches pg_dump out-of-band via a 600-permission PGPASSFILE, url-decoded. Match on the
+    // basename only, not a hardcoded /tmp/ prefix: mktemp resolves under $TMPDIR, which macOS sets to a
+    // per-user private directory rather than /tmp (the CI runner's Linux environment does default to /tmp,
+    // but the assertion shouldn't assume that).
+    expect(passfilePath).toMatch(/\/gittensory-pgpass\.[^/]+$/);
+    expect(passfileContent).toBe("*:*:*:*:SuperSecret123!");
+  });
+
+  it("preserves query-string-only connection info that a host/port/dbname split would otherwise drop", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const argsFile = join(root, "pg-dump.args");
+
+    // No authority host at all -- the actual connection target is supplied entirely via the query string
+    // (a valid, real-world libpq URI form for connecting over a Unix socket at a non-default path).
+    runBackup(root, {
+      DATABASE_URL: "postgresql:///gittensory?host=/var/run/postgresql",
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ARGS_FILE: argsFile,
+    });
+
+    const args = execFileSync("cat", [argsFile], { encoding: "utf8" });
+    expect(args).toContain("postgresql:///gittensory?host=/var/run/postgresql");
+  });
+
+  it("keeps a literal '+' in the password as '+', not a decoded space", () => {
+    const root = tmpRoot();
+    const pgBin = fakePgDump(root);
+    const envFile = join(root, "pg-dump.env");
+
+    // '+' means "space" only in application/x-www-form-urlencoded query values, not in a URI's userinfo
+    // component, where it's an ordinary allowed character -- decoding it as a space would corrupt any
+    // password containing one.
+    runBackup(root, {
+      DATABASE_URL: "postgres://user:pass+word@host/db",
+      PATH: `${pgBin}:${process.env.PATH ?? ""}`,
+      PG_DUMP_ENV_FILE: envFile,
+    });
+
+    const [, passfileContent] = execFileSync("cat", [envFile], { encoding: "utf8" }).trim().split("|");
+    expect(passfileContent).toBe("*:*:*:*:pass+word");
   });
 
   it("keeps the SQLite online backup path when no Postgres URL is configured", () => {

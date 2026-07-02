@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildBrowserSessionCookie,
   buildClearedBrowserSessionCookie,
   buildClearedGitHubOAuthStateCookie,
   buildGitHubOAuthStateCookie,
@@ -96,6 +97,12 @@ describe("session/oauth cookie builders", () => {
     expect(buildClearedBrowserSessionCookie("http://127.0.0.1/auth")).toBe(
       "gittensory_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
     );
+    expect(buildClearedBrowserSessionCookie("http://[::1]/auth")).toBe(
+      "gittensory_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
+    );
+    expect(buildBrowserSessionCookie("token", "http://[::1]/v1/auth/session")).not.toContain(
+      "Secure",
+    );
     // Secure keys off hostname, not scheme: a plain-http remote host still gets Secure.
     expect(
       buildClearedBrowserSessionCookie("http://example.com/auth"),
@@ -122,6 +129,9 @@ describe("session/oauth cookie builders", () => {
       "gittensory_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
     );
     expect(buildClearedGitHubOAuthStateCookie("http://localhost/cb")).toBe(
+      "gittensory_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
+    );
+    expect(buildClearedGitHubOAuthStateCookie("http://[::1]/cb")).toBe(
       "gittensory_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
     );
   });

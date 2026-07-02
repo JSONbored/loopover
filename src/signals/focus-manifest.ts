@@ -1,7 +1,9 @@
 import { parse as parseYaml } from "yaml";
 import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
+import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
+import { hasUnsafeWildcardCount } from "./change-guardrail";
 import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
@@ -48,9 +50,11 @@ export type FocusManifestGateConfig = {
 // `.gittensory.yml`. Each feature ALSO has a GLOBAL env flag (GITTENSORY_REVIEW_*) that stays a master
 // kill-switch (the feature never runs when its env flag is off, regardless of this block). See
 // review/feature-activation.ts for the resolver (env kill-switch → per-repo override → env-allowlist default).
-// NOTE: only the per-PR REVIEW features whose every activation site is migrated are listed here. grounding,
-// screenshots, and contentLane stay on the GITTENSORY_REVIEW_REPOS allowlist for now (grounding + contentLane are
-// coupled to the merge/close DISPOSITION path; screenshots' capture path needs dedicated coverage) — a follow-up.
+// NOTE: only the per-PR REVIEW features whose every activation site is migrated are listed here. grounding and
+// screenshots stay on the GITTENSORY_REVIEW_REPOS allowlist for now (grounding is coupled to the merge/close
+// DISPOSITION path; screenshots' capture path needs dedicated coverage) — a follow-up. contentLane got its own
+// richer `contentLane:` block below (#2435) instead of a boolean here, since it resolves to a whole
+// RegistryLaneSpec, not an on/off toggle — see resolveRegistryLaneSpec in review/content-lane/spec-resolver.ts.
 export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety"] as const;
 export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
 
@@ -58,6 +62,26 @@ export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
  *  feature on/off for THIS repo (subject to the env kill-switch); `null` (unset) ⇒ the resolver falls back to the
  *  `GITTENSORY_REVIEW_REPOS` allowlist default, so an operator who sets nothing keeps today's behavior. */
 export type FocusManifestFeaturesConfig = { present: boolean } & Record<ConvergedFeatureKey, boolean | null>;
+
+/**
+ * Per-repo registry-review lane configuration (`contentLane:` block, #2435) — lets a self-hosted maintainer
+ * configure their OWN registry (structural file-scope patterns + entry-count cap + dedup fields) without a
+ * gittensory code change. `entryFileGlob` and `collectionField` are the two REQUIRED fields to build a usable
+ * spec; `present` is true only when both are set (a partial config degrades to "not configured," not a broken
+ * half-spec — see `parseContentLaneConfig`). `validatorId` optionally references a code-registered domain
+ * validator (`review/content-lane/spec-resolver.ts`'s `REGISTRY_VALIDATORS`); omitted ⇒ structural gating only
+ * (scope/count/dedup), no domain-specific semantic check — see `RegistryLaneSpec.assessAppendedEntry`.
+ */
+export type FocusManifestContentLaneConfig = {
+  present: boolean;
+  entryFileGlob: string | null;
+  providerFileGlob: string | null;
+  artifactGlob: string | null;
+  collectionField: string | null;
+  maxAppendedEntries: number | null;
+  duplicateKeyFields: string[];
+  validatorId: string | null;
+};
 
 /**
  * Generic repository-settings override declared in `.gittensory.yml` under `settings:`. A partial of
@@ -98,6 +122,7 @@ export type FocusManifestSettings = Partial<
     | "autoMaintain"
     | "agentPaused"
     | "agentDryRun"
+    | "commandAuthorization"
     | "contributorBlacklist"
     | "blacklistLabel"
   >
@@ -195,6 +220,7 @@ export type FocusManifest = {
   settings: FocusManifestSettings;
   review: FocusManifestReviewConfig;
   features: FocusManifestFeaturesConfig;
+  contentLane: FocusManifestContentLaneConfig;
   warnings: string[];
 };
 
@@ -267,6 +293,17 @@ const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
   safety: null,
 };
 
+const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {
+  present: false,
+  entryFileGlob: null,
+  providerFileGlob: null,
+  artifactGlob: null,
+  collectionField: null,
+  maxAppendedEntries: null,
+  duplicateKeyFields: [],
+  validatorId: null,
+};
+
 const EMPTY_MANIFEST: FocusManifest = {
   present: false,
   source: "none",
@@ -282,6 +319,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   settings: {},
   review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
   features: { ...EMPTY_FEATURES_CONFIG },
+  contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   warnings: [],
 };
 
@@ -302,7 +340,16 @@ export function isFocusManifestPublicSafe(text: string): boolean {
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {
-  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] }, features: { ...EMPTY_FEATURES_CONFIG } };
+  return {
+    ...EMPTY_MANIFEST,
+    source,
+    warnings,
+    gate: { ...EMPTY_GATE_CONFIG },
+    settings: {},
+    review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+    features: { ...EMPTY_FEATURES_CONFIG },
+    contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
+  };
 }
 
 function normalizeStringList(value: JsonValue | undefined, field: string, warnings: string[]): string[] {
@@ -355,6 +402,21 @@ function normalizeOptionalGateMode(value: JsonValue | undefined, field: string, 
   if (value === "off" || value === "advisory" || value === "block") return value;
   warnings.push(`Manifest gate field "${field}" must be one of off, advisory, block; ignoring "${String(value)}".`);
   return null;
+}
+
+/** `gate.readiness.mode` (and its `settings.qualityGateMode` alias below) is documented and parsed as the shared
+ *  off/advisory/block tri-state, but buildQualityGateWarning (src/rules/advisory.ts) always produces a
+ *  warning-severity finding — never a blocker — and isConfiguredGateBlocker has no branch for it: readiness/
+ *  quality is intentionally informational-only and can never hard-block a PR. Without this, a maintainer who
+ *  sets `mode: block` believes a real quality floor is enforced when the effective behavior is silently
+ *  advisory-only (#2267). Downgrade "block" to "advisory" here, with a clear deprecation warning, so the parsed
+ *  config always matches what the gate actually does. Exported so the settings-write API routes (the
+ *  dashboard/API path for the SAME `qualityGateMode` field) can apply the identical downgrade before persisting. */
+export function normalizeReadinessGateMode(value: JsonValue | undefined, field: string, warnings: string[]): GateRuleMode | null {
+  const mode = normalizeOptionalGateMode(value, field, warnings);
+  if (mode !== "block") return mode;
+  warnings.push(`Manifest gate field "${field}" no longer accepts "block" — readiness/quality is informational-only and can never hard-block a PR; downgrading to "advisory". Use gate.manifestPolicy or another enforceable gate for a real quality floor.`);
+  return "advisory";
 }
 
 function normalizeOptionalBoolean(value: JsonValue | undefined, field: string, warnings: string[]): boolean | null {
@@ -422,7 +484,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
-    readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
+    readinessMode: normalizeReadinessGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
     slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
     slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
@@ -440,6 +502,13 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
+  // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
+  // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
+  // that inertness at parse time rather than leaving it silently no-op; `false`/unset matches the (also inert)
+  // default, so only an explicit `true` is worth flagging.
+  if (gate.firstTimeContributorGrace === true) {
+    warnings.push(`Manifest field "gate.firstTimeContributorGrace" is currently reserved/inert — it does not soften a blocker outcome for first-time contributors.`);
+  }
   gate.present =
     gate.enabled !== null ||
     gate.pack !== null ||
@@ -540,6 +609,86 @@ export function featuresConfigToJson(features: FocusManifestFeaturesConfig): Jso
   return out;
 }
 
+/** A positive INTEGER count (not a score/confidence) — e.g. `contentLane.maxAppendedEntries` counts discrete
+ *  surfaces[] entries, so a fractional value (a likely typo) would render a nonsensical contributor-facing close
+ *  message ("append between 1 and 2.5 entries"). Rejects fractional and non-positive values alike. */
+function normalizeOptionalPositiveInteger(value: JsonValue | undefined, field: string, warnings: string[]): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  warnings.push(`Manifest field "${field}" must be a positive whole number; ignoring it.`);
+  return null;
+}
+
+/** Normalize + bound a maintainer-supplied glob string: trims/length-caps like any other string field, AND
+ *  rejects one globToRegExp (review/content-lane/spec-resolver.ts's reuse of the guardrail-path compiler) would
+ *  itself refuse to compile safely. Reuses `hasUnsafeWildcardCount` — globToRegExp's OWN safety predicate —
+ *  rather than a locally-counted threshold: a caller that counts wildcards differently (e.g. raw `*` characters,
+ *  which double-counts a `**` pair as 2 groups instead of 1) can accept a glob globToRegExp then silently
+ *  compiles to NEVER_MATCHES, configuring a lane that is "present" but can never activate on any changed file
+ *  (#confirmed-bug). A glob over the cap is REJECTED (warns, returns null) rather than truncated — silently
+ *  cutting wildcards out of a maintainer's pattern would silently change its meaning, which is worse than making
+ *  them fix an over-complex glob. */
+function normalizeOptionalGlob(value: JsonValue | undefined, field: string, warnings: string[]): string | null {
+  const normalized = normalizeOptionalString(value, field, warnings);
+  if (normalized === null) return null;
+  if (normalized.length > MAX_ITEM_LENGTH) {
+    // REJECT, not truncate: cutting characters out of a glob changes which files it matches (e.g. a
+    // mid-directory-name cut can turn a narrow, intended pattern into one that matches an unrelated path
+    // prefix, or one that never matches anything) — silently compiling a DIFFERENT pattern than the
+    // maintainer configured is worse than making them shorten an over-complex glob.
+    warnings.push(`Manifest field "${field}" is an over-long glob (${normalized.length} > ${MAX_ITEM_LENGTH} chars); ignoring it.`);
+    return null;
+  }
+  if (hasUnsafeWildcardCount(normalized)) {
+    warnings.push(`Manifest field "${field}" has too many wildcards to compile safely; ignoring it.`);
+    return null;
+  }
+  return normalized;
+}
+
+/**
+ * Parse the optional `contentLane:` mapping — per-repo registry-review lane configuration (#2435). `entryFileGlob`
+ * and `collectionField` are REQUIRED to build a usable spec; a config missing either — including a glob rejected
+ * by `normalizeOptionalGlob`'s wildcard cap — degrades to "not configured" (a warning, falling through to the
+ * allowlist default) rather than a broken half-spec. Glob fields stay plain strings here — compiling them to
+ * RegExp is the resolver's job (`review/content-lane/spec-resolver.ts`), not the parser's, so this file stays
+ * free of a RegExp-from-config compile step; it's still this file's job to keep an over-complex glob from ever
+ * reaching that compile step at all.
+ */
+function parseContentLaneConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestContentLaneConfig {
+  if (value === undefined || value === null) return { ...EMPTY_CONTENT_LANE_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "contentLane" must be a mapping; ignoring it.');
+    return { ...EMPTY_CONTENT_LANE_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const entryFileGlob = normalizeOptionalGlob(record.entryFileGlob, "contentLane.entryFileGlob", warnings);
+  const providerFileGlob = normalizeOptionalGlob(record.providerFileGlob, "contentLane.providerFileGlob", warnings);
+  const artifactGlob = normalizeOptionalGlob(record.artifactGlob, "contentLane.artifactGlob", warnings);
+  const collectionField = normalizeOptionalString(record.collectionField, "contentLane.collectionField", warnings);
+  const maxAppendedEntries = normalizeOptionalPositiveInteger(record.maxAppendedEntries, "contentLane.maxAppendedEntries", warnings);
+  const duplicateKeyFields = normalizeStringList(record.duplicateKeyFields, "contentLane.duplicateKeyFields", warnings);
+  const validatorId = normalizeOptionalString(record.validatorId, "contentLane.validatorId", warnings);
+  if (!entryFileGlob || !collectionField) {
+    warnings.push('Manifest field "contentLane" requires both entryFileGlob and collectionField; ignoring it.');
+    return { ...EMPTY_CONTENT_LANE_CONFIG };
+  }
+  return { present: true, entryFileGlob, providerFileGlob, artifactGlob, collectionField, maxAppendedEntries, duplicateKeyFields, validatorId };
+}
+
+/** Serialize a contentLane config back into the parse-compatible `contentLane:` shape so a cached snapshot
+ *  round-trips through {@link parseContentLaneConfig} unchanged. Returns null when nothing is configured. */
+export function contentLaneConfigToJson(contentLane: FocusManifestContentLaneConfig): JsonValue {
+  if (!contentLane.present || !contentLane.entryFileGlob || !contentLane.collectionField) return null;
+  const out: Record<string, JsonValue> = { entryFileGlob: contentLane.entryFileGlob, collectionField: contentLane.collectionField };
+  if (contentLane.providerFileGlob !== null) out.providerFileGlob = contentLane.providerFileGlob;
+  if (contentLane.artifactGlob !== null) out.artifactGlob = contentLane.artifactGlob;
+  if (contentLane.maxAppendedEntries !== null) out.maxAppendedEntries = contentLane.maxAppendedEntries;
+  if (contentLane.duplicateKeyFields.length > 0) out.duplicateKeyFields = contentLane.duplicateKeyFields;
+  if (contentLane.validatorId !== null) out.validatorId = contentLane.validatorId;
+  return out;
+}
+
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {
   if (value === undefined || value === null) return null;
   if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
@@ -584,7 +733,10 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (duplicatePrGateMode !== null) out.duplicatePrGateMode = duplicatePrGateMode;
   const selfAuthoredLinkedIssueGateMode = normalizeOptionalGateMode(r.selfAuthoredLinkedIssueGateMode, "settings.selfAuthoredLinkedIssueGateMode", warnings);
   if (selfAuthoredLinkedIssueGateMode !== null) out.selfAuthoredLinkedIssueGateMode = selfAuthoredLinkedIssueGateMode;
-  const qualityGateMode = normalizeOptionalGateMode(r.qualityGateMode, "settings.qualityGateMode", warnings);
+  // Same tri-state field as gate.readiness.mode above (the friendly gate alias overlays onto it in
+  // resolveEffectiveSettings) — apply the identical "block" → "advisory" downgrade here too, so a maintainer
+  // setting `settings.qualityGateMode: block` directly hits the same deprecation warning (#2267).
+  const qualityGateMode = normalizeReadinessGateMode(r.qualityGateMode, "settings.qualityGateMode", warnings);
   if (qualityGateMode !== null) out.qualityGateMode = qualityGateMode;
   const qualityGateMinScore = normalizeOptionalScore(r.qualityGateMinScore, "settings.qualityGateMinScore", warnings);
   if (qualityGateMinScore !== null) out.qualityGateMinScore = qualityGateMinScore;
@@ -615,6 +767,22 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   // field) and overlays the DB value via the resolver. Only a mapping is honoured; anything else is ignored.
   if (typeof r.autoMaintain === "object" && r.autoMaintain !== null && !Array.isArray(r.autoMaintain)) {
     out.autoMaintain = normalizeAutoMaintainPolicy(r.autoMaintain);
+  }
+  // Command authorization policy (#2268 config-as-code parity): `settings.commandAuthorization` declares the
+  // full role policy the same way `autoMaintain` does — the normalizer fills any unset/invalid FIELD from
+  // DEFAULT_COMMAND_AUTHORIZATION_POLICY, so a partially-valid mapping yields a complete, safe policy that
+  // overlays the DB value via the resolver's `{...dbSettings, ...manifest.settings}` spread. But an invalid
+  // TOP-LEVEL shape (not a mapping at all) is a different case: normalizeCommandAuthorizationPolicy's own
+  // fallback there is meant for callers with no DB value to fall back to, not for this overlay — applying it
+  // here would let a typo'd config silently overwrite a stricter DB-persisted policy with the built-in
+  // default. So only apply the normalized policy when the raw value was actually a mapping; otherwise warn
+  // and leave `out.commandAuthorization` unset so the resolver preserves whatever the DB already has.
+  if (typeof r.commandAuthorization === "object" && r.commandAuthorization !== null && !Array.isArray(r.commandAuthorization)) {
+    const { policy, warnings: commandAuthorizationWarnings } = normalizeCommandAuthorizationPolicy(r.commandAuthorization);
+    warnings.push(...commandAuthorizationWarnings);
+    out.commandAuthorization = policy;
+  } else if (r.commandAuthorization !== undefined) {
+    warnings.push(`Manifest "settings.commandAuthorization" must be an object; ignoring it and keeping any existing policy.`);
   }
   // Contributor blacklist (#1425): `settings.contributorBlacklist` is a list of banned-login entries. Only set it
   // when at least one VALID entry survives normalization, so a malformed block never blanks the DB-configured
@@ -983,6 +1151,14 @@ export function resolveEffectiveSettings(
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {
     effective.linkedIssueGateMode = "block";
   }
+  // Readiness/quality can never hard-block a PR (buildQualityGateWarning is always advisory-severity;
+  // isConfiguredGateBlocker has no branch for it). The write-time guards (the settings.qualityGateMode /
+  // gate.readiness.mode parsers above, and the settings-write API routes) stop a NEW "block" value from being
+  // introduced, but a repo whose DB row already has quality_gate_mode = "block" from before those guards
+  // existed would still resolve to it here. Downgrade it at this single resolver too, so the EFFECTIVE settings
+  // the gate/review pipeline AND the settings-preview dashboard read (both call this function) can never carry
+  // a value that implies enforcement it doesn't have, regardless of when or where it was written (#2267).
+  if (effective.qualityGateMode === "block") effective.qualityGateMode = "advisory";
   effective.contributorBlacklist = mergeContributorBlacklists(effective.contributorBlacklist ?? [], sharedContributorBlacklist);
   return effective;
 }
@@ -1014,6 +1190,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     settings: parseSettingsOverride(record.settings, warnings),
     review: parseReviewConfig(record.review, warnings),
     features: parseFeaturesConfig(record.features, warnings),
+    contentLane: parseContentLaneConfig(record.contentLane, warnings),
     warnings,
   };
   if (
@@ -1028,7 +1205,8 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.gate.present &&
     Object.keys(manifest.settings).length === 0 &&
     !manifest.review.present &&
-    !manifest.features.present
+    !manifest.features.present &&
+    !manifest.contentLane.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;

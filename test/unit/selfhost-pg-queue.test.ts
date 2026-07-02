@@ -615,14 +615,14 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
-  it("pre-yields GitHub-budget background jobs without repo fields from global REST observations", async () => {
+  it("pre-yields public-token GitHub-budget background jobs without installation ids", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
     process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
     try {
       const m = makePool();
-      m.setRateLimitRows([{ admission_key: null, repo_full_name: "owner/repo", remaining: "120", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" }]);
+      m.setRateLimitRows([{ admission_key: "public-token", repo_full_name: "owner/repo", remaining: "120", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" }]);
       m.enqueueJob("background", {
         type: "agent-regate-sweep",
         requestedBy: "schedule",
@@ -637,6 +637,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET status='pending', run_after=GREATEST"),
         [Date.parse("2026-06-24T12:10:15.000Z"), "github rate-limit background admission", "background"],
       );
+      expect(await renderMetrics()).toContain('gittensory_jobs_rate_limit_admission_deferred_total{job_type="agent-regate-sweep",key_scope="public",kind="background"} 1');
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
       else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
@@ -727,7 +728,10 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
-  it("pre-yields from legacy repo exhaustion before older healthy exact observations", async () => {
+  it("REGRESSION: a newer legacy unkeyed exhaustion does not pin a healthy exact installation observation (self-host webhook backlog)", async () => {
+    // Before the fix: a stale/legacy null-admission_key row that happened to be observed MORE RECENTLY
+    // than the installation's own (healthy) exact reading would win purely on recency, deferring every
+    // webhook for a perfectly healthy installation. The exact reading must govern here.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -744,10 +748,10 @@ describe("createPgQueue (durable #977)", () => {
 
       await q.drain();
 
-      expect(seen).toEqual([]);
-      expect(m.pool.query).toHaveBeenCalledWith(
+      expect(seen).toEqual(["github-webhook"]);
+      expect(m.pool.query).not.toHaveBeenCalledWith(
         expect.stringContaining("SET status='pending', run_after=GREATEST"),
-        [Date.parse("2026-06-24T12:10:15.000Z"), "github rate-limit webhook admission", "webhook"],
+        expect.anything(),
       );
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -755,7 +759,11 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
-  it("does not keep webhook admission closed from stale exact rows after a newer healthy legacy observation", async () => {
+  it("REGRESSION: a newer healthy legacy observation does not clear a genuine exact installation exhaustion", async () => {
+    // An unkeyed/legacy fallback is not proven to report on the SAME budget as the exact installation
+    // key, so it must not "clear" a real exhaustion any more than it should be able to suppress a
+    // healthy exact reading -- both directions trust an unrelated bucket's signal over this
+    // installation's own. The exact observation's own reset_at already bounds the wait.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -772,10 +780,10 @@ describe("createPgQueue (durable #977)", () => {
 
       await q.drain();
 
-      expect(seen).toEqual(["github-webhook"]);
-      expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect(seen).toEqual([]);
+      expect(m.pool.query).toHaveBeenCalledWith(
         expect.stringContaining("SET status='pending', run_after=GREATEST"),
-        expect.anything(),
+        [Date.parse("2026-06-24T12:10:15.000Z"), "github rate-limit webhook admission", "webhook"],
       );
     } finally {
       if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
@@ -1062,7 +1070,7 @@ describe("createPgQueue (durable #977)", () => {
         expect.stringContaining("SET run_after=GREATEST(run_after, $1), last_error=COALESCE"),
         expect.arrayContaining([expect.any(Number), "github rate-limit budget deferred", "pending-same"]),
       );
-      expect(fn).toHaveBeenCalledWith(
+      expect(fn).not.toHaveBeenCalledWith(
         expect.stringContaining("SET run_after=GREATEST(run_after, $1), last_error=COALESCE"),
         expect.arrayContaining([expect.any(Number), "github rate-limit budget deferred", "pending-legacy"]),
       );

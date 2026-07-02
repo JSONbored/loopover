@@ -15,6 +15,7 @@ import {
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionTargetForJob,
+  errorMessageWithCause,
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
@@ -380,7 +381,7 @@ export function createSqliteQueue(
         }, jobTraceParent);
       } catch (error) {
         const attempts = job.attempts + 1;
-        const errMsg = error instanceof Error ? error.message : "unknown error";
+        const errMsg = errorMessageWithCause(error);
         const rateLimitDelayMs = githubRateLimitRetryDelayMs(error);
         if (rateLimitDelayMs !== null) {
           const now = Date.now();

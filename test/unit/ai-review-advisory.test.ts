@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAiReviewDiff, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
+import { buildAiReviewDiff, claimAiReviewLock, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
 import { BEST_REVIEW_MODELS, INCOHERENT_DIFF_ASSESSMENT } from "../../src/services/ai-review";
 import * as sentryModule from "../../src/selfhost/sentry";
 import { upsertRepositoryAiKey } from "../../src/db/repositories";
@@ -521,6 +521,38 @@ describe("runAiReviewForAdvisory", () => {
       findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
     });
     expect(result?.notes).toContain("AI review could not be completed for this PR head");
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
+  });
+
+  it("#confirmed-bug: defers to an already-held AI review lock and never invokes the AI when another pass is in-flight for this exact head", async () => {
+    const adv = advisory();
+    let aiCalls = 0;
+    const env = aiEnv(async () => {
+      aiCalls += 1;
+      return { response: notesOnlyJson() };
+    });
+    // Simulate a webhook pass already in-flight for this exact (repo, PR, head, mode) tuple — the caller under
+    // test (a sweep-shaped pass, say) must defer instead of racing it with a second, independently-decided
+    // LLM call.
+    expect(await claimAiReviewLock(env, "acme/widgets", 3, "sha3", "block")).toBe(true);
+
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+
+    expect(aiCalls).toBe(0); // the AI mock was never invoked — the lock short-circuited before the LLM call
+    expect(result).toMatchObject({
+      reviewerCount: 0,
+      inlineFindings: [],
+      cacheable: false,
+      findings: [expect.objectContaining({ code: "ai_review_inconclusive" })],
+    });
+    expect(result?.notes).toContain("AI review is already running for this PR head in another Gittensory pass");
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_review_inconclusive"]);
   });
 

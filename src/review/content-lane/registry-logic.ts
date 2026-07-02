@@ -544,10 +544,12 @@ export function assessSubnetDocument(
   if (!Array.isArray(doc.surfaces)) {
     return fail("unsupported-shape", "Subnet document must carry a surfaces[] array.");
   }
-  // The orchestrator resolves the single appended entry by diffing head vs base surfaces[]; it passes null when
-  // the PR adds zero or more than one entry (or edits an existing one) — never a silent multi-entry merge.
+  // A per-entry call: the orchestrator resolves every appended entry by diffing head vs base surfaces[], enforces
+  // the spec's maxAppendedEntries cap (and the ≥1-entry requirement) BEFORE calling this per entry, then calls it
+  // once per appended entry. So appendedEntry is null/undefined here only when a specific array element itself is
+  // missing/malformed (a data-shape problem) — it is no longer a "wrong count" sentinel.
   if (appendedEntry === null || appendedEntry === undefined) {
-    return fail("unsupported-shape", "PR must append exactly one surface entry to surfaces[].");
+    return fail("unsupported-shape", "Surface entry to assess is missing — the appended entry could not be resolved.");
   }
   // Whole-document secret scan catches material in the envelope (outside the entry); the entry is re-scanned below.
   if (secretsScan && containsSecretLikeText(JSON.stringify(doc))) {
@@ -667,6 +669,31 @@ export interface RegistryLaneSpec {
   artifactPattern?: RegExp;
   /** The array field on an entry file a contribution appends to (the surface model: "surfaces"). */
   collectionField: string;
+  /** Max surfaces[] entries a single PR may append in one run. Omitted ⇒ today's strict single-entry-only
+   *  default — safe-by-default backward compat for every spec that doesn't explicitly opt in (including future,
+   *  unknown per-repo registries). Set explicitly to raise the cap; `Infinity` removes it entirely (e.g.
+   *  metagraphed's documented "several surfaces for one subnet in one diff is one merge" anti-farming policy). */
+  maxAppendedEntries?: number;
+  /** Entry field names whose COMBINED values identify "the same entry" for duplicate detection (e.g. `["url"]`).
+   *  Omitted ⇒ duplicate detection is OFF (safe-by-default backward compat — a spec that doesn't opt in gets no
+   *  new close reason). When set, an appended entry whose identity matches an entry already present in the base
+   *  document's `collectionField` array, OR an earlier entry appended in the SAME PR, closes the whole PR. A field
+   *  whose value looks like a URL is compared via `normalizePublicUrl` (so trivial formatting differences don't
+   *  count as different); every other field is compared as a trimmed, case-insensitive string (or a structural
+   *  JSON comparison for a non-string value). Generic — the engine only duck-types the configured field names off
+   *  each entry, it never assumes any domain-specific shape (kind/netuid/etc. are metagraphed's own vocabulary). */
+  duplicateKeyFields?: readonly string[];
+  /** Validates ONE appended surfaces[] entry against the whole document (root shape + the specific entry) and
+   *  returns its Assessment — the registry's own domain-specific semantic check (shape/safety/business rules).
+   *  The orchestrator calls this once per appended entry and aggregates the results; it never validates anything
+   *  itself, so a different registry supplies its own function here without touching the orchestrator. Omitted
+   *  ⇒ the orchestrator returns "manual" for entry submissions to this registry (structural gating — scope,
+   *  entry-count cap, duplicate detection — still applies; there's just no domain-specific check configured yet). */
+  assessAppendedEntry?: (document: unknown, opts: { secretsScan?: boolean; sourceUrlValidation?: boolean; appendedEntry: unknown }) => Assessment;
+  /** Validates a flat provider-submission document and returns its ProviderAssessment — the registry's own
+   *  domain-specific check, analogous to `assessAppendedEntry` but for the provider-file scope. Omitted ⇒ the
+   *  orchestrator returns "manual" for provider submissions to this registry. */
+  assessProviderEntry?: (document: unknown, opts?: { secretsScan?: boolean; sourceUrlValidation?: boolean }) => ProviderAssessment;
 }
 
 export type RegistryPrScope = "entry-submission" | "provider-submission" | "mixed-files" | "not-direct-submission";
@@ -713,6 +740,58 @@ export function isRegistrySubmissionScope(scope: RegistryPrScope): boolean {
   return scope === "entry-submission" || scope === "provider-submission";
 }
 
+/** Normalizes a single field value for duplicate-identity comparison. A URL-shaped string is canonicalized via
+ *  normalizePublicUrl (so http/https/case/trailing-slash/tracking-param differences don't count as different);
+ *  any other string is trimmed + lowercased; a non-string value falls back to a structural JSON comparison.
+ *  Returns null for a null/undefined value (an absent field contributes nothing to the identity). */
+function normalizeIdentityValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return normalizePublicUrl(value) ?? value.trim().toLowerCase();
+  return JSON.stringify(value);
+}
+
+/** The duplicate-identity key for `entry` under `fields` (e.g. `["url"]` or `["url", "kind"]`): the normalized
+ *  values of those fields, combined via JSON.stringify. A plain joined string (e.g. space-separated) would be
+ *  AMBIGUOUS — two entries whose field values straddle the join boundary differently could collide onto the same
+ *  string (`["alpha beta", "docs"]` vs `["alpha", "beta docs"]` both joining to "alpha beta docs") and falsely
+ *  read as duplicates; JSON.stringify's quoting/structure makes field boundaries unambiguous regardless of
+ *  content. Returns null when EVERY configured field is absent on this entry — there's nothing to key on, so it
+ *  can never match or be matched. */
+function duplicateIdentityKey(entry: unknown, fields: readonly string[]): string | null {
+  const record = entry as Record<string, unknown> | null;
+  const parts = fields.map((field) => normalizeIdentityValue(record?.[field]));
+  return parts.every((part) => part === null) ? null : JSON.stringify(parts);
+}
+
+/**
+ * The first entry in `appendedEntries` whose duplicate-identity key (under `spec.duplicateKeyFields`) collides
+ * with an EARLIER appended entry (a same-PR duplicate) or with any entry already in `existingEntries` (a
+ * resubmission of an entry already in the registry) — wrapped in a 1-tuple so a legitimate falsy/null entry value
+ * is never confused with "no duplicate found" (plain `null`). Returns null when the spec has no
+ * `duplicateKeyFields` (the default — duplicate detection is opt-in per spec) or no collision exists. Generic:
+ * works for ANY RegistryLaneSpec by duck-typing the configured field names, not just metagraphed's.
+ */
+export function findDuplicateAppendedEntry(
+  spec: RegistryLaneSpec,
+  appendedEntries: readonly unknown[],
+  existingEntries: readonly unknown[],
+): [unknown] | null {
+  const fields = spec.duplicateKeyFields;
+  if (!fields || fields.length === 0) return null;
+  const seen = new Set<string>();
+  for (const entry of existingEntries) {
+    const key = duplicateIdentityKey(entry, fields);
+    if (key !== null) seen.add(key);
+  }
+  for (const entry of appendedEntries) {
+    const key = duplicateIdentityKey(entry, fields);
+    if (key === null) continue;
+    if (seen.has(key)) return [entry];
+    seen.add(key);
+  }
+  return null;
+}
+
 // metagraphed's spec — the first RegistryLaneSpec. surfaces[] live in registry/subnets/<slug>.json; providers
 // are FLAT registry/providers/<slug>.json (the community/ subdir was retired). A PR touching the old
 // registry/candidates/community/* path matches none of these → mixed-files / not-direct (correctly not adopted
@@ -724,4 +803,17 @@ export const METAGRAPHED_LANE_SPEC: RegistryLaneSpec = {
   providerFilePattern: FLAT_PROVIDER_PATTERN,
   artifactPattern: ARTIFACT_PATTERN,
   collectionField: "surfaces",
+  // metagraphed's contributor docs deliberately allow appending SEVERAL surfaces[] entries for one subnet in one
+  // PR (the 2026-06 anti-farming fix: splitting one subnet's surfaces into many near-identical PRs is what the
+  // single-entry cap used to force) — no cap here, per entry validated independently by the orchestrator.
+  maxAppendedEntries: Infinity,
+  // Removing the single-entry cap also removed its incidental side effect of rejecting a same-PR duplicate
+  // surfaces[] entry (added.length!==1 used to close it). Opt back into duplicate detection explicitly, keyed on
+  // `url` alone (a subnet's surfaces are distinct interfaces; the same url appearing twice — in one PR or against
+  // an entry already registered — is a resubmission, not a new surface).
+  duplicateKeyFields: ["url"],
+  // metagraphed's own domain-specific semantic validators (netuid/kind/public_safe/auth_required shape+safety
+  // checks) — supplied here, not hardcoded into the orchestrator, so a different registry can supply its own.
+  assessAppendedEntry: assessSubnetDocument,
+  assessProviderEntry: assessProviderDocument,
 };

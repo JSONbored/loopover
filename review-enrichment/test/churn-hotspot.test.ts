@@ -76,6 +76,19 @@ test("scanChurnHotspot: requires a github token and a valid repo slug", async ()
   assert.deepEqual(await scanChurnHotspot({ repoFullName: "bad slug/x!", prNumber: 1, githubToken: "t", files: [{ path: "src/a.ts" }] }, async () => jsonResponse(commits(20, 2))), []);
 });
 
+test("scanChurnHotspot: rejects multi-segment repo slugs without fetching", async () => {
+  let called = false;
+  const out = await scanChurnHotspot(
+    { repoFullName: "octo/repo/extra", prNumber: 1, githubToken: "ghp_test", files: [{ path: "src/a.ts" }] },
+    async () => {
+      called = true;
+      return jsonResponse(commits(20, 2));
+    },
+  );
+  assert.deepEqual(out, []);
+  assert.equal(called, false);
+});
+
 test("scanChurnHotspot: fails safe on a non-ok or throwing fetch", async () => {
   assert.deepEqual(await scanChurnHotspot(req([{ path: "src/a.ts" }]), async () => jsonResponse({}, 500)), []);
   assert.deepEqual(

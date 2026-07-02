@@ -100,7 +100,9 @@ export async function scanChurnHotspot(
 ): Promise<ChurnHotspotFinding[]> {
   const { repoFullName, githubToken, files = [] } = req;
   if (!githubToken) return [];
-  const [owner, repo] = repoFullName.split("/");
+  const parts = repoFullName.split("/");
+  if (parts.length !== 2) return [];
+  const [owner, repo] = parts;
   if (!owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
 
   const headers = githubHeaders(githubToken);

@@ -1,16 +1,34 @@
-import { readFileSync } from "node:fs";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 type BoundValue = string | number | null | Uint8Array;
+
+// Listing + reading migrations/*.sql (~90 files) on every TestD1Database construction (~1500 call sites
+// across the suite) is pure overhead: the file list and contents never change within a worker process's
+// lifetime. Cache the concatenated SQL once per process instead of re-reading it every call.
+//
+// NOT using node:sqlite's serialize()/deserialize() here: they would let one migrated template be cloned
+// per instance instead of re-executing the SQL each time (a much bigger win), but they don't exist on this
+// repo's pinned Node 22 (`.nvmrc`) at all -- confirmed absent from DatabaseSync's prototype on Node 22.23.1,
+// present only from Node 24+. An earlier version of this cache used them and passed locally on a newer Node,
+// but crashed every test in CI (`db.deserialize is not a function`) since CI runs the pinned Node 22. Stick
+// to what Node 22 actually supports.
+let migratedSql: string | null = null;
+function getMigratedSql(): string {
+  if (migratedSql) return migratedSql;
+  migratedSql = readdirSync("migrations")
+    .filter((file) => file.endsWith(".sql"))
+    .sort()
+    .map((file) => readFileSync(`migrations/${file}`, "utf8"))
+    .join("\n");
+  return migratedSql;
+}
 
 export class TestD1Database {
   readonly db = new DatabaseSync(":memory:");
 
   constructor() {
-    for (const migrationFile of readdirSync("migrations").filter((file) => file.endsWith(".sql")).sort()) {
-      this.db.exec(readFileSync(`migrations/${migrationFile}`, "utf8"));
-    }
+    this.db.exec(getMigratedSql());
   }
 
   prepare(sql: string) {
@@ -78,6 +96,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
     GITHUB_APP_PRIVATE_KEY: "test-private-key",
     ADMIN_GITHUB_LOGINS: "jsonbored",
+    MCP_ACTUATION_REPO_ALLOWLIST: "*",
     SELFHOST_TRANSIENT_CACHE: {
       async get(key: string) {
         return transientCache.get(key) ?? null;
@@ -87,6 +106,15 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
       },
       async del(key: string) {
         transientCache.delete(key);
+      },
+      // Mirrors createRedisCache's atomic claim (#2129): the check-and-set below has no `await` between the
+      // `has` read and the `set` write, so it completes synchronously within one microtask — a concurrent
+      // caller can never observe the key as absent partway through another caller's claim, matching Redis's
+      // SET NX server-side atomicity.
+      async claim(key: string, value: string) {
+        if (transientCache.has(key)) return false;
+        transientCache.set(key, value);
+        return true;
       },
     },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the

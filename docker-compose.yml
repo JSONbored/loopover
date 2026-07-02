@@ -501,6 +501,9 @@ services:
   # Runs `runs-on: self-hosted` jobs on this machine. Set RUNNER_TOKEN= (or ACCESS_TOKEN=)
   # and RUNNER_REPO_URL= (e.g. https://github.com/your-org/your-repo) in .env.
   # Get a token at: https://github.com/<owner>/<repo>/settings/actions/runners/new
+  # Running this alongside the main `gittensory` app on the SAME host? A burst of CI jobs can starve the
+  # app of CPU with no limits set (the default below). See docker-compose.override.yml.example for a
+  # proven CPU-priority pattern (relative cpu_shares + a per-container cpus ceiling) before scaling this up.
   runner:
     # Pin to a specific version tag — `latest` is mutable. Find a digest via:
     # docker pull myoung34/github-runner:ubuntu-jammy && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-jammy
@@ -578,7 +581,7 @@ services:
     command:
       - /bin/sh
       - -c
-      - "sh /backup-metrics.sh"
+      - "apk add --no-cache busybox-extras && sh /backup-metrics.sh"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics | grep -q '^gittensory_backup_latest_timestamp_seconds'"]
       interval: 30s

@@ -273,11 +273,16 @@ function fallbackObservationCanOverrideExact(
   exact: AdmissionObservation | null,
 ): boolean {
   if (!fallback) return false;
-  if (!exact) return true;
-  const fallbackMs = observationMs(fallback);
-  const exactMs = observationMs(exact);
-  if (fallbackMs === null) return false;
-  return exactMs === null || fallbackMs > exactMs;
+  // A null/unkeyed fallback row is frequently a DIFFERENT bucket entirely (a public token, another
+  // consumer's traffic, or a pre-migration write that never carried an admission_key) -- we have no
+  // evidence it reports on the SAME budget as this admission key. That untrustworthiness applies
+  // regardless of which direction the fallback's reading points: it must not suppress a healthy exact
+  // observation (the original bug), but it must equally not CLEAR a genuine exact exhaustion either --
+  // both are the same category of false signal, just pointing opposite ways. Once an exact observation
+  // exists for this key, it alone governs; the exact reading's own reset_at already bounds how long an
+  // exhaustion can block admission, so there is no correctness reason to let an unrelated bucket
+  // override it in either direction. Fallback governs ONLY when no exact observation exists at all.
+  return !exact;
 }
 
 export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
@@ -368,9 +373,10 @@ export function githubRateLimitAdmissionTargetForJob(
     };
   }
   if (!isGitHubBudgetBackgroundJob(message)) return null;
+  const admissionKey = githubRateLimitAdmissionKeyForJob(message);
   return {
     kind: "background",
-    admissionKey: githubRateLimitAdmissionKeyForJob(message),
+    admissionKey: admissionKey ?? githubRateLimitAdmissionKeyForPublicToken(),
   };
 }
 
@@ -379,9 +385,13 @@ export function matchesGitHubRateLimitAdmissionTarget(
   blocked: GitHubRateLimitAdmissionTarget,
 ): boolean {
   if (candidate === null) return false;
-  // Null-key GitHub jobs are legacy/unknown actor work; park them with a depleted known bucket,
-  // and park all GitHub-budget work when the depleted bucket itself is unknown.
-  if (blocked.admissionKey === null) return true;
+  // A null-key CANDIDATE is legacy/unknown-actor work whose true bucket we can't prove is unaffected,
+  // so it still parks alongside any confirmed exhaustion (known-keyed or null-keyed alike). But a
+  // null-key BLOCKED target (the job that actually failed had no admissionKey) does NOT justify
+  // parking every OTHER concretely-keyed installation's work too -- we only know ONE unscoped bucket
+  // is exhausted, not that a SPECIFIC installation's own budget is affected. Scoping this the same way
+  // as a keyed blocked target avoids the same false-positive class as a stale unkeyed observation
+  // pinning a healthy installation's webhooks (mirrors fallbackObservationCanOverrideExact above).
   return candidate.admissionKey === blocked.admissionKey || candidate.admissionKey === null;
 }
 
@@ -464,6 +474,23 @@ function githubWebhookPriority(payload: string): number {
     return 0;
   }
   return 10;
+}
+
+/** A diagnosable message for a job failure, including the ROOT CAUSE — not just the wrapper's own text.
+ *  Drizzle's DrizzleQueryError (thrown on every failed query, both queue backends) sets its OWN `.message` to a
+ *  generic "Failed query: <sql>\nparams: <params>" and stashes the actual driver error — a Postgres SQLSTATE
+ *  deadlock/serialization failure, a SQLite busy/constraint code, a connection reset, etc. — on `.cause`.
+ *  Logging only `error.message` for a query failure is undiagnosable: every failure looks identical (the same
+ *  query + params) regardless of the actual reason, which is exactly the information needed to tell a transient
+ *  lock/connection blip apart from a genuine data or schema bug. Includes the cause's `.code` (Postgres SQLSTATE
+ *  / SQLite result code) when present, since that is the canonical, greppable identifier for the failure class. */
+export function errorMessageWithCause(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown error";
+  const cause = error.cause;
+  if (!(cause instanceof Error)) return error.message;
+  const code = (cause as { code?: unknown }).code;
+  const codeSuffix = typeof code === "string" && code.length > 0 ? ` [${code}]` : "";
+  return `${error.message} — caused by: ${cause.message}${codeSuffix}`;
 }
 
 const DEFAULT_GITHUB_RATE_LIMIT_RETRY_MS = 5 * 60_000;

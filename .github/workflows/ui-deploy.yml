@@ -30,7 +30,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `npm run ui:build` also regenerates apps/gittensory-ui/public/openapi.json, but `ui:openapi:check`
+      # just verified the committed spec is already byte-identical to what regenerating it would produce
+      # -- run ui:build's other two steps directly instead of the aggregate script, skipping that redundant
+      # regen (mirrors the same fix in .github/workflows/ci.yml's "UI build" step).
       - name: Validate frontend
         env:
           VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
-        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run ui:build
+        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run extension:build && npm --workspace @jsonbored/gittensory-ui run build

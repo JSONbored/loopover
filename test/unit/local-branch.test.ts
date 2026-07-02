@@ -1737,6 +1737,24 @@ describe("local MCP git metadata collection", () => {
     );
   });
 
+  it("classifies Cypress/e2e and snapshot paths as test files, mirroring the server isTestPath", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { isTestFile, isCodeFile } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    // Existing forms still classify as tests.
+    for (const file of ["test/foo.ts", "src/app.test.ts", "pkg/foo_test.go", "spec/foo_spec.rb", "src/__tests__/x.ts"]) {
+      expect(isTestFile(file)).toBe(true);
+    }
+    // Regression: Cypress/e2e and snapshot files must count as tests; before this they fell through to
+    // isCodeFile and were wrongly counted as source in the local packet.
+    for (const file of ["components/Button.cy.ts", "e2e/login.e2e.tsx", "src/__snapshots__/Button.snap.ts"]) {
+      expect(isTestFile(file)).toBe(true);
+      expect(isCodeFile(file)).toBe(false);
+    }
+    // Plain source stays source.
+    expect(isTestFile("src/app.ts")).toBe(false);
+    expect(isCodeFile("src/app.ts")).toBe(true);
+  });
+
   it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {
     // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { extractLinkedIssues } = await import("../../packages/gittensory-mcp/lib/local-branch.js");

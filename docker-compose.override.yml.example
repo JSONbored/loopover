@@ -1,0 +1,35 @@
+# Optional CPU-priority tuning for boxes running `--profile runners` alongside the main `gittensory`
+# app on the SAME host. Copy to `docker-compose.override.yml` (gitignored, auto-loaded by `docker
+# compose` alongside docker-compose.yml) and adjust the numbers for your host if you use this pattern.
+#
+# WHY THIS EXISTS: with no limits set (the default -- see docker-compose.yml), every container competes
+# for the host's CPUs on equal footing. On a box that ALSO runs `--profile runners`, a burst of CI jobs
+# can starve the `gittensory` app itself of CPU, slowing down (or queuing up) the very review work the
+# app exists to do -- discovered running this exact pattern in production on an 8-vCPU box: 3 uncapped
+# runner containers left the app starved under load.
+#
+# THE FIX IS PRIORITY, NOT A HARD SPLIT: `cpu_shares` is a RELATIVE weight that only matters once the
+# host is actually contended (all CPUs busy at once) -- a job still gets 100% of an idle box regardless
+# of its share. Setting the app's shares high and the runner's low means: engine work always wins a race
+# for CPU when both want it at the same instant, but CI is never blocked from running merely because the
+# app exists -- it just yields faster than it otherwise would under real contention.
+#
+# `cpus` is a separate, absolute ceiling (not a reservation) -- it caps how many cores a SINGLE container
+# can burst to, independent of shares. Size it to your own host: these examples assume an 8-vCPU box
+# running the app + 3 runner replicas; the runner values below intentionally sum to MORE than the host's
+# core count (12 > 8) because `cpus` is a per-container ceiling, not a guarantee -- the host's own CPU
+# scheduler (driven by the relative `cpu_shares` below) resolves real contention when multiple containers
+# actually want the CPU at once.
+#
+# Sizing guide for a different host: pick a `gittensory` : `runner` cpu_shares ratio reflecting how
+# strongly you want review work to win contention (8:1 below is deliberately aggressive), and keep each
+# runner replica's `cpus` ceiling at roughly (host vCPUs) / (number of runner replicas you plan to run),
+# so a single busy runner can't monopolize the box even before shares kick in.
+
+services:
+  gittensory:
+    cpu_shares: 4096
+
+  runner:
+    cpu_shares: 512
+    cpus: "4.0"

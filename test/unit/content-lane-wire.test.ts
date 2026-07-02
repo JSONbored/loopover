@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation } from "../../src/rules/advisory";
-import { applySurfaceGate, evaluateWithSurfaceLane, isContentLaneWired, resolveSurfaceRefs, runMetagraphedSurfaceGate, surfaceVerdictToGate } from "../../src/review/content-lane-wire";
+import { applySurfaceGate, evaluateWithSurfaceLane, resolveSurfaceRefs, runRegistrySurfaceGate, surfaceVerdictToGate } from "../../src/review/content-lane-wire";
 import type { SurfaceReviewInput } from "../../src/review/content-lane/orchestrator";
+import { METAGRAPHED_LANE_SPEC } from "../../src/review/content-lane/registry-logic";
+import { parseFocusManifest, type FocusManifest } from "../../src/signals/focus-manifest";
 import type { AdvisoryFinding } from "../../src/types";
 
 const env = {} as unknown as Env;
@@ -16,16 +18,11 @@ const validProvider = JSON.stringify({ provider: { id: "acme", name: "Acme", web
 // A loadFile stub keyed by `${ref}:${path}` (mirrors the orchestrator test) so the adapter never hits the network.
 const loader = (files: Record<string, string | null>): SurfaceReviewInput["loadFile"] => (path, ref) => Promise.resolve(files[`${ref}:${path}`] ?? null);
 const gate = (over: Partial<GateCheckEvaluation>): GateCheckEvaluation => ({ enabled: true, conclusion: "success", title: "Gate", summary: "", blockers: [], warnings: [], ...over });
+// A no-`contentLane:`-config manifest — evaluateWithSurfaceLane's resolver falls through to the
+// GITTENSORY_REVIEW_REPOS allowlist default (METAGRAPHED_LANE_SPEC), matching today's zero-config behavior.
+const noConfigManifest = (): Promise<FocusManifest> => Promise.resolve(parseFocusManifest(null));
 
 afterEach(() => vi.unstubAllGlobals());
-
-describe("isContentLaneWired", () => {
-  it("requires BOTH the flag and the per-repo allowlist", () => {
-    expect(isContentLaneWired({ GITTENSORY_REVIEW_REPOS: REPO }, REPO)).toBe(false); // flag off
-    expect(isContentLaneWired({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "OtherOrg/other" }, REPO)).toBe(false); // not allowlisted
-    expect(isContentLaneWired({ GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO }, REPO)).toBe(true);
-  });
-});
 
 describe("surfaceVerdictToGate", () => {
   it("merge → success with no finding", () => {
@@ -105,11 +102,48 @@ describe("applySurfaceGate", () => {
     expect(out?.conclusion).toBe("failure"); // the secret still blocks the merge
     expect(out?.blockers).toEqual([secret]); // the generic blocker survives the override
   });
+  it("REGRESSION: an AI-judgment-only blocker (e.g. a hallucinated grounding/RAG claim) does not veto a decisive surface merge, and the generic gate's OTHER warnings survive", () => {
+    const aiConsensusDefect: AdvisoryFinding = {
+      code: "ai_consensus_defect",
+      title: "AI reviewers agree on a likely critical defect",
+      severity: "critical",
+      detail: "the current registry context already tracks this netuid under a different slug",
+    };
+    // A warning unrelated to the (overridden) AI blocker — e.g. a quality-readiness note — must NOT vanish just
+    // because the AI blocker next to it gets overridden.
+    const qualityWarning: AdvisoryFinding = { code: "quality_readiness_low", title: "Readiness is low", severity: "warning", detail: "" };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [qualityWarning] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericAiOnly, surfaceMerge);
+    // The surface lane is the sole, AI-free adjudicator for this structured data — an AI-judgment-only blocker
+    // has no standing to override its merge (unlike the real secret_leak blocker in the test above).
+    expect(out?.conclusion).toBe("success");
+    expect(out?.blockers).toEqual([]);
+    // The overridden AI blocker must NOT reappear (demoted or otherwise) — it was simply wrong. Only the
+    // generic gate's unrelated warning, plus any surface warnings, survive.
+    expect(out?.warnings).toEqual([qualityWarning]);
+  });
+  it("an AI-judgment-only generic failure still fails when the surface ITSELF closes (both agree, no override needed)", () => {
+    const split: AdvisoryFinding = { code: "ai_review_split", title: "Split", severity: "critical", detail: "one reviewer flagged a defect" };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [split], warnings: [] });
+    const out = applySurfaceGate(genericAiOnly, surfaceClose);
+    expect(out?.conclusion).toBe("failure");
+    expect(out?.blockers).toEqual([split, ...surfaceClose.blockers]); // union — the AI-only exception only applies to a surface MERGE
+  });
+  it("a MIXED generic failure (an AI-judgment code plus a real blocker) is not AI-judgment-only — still overrides a surface merge", () => {
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked key" };
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "" };
+    const genericMixed = gate({ conclusion: "failure", blockers: [aiConsensusDefect, secret], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    const out = applySurfaceGate(genericMixed, surfaceMerge);
+    expect(out?.conclusion).toBe("failure"); // the real blocker means this is NOT an AI-judgment-only failure
+    expect(out?.blockers).toEqual([aiConsensusDefect, secret]);
+  });
 });
 
-describe("runMetagraphedSurfaceGate (injected loader — adapter logic)", () => {
+describe("runRegistrySurfaceGate (injected loader — adapter logic)", () => {
   const run = (files: { path: string; status?: string | null }[], stub: Record<string, string | null>, advisory = { findings: [] as AdvisoryFinding[] }) =>
-    runMetagraphedSurfaceGate(env, { installationId: 0, repoFullName: REPO, pr: { headSha: "HEAD", baseRef: "BASE" }, advisory, files }, loader(stub));
+    runRegistrySurfaceGate(env, METAGRAPHED_LANE_SPEC, { installationId: 0, repoFullName: REPO, pr: { headSha: "HEAD", baseRef: "BASE" }, advisory, files }, loader(stub));
 
   it("defers (null) for a non-submission PR", async () => {
     expect(await run([{ path: "README.md", status: "added" }], {})).toBeNull();
@@ -143,6 +177,14 @@ describe("runMetagraphedSurfaceGate (injected loader — adapter logic)", () => 
     const out = await run([{ path: SUBNET, status: "added" }], { [`head:${SUBNET}`]: doc([newEntry]) });
     expect(out?.conclusion).toBe("success");
   });
+
+  it("a same-PR duplicate append (METAGRAPHED_LANE_SPEC's opt-in duplicateKeyFields) → failure end-to-end through the live adapter wiring", async () => {
+    const advisory = { findings: [] as AdvisoryFinding[] };
+    const copy = { ...newEntry, id: "a-copy" };
+    const out = await run([{ path: SUBNET, status: "modified" }], { [`head:${SUBNET}`]: doc([existing, newEntry, copy]), [`base:${SUBNET}`]: doc([existing]) }, advisory);
+    expect(out?.conclusion).toBe("failure");
+    expect(advisory.findings.map((f) => f.code)).toEqual(["surface_lane_reject"]);
+  });
 });
 
 describe("resolveSurfaceRefs", () => {
@@ -173,6 +215,11 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
     expect(await evaluateWithSurfaceLane({} as unknown as Env, REPO, true, generic, baseArgs)).toBe(generic);
   });
 
+  it("returns the generic gate unchanged when the flag is on but NO spec resolves for this repo (no config, not in the allowlist — no file resolve)", async () => {
+    const unresolvedEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "Some/OtherRepo" } as unknown as Env;
+    expect(await evaluateWithSurfaceLane(unresolvedEnv, REPO, true, generic, baseArgs, noConfigManifest)).toBe(generic);
+  });
+
   it("when wired, runs the surface lane via the real GitHub loader and overrides the gate", async () => {
     const bodies: Record<string, string> = {
       "HEAD:registry/subnets/foo.json": doc([existing, newEntry]),
@@ -186,13 +233,374 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
       return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
     });
     const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      generic,
+      {
+        installationId: null, // → unauthenticated fetcher; only the stub is hit
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
+      },
+      noConfigManifest,
+    );
+    expect(out?.conclusion).toBe("success"); // a clean append merges, overriding the generic gate
+  });
+
+  it("REGRESSION: overriding an AI-judgment-only failure also strips the stale AI finding from advisory.findings (so the public comment can't contradict the merge)", async () => {
+    const bodies: Record<string, string> = {
+      "HEAD:registry/subnets/foo.json": doc([existing, newEntry]),
+      "BASE:registry/subnets/foo.json": doc([existing]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "hallucinated" };
+    const otherWarning: AdvisoryFinding = { code: "quality_readiness_low", title: "Readiness is low", severity: "warning", detail: "" };
+    // Simulates the real pipeline: `runAiReviewForAdvisory` already pushed the SAME finding into advisory.findings
+    // (consumed independently by the unified-comment bridge's consensusDefectFromFindings) before the generic gate
+    // was evaluated from it.
+    const advisory = { findings: [aiConsensusDefect, otherWarning] };
+    const genericAiOnly = gate({ conclusion: "failure", blockers: [aiConsensusDefect], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      genericAiOnly,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
+      },
+      noConfigManifest,
+    );
+    expect(out?.conclusion).toBe("success");
+    // The overridden ai_consensus_defect must be gone from advisory.findings too — otherwise the unified-comment
+    // bridge would still recover it via consensusDefectFromFindings and render "Concerns raised" over a merge.
+    expect(advisory.findings).toEqual([otherWarning]);
+  });
+
+  it("does NOT touch advisory.findings when the surface lane defers or the generic gate isn't AI-judgment-only", async () => {
+    const aiConsensusDefect: AdvisoryFinding = { code: "ai_consensus_defect", title: "AI defect", severity: "critical", detail: "" };
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked" };
+    const advisory = { findings: [aiConsensusDefect, secret] };
+    // A real (non-AI) blocker alongside the AI one means isAiJudgmentOnlyFailure is false — no cleanup should run.
+    const genericMixed = gate({ conclusion: "failure", blockers: [aiConsensusDefect, secret], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      genericMixed,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: "README.md", status: "modified" }], // not a registry submission → surface defers (null)
+      },
+      noConfigManifest,
+    );
+    expect(advisory.findings).toEqual([aiConsensusDefect, secret]);
+  });
+
+  it("defaults to the REAL loadRepoFocusManifest when no override is injected, and still degrades safely on a fake env", async () => {
+    // No loadManifestOverride argument at all — exercises the production default (`loadManifestOverride ??
+    // loadRepoFocusManifest`). A fake env with no D1 binding makes the real loader reject fast; `.catch(() =>
+    // null)` still routes it to the allowlist-default resolution path rather than throwing out of this function.
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
     const out = await evaluateWithSurfaceLane(wiredEnv, REPO, true, generic, {
-      installationId: null, // → unauthenticated fetcher; only the stub is hit
+      installationId: null,
       pr: { headSha: "HEAD", baseRef: "BASE" },
       repo: { defaultBranch: "main" },
       advisory: { findings: [] },
-      getChangedFiles: async () => [{ path: SUBNET, status: "modified" }],
+      getChangedFiles: async () => [{ path: "README.md", status: "modified" }], // not a registry submission → surface defers (null)
     });
-    expect(out?.conclusion).toBe("success"); // a clean append merges, overriding the generic gate
+    expect(out).toBe(generic);
+  });
+
+  it("routes an unresolved/thrown manifest load to the allowlist default rather than throwing (fail-safe)", async () => {
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      generic,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => [{ path: "README.md", status: "modified" }], // not a registry submission → surface defers (null)
+      },
+      throwingLoader,
+    );
+    expect(out).toBe(generic); // degrades to the allowlist-default resolution path, never throws
+  });
+
+  it("REGRESSION (#confirmed-bug): holds the gate NEUTRAL — rather than silently passing — when a NON-allowlisted repo's manifest fails to load, since that's the only way it could have configured a contentLane", async () => {
+    // OTHER_REPO is NOT in GITTENSORY_REVIEW_REPOS, so its only path to a resolved spec is an explicit
+    // contentLane: config in its OWN .gittensory.yml. If we can't even read that file, we cannot tell "this
+    // repo never configured content-lane" apart from "it did, but we couldn't check this pass" — silently
+    // falling through to the plain generic (clean) evaluation would let a real registry submission merge
+    // unevaluated.
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      OTHER_REPO,
+      true,
+      generic,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => {
+          throw new Error("getChangedFiles must NOT be called — held before any surface-lane fetch");
+        },
+      },
+      throwingLoader,
+    );
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.blockers).toEqual([]);
+    expect(out?.title).toMatch(/held for human review/i);
+  });
+
+  it("REGRESSION (#confirmed-bug): the neutral hold has empty warnings when there was no generic gate evaluation at all", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      OTHER_REPO,
+      true,
+      undefined, // no generic gate evaluation to fall back to for warnings
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => {
+          throw new Error("getChangedFiles must NOT be called — held before any surface-lane fetch");
+        },
+      },
+      throwingLoader,
+    );
+    expect(out?.conclusion).toBe("neutral");
+    expect(out?.warnings).toEqual([]);
+  });
+
+  it("REGRESSION (#confirmed-bug): a real generic hard blocker survives a NON-allowlisted repo's manifest-load failure — never cleared to neutral", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked" };
+    const genericWithBlocker = gate({ conclusion: "failure", blockers: [secret], warnings: [] });
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const throwingLoader = (): Promise<FocusManifest> => Promise.reject(new Error("simulated D1/network failure"));
+    const out = await evaluateWithSurfaceLane(
+      wiredEnv,
+      OTHER_REPO,
+      true,
+      genericWithBlocker,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => {
+          throw new Error("getChangedFiles must NOT be called — held before any surface-lane fetch");
+        },
+      },
+      throwingLoader,
+    );
+    expect(out).toBe(genericWithBlocker); // the real hard blocker is preserved, not overridden to neutral
+  });
+
+  it("activates the surface lane for a NON-metagraphed repo purely from an explicit contentLane: config — no allowlist entry needed", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const OTHER_ENTRY = "registry/items/foo.json";
+    const otherDoc = (items: unknown[]) => JSON.stringify({ items });
+    const bodies: Record<string, string> = {
+      [`HEAD:${OTHER_ENTRY}`]: otherDoc([{ url: "https://api.example.org/new" }]),
+      [`BASE:${OTHER_ENTRY}`]: otherDoc([]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    // Flag on, but OTHER_REPO is NOT in GITTENSORY_REVIEW_REPOS — proving activation comes from the config alone.
+    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const configuredManifest = (): Promise<FocusManifest> =>
+      Promise.resolve(
+        parseFocusManifest({
+          contentLane: { entryFileGlob: "registry/items/*.json", collectionField: "items" },
+        }),
+      );
+    const out = await evaluateWithSurfaceLane(
+      configuredEnv,
+      OTHER_REPO,
+      true,
+      undefined,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory: { findings: [] },
+        getChangedFiles: async () => [{ path: OTHER_ENTRY, status: "modified" }],
+      },
+      configuredManifest,
+    );
+    // No validatorId was configured → structural gating only (a valid, non-duplicate, in-scope append) →
+    // manual, NOT merge/close — the concrete proof this is reachable via config alone (see spec-resolver tests
+    // for the full config→spec resolution matrix).
+    expect(out?.conclusion).toBe("neutral");
+  });
+
+  it("a CONFIG-RESOLVED spec's duplicateKeyFields drives the same end-to-end dedup close as METAGRAPHED_LANE_SPEC's own — the whole pipeline, not just the code-defined default spec", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const OTHER_ENTRY = "registry/items/foo.json";
+    const otherDoc = (items: unknown[]) => JSON.stringify({ items });
+    const dup1 = { url: "https://api.example.org/new" };
+    const dup2 = { url: "https://api.example.org/new", note: "a same-PR resubmission of the same url" };
+    const bodies: Record<string, string> = {
+      [`HEAD:${OTHER_ENTRY}`]: otherDoc([dup1, dup2]),
+      [`BASE:${OTHER_ENTRY}`]: otherDoc([]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const configuredManifest = (): Promise<FocusManifest> =>
+      Promise.resolve(
+        parseFocusManifest({
+          contentLane: { entryFileGlob: "registry/items/*.json", collectionField: "items", duplicateKeyFields: ["url"] },
+        }),
+      );
+    const advisory = { findings: [] as AdvisoryFinding[] };
+    const out = await evaluateWithSurfaceLane(
+      configuredEnv,
+      OTHER_REPO,
+      true,
+      undefined,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: OTHER_ENTRY, status: "modified" }],
+      },
+      configuredManifest,
+    );
+    expect(out?.conclusion).toBe("failure"); // the same-PR url duplicate closes, exactly as the METAGRAPHED_LANE_SPEC regression test above proves
+    expect(advisory.findings.map((f) => f.code)).toEqual(["surface_lane_reject"]);
+  });
+
+  it("an UNREGISTERED contentLane.validatorId (operator typo) pushes a non-blocking diagnostic finding into advisory.findings, alongside the degraded structural-only verdict", async () => {
+    const OTHER_REPO = "SomeoneElse/other-registry";
+    const OTHER_ENTRY = "registry/items/foo.json";
+    const otherDoc = (items: unknown[]) => JSON.stringify({ items });
+    const bodies: Record<string, string> = {
+      [`HEAD:${OTHER_ENTRY}`]: otherDoc([{ url: "https://api.example.org/new" }]),
+      [`BASE:${OTHER_ENTRY}`]: otherDoc([]),
+    };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    const configuredManifest = (): Promise<FocusManifest> =>
+      Promise.resolve(
+        parseFocusManifest({
+          contentLane: { entryFileGlob: "registry/items/*.json", collectionField: "items", validatorId: "metagraph" }, // typo — should be "metagraphed"
+        }),
+      );
+    const advisory = { findings: [] as AdvisoryFinding[] };
+    const out = await evaluateWithSurfaceLane(
+      configuredEnv,
+      OTHER_REPO,
+      true,
+      undefined,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: OTHER_ENTRY, status: "modified" }],
+      },
+      configuredManifest,
+    );
+    // Structural gating still runs in degraded (no-validator) mode — a clean, non-duplicate, in-scope append →
+    // manual (the same "no validator configured" degraded verdict an omitted validatorId gets), NOT a crash.
+    expect(out?.conclusion).toBe("neutral");
+    const codes = advisory.findings.map((f) => f.code);
+    expect(codes).toContain("surface_lane_unknown_validator_id");
+    const warning = advisory.findings.find((f) => f.code === "surface_lane_unknown_validator_id");
+    expect(warning?.severity).toBe("warning");
+    expect(warning?.detail).toContain('"metagraph"');
+    expect(warning?.detail).toContain("metagraphed"); // the known-id hint names the real registered id
+  });
+
+  it("a REGISTERED contentLane.validatorId pushes NO unknown-validator diagnostic", async () => {
+    const advisory = { findings: [] as AdvisoryFinding[] };
+    const registeredManifest = (): Promise<FocusManifest> =>
+      Promise.resolve(parseFocusManifest({ contentLane: { entryFileGlob: "registry/subnets/*.json", collectionField: "surfaces", validatorId: "metagraphed" } }));
+    const configuredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: "Some/OtherRepo" } as unknown as Env;
+    await evaluateWithSurfaceLane(
+      configuredEnv,
+      REPO,
+      true,
+      generic,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: "README.md", status: "modified" }], // not a submission → surface defers
+      },
+      registeredManifest,
+    );
+    expect(advisory.findings.map((f) => f.code)).not.toContain("surface_lane_unknown_validator_id");
+  });
+
+  it("an omitted validatorId (today's zero-config default) pushes NO unknown-validator diagnostic", async () => {
+    const advisory = { findings: [] as AdvisoryFinding[] };
+    const wiredEnv = { GITTENSORY_REVIEW_CONTENT_LANE: "true", GITTENSORY_REVIEW_REPOS: REPO } as unknown as Env;
+    await evaluateWithSurfaceLane(
+      wiredEnv,
+      REPO,
+      true,
+      generic,
+      {
+        installationId: null,
+        pr: { headSha: "HEAD", baseRef: "BASE" },
+        repo: { defaultBranch: "main" },
+        advisory,
+        getChangedFiles: async () => [{ path: "README.md", status: "modified" }],
+      },
+      noConfigManifest,
+    );
+    expect(advisory.findings).toEqual([]);
   });
 });

@@ -12,6 +12,7 @@ import {
   consumingRetryDelayMs,
   deterministicJitterMs,
   FOREGROUND_QUEUE_PRIORITY_FLOOR,
+  errorMessageWithCause,
   githubRateLimitAdmissionDelayMs,
   githubRateLimitAdmissionTargetForJob,
   githubRateLimitMetricContext,
@@ -440,7 +441,7 @@ export function createPgQueue(
         }, jobTraceParent);
       } catch (error) {
         const attempts = Number(job.attempts) + 1;
-        const errMsg = error instanceof Error ? error.message : "unknown error";
+        const errMsg = errorMessageWithCause(error);
         const rateLimitDelayMs = githubRateLimitRetryDelayMs(error);
         if (rateLimitDelayMs !== null) {
           const now = Date.now();

@@ -12,8 +12,15 @@
 //  - duplicates (awesome) : duplicate-detection + protected-edit gate
 //  - source-evidence (a.) : source-URL reachability gate (injectable fetch)
 //  - security-scan (a.)   : embedded-secret + pipe-to-shell scan
-//  - registry-logic (meta): candidate/provider gates, netuid GROUNDING, dedup keys, freshness, scope
-//  - netuid-verification  : taostats + public-registry netuid identity (fail-open; taostats key optional)
+//  - registry-logic (meta): the GENERIC surface-model engine (RegistryLaneSpec, scope classification, duplicate
+//                           detection) plus metagraphed's OWN domain-specific validators (candidate/provider
+//                           gates, netuid GROUNDING, dedup keys, freshness) — the latter are metagraphed's own
+//                           reference implementation, still exported here for a future registry to use as a
+//                           template, not because they're generic.
+//
+// NOT re-exported here (metagraphed's own domain plumbing, no reason for a different registry to import it):
+// taostats + public-registry netuid GROUNDING lookups (fail-open; taostats key optional) — import directly from
+// ./netuid-verification if you're specifically working on metagraphed's own validators.
 //
 // DEFERRED / engine-entangled (NOT ported here — see the port report): the dual-AI review
 // orchestration (needs the inference adapter + the gate engine), content-RAG (Vectorize/D1/Queue),
@@ -109,12 +116,4 @@ export {
   type ProviderLike,
   type Verdict,
 } from "./registry-logic";
-export { runSurfaceReview, diffAppendedSurfaceEntry, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";
-export {
-  checkNetuidExists,
-  fetchSubnetRecord,
-  fetchTaostatsSubnetIdentity,
-  type NetuidVerificationEnv,
-  type SubnetRecord,
-  type TaostatsIdentity,
-} from "./netuid-verification";
+export { runSurfaceReview, diffAppendedSurfaceEntries, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";

@@ -240,6 +240,7 @@ export async function scanCodeowners(
   const repoOwner = parts[0];
   const repoName = parts[1];
   if (
+    parts.length !== 2 ||
     !repoOwner ||
     !repoName ||
     !SLUG_RE.test(repoOwner) ||

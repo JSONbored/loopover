@@ -76,10 +76,58 @@ describe("PR freshness guards", () => {
     ).toBe("PR head changed from unknown to unknown");
   });
 
+  it("does not require draft state by default, even when the PR is no longer a draft", () => {
+    const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, draft: false }, "sha1");
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open" });
+  });
+
+  it("REGRESSION (#2130 follow-up): treats a same-head PR converted back to ready_for_review as stale when the caller requires draft", () => {
+    const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, draft: false }, "sha1", { requireDraft: true });
+    expect(result).toMatchObject({ status: "stale", reason: "no_longer_draft", liveState: "open", liveHeadSha: "sha1" });
+    expect(pullRequestFreshnessDetail(result)).toBe("PR is no longer a draft");
+  });
+
+  it("treats a still-draft PR as current when the caller requires draft", () => {
+    const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" }, draft: true }, "sha1", { requireDraft: true });
+    expect(result).toEqual({ status: "current", liveHeadSha: "sha1", liveState: "open" });
+  });
+
+  it("treats a missing draft field as stale when the caller requires draft (fail-safe: only an explicit true counts)", () => {
+    const result = classifyPullRequestFreshness({ state: "open", head: { sha: "sha1" } }, "sha1", { requireDraft: true });
+    expect(result).toMatchObject({ status: "stale", reason: "no_longer_draft" });
+  });
+
+  it("fetches live PR state including draft, and requires draft when requested", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async () => Response.json({ state: "open", head: { sha: "sha7" }, draft: false }));
+    await expect(
+      fetchPullRequestFreshness(env, {
+        installationId: 123,
+        repoFullName: "owner/repo",
+        pullNumber: 7,
+        expectedHeadSha: "sha7",
+        requireDraft: true,
+      }),
+    ).resolves.toMatchObject({ status: "stale", reason: "no_longer_draft" });
+  });
+
   it("uses the stored PR head before falling back to advisory metadata", () => {
     expect(reviewedPullRequestHeadSha(" pr-sha ", "advisory-sha")).toBe("pr-sha");
     expect(reviewedPullRequestHeadSha(null, " advisory-sha ")).toBe("advisory-sha");
     expect(reviewedPullRequestHeadSha(" ", undefined)).toBeNull();
+  });
+
+  it("normalizes head SHAs case-insensitively before comparing or returning them", () => {
+    expect(reviewedPullRequestHeadSha(" AbC123 ", "fallback")).toBe("abc123");
+    expect(
+      classifyPullRequestFreshness({ state: "open", head: { sha: "AbC123" } }, "abc123"),
+    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open" });
+    expect(
+      classifyPullRequestFreshness({ state: "open", head: { sha: "abc123" } }, " ABC123 "),
+    ).toEqual({ status: "current", liveHeadSha: "abc123", liveState: "open" });
+    expect(
+      classifyPullRequestFreshness({ state: "open", head: { sha: "NewSha" } }, "oldsha"),
+    ).toMatchObject({ status: "stale", reason: "head_changed", expectedHeadSha: "oldsha", liveHeadSha: "newsha" });
   });
 
   it("fetches live PR state using the existing GitHub GET path", async () => {

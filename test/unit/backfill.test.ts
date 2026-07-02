@@ -34,6 +34,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
   fetchAndStorePullRequestFilesForReview,
+  fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
   fetchLiveReviewThreadBlockers,
   fetchRequiredStatusContexts,
@@ -1236,6 +1237,90 @@ describe("GitHub backfill", () => {
     expect(result.repos[0]).toMatchObject({ status: "success", openIssues: 101 });
     expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
       expect.arrayContaining([expect.objectContaining({ segment: "open_issues", status: "complete", fetchedCount: 101, pageCount: 2 })]),
+    );
+  });
+
+  // A fetch mock that models GitHub's real pagination: `page` is an offset of `(page-1)*per_page`, and each
+  // page returns at most `per_page` items. If a crawl shrinks per_page mid-way, `page` points at an
+  // already-consumed slice; a stable per_page reads the next slice.
+  function issuesOffsetFetch(total: number) {
+    return async (input: RequestInfo | URL): Promise<Response> => {
+      const url = input.toString();
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({ name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", language: "TypeScript", owner: { login: "JSONbored" } });
+      }
+      if (url.includes("/labels?")) return Response.json([]);
+      if (url.includes("/pulls?")) return Response.json([]);
+      if (url.includes("/issues?")) {
+        const params = new URL(url).searchParams;
+        const perPage = Number(params.get("per_page"));
+        const page = Number(params.get("page"));
+        const start = (page - 1) * perPage;
+        const slice = Array.from({ length: Math.max(0, Math.min(start + perPage, total) - start) }, (_, i) => ({
+          number: start + i + 1,
+          title: `Issue ${start + i + 1}`,
+          state: "open",
+          user: { login: "reporter" },
+          labels: [],
+          body: "",
+        }));
+        const hasNext = start + perPage < total;
+        return Response.json(slice, hasNext ? { headers: { link: `<https://api.github.com/repositories/1/issues?page=${page + 1}>; rel="next"` } } : undefined);
+      }
+      return new Response("not found", { status: 404 });
+    };
+  }
+
+  it("fetches every page when the limit is not a multiple of 100 (stable per_page offsets)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", issuesOffsetFetch(150));
+
+    const result = await backfillRegisteredRepositories(env, {
+      mode: "full",
+      limits: { issues: 150, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 },
+    });
+
+    // All 150 unique issues must be stored — a shrinking-per_page crawl re-reads page 1's tail and stores 100.
+    expect(result.repos[0]).toMatchObject({ status: "success", openIssues: 150 });
+  });
+
+  it("advances the resume cursor for a sub-100 cap instead of replaying the first page", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", issuesOffsetFetch(5));
+
+    // Cap at 2 (< 100) against a repo with 5 issues. The segment must resume from the NEXT page (cursor "2"),
+    // not the page it just consumed (cursor "1") — a same-page cursor would replay issues 1-2 forever and
+    // never reach 3-5. With per_page held at min(100, limit)=2, page 2 is offset 2 → the unread rows.
+    const result = await backfillRegisteredRepositories(env, {
+      mode: "full",
+      limits: { issues: 2, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 },
+    });
+
+    expect(result.repos[0]).toMatchObject({ openIssues: 2 });
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "open_issues", status: "capped", nextCursor: "2" })]),
+    );
+  });
+
+  it("resumes from the same page when a cap truncates it mid-page", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", issuesOffsetFetch(200));
+
+    // Cap at 150 against a repo with 200 issues: page 1 (per_page=100) yields 1-100, page 2 yields 101-200
+    // but the cap leaves room for only 50, so page 2 is consumed partway. The resume cursor must point at
+    // page 2 (the partially consumed page), not page 3, so a later run picks up 151-200 rather than skipping
+    // them. All 150 within the cap are stored (a shrinking-per_page crawl would store only 100).
+    const result = await backfillRegisteredRepositories(env, {
+      mode: "full",
+      limits: { issues: 150, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 },
+    });
+
+    expect(result.repos[0]).toMatchObject({ openIssues: 150 });
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "open_issues", status: "capped", nextCursor: "2" })]),
     );
   });
 
@@ -3484,6 +3569,37 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("uses the shared GraphQL cache for allowlisted totals reads without double-counting rate-limit observations", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T00:05:00.000Z"));
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const store = new Map<string, CachedGitHubResponse>();
+    setGitHubResponseCache({
+      get: async (key) => store.get(key) ?? null,
+      set: async (key, value) => void store.set(key, value),
+    });
+    let graphQlFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        graphQlFetches += 1;
+        return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+      }
+      if (url.includes("/labels?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    await persistTotalsSnapshot(env, { fetchedAt: "2026-05-24T23:40:00.000Z", labelsTotal: 0 });
+    await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+    await env.DB.prepare(`update repo_github_totals_snapshots set fetched_at = '2026-05-24T23:40:00.000Z' where repo_full_name = 'JSONbored/gittensory'`).run();
+    await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light", force: true });
+
+    expect(graphQlFetches).toBe(1);
+    expect([...store.keys()].some((key) => key.startsWith("gql:v1:"))).toBe(true);
+    expect((await listLatestGitHubRateLimitObservations(env)).filter((observation) => observation.resource === "graphql")).toHaveLength(1);
+  });
+
   it("records label rate limits, in-loop page caps, and expired rate observations", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);
@@ -3580,7 +3696,7 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
 
-      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] });
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -3948,6 +4064,52 @@ describe("GitHub backfill", () => {
       });
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
       expect(aggregate.ciState).toBe("passed"); // a first-party run was observed and passed; do not over-pend
+    });
+
+    it("surfaces a completeness warning when CI resolves to passed with no branch-protection required contexts, without changing ciState (#2137)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        // Workflow A ("test") ran and passed; workflow B (e.g. a path-filtered e2e-tests job) never triggered at
+        // all — no check-run, no check-suite entry, indistinguishable from a workflow that doesn't exist.
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      // Disposition is UNCHANGED (interim mitigation, not the full fix): a self-hosted repo with no
+      // expected-checks config would otherwise get stuck "pending" forever on a workflow that can structurally
+      // never complete. The gap is surfaced as an informational warning instead.
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.ciCompletenessWarning).toMatch(/branch-protection required checks/i);
+    });
+
+    it("does NOT surface a completeness warning when branch-protection required contexts ARE configured", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test"]));
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.ciCompletenessWarning).toBeNull();
+    });
+
+    it("does NOT surface a completeness warning when ciState is anything other than passed", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "failure", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.ciCompletenessWarning).toBeNull();
     });
 
     it("fold-all: a non-completed THIRD-PARTY suite is ignored (only first-party GitHub-Actions suites gate)", async () => {
@@ -4843,6 +5005,47 @@ describe("GitHub backfill", () => {
       (env as Env & { GITTENSORY_REQUIRED_CI_CONTEXTS?: string }).GITTENSORY_REQUIRED_CI_CONTEXTS = "stale-required-context";
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+    });
+  });
+
+  describe("fetchLinkedIssueFacts (#2136)", () => {
+    it("returns a found result with the extracted facts, falling back to the requested number and open state when the payload omits them", async () => {
+      const env = createTestEnv({});
+      // Sparse payload: no `number`, no `state` — exercises the `data.number ?? issueNumber` and
+      // `data.state ?? "open"` defensive fallbacks.
+      vi.stubGlobal("fetch", async () => Response.json({ labels: [{ name: "bug" }, "manual-string-label"], assignees: [{ login: "maintainer" }], user: { login: "reporter" } }));
+      const result = await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, "tok");
+      expect(result).toEqual({
+        status: "found",
+        facts: { number: 42, labels: ["bug", "manual-string-label"], assignees: ["maintainer"], state: "open", authorLogin: "reporter" },
+      });
+    });
+
+    it("returns not_found on a confirmed 404, distinct from a transient fetch error", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+      expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 999999, "tok")).toEqual({ status: "not_found" });
+    });
+
+    it("REGRESSION: treats a 404 seen with the public/anonymous token as fetch_error, not not_found — GitHub also returns 404 for a real but inaccessible private issue", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-tok" });
+      vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+      // The public token proves nothing about repo access, so a 404 here could just as easily mean "this issue
+      // is real but private and this token can't see it" -- treating it as CONFIRMED absence risks closing a PR
+      // over a genuinely-linked issue.
+      expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, env.GITHUB_PUBLIC_TOKEN)).toEqual({ status: "fetch_error" });
+    });
+
+    it("REGRESSION: treats a 404 seen with no token at all as fetch_error, not not_found", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+      expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, undefined)).toEqual({ status: "fetch_error" });
+    });
+
+    it("returns fetch_error on a transient failure (5xx), never conflating it with not_found", async () => {
+      const env = createTestEnv({});
+      vi.stubGlobal("fetch", async () => new Response("server error", { status: 500 }));
+      expect(await fetchLinkedIssueFacts(env, "JSONbored/gittensory", 42, "tok")).toEqual({ status: "fetch_error" });
     });
   });
 

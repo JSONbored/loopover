@@ -166,6 +166,77 @@ describe("v2 signal builders", () => {
     expect(health.signals.openPullRequests).toBe(1);
   });
 
+  it("detects pairwise PR title overlap when the queue exceeds 120 and overlapping PRs are newest (regression for bounded PR sampling)", () => {
+    const filler = Array.from({ length: 119 }, (_, index) => ({
+      ...pullRequests[0]!,
+      number: index + 1,
+      title: `Unrelated maintenance task ${index + 1} for widgets module`,
+      linkedIssues: [] as number[],
+      updatedAt: isoDaysAgo(200),
+    }));
+    const overlapA: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 5000,
+      title: "Fix authentication retry backoff handler",
+      linkedIssues: [],
+      updatedAt: isoDaysAgo(1),
+    };
+    const overlapB: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 5001,
+      title: "Fix authentication retry backoff logic",
+      linkedIssues: [],
+      updatedAt: isoDaysAgo(1),
+    };
+    const manyPullRequests = [...filler, overlapA, overlapB];
+    const report = buildCollisionReport(repo.fullName, issues, manyPullRequests, []);
+    expect(
+      report.clusters.some(
+        (cluster) =>
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 5000) &&
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 5001) &&
+          /meaningful terms/i.test(cluster.reason),
+      ),
+    ).toBe(true);
+  });
+
+  it("still ranks by recency when linked PRs alone exceed the pairwise cap (regression)", () => {
+    // 130 linked-issue filler PRs, all older than the two overlapping linked PRs below. Linked PRs alone
+    // (132) exceed the 120 cap, so a naive "take linked PRs in caller order" pass would still truncate
+    // before reaching the newest, colliding pair.
+    const linkedFiller = Array.from({ length: 130 }, (_, index) => ({
+      ...pullRequests[0]!,
+      number: index + 1,
+      title: `Unrelated maintenance task ${index + 1} for widgets module`,
+      linkedIssues: [9000 + index],
+      updatedAt: isoDaysAgo(200),
+    }));
+    const overlapA: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 6000,
+      title: "Fix authentication retry backoff handler",
+      linkedIssues: [7000],
+      updatedAt: isoDaysAgo(1),
+    };
+    const overlapB: PullRequestRecord = {
+      ...pullRequests[0]!,
+      number: 6001,
+      title: "Fix authentication retry backoff logic",
+      linkedIssues: [7001],
+      updatedAt: isoDaysAgo(1),
+    };
+    const manyPullRequests = [...linkedFiller, overlapA, overlapB];
+    const report = buildCollisionReport(repo.fullName, issues, manyPullRequests, []);
+    expect(
+      report.clusters.some(
+        (cluster) =>
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 6000) &&
+          cluster.items.some((item) => item.type === "pull_request" && item.number === 6001) &&
+          /meaningful terms/i.test(cluster.reason),
+      ),
+    ).toBe(true);
+  });
+
   it("uses authoritative queue counts when signal inputs are sampled", () => {
     const sampledIssues = issues.slice(0, 1);
     const sampledPullRequests = pullRequests.slice(0, 1);
@@ -1771,6 +1842,19 @@ describe("hasClearNoIssueRationale test-only spelling", () => {
   it("still rejects unrelated PR text that mentions tests without a rationale", () => {
     expect(hasClearNoIssueRationale({ title: "Add tests for classifier", body: "Adds coverage." })).toBe(false);
     expect(hasClearNoIssueRationale({ title: "Improve test harness", body: "" })).toBe(false);
+  });
+});
+
+describe("hasClearNoIssueRationale ci-only spelling", () => {
+  it("recognizes hyphenated and spaced ci-only rationales", () => {
+    expect(hasClearNoIssueRationale({ title: "ci only: tighten workflow cache", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "ci-only: tighten workflow cache", body: "" })).toBe(true);
+    expect(hasClearNoIssueRationale({ title: "Tune deploy gate", body: "This is a ci only workflow tweak." })).toBe(true);
+  });
+
+  it("still rejects unrelated PR text that mentions CI without a rationale", () => {
+    expect(hasClearNoIssueRationale({ title: "Fix CI flake in queue tests", body: "Stabilizes a failing job." })).toBe(false);
+    expect(hasClearNoIssueRationale({ title: "Improve GitHub Actions setup", body: "" })).toBe(false);
   });
 });
 

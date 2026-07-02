@@ -5,6 +5,7 @@ import {
   assessFreshness,
   assessProviderDocument,
   classifyRegistryPrScope,
+  findDuplicateAppendedEntry,
   isRegistrySubmissionScope,
   METAGRAPHED_LANE_SPEC,
   type RegistryLaneSpec,
@@ -186,7 +187,7 @@ describe("assessSubnetDocument (whole-file gate: root netuid + exactly-one appen
     expect(assessSubnetDocument({ netuid: 14 }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
   });
 
-  it("rejects when the orchestrator found zero-or-many appended entries (sentinel null/undefined)", () => {
+  it("rejects a null/undefined appendedEntry (the orchestrator found no valid entry to assess for this call)", () => {
     expect(assessSubnetDocument(doc, { appendedEntry: null }).reason).toBe("unsupported-shape");
     expect(assessSubnetDocument(doc, { appendedEntry: undefined }).reason).toBe("unsupported-shape");
   });
@@ -264,6 +265,12 @@ describe("probeFunctionalSurface", () => {
   });
 });
 
+describe("METAGRAPHED_LANE_SPEC", () => {
+  it("has no per-PR cap on appended surfaces[] entries (the 2026-06 anti-farming policy)", () => {
+    expect(METAGRAPHED_LANE_SPEC.maxAppendedEntries).toBe(Infinity);
+  });
+});
+
 describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", () => {
   const spec = METAGRAPHED_LANE_SPEC;
   it("recognizes a subnet entry-submission with an allowed generated-artifact companion", () => {
@@ -317,6 +324,119 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(classifyRegistryPrScope(bare, ["data/x.json"]).scope).toBe("entry-submission");
     expect(classifyRegistryPrScope(bare, ["data/x.json", "data/y.json"]).scope).toBe("mixed-files");
     expect(classifyRegistryPrScope(bare, ["data/x.json", "other.json"]).scope).toBe("mixed-files");
+  });
+});
+
+describe("findDuplicateAppendedEntry (generic, spec-driven duplicate detection — opt-in per RegistryLaneSpec)", () => {
+  const specNoDedup: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces" };
+  const specUrl: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: ["url"] };
+  const specUrlKind: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: ["url", "kind"] };
+  const a = { kind: "openapi", url: "https://api.example.ai/openapi.json" };
+  const b = { kind: "subnet-api", url: "https://api.example.ai/health" };
+
+  it("is off by default: a spec with no duplicateKeyFields never flags a duplicate", () => {
+    expect(findDuplicateAppendedEntry(specNoDedup, [a, a], [])).toBeNull();
+    expect(findDuplicateAppendedEntry(specNoDedup, [a], [a])).toBeNull();
+  });
+
+  it("is off when duplicateKeyFields is an explicit empty array (no fields to key on)", () => {
+    const specEmpty: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: [] };
+    expect(findDuplicateAppendedEntry(specEmpty, [a, a], [])).toBeNull();
+  });
+
+  it("flags a same-PR duplicate: a later appended entry whose url matches an earlier one", () => {
+    const dup = { ...a, id: "copy" };
+    const result = findDuplicateAppendedEntry(specUrl, [a, dup], []);
+    expect(result).toEqual([dup]);
+  });
+
+  it("flags an appended entry that resubmits a url already in the base document's existing entries", () => {
+    const existingA = { ...a, id: "existing-a" };
+    const appendedDuplicate = { ...a, id: "new-submission-same-url" };
+    expect(findDuplicateAppendedEntry(specUrl, [appendedDuplicate], [existingA])).toEqual([appendedDuplicate]);
+  });
+
+  it("detects a url that only differs by trivial formatting (trailing slash/case/tracking params) as the same entry", () => {
+    const canonical = { kind: "website", url: "https://Example.com/path/?utm_source=x" };
+    const trivialVariant = { kind: "website", url: "https://example.com/path/" };
+    expect(findDuplicateAppendedEntry(specUrl, [canonical, trivialVariant], [])).toEqual([trivialVariant]);
+  });
+
+  it("does not flag two appended entries with genuinely different urls", () => {
+    expect(findDuplicateAppendedEntry(specUrl, [a, b], [])).toBeNull();
+  });
+
+  it("skips an entry whose configured field is absent — it can never match or be matched", () => {
+    const noUrl1 = { kind: "website" };
+    const noUrl2 = { kind: "docs" };
+    expect(findDuplicateAppendedEntry(specUrl, [noUrl1, noUrl2], [a])).toBeNull();
+  });
+
+  it("skips an EXISTING entry whose configured field is absent — it is never added to the seen set", () => {
+    const existingWithoutUrl = { kind: "docs" };
+    // `a` is appended fresh; the only existing entry lacks a url entirely, so it can't collide with anything.
+    expect(findDuplicateAppendedEntry(specUrl, [a], [existingWithoutUrl])).toBeNull();
+  });
+
+  it("a compound key with only SOME fields present still keys correctly (mixed null/non-null parts)", () => {
+    const kindOnly = { kind: "openapi" }; // no url: the "url" part of the compound key is null
+    const urlOnly = { url: "https://mixed.example/x" }; // no kind: the "kind" part is null
+    // Neither collides with the other (their non-null parts land in different positions), and neither collides
+    // with itself appended twice under a DIFFERENT partial-field entry — this just exercises the mixed null/
+    // non-null `part ?? ""` join path without asserting a match.
+    expect(findDuplicateAppendedEntry(specUrlKind, [kindOnly, urlOnly], [])).toBeNull();
+    const kindOnlyRepeat = { kind: "openapi", extra: "still no url" };
+    expect(findDuplicateAppendedEntry(specUrlKind, [kindOnly, kindOnlyRepeat], [])).toEqual([kindOnlyRepeat]);
+  });
+
+  it("a compound key (url + kind) treats the same url under a DIFFERENT kind as a distinct entry", () => {
+    const sameUrlDifferentKind = { kind: "website", url: a.url };
+    expect(findDuplicateAppendedEntry(specUrlKind, [a, sameUrlDifferentKind], [])).toBeNull();
+  });
+
+  it("a compound key (url + kind) still flags the same url under the SAME kind", () => {
+    const sameUrlSameKind = { ...a, name: "renamed copy" };
+    expect(findDuplicateAppendedEntry(specUrlKind, [a, sameUrlSameKind], [])).toEqual([sameUrlSameKind]);
+  });
+
+  it("compares a non-string field value structurally (JSON.stringify fallback) rather than by url normalization", () => {
+    const specNumericField: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: ["netuid"] };
+    const first = { netuid: 14 };
+    const dup = { netuid: 14, name: "different metadata" };
+    const distinct = { netuid: 15 };
+    expect(findDuplicateAppendedEntry(specNumericField, [first, dup], [])).toEqual([dup]);
+    expect(findDuplicateAppendedEntry(specNumericField, [first, distinct], [])).toBeNull();
+  });
+
+  it("a non-URL string field is compared case-insensitively and trimmed", () => {
+    const specKindOnly: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: ["kind"] };
+    expect(findDuplicateAppendedEntry(specKindOnly, [{ kind: "Website" }, { kind: "  website  " }], [])).toEqual([{ kind: "  website  " }]);
+  });
+
+  it("regression: a compound key does NOT let two GENUINELY DIFFERENT entries collide by straddling the field-join boundary", () => {
+    // Two distinct entries whose field values, if naively joined with a plain separator, would produce the SAME
+    // string ("alpha beta" + "docs" vs "alpha" + "beta docs" both join to "alpha beta docs"). The identity key
+    // must be built so field boundaries stay unambiguous regardless of content — these must NOT be flagged.
+    const specTitleKind: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: ["title", "kind"] };
+    const entryA = { title: "alpha beta", kind: "docs" };
+    const entryB = { title: "alpha", kind: "beta docs" };
+    expect(findDuplicateAppendedEntry(specTitleKind, [entryA, entryB], [])).toBeNull();
+    // The genuinely identical pair (same title AND same kind) must still be caught.
+    const entryC = { title: "alpha beta", kind: "docs", extra: "irrelevant" };
+    expect(findDuplicateAppendedEntry(specTitleKind, [entryA, entryC], [])).toEqual([entryC]);
+  });
+
+  it("wraps the duplicate in a 1-tuple so a falsy entry value (null) is distinguishable from 'no duplicate found'", () => {
+    const specNullable: RegistryLaneSpec = { entryFilePattern: /^x$/, collectionField: "surfaces", duplicateKeyFields: ["url"] };
+    // null/non-object entries have no indexable "url" field → normalizeIdentityValue sees undefined → key null →
+    // never added to `seen` and never matched. This asserts the NOT-a-duplicate outcome stays a plain `null`.
+    expect(findDuplicateAppendedEntry(specNullable, [null, undefined], [])).toBeNull();
+  });
+
+  it("ignores entries already present at both base AND head (an unrelated pre-existing pair never trips a same-PR-only check)", () => {
+    // b is appended once; the base document ALSO already independently contains an unrelated entry `a` — the
+    // presence of an unrelated existing entry must not spuriously flag the single new append as a duplicate.
+    expect(findDuplicateAppendedEntry(specUrl, [b], [a])).toBeNull();
   });
 });
 

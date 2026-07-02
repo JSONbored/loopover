@@ -135,6 +135,14 @@ gate:
     # the gate. Bool. Default: false.
     aiAdvisory: false
 
+  # Oversized-PR gate. A PR at/above BOTH the file-count and line-count thresholds
+  # (engine defaults, not configurable here) gets a manual-review HOLD finding —
+  # never a hard blocker, so it's dry-run/advisory friendly regardless of mode.
+  # off | advisory | block. Default: off. Config-as-code only — no DB column or
+  # dashboard toggle; this can only be set here.
+  size:
+    mode: off
+
   # Composite merge-readiness gate (no min score).
   # off | advisory | block. Default: off.
   mergeReadiness: off
@@ -144,6 +152,19 @@ gate:
   # an enforceable blocker. Independent of mergeReadiness.
   # off | advisory | block. Default: off.
   manifestPolicy: off
+
+  # Self-authored-linked-issue gate — blocks (or advises on) a PR whose only
+  # linked issue was opened by the PR's own author, which the readiness/quality
+  # signals can't otherwise catch. off | advisory | block. Default: advisory.
+  # DB-backed (dashboard-settable too); this overrides the stored value.
+  selfAuthoredLinkedIssue: advisory
+
+  # Gate-wide dry-run. When true, the gate evaluates and posts its verdict as
+  # normal but never actually blocks/merges/closes based on it — useful for
+  # trialing a stricter pack or mode change against real traffic before
+  # enforcing it. Bool. Default: false. Config-as-code only — no DB column or
+  # dashboard toggle; this can only be set here.
+  dryRun: false
 
   # First-time-contributor grace. RESERVED / currently INERT: this value is
   # parsed and stored, but the gate does not read it — a first-time
@@ -188,6 +209,11 @@ gate:
     # String or null. Default: null (the key record's model, else a conservative
     # per-provider default).
     model: null
+    # Minimum calibrated AI-reviewer confidence (0-1) for a consensus defect to
+    # become a blocker; below this it stays advisory-only. Number 0–1, or null.
+    # Default: null (engine uses 0.93). Config-as-code only — no DB column or
+    # dashboard toggle; this can only be set here.
+    closeConfidence: null
 
 
 # ----------------------------------------------------------------------------

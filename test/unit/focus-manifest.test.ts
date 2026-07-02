@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   buildFocusManifestGuidance,
@@ -167,6 +168,18 @@ describe("parseFocusManifestContent", () => {
     const manifest = parseFocusManifestContent("wantedPaths: [unterminated", "repo_file");
     expect(manifest.present).toBe(false);
     expect(manifest.warnings.join(" ")).toMatch(/not valid YAML/i);
+  });
+
+  it("parses .gittensory.yml.example with zero warnings (#2554: doc must match parser exactly)", () => {
+    const content = readFileSync(".gittensory.yml.example", "utf8");
+    const manifest = parseFocusManifestContent(content, "repo_file");
+    expect(manifest.warnings).toEqual([]);
+    expect(manifest.present).toBe(true);
+    // Spot-check the 4 knobs #2554 added docs for actually round-trip through the real parser.
+    expect(manifest.gate.sizeMode).toBe("off");
+    expect(manifest.gate.dryRun).toBe(false);
+    expect(manifest.gate.selfAuthoredLinkedIssue).toBe("advisory");
+    expect(manifest.gate.aiReviewCloseConfidence).toBeNull();
   });
 });
 

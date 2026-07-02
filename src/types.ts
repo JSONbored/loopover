@@ -546,9 +546,10 @@ export type RepositorySettings = {
    *  opened the linked issue (`pr.authorLogin === issue.authorLogin`). Defaults to `advisory` — the finding
    *  is surfaced in the review panel but never blocks unless the maintainer opts in. */
   selfAuthoredLinkedIssueGateMode: GateRuleMode;
-  /** First-time-contributor grace (#552). When true, a would-be BLOCK is softened to a neutral/advisory gate
-   *  for a genuine newcomer (0 merged PRs in this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs).
-   *  Repeat offenders and authors with merge history are gated normally. Default false — opt-in. */
+  /** First-time-contributor grace (#552). RESERVED / currently INERT (#2266): parsed, clamped, and threaded
+   *  end-to-end, but the gate evaluator never reads it — a genuine newcomer with a real blocker is still
+   *  one-shot closed exactly like a repeat contributor (blocker findings must remain closure outcomes).
+   *  Setting this true has no runtime effect today; kept for potential future use. Default false. */
   firstTimeContributorGrace: boolean;
   /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
   slopGateMinScore?: number | null | undefined;
@@ -682,13 +683,24 @@ export type AgentPendingActionParams = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
-  expectedHeadSha?: string;
-  // WHICH kind of close this is (see PlannedAgentAction.closeKind) — must round-trip through staging so the
-  // close-precision circuit-breaker can still scope itself correctly when a staged close is later accepted (#2127).
+  // Which kind of close this is (see PlannedAgentAction.closeKind), persisted so it round-trips through staging:
+  // the close-precision circuit-breaker still scopes itself correctly when a staged close is later accepted
+  // (#2127), and the actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still
+  // fires correctly once the row is replayed through pendingActionToPlanned, rather than silently skipping for
+  // a lost discriminator.
   closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
+  expectedHeadSha?: string;
+  // For an `approve` action: retract the bot's own stale approval instead of posting a new one (see
+  // PlannedAgentAction.dismissStaleApproval). Must round-trip through staging like every other action-specific
+  // field. (#2254)
+  dismissStaleApproval?: boolean;
 };
 
-export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";
+// "errored" is distinct from "accepted": the maintainer's accept decision ran the staged action through the
+// executor, but the mutation itself threw (a real GitHub-call failure), as opposed to a clean "accepted" outcome
+// where the executor's own gates (autonomy/dry-run/freshness) declined to act -- that's an intentional policy
+// result, not a failure, and stays "accepted" (#2423).
+export type AgentPendingActionStatus = "pending" | "accepted" | "rejected" | "errored";
 
 /** Approval-queue row (#779): an `auto_with_approval` action the write-actions layer staged for a one-tap
  *  maintainer accept (→ execute) or reject (→ cancel). */

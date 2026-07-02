@@ -6,7 +6,11 @@
 // (`features:` block). The precedence, highest to lowest:
 //   1. GLOBAL env flag (GITTENSORY_REVIEW_*) — a MASTER KILL-SWITCH. Off ⇒ the feature never runs anywhere,
 //      regardless of any per-repo override (so an operator keeps one deploy-wide off switch per feature).
-//   2. Per-repo `features:` override — `true`/`false` forces the feature on/off for this repo.
+//   2. Per-repo `features:` override — `true`/`false` forces the feature on/off for this repo. EXCEPTION:
+//      `safety` (prompt-injection defanging) is security-critical and `.gittensory.yml` lives in the repo
+//      itself, writable by a lower-trust actor than the operator — so a repo override may only TIGHTEN
+//      (force-on) the operator's global enablement, never loosen it. `features.safety: false` is treated as
+//      "no opinion" (falls through to the allowlist default below) rather than an active force-off (#2269).
 //   3. `GITTENSORY_REVIEW_REPOS` allowlist — the back-compat DEFAULT when the manifest says nothing, so a repo
 //      that sets no `features:` block behaves exactly as it did before this change.
 //
@@ -32,6 +36,7 @@ const FEATURE_GLOBAL_FLAG: Record<ConvergedFeatureKey, (env: Env) => boolean> = 
  * Resolve whether a converged feature is active for a repo, given the already-loaded manifest (or null). Pure +
  * synchronous so it carries no I/O and is the single unit-tested place the precedence lives. Precedence: env
  * kill-switch (off ⇒ false) → per-repo `features:` override → `GITTENSORY_REVIEW_REPOS` allowlist default.
+ * `safety` is asymmetric: an override can only force it ON, never force it OFF (#2269) — see the file header.
  */
 export function resolveConvergedFeature(
   env: Env,
@@ -41,6 +46,9 @@ export function resolveConvergedFeature(
 ): boolean {
   if (!FEATURE_GLOBAL_FLAG[feature](env)) return false; // master kill-switch
   const override = manifest?.features?.[feature] ?? null;
+  // Security-critical: a repo-controlled override must not silently defeat the operator's global enablement.
+  // `false` is downgraded to "no opinion" so it falls through to the allowlist default instead of forcing off.
+  if (feature === "safety") return override === true || isConvergenceRepoAllowed(env, repoFullName);
   if (override !== null) return override; // explicit per-repo on/off
   return isConvergenceRepoAllowed(env, repoFullName); // back-compat allowlist default
 }

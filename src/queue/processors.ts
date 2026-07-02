@@ -205,6 +205,7 @@ import {
 import {
   isGlobalAgentPause,
   resolveAgentActionMode,
+  resolveAgentPermissionReadiness,
 } from "../settings/agent-execution";
 import {
   SWEEP_FANOUT_DEDUP_MS,
@@ -221,6 +222,7 @@ import {
   queueSnapshotBacklog,
   queueSnapshotFromBinding,
 } from "../selfhost/queue-common";
+import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import {
   downgradeCloseToHold,
   downgradeMergeToHold,
@@ -350,7 +352,6 @@ import {
   emptyReviewRagTelemetry,
   isRagEnabled,
 } from "../review/rag-wire";
-import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import {
   buildReviewEnrichment,
   isEnrichmentEnabled,
@@ -389,6 +390,7 @@ import {
   closePullRequest,
   createIssueComment,
   getLastCloserLogin,
+  getLastReopenerLogin,
 } from "../github/pr-actions";
 import {
   loadLinkedIssueHardRules,
@@ -1694,6 +1696,50 @@ async function maybeRunAgentMaintenance(
   if (pr.isDraft) return;
   if (!gate) return;
 
+  // Per-PR mutual exclusion (#2129): a webhook re-review and a sweep-driven agent-regate-pr job use different
+  // coalesce-key shapes (jobCoalesceKey never matches one against the other) and QUEUE_CONCURRENCY explicitly
+  // overlaps I/O-bound jobs, so two passes for the SAME PR can both reach this point concurrently, each with its
+  // own independently-timed live CI/mergeable/reviewDecision read. If those reads disagree, both could plan and
+  // execute DIFFERENT actions for the same PR. Claim a short-TTL advisory lock before the plan-and-execute
+  // critical section (extracted below so the try/finally doesn't force-reindent that whole block); a pass that
+  // loses the race defers cleanly — the next webhook/sweep tick is the backstop. Lightweight stand-in for the
+  // per-PR SubmissionLock Durable Object noted as a longer-term TODO in env.d.ts.
+  if (!(await claimAgentMaintenanceLock(env, repoFullName, pr.number))) return;
+  try {
+    await runAgentMaintenancePlanAndExecute(env, {
+      installationId,
+      repoFullName,
+      repo: args.repo,
+      pr,
+      settings,
+      otherOpenPullRequests,
+      deliveryId: args.deliveryId,
+      gate,
+      liveFacts: args.liveFacts,
+    });
+  } finally {
+    await releaseAgentMaintenanceLock(env, repoFullName, pr.number);
+  }
+}
+
+/** The plan-and-execute critical section of {@link maybeRunAgentMaintenance}, extracted so the caller's
+ *  per-PR lock (#2129) wraps it in a try/finally without reindenting this whole block. */
+async function runAgentMaintenancePlanAndExecute(
+  env: Env,
+  args: {
+    installationId: number;
+    repoFullName: string;
+    repo: Awaited<ReturnType<typeof getRepository>>;
+    pr: PullRequestRecord;
+    settings: RepositorySettings;
+    otherOpenPullRequests: PullRequestRecord[];
+    deliveryId: string;
+    gate: ReturnType<typeof evaluateGateCheck>;
+    liveFacts: LiveGithubFacts;
+  },
+): Promise<void> {
+  const { installationId, repoFullName, pr, settings, otherOpenPullRequests, gate } = args;
+
   // Convergence safety: feed the planner the PR's changed paths + the repo's hard-guardrail globs so guarded
   // paths force manual review, and flag owner-authored PRs so they are never auto-closed (standing rule).
   // FIX B: resolve files via the shared resolver so an EMPTY stored list (the maintenance ran before the
@@ -1750,6 +1796,27 @@ async function maybeRunAgentMaintenance(
     token,
     admissionKey,
   );
+  // #2137: informational-only nudge for the operator — never affects the disposition below (ciState is
+  // unchanged). recordAuditEvent is a DB write with its own internal failure handling; a failure here must
+  // never block the maintenance pass, hence the outer .catch().
+  if (ciAggregate.ciCompletenessWarning) {
+    /* v8 ignore next -- ciCompletenessWarning is only ever set when ciState === "passed", and
+     * fetchLiveCiAggregate/reduceLiveCiAggregate short-circuit to "unverified" for a falsy headSha before ever
+     * reaching that computation — so pr.headSha (the same value passed into refreshLiveCiAggregate above) is
+     * always truthy here; the fallback is defensive. */
+    const ciCompletenessHeadSha = pr.headSha ?? null;
+    await recordAuditEvent(env, {
+      eventType: "github_app.ci_completeness_unverified",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "completed",
+      detail: ciAggregate.ciCompletenessWarning,
+      metadata: { deliveryId: args.deliveryId, repoFullName, headSha: ciCompletenessHeadSha },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+      () => undefined,
+    );
+  }
   const changedPaths = changedPathsForGuardrail(changedFiles);
   const repoOwner = repoFullName.includes("/")
     ? repoFullName.slice(0, repoFullName.indexOf("/"))
@@ -1758,6 +1825,12 @@ async function maybeRunAgentMaintenance(
   const authorIsOwner =
     authorLogin.length > 0 &&
     authorLogin.toLowerCase() === repoOwner.toLowerCase();
+  // Fleet-operator identity (#2133): the same ADMIN_GITHUB_LOGINS allowlist already honored by the
+  // reopen-reclose path's hasMaintainerPermission, folded into the primary close-eligibility computation so an
+  // admin login (not the literal repo owner) gets the identical never-auto-closed exemption everywhere.
+  const authorIsAdmin =
+    authorLogin.length > 0 &&
+    parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
 
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
@@ -1800,9 +1873,11 @@ async function maybeRunAgentMaintenance(
     changedPaths,
     hardGuardrailGlobs,
     authorIsOwner,
+    authorIsAdmin,
     authorIsAutomationBot,
     closeOwnerAuthors: settings.closeOwnerAuthors,
     ciState: ciAggregate.ciState,
+    ciHasPending: ciAggregate.hasPending,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
     ...(blacklistEntry !== null
@@ -2296,6 +2371,70 @@ async function ciReReviewCoalesced(
   );
 }
 
+// Issue-side wake coalescing (#2371): a DEDICATED key namespace, distinct from ciReReviewCoalesced's
+// `ci-coalesce:` window. The two triggers are semantically different — CI-completion webhooks for the same run
+// are interchangeable (whichever wins the race re-fetches the SAME already-settled CI state), but an issue-side
+// label/assignment change is not: a completely unrelated CI re-review claiming the shared window would silently
+// suppress a genuinely different issue-side signal, leaving the PR on stale linked-issue state until the window
+// expires or the sweep eventually reaches it. Reusing ciReReviewCoalesced's key made that cross-domain collision
+// possible; a separate namespace confines coalescing to a burst of same-PR issue-side events.
+async function issueLinkedPrReReviewCoalesced(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+): Promise<boolean> {
+  return ciCompletionCoalesced(
+    env,
+    `issue-link-coalesce:${repoFullName.toLowerCase()}#${prNumber}`,
+  );
+}
+
+// Unlike CI-completion events, same-PR issue-side events are NOT interchangeable within the coalesce window: an
+// add-then-remove label or assign-then-unassign sequence carries genuinely DIFFERENT states, so silently dropping
+// every event after the first (as ciCompletionCoalesced's plain throttle does) can leave the PR on a stale
+// verdict for up to the window's length. Schedule exactly ONE trailing agent-regate-pr re-review to run just
+// after the window closes, guaranteeing the LATEST state is always eventually captured — deduped (its own
+// window, same TTL) so a burst of N coalesced events schedules ONE trailing job, not N. Reuses the existing
+// agent-regate-pr sweep-unit job (already rate-limit-aware and retried), not a new job type (#2371).
+async function scheduleTrailingIssueLinkedReReview(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<void> {
+  const key = `issue-link-trailing:${repoFullName.toLowerCase()}#${prNumber}`;
+  // Check-then-claim, but the CLAIM only happens after the send actually succeeds (#2371 follow-up): claiming
+  // eagerly (as ciCompletionCoalesced's own combined check-and-set does) would record "a trailing re-review is
+  // scheduled" even when the enqueue itself throws, permanently swallowing the guarantee this function exists to
+  // provide for the rest of the window — a later coalesced event would see the marker held and skip retrying,
+  // even though nothing was actually queued.
+  if (await getTransientKey(env, key)) return;
+  try {
+    await env.JOBS.send(
+      {
+        type: "agent-regate-pr",
+        deliveryId,
+        repoFullName,
+        prNumber,
+        installationId,
+      },
+      { delaySeconds: CI_COALESCE_WINDOW_SECONDS },
+    );
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        ev: "issue_link_trailing_enqueue_failed",
+        repoFullName,
+        pull: prNumber,
+        message: errorMessage(error).slice(0, 120),
+      }),
+    );
+    return; // do NOT claim — a later coalesced event in this window should retry the enqueue
+  }
+  await putTransientKey(env, key, "1", CI_COALESCE_WINDOW_SECONDS);
+}
+
 async function ciHeadShaResolutionCoalesced(
   env: Env,
   repoFullName: string,
@@ -2305,6 +2444,124 @@ async function ciHeadShaResolutionCoalesced(
     env,
     `ci-head-sha-resolve:${repoFullName.toLowerCase()}@${headSha.toLowerCase()}`,
   );
+}
+
+/**
+ * Best-effort exclusive claim against the self-host transient cache, shared by every per-PR/per-review advisory
+ * lock below. Requires the store's native atomic claim() (Redis SET NX) to provide any real exclusivity — it is
+ * the only way to close the race between two concurrent callers each observing an absent key. A plain
+ * get-then-set pair CANNOT close that race in general, even with an extra write-then-verify re-read: caller A
+ * can write its own token, read it straight back, and return true entirely BEFORE caller B's later write/read
+ * also completes and also returns true — both callers "win" (#confirmed-bug). Rather than pretend to serialize
+ * via a check that silently fails under exactly the concurrent load this lock exists to guard against, an
+ * adapter without claim() gets NO exclusivity from this helper: every caller proceeds. This is honest about the
+ * limitation rather than a false guarantee, and costs nothing in practice — self-host's Redis-backed cache (the
+ * only cache adapter this codebase ships) always implements claim(), so this is a documented limitation for a
+ * hypothetical future adapter, not a live gap. A missing cache or a thrown claim() also fails OPEN (returns
+ * true) — every lock built on this helper is defense-in-depth, never the primary safety gate, and must never
+ * itself block real work from running.
+ */
+async function claimTransientLock(
+  env: Env,
+  key: string,
+  ttlSeconds: number,
+): Promise<boolean> {
+  if (!env.SELFHOST_TRANSIENT_CACHE?.claim) return true; // no atomic primitive — nothing to serialize against.
+  try {
+    return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", ttlSeconds);
+  } catch {
+    return true; // fail open — see the doc comment above.
+  }
+}
+
+// Per-PR advisory lock around maybeRunAgentMaintenance's plan-and-execute critical section (#2129). The TTL is a
+// crash-safety backstop only — the normal path releases explicitly in a finally block within a few seconds — so
+// it is sized well above any realistic pass duration (matches CI_COALESCE_WINDOW_SECONDS, an already-vetted
+// value for a comparable-scale operation in this file), not to bound throughput.
+const AGENT_MAINTENANCE_LOCK_TTL_SECONDS = 60;
+
+function agentMaintenanceLockKey(repoFullName: string, prNumber: number): string {
+  return `agent-maintenance-lock:${repoFullName.toLowerCase()}#${prNumber}`;
+}
+
+/**
+ * Claim the per-PR advisory lock. Returns false when another pass already holds it (caller must skip this pass
+ * — the next webhook/sweep tick is the backstop). A missing cache or cache hiccup fails OPEN (returns true —
+ * the lock is a defense-in-depth serializer, not the primary safety gate, and must never itself block actuation).
+ */
+export async function claimAgentMaintenanceLock(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+): Promise<boolean> {
+  return claimTransientLock(
+    env,
+    agentMaintenanceLockKey(repoFullName, prNumber),
+    AGENT_MAINTENANCE_LOCK_TTL_SECONDS,
+  );
+}
+
+/** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */
+export async function releaseAgentMaintenanceLock(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+): Promise<void> {
+  try {
+    await env.SELFHOST_TRANSIENT_CACHE?.del?.(
+      agentMaintenanceLockKey(repoFullName, prNumber),
+    );
+  } catch {
+    // best-effort; the TTL is the backstop if release fails
+  }
+}
+
+// Per-(repo, PR, head SHA) advisory lock around runAiReviewForAdvisory's expensive grounding/RAG/enrichment/LLM
+// section (#confirmed-bug: a webhook pass and an agent-regate-pr sweep pass can independently reach this same
+// code for the SAME PR at the SAME head SHA, both miss the cache, and both fire a real LLM call — which can
+// return DIFFERENT verdicts). The TTL is a crash-safety backstop only (see AI_REVIEW_LOCK_TTL_SECONDS below), not
+// a throughput bound — same philosophy as AGENT_MAINTENANCE_LOCK_TTL_SECONDS (#2129/#2368).
+const AI_REVIEW_LOCK_TTL_SECONDS = 1_800; // 30 minutes — see justification below.
+
+function aiReviewLockKey(repoFullName: string, prNumber: number, headSha: string, mode: string): string {
+  return `ai-review-lock:${repoFullName.toLowerCase()}#${prNumber}@${headSha.toLowerCase()}:${mode}`;
+}
+
+/**
+ * Claim the per-(repo, PR, head SHA, mode) advisory lock before the expensive grounding/RAG/enrichment/LLM
+ * section of runAiReviewForAdvisory. Returns false when another pass already holds it for this exact head (the
+ * caller must treat this as "another pass is already reviewing this head" and return the inconclusive-hold shape
+ * below — the next webhook/sweep tick, or the pass that IS running, is the backstop that populates the cache).
+ * A missing cache or cache hiccup fails OPEN (returns true — the lock is defense-in-depth, never the primary
+ * safety gate, and must never itself block a real review from running).
+ */
+export async function claimAiReviewLock(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string,
+  mode: string,
+): Promise<boolean> {
+  return claimTransientLock(
+    env,
+    aiReviewLockKey(repoFullName, prNumber, headSha, mode),
+    AI_REVIEW_LOCK_TTL_SECONDS,
+  );
+}
+
+/** Best-effort release, called from a finally block so the lock frees promptly instead of waiting out the TTL. */
+export async function releaseAiReviewLock(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string,
+  mode: string,
+): Promise<void> {
+  try {
+    await env.SELFHOST_TRANSIENT_CACHE?.del?.(aiReviewLockKey(repoFullName, prNumber, headSha, mode));
+  } catch {
+    // best-effort; the TTL is the backstop if release fails
+  }
 }
 
 /** Read the CI head SHA off a `check_suite`/`check_run` `completed` payload (the event node carries `head_sha`;
@@ -2457,6 +2714,73 @@ async function maybeReReviewOnCiCompletion(
     for (const prNumber of prNumbers) {
       // Coalesce the CI-completion storm: skip if this PR was re-reviewed within the window.
       if (await ciReReviewCoalesced(env, repoFullName, prNumber)) continue;
+      await reReviewStoredPullRequest(
+        env,
+        deliveryId,
+        installationId,
+        repoFullName,
+        prNumber,
+      );
+    }
+  }
+  await recordWebhookEvent(env, {
+    deliveryId,
+    eventName,
+    action: payload.action,
+    installationId,
+    repositoryFullName: repoFullName,
+    payloadHash: "processed",
+    status: "processed",
+  });
+  return true;
+}
+
+/**
+ * Wake linked PRs on an issue-side signal (#2259). Labeling/unlabeling (e.g. maintainer-only) or
+ * assigning/unassigning on a linked ISSUE can flip a linked-issue hard-rule verdict, but that only gets
+ * re-evaluated when the PR ITSELF receives a webhook or the staleness-ordered sweep eventually reaches it —
+ * which can lag for many cycles on a repo with more than a few open PRs. Re-review every OPEN PR that links
+ * this issue promptly instead of waiting. Uses its OWN coalesce window (issueLinkedPrReReviewCoalesced,
+ * DISTINCT from CI-completion's — #2371): the two triggers are not interchangeable, so a shared window let an
+ * unrelated CI re-review silently suppress a genuinely different issue-side signal. Within the issue-side
+ * window itself, same-PR events are ALSO not interchangeable (an add-then-remove or assign-then-unassign
+ * sequence carries genuinely different states), so a coalesced event schedules a trailing re-review
+ * (scheduleTrailingIssueLinkedReReview) instead of silently dropping the state it represents.
+ */
+async function maybeReReviewOnLinkedIssueChange(
+  env: Env,
+  deliveryId: string,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  if (eventName !== "issues") return false;
+  if (
+    payload.action !== "labeled" &&
+    payload.action !== "unlabeled" &&
+    payload.action !== "assigned" &&
+    payload.action !== "unassigned"
+  )
+    return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  const issueNumber = payload.issue?.number;
+  if (!repoFullName || !installationId || !issueNumber) return false;
+  if (isConvergenceRepoAllowed(env, repoFullName)) {
+    const openPullRequests = await listOpenPullRequests(env, repoFullName);
+    const linkingPrNumbers = openPullRequests
+      .filter((pr) => pr.linkedIssues.includes(issueNumber))
+      .map((pr) => pr.number);
+    for (const prNumber of linkingPrNumbers) {
+      if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
+        await scheduleTrailingIssueLinkedReReview(
+          env,
+          deliveryId,
+          installationId,
+          repoFullName,
+          prNumber,
+        );
+        continue;
+      }
       await reReviewStoredPullRequest(
         env,
         deliveryId,
@@ -3364,6 +3688,13 @@ async function processGitHubWebhook(
       await maybeCaptureOnDeploymentStatus(env, deliveryId, eventName, payload)
     )
       return;
+    // Linked-issue label/assignment change (#2259) — an `issues` event carries no `payload.pull_request` either,
+    // so it must be handled here alongside the other non-PR wake triggers: it re-reviews every open PR that
+    // links this issue promptly, instead of waiting for a PR-side webhook or the staleness-ordered sweep.
+    if (
+      await maybeReReviewOnLinkedIssueChange(env, deliveryId, eventName, payload)
+    )
+      return;
 
     if (payload.repository?.full_name && payload.pull_request) {
       const repoFullName = payload.repository.full_name;
@@ -3483,14 +3814,21 @@ async function processGitHubWebhook(
         const repoOwner = repoFullName.includes("/")
           ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase()
           : "";
+        const draftDodgeAuthorLogin = (pr.authorLogin ?? "").toLowerCase();
         const authorIsOwner =
-          (pr.authorLogin ?? "").toLowerCase() === repoOwner &&
-          repoOwner.length > 0;
+          draftDodgeAuthorLogin === repoOwner && repoOwner.length > 0;
+        // Fleet-operator identity (#2133): same ADMIN_GITHUB_LOGINS exemption as the primary close-eligibility
+        // computation above and hasMaintainerPermission below — an admin login must never be auto-closed here
+        // either, matching every other actuation path's trusted-operator definition.
+        const authorIsAdmin =
+          draftDodgeAuthorLogin.length > 0 &&
+          parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(draftDodgeAuthorLogin);
         if (
           block &&
           block.headSha === pr.headSha &&
           !block.overridden &&
-          !authorIsOwner
+          !authorIsOwner &&
+          !authorIsAdmin
         ) {
           // Respect the agent action mode (#killswitch-gap): the outer guard already excludes a per-repo pause,
           // but this close path must also honor the global freeze and dry-run — so a freeze is a COMPLETE stop
@@ -3502,33 +3840,111 @@ async function processGitHubWebhook(
             agentDryRun: settings.agentDryRun,
           });
           if (draftMode === "live") {
-            const codes = block.blockerCodes.join(", ");
-            await createIssueComment(
+            // Write-permission readiness (#2134): this close bypasses executeAgentMaintenanceActions entirely
+            // (the whole point is to enforce the gate verdict against the CURRENT headSha even though the PR
+            // was converted to draft), so it never got the standard pipeline's step-6 PR_WRITE_CLASSES guard.
+            // Without this, a revoked/never-consented pull_requests:write grant would still attempt the close,
+            // get a 403 from GitHub, and have it silently swallowed by the .catch() below — with the audit
+            // event still recorded as "completed" as if the close actually happened. Checked BEFORE the live
+            // freshness re-check below so a permission-denied installation never pays for a live GitHub fetch.
+            // Deliberately UNCAUGHT: getInstallation itself never swallows a genuine D1 read failure (it only
+            // resolves null on a legitimate "row not found" query result), so let a transient storage hiccup
+            // propagate and fail this whole webhook job -- the queue's own retry re-runs it, and a later attempt
+            // with a working DB read correctly evaluates readiness. Catching it into `null` here would instead
+            // permanently misrecord the outcome as "pull_requests: write not granted" (a real GitHub-permission
+            // problem) when the actual cause was an infra blip, misleading an operator investigating the audit
+            // trail and burying the fact that no retry ever happens for a caught, definitively-denied outcome.
+            const draftDodgeInstallation = await getInstallation(
               env,
               installationId,
-              repoFullName,
-              pr.number,
-              `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
-            ).catch(() => undefined);
-            await closePullRequest(
-              env,
-              installationId,
-              repoFullName,
-              pr.number,
-            ).catch(() => undefined);
-            await recordAuditEvent(env, {
-              eventType: "github_app.draft_dodge_closed",
-              actor: "gittensory",
-              targetKey: `${repoFullName}#${pr.number}`,
-              outcome: "completed",
-              detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
-              metadata: {
-                deliveryId,
+            );
+            /* v8 ignore next -- upsertInstallation already ran unconditionally earlier in this same handler for
+             * every webhook, so a genuinely-missing row is not reachable through the normal webhook path
+             * exercised by tests; a synced installation always has a permissions object. */
+            const draftDodgeInstallationPermissions = draftDodgeInstallation?.permissions ?? null;
+            const draftDodgePermissionReadiness = resolveAgentPermissionReadiness({
+              autonomy: settings.autonomy,
+              installationPermissions: draftDodgeInstallationPermissions,
+            });
+            if (draftDodgePermissionReadiness !== "ready") {
+              /* v8 ignore next -- a deleted-account PR yields a null author login; the fallback is defensive */
+              const draftDodgeAuthor = pr.authorLogin ?? "unknown";
+              await recordAuditEvent(env, {
+                eventType: "github_app.draft_dodge_closed",
+                actor: "gittensory",
+                targetKey: `${repoFullName}#${pr.number}`,
+                outcome: "denied",
+                detail: `denied draft-dodge close for ${draftDodgeAuthor} — pull_requests: write not granted`,
+                metadata: {
+                  deliveryId,
+                  repoFullName,
+                  headSha: pr.headSha,
+                  blockerCodes: block.blockerCodes,
+                },
+              }).catch(
+                /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+                () => undefined,
+              );
+            } else {
+              // Live re-check (#2130): the two async DB reads above (getGateBlockOutcome, resolveAgentActionMode's
+              // isGlobalAgentFrozen) leave a window where a maintainer could merge/close the PR, or a fresh push
+              // could clear the gate failure, before this fires. Unlike the main gate-close path — which routes
+              // every close through executeAgentMaintenanceActions's freshness guard — this handler acted purely
+              // off the stale webhook-ingestion payload. Re-verify live state immediately before the mutation.
+              // requireDraft: head/state alone would still read "current" if the author converted the PR BACK
+              // to ready_for_review in that window -- the draft-dodge close's own justification no longer
+              // holds, since there is no longer a draft to be "dodging" the gate through.
+              const freshness = await fetchPullRequestFreshness(env, {
+                installationId,
                 repoFullName,
-                headSha: pr.headSha,
-                blockerCodes: block.blockerCodes,
-              },
-            }).catch(() => undefined);
+                pullNumber: pr.number,
+                expectedHeadSha: pr.headSha,
+                requireDraft: true,
+              });
+              if (freshness.status !== "current") {
+                await recordAuditEvent(env, {
+                  eventType: "github_app.draft_dodge_closed",
+                  actor: "gittensory",
+                  targetKey: `${repoFullName}#${pr.number}`,
+                  outcome: "denied",
+                  detail: `${pullRequestFreshnessDetail(freshness)} — draft-dodge close not executed`,
+                  metadata: {
+                    deliveryId,
+                    repoFullName,
+                    headSha: pr.headSha,
+                    blockerCodes: block.blockerCodes,
+                  },
+                }).catch(() => undefined);
+              } else {
+                const codes = block.blockerCodes.join(", ");
+                await createIssueComment(
+                  env,
+                  installationId,
+                  repoFullName,
+                  pr.number,
+                  `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
+                ).catch(() => undefined);
+                await closePullRequest(
+                  env,
+                  installationId,
+                  repoFullName,
+                  pr.number,
+                ).catch(() => undefined);
+                await recordAuditEvent(env, {
+                  eventType: "github_app.draft_dodge_closed",
+                  actor: "gittensory",
+                  targetKey: `${repoFullName}#${pr.number}`,
+                  outcome: "completed",
+                  detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
+                  metadata: {
+                    deliveryId,
+                    repoFullName,
+                    headSha: pr.headSha,
+                    blockerCodes: block.blockerCodes,
+                  },
+                }).catch(() => undefined);
+              }
+            }
           } else if (draftMode === "dry_run") {
             /* v8 ignore next -- a deleted-account PR yields a null author login; the fallback is defensive */
             const draftAuthor = pr.authorLogin ?? "unknown";
@@ -3918,8 +4334,7 @@ export async function resolveLinkedIssueAuthorLogins(
       login != null
         ? Promise.resolve(login)
         : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token, admissionKey)
-            .then((facts) => facts?.authorLogin ?? null)
-            .catch(() => null),
+            .then((result) => (result.status === "found" ? result.facts.authorLogin : null)),
     ),
   );
 }
@@ -4323,6 +4738,39 @@ export async function runAiReviewForAdvisory(
     }))
   )
     return undefined;
+  // Per-(repo, PR, head SHA, mode) advisory lock (#confirmed-bug, mirrors #2129/#2368's claimAgentMaintenanceLock):
+  // a webhook pass and an agent-regate-pr sweep pass can independently reach this point for the SAME PR at the
+  // SAME head, both miss the cache (neither has written yet), and both fire a real, wasteful LLM call that can
+  // return different verdicts. Claim before the expensive section below; a pass that loses the race returns the
+  // same inconclusive-hold shape the "AI produced no usable verdict" path already returns, so the gate is held
+  // (neutral) for a human rather than either pass's independently-decided verdict racing the other's cache write.
+  if (
+    !(await claimAiReviewLock(
+      env,
+      args.repoFullName,
+      args.pr.number,
+      args.advisory.headSha,
+      args.settings.aiReviewMode,
+    ))
+  ) {
+    const findings: AdvisoryFinding[] = [
+      {
+        code: "ai_review_inconclusive",
+        severity: "warning",
+        title: "AI review already in progress for this PR head",
+        detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+        action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+      },
+    ];
+    args.advisory.findings.push(...findings);
+    return {
+      notes: "AI review is already running for this PR head in another Gittensory pass. Gittensory is holding this PR for manual review until that pass completes.",
+      reviewerCount: 0,
+      inlineFindings: [],
+      findings,
+      cacheable: false,
+    };
+  }
   try {
     // BYOK: decrypt the maintainer's provider key only for confirmed contributors when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
@@ -4614,6 +5062,14 @@ export async function runAiReviewForAdvisory(
       head_sha: args.advisory.headSha,
     });
     return undefined;
+  } finally {
+    await releaseAiReviewLock(
+      env,
+      args.repoFullName,
+      args.pr.number,
+      args.advisory.headSha,
+      args.settings.aiReviewMode,
+    );
   }
 }
 
@@ -5508,6 +5964,7 @@ async function maybePublishPrPublicSurface(
           agent: "dual-ai",
         },
         async () => {
+          const reviewManifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
           // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
           // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
           // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
@@ -5519,63 +5976,118 @@ async function maybePublishPrPublicSurface(
             pathInstructions: reviewPathInstructions,
             instructions: manifestReviewInstructions,
             excludePaths: reviewExcludePaths,
-          } = resolveReviewPromptOverrides(
-            /* v8 ignore next -- fail-open manifest-read rejection is exercised in runAiReviewForAdvisory; this wrapper preserves the same fallback. */
-            await loadRepoFocusManifest(env, repoFullName).catch(() => null),
-          );
+          } = resolveReviewPromptOverrides(reviewManifest);
           inlineCommentsEnabledForReview = shouldRequestInlineFindings(
             env,
             repoFullName,
             reviewInlineComments,
           );
+          const reviewFilesForAi = await getReviewFiles();
+          const changedPaths = reviewFilesForAi.map((file) => file.path);
           // Per-repo review CONTEXT (#review-skills): fold the container-private review/AGENTS.md (or legacy
           // review/CLAUDE.md) guide + the matching review/skills/*.md modules into the SAME review-instructions slot,
           // so reviews follow each repo's conventions.
           // Glob-gated for cost (only skills matching the changed files are injected); absent config dir ⇒ empty ⇒
-          // byte-identical prompt. getReviewFiles() is memoized, so this reuses the loaded diff.
-          const reviewFilesForAi = await getReviewFiles();
-          const changedReviewPaths = reviewFilesForAi.map((file) => file.path);
+          // byte-identical prompt. getReviewFiles() is memoized, so the second call reuses the loaded diff.
           const reviewInstructions =
             [
               manifestReviewInstructions,
               composeRepoReviewContext(
                 await loadRepoReviewContext(repoFullName),
-                changedReviewPaths,
+                changedPaths,
               ),
             ]
               .map((part) => part?.trim())
               .filter(Boolean)
               .join("\n\n") || null;
-          const reviewInputFingerprint = await aiReviewCacheInputFingerprint({
-            changedPaths: changedReviewPaths,
-            env,
+          const convergedRepoAllowed = isConvergenceRepoAllowed(env, repoFullName);
+          // Resolved ONCE and reused both for the fingerprint AND the cache-bypass decision below: grounding/RAG/
+          // enrichment/reputation each pull TIME-VARYING external context (live CI checks, the vector index,
+          // REES/CVE data, the submitter's evolving reputation) that can change for the SAME head SHA without
+          // any of these booleans flipping. Fingerprinting only "is the feature on" can't detect that drift
+          // without fetching the content itself (which would defeat caching), so a repo with ANY of these active
+          // bypasses the cache entirely rather than fingerprinting a value that can't prove freshness.
+          const dynamicReviewFeatures = {
+            grounding: isGroundingEnabled(env) && convergedRepoAllowed,
+            rag: resolveConvergedFeature(env, reviewManifest, "rag", repoFullName),
+            enrichment: isEnrichmentEnabled(env) && convergedRepoAllowed,
+            reputation: resolveConvergedFeature(
+              env,
+              reviewManifest,
+              "reputation",
+              repoFullName,
+            ),
+          };
+          const dynamicReviewContextActive =
+            dynamicReviewFeatures.grounding ||
+            dynamicReviewFeatures.rag ||
+            dynamicReviewFeatures.enrichment ||
+            dynamicReviewFeatures.reputation;
+          const inputFingerprint = await aiReviewCacheInputFingerprint({
+            title: pr.title,
             mode: settings.aiReviewMode,
-            pr: {
-              baseSha: webhook.baseSha,
-              title: pr.title,
-            },
-            review: {
-              effectiveInlineComments: inlineCommentsEnabledForReview,
-              excludePaths: reviewExcludePaths,
-              inlineComments: reviewInlineComments,
-              instructions: reviewInstructions,
-              pathInstructions: reviewPathInstructions,
-              profile: reviewProfile,
-            },
-            settings,
+            byok: settings.aiReviewByok,
+            provider: settings.aiReviewProvider,
+            model: settings.aiReviewModel,
+            aiReviewAllAuthors: settings.aiReviewAllAuthors,
+            aiReviewCloseConfidence: settings.aiReviewCloseConfidence,
+            gatePack: settings.gatePack,
+            reviewerPlan: env.AI_REVIEW_PLAN,
+            selfHostProviderConfig: env.AI_REVIEW_PLAN
+              ? {
+                  claudeModel: env.CLAUDE_AI_MODEL,
+                  claudeEffort: env.CLAUDE_AI_EFFORT,
+                  claudeTimeoutMs: env.CLAUDE_AI_TIMEOUT_MS,
+                  codexModel: env.CODEX_AI_MODEL,
+                  codexEffort: env.CODEX_AI_EFFORT,
+                  codexTimeoutMs: env.CODEX_AI_TIMEOUT_MS,
+                  ollamaBaseUrl: env.OLLAMA_AI_BASE_URL,
+                  ollamaModel: env.OLLAMA_AI_MODEL,
+                  openaiCompatibleBaseUrl: env.OPENAI_COMPATIBLE_AI_BASE_URL,
+                  openaiCompatibleModel: env.OPENAI_COMPATIBLE_AI_MODEL,
+                  openaiBaseUrl: env.OPENAI_AI_BASE_URL,
+                  openaiModel: env.OPENAI_AI_MODEL,
+                  anthropicBaseUrl: env.ANTHROPIC_AI_BASE_URL,
+                  anthropicModel: env.ANTHROPIC_AI_MODEL,
+                }
+              : null,
+            profile: reviewProfile,
+            inlineComments: inlineCommentsEnabledForReview,
+            pathInstructions: reviewPathInstructions,
+            pathGuidance: resolveReviewPathInstructions(
+              reviewPathInstructions,
+              changedPaths,
+            ),
+            repoInstructions: reviewInstructions,
+            excludePaths: reviewExcludePaths,
+            changedPaths,
+            baseSha: webhook.baseSha,
+            reviewFiles: reviewFilesForAi.map((file) => ({
+              path: file.path,
+              status: file.status,
+              patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+              additions: file.additions,
+              deletions: file.deletions,
+            })),
+            features: dynamicReviewFeatures,
           });
-          // #1 self-host AI-review cache: reuse a prior review for this exact (repo, pr, head SHA, mode) ONLY when
-          // the prompt/config inputs that affect the model output still match. Private repo instructions, RAG
-          // suppressions, feature flags, inline-comment mode, and BYOK model choices all change review output even
-          // when the head SHA is unchanged, so they are folded into the stored input fingerprint.
-          const cachedReview = await getCachedAiReview(
-            env,
-            repoFullName,
-            pr.number,
-            advisory.headSha,
-            settings.aiReviewMode,
-            reviewInputFingerprint,
-          ).catch(() => null);
+          // #1 self-host AI-review cache: the LLM output for a PR changes only when the code (head SHA), review
+          // mode, reviewer plan, feature activation, or prompt-shaping inputs change. A re-delivered webhook or the
+          // block-mode re-gate sweep can reuse that exact review; stale same-head reviews from older private review
+          // instructions or feature config are intentionally treated as misses. The deterministic gate still runs.
+          // A repo with an active dynamic-context feature (grounding/RAG/enrichment/reputation) bypasses the
+          // cache entirely — see dynamicReviewContextActive above — since a cache hit there could replay a
+          // review built against now-stale external context for an otherwise-unchanged head.
+          const cachedReview = dynamicReviewContextActive
+            ? null
+            : await getCachedAiReview(
+                env,
+                repoFullName,
+                pr.number,
+                advisory.headSha,
+                settings.aiReviewMode,
+                inputFingerprint,
+              ).catch(() => null);
           if (cachedReview && hasPublicReviewAssessment(cachedReview.notes)) {
             advisory.findings.push(...cachedReview.findings);
             aiReview = cachedReview;
@@ -5595,7 +6107,7 @@ async function maybePublishPrPublicSurface(
               reviewExcludePaths,
               reviewInlineComments,
             });
-            if (aiReview && aiReview.cacheable !== false)
+            if (aiReview && aiReview.cacheable !== false && !dynamicReviewContextActive)
               await putCachedAiReview(
                 env,
                 repoFullName,
@@ -5607,7 +6119,7 @@ async function maybePublishPrPublicSurface(
                   metadata: {
                     /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
                     ...(aiReview.metadata ?? {}),
-                    inputFingerprint: reviewInputFingerprint,
+                    inputFingerprint,
                   },
                 },
               ).catch(() => undefined);
@@ -7434,6 +7946,75 @@ async function maybeRecloseDisallowedReopen(
       () => undefined,
     );
     return true; // handled (decision made); never falls through to act on a stood-down repo
+  }
+  // Live re-check (#2130): the maintainer-permission lookup, getLastCloserLogin's timeline read, and
+  // resolveRepositorySettings/isGlobalAgentFrozen above leave a window where the PR's live state could have
+  // moved — e.g. a maintainer re-closes it themselves, or reopens it a second time with real authorization —
+  // before this fires. Mirrors the draft-dodge sibling's identical fix; re-verify immediately before the mutation.
+  const reopenFreshness = await fetchPullRequestFreshness(env, {
+    installationId,
+    repoFullName,
+    pullNumber: pr.number,
+    expectedHeadSha: pr.headSha,
+  });
+  if (reopenFreshness.status !== "current") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: `${pullRequestFreshnessDetail(reopenFreshness)} — reopen re-close not executed`,
+      metadata: { deliveryId, repoFullName },
+    }).catch(() => undefined);
+    return true; // handled (decision made); a stale re-check still counts as handled, not a fallthrough
+  }
+  // Head/state freshness alone can't see a permission grant: the SAME reopener could be promoted to a
+  // maintainer/admin/write collaborator (or added as one) in the window since the check above ran, which
+  // would authorize exactly the reopen this handler is about to undo. Re-verify immediately before the
+  // mutation, not just once at ingestion time.
+  if (await hasMaintainerPermission(reopener)) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: `${reopener} now holds maintainer permission — reopen re-close not executed`,
+      metadata: { deliveryId, repoFullName },
+    }).catch(() => undefined);
+    return true; // handled (decision made); a newly-authorized reopener still counts as handled
+  }
+  // Live re-check #3 (#2369): head/state freshness and the reopener's OWN permission are not the only things that
+  // can move in the window before this fires — a DIFFERENT person (e.g. an actual maintainer) can reopen the SAME
+  // PR again after the original disallowed reopen, which is a legitimate, authorized reopen. Since the PR was
+  // already open, that second reopen doesn't change head/state, so checks #1/#2 above cannot see it. Ask directly:
+  // is `reopener` STILL the most recent "reopened" actor on this PR's timeline? If someone else's reopen is now the
+  // live reason the PR is open, re-closing it would wrongly undo that person's authorized action.
+  const latestReopener = await getLastReopenerLogin(
+    env,
+    installationId,
+    repoFullName,
+    pr.number,
+  );
+  const latestReopenerLogin = latestReopener.login?.toLowerCase() ?? null;
+  // Ambiguous ("can't prove no later reopen exists beyond the inspected window") must fail CLOSED here — the
+  // opposite of the closer-lookup's fail-open bias above — because wrongly re-closing a maintainer-authorized PR
+  // is the worse failure mode than leaving a disallowed reopen unclosed for one more tick.
+  const reopenerWindowAmbiguous =
+    latestReopenerLogin == null && !latestReopener.coveredAllPages;
+  const reopenerSuperseded =
+    reopenerWindowAmbiguous || latestReopenerLogin !== reopener;
+  if (reopenerSuperseded) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: reopenerWindowAmbiguous
+        ? `could not confirm ${reopener} is still the most recent reopener (event window not fully covered) — reopen re-close not executed`
+        : `the current reopener is now ${latestReopenerLogin ?? "unknown"}, not ${reopener} — reopen re-close not executed`,
+      metadata: { deliveryId, repoFullName },
+    }).catch(() => undefined);
+    return true; // handled (decision made); a superseded/ambiguous reopener still counts as handled
   }
   await createIssueComment(
     env,

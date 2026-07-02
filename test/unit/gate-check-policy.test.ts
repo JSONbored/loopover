@@ -50,12 +50,14 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
   it("overlays the friendly gate: alias over DB settings (incl. gate.enabled -> gateCheckMode)", () => {
     const eff = resolveEffectiveSettings(
       settings({ gateCheckMode: "enabled", linkedIssueGateMode: "advisory", duplicatePrGateMode: "block", qualityGateMode: "off", qualityGateMinScore: 10 }),
+      // readiness.mode: "block" is downgraded to "advisory" at parse time (#2267) — readiness/quality can
+      // never hard-block, so this exercises the SAME downgrade flowing through resolveEffectiveSettings.
       parseFocusManifest({ gate: { enabled: false, linkedIssue: "block", duplicates: "off", readiness: { mode: "block", minScore: 70 } } }),
     );
     expect(eff.gateCheckMode).toBe("off"); // gate.enabled: false disables from config
     expect(eff.linkedIssueGateMode).toBe("block");
     expect(eff.duplicatePrGateMode).toBe("off");
-    expect(eff.qualityGateMode).toBe("block");
+    expect(eff.qualityGateMode).toBe("advisory");
     expect(eff.qualityGateMinScore).toBe(70);
   });
 
@@ -125,6 +127,46 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     };
     const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
     // An inconclusive AI can no longer bury a real violation in a "held" state — the secret_leak still hard-blocks.
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
+  });
+
+  it("holds the gate NEUTRAL (never a failure-close) when the AI review lock is held by another in-flight pass (#confirmed-bug)", () => {
+    // Same code, different finding text — the lock-contention finding constructed by runAiReviewForAdvisory's
+    // new claim-failure branch. advisory.ts only keys on `code`, so this proves the mechanism end-to-end for
+    // the new finding shape without needing to touch advisory.ts.
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        {
+          code: "ai_review_inconclusive",
+          title: "AI review already in progress for this PR head",
+          severity: "warning",
+          detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+          action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+        },
+      ],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toEqual([]);
+  });
+
+  it("a deterministic hard blocker (secret_leak) still FAILS even when the AI review is held by lock contention (#confirmed-bug)", () => {
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        { code: "secret_leak", title: "Possible leaked secret", severity: "critical", detail: "a committed token", action: "remove and rotate it" },
+        {
+          code: "ai_review_inconclusive",
+          title: "AI review already in progress for this PR head",
+          severity: "warning",
+          detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+          action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
+        },
+      ],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
   });

@@ -109,7 +109,7 @@ export {
   type ProviderLike,
   type Verdict,
 } from "./registry-logic";
-export { runSurfaceReview, diffAppendedSurfaceEntry, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";
+export { runSurfaceReview, diffAppendedSurfaceEntries, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";
 export {
   checkNetuidExists,
   fetchSubnetRecord,

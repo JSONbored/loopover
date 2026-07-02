@@ -2110,6 +2110,21 @@ export async function setGlobalAgentFrozen(env: Env, frozen: boolean, updatedBy?
     .run();
 }
 
+/** Strict (non-fail-open) read of the kill-switch row, for the operator route's read-after-write verification
+ *  (#2359) and for surfacing current state. Unlike {@link isGlobalAgentFrozen} — deliberately fail-open on the
+ *  enforcement hot path so a D1 hiccup never silently freezes the fleet — this THROWS on a driver error or a
+ *  missing singleton row, because here a swallowed error must surface as "could not verify", never be silently
+ *  reported as "unfrozen". */
+export async function getGlobalAgentFrozenState(env: Env): Promise<{ frozen: boolean; updatedAt: string | null; updatedBy: string | null }> {
+  const row = await env.DB.prepare("SELECT frozen, updated_at, updated_by FROM global_agent_controls WHERE id = 'singleton'").first<{
+    frozen: number;
+    updated_at: string | null;
+    updated_by: string | null;
+  }>();
+  if (!row) throw new Error("global_agent_controls has no singleton row — re-run migrations or re-seed the row");
+  return { frozen: row.frozen === 1, updatedAt: row.updated_at, updatedBy: row.updated_by };
+}
+
 export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promise<void> {
   const db = getDb(env.DB);
   await db.insert(auditEvents).values({

@@ -178,7 +178,10 @@ This is where most PRs fail Codecov. The bar is **every changed line AND every c
 - **Regression test for every bug fix:** add a test named for the bug that reproduces it and pins the
   fix. A fix without a regression test is incomplete.
 - **Iterate fast, then measure honestly.** While writing tests, scope to one file:
-  `npx vitest run test/unit/<file>.test.ts` (or `-t "<name>"`). Before pushing, run the whole suite
+  `npx vitest run test/unit/<file>.test.ts` (or `-t "<name>"`), or run `npm run test:changed` to let
+  Vitest select every test whose real import graph is affected by your diff against `main` — faster
+  than guessing which files matter, and more accurate than a path glob. It is a local-only convenience;
+  it is not wired into CI or the Codecov gate. Before pushing, run the whole suite
   **unsharded** — `npm run test:coverage` — the only faithful local coverage signal (CI shards + merges,
   so a single shard under-reports).
 - **Find the uncovered branch.** In the v8 text report, read the **% Branch** column and the

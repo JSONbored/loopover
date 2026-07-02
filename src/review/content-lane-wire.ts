@@ -9,14 +9,19 @@
 // fetch, and `gateEvaluation` is byte-identical to today. The verdict NEVER depends on an AI model, so this is
 // independent of the AI-reviewer accuracy work (the surface lane emits none of the AI_JUDGMENT_BLOCKER_CODES).
 //
-// SAFETY (two deliberate guards):
-//  1. A generic HARD blocker (e.g. a committed secret detected before this runs) is PRESERVED — a surface
-//     "merge" can never clear a real critical the generic gate already raised (applySurfaceGate unions them).
+// SAFETY (three deliberate guards):
+//  1. A generic HARD (non-AI-judgment) blocker — e.g. a committed secret detected before this runs — is PRESERVED:
+//     a surface "merge" can never clear a real critical the generic gate already raised (applySurfaceGate unions
+//     them).
 //  2. An unreadable head — or a null base on a file GitHub marks "modified" (whose base MUST exist, so a null
 //     read is a transient blip, not an absent base) — defers to the generic gate rather than auto-closing a good
 //     PR on a spurious "the submission looks empty/invalid" read. (A null base on an ADDED file is the expected
 //     brand-new-entry case and is not deferred.)
-import type { GateCheckEvaluation } from "../rules/advisory";
+//  3. A generic failure caused SOLELY by AI-judgment blockers (`ai_consensus_defect` / `ai_review_split`) does
+//     NOT override a decisive surface verdict (applySurfaceGate). The surface lane is the sole, AI-free
+//     adjudicator for this structured data — an AI opinion has no standing to veto it, only a real deterministic
+//     blocker does (see guard #1).
+import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation, isAiJudgmentOnlyFailure } from "../rules/advisory";
 import type { AdvisoryFinding, AdvisorySeverity } from "../types";
 import { type ContentLaneEnv, isContentLaneEnabled } from "./content-lane/flag";
 import { runSurfaceReview, type SurfaceReviewInput, type SurfaceReviewResult } from "./content-lane/orchestrator";
@@ -62,10 +67,19 @@ export function surfaceVerdictToGate(result: SurfaceReviewResult): {
   return { evaluation: { enabled: true, conclusion: "failure", title: SURFACE_TITLE, summary, blockers: [finding], warnings: [] }, finding };
 }
 
-/** Merge the surface override onto the generic gate while PRESERVING the generic gate's hard blockers. A surface
- *  "merge" must NOT clear a real critical (e.g. a committed secret) the generic gate already raised — so when the
- *  generic gate carries blockers, they survive and the conclusion stays a failure. `null` surface ⇒ defer (the
- *  generic gate is returned unchanged). PURE. */
+/** Merge the surface override onto the generic gate while PRESERVING the generic gate's hard (non-AI-judgment)
+ *  blockers. A surface "merge" must NOT clear a real critical (e.g. a committed secret) the generic gate already
+ *  raised — so when the generic gate carries such blockers, they survive and the conclusion stays a failure.
+ *  `null` surface ⇒ defer (the generic gate is returned unchanged). PURE.
+ *
+ *  EXCEPTION: when the generic gate's ONLY blockers are AI-judgment codes (`ai_consensus_defect` /
+ *  `ai_review_split`, see `isAiJudgmentOnlyFailure`), a decisive surface merge overrides them — the surface lane
+ *  is the sole, AI-free adjudicator for this structured registry data (its own secrets/shape/safety scan already
+ *  runs independently), so an AI opinion alone must never veto a verdict the deterministic lane already reached.
+ *  A real (non-AI) blocker in the mix still falls through to the union below and blocks. The generic gate's
+ *  OTHER (non-blocker) warnings are unrelated to the discarded AI blocker and are preserved onto the surface
+ *  result rather than silently dropped — see `evaluateWithSurfaceLane` for the companion `advisory.findings`
+ *  cleanup that keeps the public comment from re-surfacing the overridden AI defect via a separate path. */
 export function applySurfaceGate(
   generic: GateCheckEvaluation | undefined,
   surface: GateCheckEvaluation | null,
@@ -78,6 +92,9 @@ export function applySurfaceGate(
   if (generic.blockers.length === 0) {
     if (surface.conclusion === "success") return generic;
     return surface;
+  }
+  if (isAiJudgmentOnlyFailure(generic) && surface.conclusion === "success") {
+    return { ...surface, warnings: [...generic.warnings, ...surface.warnings] };
   }
   return {
     enabled: true,
@@ -120,7 +137,8 @@ export async function runMetagraphedSurfaceGate(
     // An unreadable HEAD — or a null BASE for a file GitHub reports as "modified" (whose base MUST exist, so a
     // null read is a transient fetch blip, NOT an absent base) — would make a valid submission read as empty/
     // invalid → a spurious one-shot close. Defer to the generic gate instead. A null base for an ADDED file is
-    // the expected brand-new-entry case and is left to the orchestrator (one new entry merges; many close).
+    // the expected brand-new-entry case and is left to the orchestrator, whose spec-driven entry-count policy
+    // decides the verdict (METAGRAPHED_LANE_SPEC allows any number of clean entries — see maxAppendedEntries).
     if (ref === "head" && content === null) deferUnreadable = true;
     if (ref === "base" && content === null && statusByPath.get(path) === "modified") deferUnreadable = true;
     return content;
@@ -149,7 +167,15 @@ export function resolveSurfaceRefs(
 
 /** The processor SEAM in one testable call: when the surface lane is wired for this repo, run it and merge its
  *  verdict onto the generic gate (preserving generic hard blockers); otherwise return the generic evaluation
- *  unchanged. `getChangedFiles` is a thunk so an unwired repo resolves no files (no extra diff load). */
+ *  unchanged. `getChangedFiles` is a thunk so an unwired repo resolves no files (no extra diff load).
+ *
+ *  When `applySurfaceGate`'s AI-judgment override fires (an AI-judgment-only generic failure is overridden by a
+ *  decisive surface merge), the AI-judgment finding(s) are ALSO removed from `args.advisory.findings` — that
+ *  array is a separate, raw feed the unified-comment bridge reads independently via `consensusDefectFromFindings`
+ *  (src/review/unified-comment-bridge.ts) to render the "Code review" reviewer note, bypassing the gate
+ *  evaluation entirely. Without this cleanup, the public comment would still show "Concerns raised — review
+ *  before merging" quoting the overridden AI defect even though the gate the same comment reports is a clean
+ *  merge — a visible, confusing contradiction of the override this function just made. */
 export async function evaluateWithSurfaceLane(
   env: Env,
   repoFullName: string,
@@ -171,5 +197,9 @@ export async function evaluateWithSurfaceLane(
     advisory: args.advisory,
     files: await args.getChangedFiles(),
   });
-  return applySurfaceGate(gateEvaluation, surfaceGate);
+  const result = applySurfaceGate(gateEvaluation, surfaceGate);
+  if (gateEvaluation && surfaceGate?.conclusion === "success" && isAiJudgmentOnlyFailure(gateEvaluation)) {
+    args.advisory.findings = args.advisory.findings.filter((finding) => !AI_JUDGMENT_BLOCKER_CODES.has(finding.code));
+  }
+  return result;
 }

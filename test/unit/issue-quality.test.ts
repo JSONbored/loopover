@@ -293,6 +293,23 @@ describe("issue quality reports", () => {
     const report = buildIssueQualityReport(repo, issues, [], repo.fullName);
     expect(report.issues.length).toBeLessThanOrEqual(100);
   });
+
+  it("ranks by score before capping to 100, so a strong issue beyond the first 100 in DB order is not dropped (regression)", () => {
+    const repo = issueDiscoveryRepo("owner/rank-before-cap");
+    // 110 thin, stale filler issues (low score) followed by one detailed, fresh, labelled issue (highest score) —
+    // capping by DB-order position before scoring would drop the strong issue entirely.
+    const filler = Array.from({ length: 110 }, (_, index) =>
+      issue(repo.fullName, index + 1, `bulk ${index}`, { body: "Short.", updatedAt: "2025-01-01T00:00:00.000Z" }),
+    );
+    const strongIssue = issue(repo.fullName, 111, "Detailed, well-labelled issue", {
+      body: "x".repeat(220),
+      labels: ["bug"],
+      updatedAt: now(),
+    });
+    const report = buildIssueQualityReport(repo, [...filler, strongIssue], [], repo.fullName);
+    expect(report.issues).toHaveLength(100);
+    expect(report.issues[0]).toMatchObject({ number: 111, score: 100 });
+  });
 });
 
 describe("buildContributorOpportunities x issue quality", () => {

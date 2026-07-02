@@ -173,7 +173,21 @@ export async function resolveLinkedIssueHardRule(args: {
   if (args.linkedIssues.length === 0) return undefined;
   const token = args.ciToken ?? args.env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
-  const issueFacts = (await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)))).flatMap((facts) => (facts ? [facts] : []));
-  if (issueFacts.length === 0) return undefined;
+  const fetchResults = await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
+  const issueFacts = fetchResults.flatMap((result) => (result.status === "found" ? [result.facts] : []));
+  if (issueFacts.length === 0) {
+    // Every reference resolved to a CONFIRMED 404 — never a transient fetch_error (#2136). Mirrors the overflow
+    // treatment above: a contributor citing a fabricated issue number must not silently satisfy the hard rule
+    // the same way a genuinely-linked-but-unfetchable issue fails open. A single fetch_error in the mix still
+    // fails open (we cannot rule out a real, rule-violating issue behind that failure).
+    const allConfirmedNotFound = fetchResults.every((result) => result.status === "not_found");
+    if (allConfirmedNotFound) {
+      return {
+        violated: true,
+        reason: "The linked issue reference could not be found — please link a real, open issue or request maintainer review.",
+      };
+    }
+    return undefined;
+  }
   return evaluateLinkedIssueHardRules({ issues: issueFacts, config: args.config, repoOwner: args.repoOwner });
 }

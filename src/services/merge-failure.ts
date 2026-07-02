@@ -4,6 +4,11 @@ import { errorMessage } from "../utils/json";
 // current commit, so retrying it every sweep is pointless and noisy — classify it once and let the executor
 // mark the PR terminally merge-blocked (held for a human) instead of looping forever.
 //
+//   • 401 Bad credentials → the installation token was rejected: the App was suspended or its private key was
+//     rotated mid-flight. withInstallationTokenRetry (src/github/app.ts) already evicts-and-retries ONCE on a
+//     401 inside the merge call itself, so a 401 reaching HERE means that retry also failed — a genuinely,
+//     persistently unauthorized installation, not a one-off stale-token race. Burning the full MERGE_RETRY_CAP
+//     against the same known-bad credential wastes calls for nothing; fail fast instead (#2264).
 //   • 403 Resource not accessible by integration → the App lacks pull_requests:write / the branch is
 //     protected against the App. A human must re-consent or merge.
 //   • 405 Method Not Allowed → merge not allowed (e.g. required reviews/checks policy forbids an App merge).
@@ -40,6 +45,7 @@ function httpStatus(error: unknown): number | undefined {
 export function classifyMergeFailure(error: unknown): { terminal: boolean; reason: string } {
   const message = errorMessage(error);
   const status = httpStatus(error);
+  if (status === 401) return { terminal: true, reason: `installation token rejected: App suspended or key rotated (401): ${message}` };
   if (status === 403) return { terminal: true, reason: `merge forbidden (403 — pull_requests:write or branch protection): ${message}` };
   // A 405 "Base branch was modified" is a benign TOCTOU race, not a policy rejection — retry against the new base
   // (the executor caps retries at MERGE_RETRY_CAP before escalating to the same terminal hold).

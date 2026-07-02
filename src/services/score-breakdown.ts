@@ -31,6 +31,48 @@ function bandForMultiplier(value: number, blockedAtZero = true): ScoreMultiplier
   return "reduced";
 }
 
+// Sibling of densityBreakdown for the saturated base-score value (#808 / entrius/gittensor
+// constants.py): `base_score = MERGED_PR_BASE_SCORE × (1 - exp(-src_tok / SRC_TOK_SATURATION_SCALE))
+// + min(total_token_score / CONTRIBUTION_SCORE_FOR_FULL_BONUS, 1) × MAX_CONTRIBUTION_BONUS`.
+// densityBreakdown surfaces the saturation ratio (densityMultiplier); this surfaces the
+// actual base_score the contributor has earned — the foundation that flows into estimatedMergedScore
+// before the multipliers apply — so a miner sees both the curve and the resulting cap contribution.
+// Uses preview.scoreEstimate.baseScoreCap (carried from the scoring core, which has the snapshot
+// constants) to compute a relative saturation ratio instead of a hardcoded threshold.
+const BASE_SCORE_SATURATION_RATIO = 0.95;
+
+function baseScoreBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
+  const { baseScore, baseScoreCap, contributionBonus } = preview.scoreEstimate;
+  const baseGatePassed = preview.gates.baseTokenGatePassed;
+  if (!baseGatePassed) {
+    return {
+      component: "baseScore",
+      band: "blocked",
+      summary: `Base score is not yet in the score pipeline — the change does not meet the minimum meaningful source-change threshold (current base is ${roundBand(baseScore)}).`,
+      lever: "Add more substantive source changes or tighten the diff before relying on this preview.",
+      leverageScore: 75,
+    };
+  }
+  const saturated = baseScoreCap !== undefined && baseScoreCap > 0 && baseScore / baseScoreCap >= BASE_SCORE_SATURATION_RATIO;
+  const hasBonus = contributionBonus > 0;
+  const bonusClause = hasBonus ? `; contribution bonus contributing at ${roundBand(contributionBonus)}` : "; contribution bonus not contributing";
+  const capClause = baseScoreCap === undefined
+    ? "using a fixed base score override (not bounded by the model cap)"
+    : saturated
+      ? "saturated near the score cap"
+      : "contributing toward the score cap";
+  const summary = `Base score is ${capClause} (current base ${roundBand(baseScore)}${bonusClause}).`;
+  return {
+    component: "baseScore",
+    band: saturated ? "full" : "neutral",
+    summary,
+    lever: saturated
+      ? "Maintain source quality on subsequent contributions; the base-score pipeline is at saturation."
+      : "Keep source changes substantive and proportional to supporting changes for the contribution bonus to continue earning.",
+    leverageScore: saturated ? 3 : hasBonus ? 7 : 12,
+  };
+}
+
 function densityBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { densityMultiplier, contributionBonus } = preview.scoreEstimate;
   const baseGatePassed = preview.gates.baseTokenGatePassed;
@@ -338,6 +380,7 @@ function pickHighestLeverage(components: ScoreMultiplierBreakdown[]): ScoreBreak
  */
 export function explainScoreBreakdown(preview: ScorePreviewResult): ScoreBreakdownExplanation {
   const components = [
+    baseScoreBreakdown(preview),
     densityBreakdown(preview),
     contributionBonusBreakdown(preview),
     labelMultiplierBreakdown(preview),

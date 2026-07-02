@@ -23,7 +23,9 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
 // Without this mock, an unconfigured GITHUB_APP_PRIVATE_KEY leaves the accept-time live-recheck token mint
 // undefined; fetchLiveCiAggregate then FULFILLS with ciState "unverified" (not a rejection), which the
 // accept-time staleness check (agent-approval-queue.ts) now treats as non-"passed" — a genuine stale signal,
-// not a fail-open case. Default to "passed" so a staged-merge happy path isn't accidentally exercising that.
+// not a fail-open case. #2364's live CI re-check (in executeAgentMaintenanceActions) runs for every
+// merge/heuristic-close accept too. Default to "passed" so the existing "accept executes the staged merge"
+// happy path executes live instead of being (correctly) denied for CI neither test was simulating.
 vi.mock("../../src/github/backfill", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/backfill")>();
   return {
@@ -48,7 +50,7 @@ async function seedPending(env: Env) {
     repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
   });
   await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
-  const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+  const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
   return action;
 }
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getPullRequestDetailSyncState,
   listPullRequestFiles,
+  listPullRequestReviews,
   listRecentMergedPullRequests,
   recordGitHubRateLimitObservation,
   upsertPullRequestDetailSyncState,
@@ -407,6 +408,190 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
       await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 91, status: "complete", headSha: null });
 
       expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 91)).toMatchObject({ headSha: null });
+    });
+  });
+
+  // Durable review cache (#2537): reviews are independent of head SHA, so — unlike the files cache above — this is
+  // gated purely on reviewsSyncedAt being set (webhook-invalidated), not a head comparison.
+  describe("durable review cache (#2537)", () => {
+    it("fetches reviews for a PR with no prior reviewsSyncedAt (cold cache)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 100,
+        title: "Open PR, never synced",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-100" },
+        labels: [],
+        body: "",
+      });
+      const urls = stubFetchTracking((url) =>
+        url.includes("/pulls/100/reviews") ? Response.json([{ id: 1, user: { login: "reviewer" }, state: "APPROVED", submitted_at: "2026-05-20T00:00:00.000Z" }]) : Response.json([]),
+      );
+
+      const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 100);
+
+      expect(result).toMatchObject({ status: "complete" });
+      expect(urls.some((url) => url.includes("/pulls/100/reviews"))).toBe(true);
+      expect(await listPullRequestReviews(env, "JSONbored/gittensory", 100)).toEqual([expect.objectContaining({ reviewerLogin: "reviewer", state: "APPROVED" })]);
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 100)).toMatchObject({ reviewsSyncedAt: expect.any(String) });
+    });
+
+    it("stores a fetched review with a missing state as UNKNOWN (nullish fallback)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 105,
+        title: "Open PR, stateless review payload",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-105" },
+        labels: [],
+        body: "",
+      });
+      stubFetchTracking((url) => (url.includes("/pulls/105/reviews") ? Response.json([{ id: 9, user: { login: "reviewer" }, submitted_at: "2026-05-20T00:00:00.000Z" }]) : Response.json([])));
+
+      await refreshPullRequestDetails(env, "JSONbored/gittensory", 105);
+
+      expect(await listPullRequestReviews(env, "JSONbored/gittensory", 105)).toEqual([expect.objectContaining({ reviewerLogin: "reviewer", state: "UNKNOWN" })]);
+    });
+
+    it("reuses the review snapshot without calling GitHub when reviewsSyncedAt is set, even if the head SHA changed (contrast: files DO refetch on head change)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 101,
+        title: "Open PR, new push",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-101-new" },
+        labels: [],
+        body: "",
+      });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 101,
+        status: "complete",
+        headSha: "head-101-old",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+      const urls = stubFetchTracking((url) => {
+        if (url.includes("/pulls/101/reviews")) return new Response("must not be called", { status: 500 });
+        if (url.includes("/pulls/101/files")) return Response.json([{ filename: "src/new.ts", status: "added", additions: 1, deletions: 0, changes: 1 }]);
+        return Response.json([]);
+      });
+
+      const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 101);
+
+      expect(result).toMatchObject({ status: "complete" });
+      // Reviews: NOT refetched (head-independent cache still valid).
+      expect(urls.some((url) => url.includes("/pulls/101/reviews"))).toBe(false);
+      // Files: DID refetch — the head SHA changed, so the file cache (head-scoped) correctly missed.
+      expect(urls.some((url) => url.includes("/pulls/101/files"))).toBe(true);
+    });
+
+    it("fetches fresh reviews when reviewsSyncedAt is null (invalidated)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 102,
+        title: "Open PR, review invalidated",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-102" },
+        labels: [],
+        body: "",
+      });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 102,
+        status: "complete",
+        headSha: "head-102",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+        reviewsSyncedAt: null,
+      });
+      const urls = stubFetchTracking((url) =>
+        url.includes("/pulls/102/reviews") ? Response.json([{ id: 2, user: { login: "reviewer2" }, state: "CHANGES_REQUESTED", submitted_at: "2026-05-21T00:00:00.000Z" }]) : Response.json([]),
+      );
+
+      const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 102);
+
+      expect(result).toMatchObject({ status: "complete" });
+      expect(urls.some((url) => url.includes("/pulls/102/reviews"))).toBe(true);
+      expect(await listPullRequestReviews(env, "JSONbored/gittensory", 102)).toEqual([expect.objectContaining({ reviewerLogin: "reviewer2" })]);
+    });
+
+    it("regression: a FAILED review sync does not stamp reviewsSyncedAt, so the next call retries instead of permanently caching the failure", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 106,
+        title: "Open PR, review sync fails then recovers",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-106" },
+        labels: [],
+        body: "",
+      });
+      let reviewsCalls = 0;
+      stubFetchTracking((url) => {
+        if (url.includes("/pulls/106/reviews")) {
+          reviewsCalls += 1;
+          return reviewsCalls === 1 ? new Response("review failure", { status: 503 }) : Response.json([{ id: 3, user: { login: "reviewer3" }, state: "APPROVED", submitted_at: "2026-05-22T00:00:00.000Z" }]);
+        }
+        return Response.json([]);
+      });
+
+      const first = await refreshPullRequestDetails(env, "JSONbored/gittensory", 106);
+      expect(first.status).toBe("partial");
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 106)).toMatchObject({ reviewsSyncedAt: null });
+
+      const second = await refreshPullRequestDetails(env, "JSONbored/gittensory", 106);
+      expect(second.status).toBe("complete");
+      expect(reviewsCalls).toBe(2); // retried — NOT skipped as "already synced" from the failed first attempt
+      expect(await listPullRequestReviews(env, "JSONbored/gittensory", 106)).toEqual([expect.objectContaining({ reviewerLogin: "reviewer3" })]);
+    });
+
+    it("a 'running' pre-fetch stamp does not clear a prior reviewsSyncedAt (PARTIAL-UPDATE CONTRACT regression)", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 103,
+        status: "complete",
+        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 103, status: "running" });
+
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 103)).toMatchObject({
+        status: "running",
+        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+    });
+
+    it("records miss then hit on the reviews cache metric across a cold then warm read", async () => {
+      resetMetrics();
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      await seedRegisteredRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 104,
+        title: "Metrics PR",
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: "head-104" },
+        labels: [],
+        body: "",
+      });
+      stubFetchTracking(() => Response.json([]));
+
+      await refreshPullRequestDetails(env, "JSONbored/gittensory", 104);
+      await refreshPullRequestDetails(env, "JSONbored/gittensory", 104);
+
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_pr_reviews_cache_total{result="miss"} 1');
+      expect(metrics).toContain('gittensory_pr_reviews_cache_total{result="hit"} 1');
     });
   });
 });

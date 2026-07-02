@@ -18,6 +18,7 @@ import {
   getInstallation,
   getLatestUpstreamRulesetSnapshot,
   getPullRequest,
+  getPullRequestDetailSyncState,
   getRepository,
   listUpstreamDriftReports,
   listInstallationHealth,
@@ -38,6 +39,7 @@ import {
   upsertInstallation,
   updatePullRequestSlopAssessment,
   upsertOfficialMinerDetection,
+  upsertPullRequestDetailSyncState,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
   upsertIssueWatchSubscription,
@@ -13274,6 +13276,337 @@ describe("queue processors", () => {
     await processJob(env, { type: "ops-alerts", requestedBy: "test" });
     expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly") && line.includes("owner/repo"))).toBe(true);
     warn.mockRestore();
+  });
+
+  // #2537: durable PR-state / review caches — webhook invalidation + the act-boundary regression.
+  describe("durable PR-state and review caches (#2537)", () => {
+    function seedWarmPrStateCache(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+      return upsertPullRequestDetailSyncState(env, {
+        repoFullName,
+        pullNumber,
+        status: "complete",
+        prMergeableState: "clean",
+        prState: "open",
+        prStateFetchedAt: new Date().toISOString(),
+      });
+    }
+
+    it.each(["synchronize", "closed", "reopened"] as const)(
+      "pull_request %s action invalidates the durable PR-state cache",
+      async (action) => {
+        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+        await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+        await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+        await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+        await seedWarmPrStateCache(env, "JSONbored/gittensory", 200);
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          return Response.json({});
+        });
+
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `invalidate-pr-state-${action}`,
+          eventName: "pull_request",
+          payload: {
+            action,
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: { number: 200, title: "PR", state: action === "closed" ? "closed" : "open", user: { login: "contributor" }, head: { sha: "a200" }, labels: [], body: "" },
+          },
+        });
+
+        expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 200)).toMatchObject({
+          prMergeableState: null,
+          prState: null,
+          prStateFetchedAt: null,
+        });
+      },
+    );
+
+    it("a non-invalidating pull_request action (labeled) leaves the durable PR-state cache UNCHANGED", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      await seedWarmPrStateCache(env, "JSONbored/gittensory", 201);
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        return Response.json({});
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "invalidate-pr-state-labeled",
+        eventName: "pull_request",
+        payload: {
+          action: "labeled",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 201, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "a201" }, labels: [], body: "" },
+        },
+      });
+
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 201)).toMatchObject({
+        prMergeableState: "clean",
+        prState: "open",
+      });
+    });
+
+    it.each(["submitted", "edited", "dismissed"] as const)(
+      "pull_request_review %s action invalidates the durable review cache",
+      async (action) => {
+        const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+        await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+        await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+        await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+        await upsertPullRequestDetailSyncState(env, {
+          repoFullName: "JSONbored/gittensory",
+          pullNumber: 202,
+          status: "complete",
+          reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+        });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+          if (url.includes("/pulls/202/files")) return Response.json([]);
+          if (url.includes("/pulls/202/reviews")) return Response.json([]);
+          return Response.json({});
+        });
+
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `invalidate-reviews-${action}`,
+          eventName: "pull_request_review",
+          payload: {
+            action,
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: { number: 202, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "a202" }, labels: [], body: "" },
+            review: { state: "approved", user: { login: "maintainer" }, submitted_at: "2026-06-01T00:00:00.000Z" },
+          },
+        });
+
+        // Immediately after invalidation, refreshPullRequestDetails (gated by shouldRefreshFilesForPreMergeChecks
+        // etc., which is not guaranteed true here) may or may not re-stamp it — assert the invalidating WRITE
+        // happened by checking the row is either null (invalidated, not yet refetched) or freshly re-stamped
+        // (invalidated then immediately refetched within this same pass); either way it is NOT the stale value.
+        const state = await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 202);
+        expect(state?.reviewsSyncedAt).not.toBe("2026-05-20T00:00:00.000Z");
+      },
+    );
+
+    it("a pull_request_review_comment event (sibling of pull_request_review) does NOT invalidate the durable review cache", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: {}, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 203,
+        status: "complete",
+        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        return Response.json({});
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "no-invalidate-review-comment",
+        eventName: "pull_request_review_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 203, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "a203" }, labels: [], body: "" },
+          comment: { id: 1, body: "nit", user: { login: "maintainer" } },
+        },
+      });
+
+      expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 203)).toMatchObject({
+        reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+    });
+
+    // The single most important regression in #2537: a STALE durable cache (seeded "clean") must NEVER be read by
+    // the act-boundary merge/close decision. The disposition must always see the LIVE state, even when it
+    // disagrees with a fresh-looking cache row — this is the exact #4220 contradiction the design must not
+    // reintroduce.
+    it("#4220 regression: the act-boundary close decision reads the LIVE dirty mergeable_state, never the stale cached clean value", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write" }, events: [] } });
+      await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+      await upsertRepositorySettings(env, {
+        repoFullName: "owner/agent-repo",
+        autonomy: { close: "auto" },
+        aiReviewMode: "off",
+        gatePack: "oss-anti-slop",
+        gateCheckMode: "enabled",
+        checkRunMode: "off",
+        commentMode: "off",
+        publicSurface: "off",
+      });
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 8, title: "Conflicted PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+      // Seed a FRESH-LOOKING durable cache claiming `clean` — if the act-boundary read were ever routed through
+      // this cache, the PR would incorrectly stay open / merge instead of closing.
+      await seedWarmPrStateCache(env, "owner/agent-repo", 8);
+      // Isolation (mutation-tested): the agent-regate-pr sweep's OWN reReviewStoredPullRequest resync calls
+      // primeDurablePrStateCache, which would otherwise overwrite the seeded stale "clean" row with the live
+      // "dirty" value BEFORE the act-boundary disposition even runs — self-healing the cache for an unrelated
+      // reason and making this test pass even if the disposition itself were wrongly routed through the cache.
+      // No-op it so the seeded stale row survives untouched to the disposition boundary: the ONLY way this test
+      // can still observe the correct "dirty" close below is a genuine live re-fetch AT the act boundary.
+      const primeDurablePrStateCacheSpy = vi.spyOn(backfillModule, "primeDurablePrStateCache").mockResolvedValue(undefined);
+      // Precise, mutation-tested isolation of the act-boundary's OWN routing (not just the end-to-end outcome,
+      // which other code in this same job can also produce correctly via a different path): spy (pass-through,
+      // real implementation still runs) on the raw vs. durable-cache-backed merge-state fetchers directly.
+      const rawMergeStateSpy = vi.spyOn(backfillModule, "fetchLivePullRequestMergeState");
+      const cachedMergeStateSpy = vi.spyOn(backfillModule, "cachedFetchLivePullRequestMergeState");
+      let barePullGets = 0;
+      let closedViaPatch = false;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.endsWith("/pulls/8") && method === "PATCH") {
+          closedViaPatch = JSON.parse(String(init?.body ?? "{}")).state === "closed";
+          return Response.json({ number: 8, state: "closed" });
+        }
+        if (/\/pulls\/8(?:\?|$)/.test(url) && method === "GET") {
+          barePullGets += 1;
+          // ALWAYS live-dirty — the stale cache above claims "clean". Every bare-pull read here must reflect this.
+          return Response.json({ number: 8, title: "Conflicted PR", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, mergeable_state: "dirty", labels: [], body: "Closes #1" });
+        }
+        if (url.includes("/pulls/8/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.includes("/commits/b8/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/b8/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/8/comments")) return Response.json([], { status: 200 });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+      vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "act-boundary-4220-regression", repoFullName: "owner/agent-repo", prNumber: 8, installationId: 9001 });
+
+      // The disposition must have observed the LIVE dirty state (multiple bare-pull reads, none short-circuited
+      // by the stale "clean" durable cache) and closed the PR — never merged/left-open on the stale clean value.
+      expect(barePullGets).toBeGreaterThan(0);
+      expect(closedViaPatch).toBe(true);
+      const closeAudit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.close'").first<{ detail: string }>();
+      expect(closeAudit?.detail).toContain("conflicts with the base branch");
+      const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.merge'").first<{ n: number }>();
+      expect(mergeAudit?.n).toBe(0);
+      // The seeded stale row was NEVER overwritten before the disposition ran (primeDurablePrStateCache no-op'd
+      // above) — so the correct close decision above genuinely proves the act-boundary bypassed the stale cache.
+      expect(primeDurablePrStateCacheSpy).toHaveBeenCalled();
+      // The act-boundary's own merge-state read went through the RAW (uncached) fetcher, never the durable-cache
+      // wrapper -- mutation-tested: swapping refreshLiveMergeState's call to cachedFetchLivePullRequestMergeState
+      // flips these two assertions and does NOT otherwise fail this test, proving they genuinely isolate the
+      // routing this test claims to guard (unlike asserting on barePullGets/closedViaPatch alone, which stayed
+      // green under that mutation because the resync's own live prefetch already primed the request-local memo).
+      expect(rawMergeStateSpy).toHaveBeenCalled();
+      expect(cachedMergeStateSpy).not.toHaveBeenCalled();
+    });
+
+    it("#4220 regression (unified comment): the public comment's merge-state label reflects the LIVE dirty value, not the stale cached clean value", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
+      await persistRegistrySnapshot(
+        env,
+        normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+      );
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "detected_contributors_only",
+        publicAudienceMode: "gittensor_only",
+        publicSignalLevel: "standard",
+        publicSurface: "comment_and_label",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        checkRunDetailLevel: "minimal",
+        gateCheckMode: "enabled",
+        backfillEnabled: true,
+        privateTrustEnabled: true,
+      });
+      await seedWarmPrStateCache(env, "JSONbored/gittensory", 9);
+      // Isolation (mutation-tested): a `synchronize` webhook UNCONDITIONALLY calls invalidatePrStateCache before
+      // the comment-rendering boundary below runs, which would otherwise clear the seeded stale "clean" row for
+      // an unrelated reason (webhook-driven invalidation, not the act-boundary's own force-refetch) and make this
+      // test pass even if the comment's merge-state read were wrongly routed through the cache. No-op it so the
+      // seeded stale row survives untouched: the ONLY way this test can still observe "dirty" in the comment below
+      // is a genuine live re-fetch AT the comment's own act-boundary-adjacent read.
+      const invalidatePrStateCacheSpy = vi.spyOn(backfillModule, "invalidatePrStateCache").mockResolvedValue(undefined);
+      const rawMergeStateSpy = vi.spyOn(backfillModule, "fetchLivePullRequestMergeState");
+      const cachedMergeStateSpy = vi.spyOn(backfillModule, "cachedFetchLivePullRequestMergeState");
+      let postedBody = "";
+      const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+        ciState: "passed",
+        hasPending: false,
+        hasVisiblePending: false,
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ciCompletenessWarning: null,
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token", expires_at: "2026-05-28T00:04:00.000Z" });
+        if (url.includes("/pulls/9/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
+        // ALWAYS live-dirty — the seeded durable cache above claims "clean".
+        if (/\/pulls\/9(?:\?|$)/.test(url)) return Response.json({ number: 9, mergeable_state: "dirty" });
+        if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 901 }, { status: 201 });
+        if (url.includes("/check-runs/901") && method === "PATCH") return Response.json({ id: 901 });
+        if (url.includes("/issues/9/comments") && method === "GET") return Response.json([]);
+        if (url.includes("/issues/9/comments") && method === "POST") {
+          postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+          return Response.json({ id: 1, html_url: "https://github.com/comment/1" }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "act-boundary-4220-comment-regression",
+        eventName: "pull_request",
+        payload: {
+          action: "synchronize",
+          installation: {
+            id: 123,
+            account: { login: "JSONbored", id: 1, type: "User" },
+            repository_selection: "selected",
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+            events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+          },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 9,
+            title: "Conflicted PR",
+            state: "open",
+            user: { login: "contributor" },
+            head: { sha: "a9" },
+            labels: [],
+            body: "Closes #1",
+          },
+        },
+      });
+
+      liveCiSpy.mockRestore();
+      // The rendered comment must reflect the LIVE dirty merge-state, not the stale cached "clean" value — a
+      // "safe to merge" chip here while the disposition later closes the PR is the exact #4220 contradiction.
+      expect(postedBody).not.toMatch(/safe to merge/i);
+      // The seeded stale row was NEVER cleared by the webhook's own invalidation (no-op'd above), so the "dirty"
+      // label above can only have come from the comment-render boundary's OWN routing -- confirm directly (same
+      // mutation-tested pattern as the disposition test above).
+      expect(invalidatePrStateCacheSpy).toHaveBeenCalled();
+      expect(rawMergeStateSpy).toHaveBeenCalled();
+      expect(cachedMergeStateSpy).not.toHaveBeenCalled();
+    });
   });
 });
 

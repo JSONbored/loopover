@@ -75,6 +75,9 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
+  cachedFetchLivePullRequestHeadSha,
+  cachedFetchLivePullRequestMergeState,
+  cachedFetchLivePullRequestState,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
@@ -90,6 +93,9 @@ import {
   fetchLivePullRequestState,
   fetchOpenPullRequestNumbersForCommit,
   fetchRequiredStatusContexts,
+  invalidatePrReviewsCache,
+  invalidatePrStateCache,
+  primeDurablePrStateCache,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -614,15 +620,24 @@ function cachedLiveMergeState(
   const key = liveFactKey(repoFullName, prNumber, liveFactTokenPart(token));
   const cached = facts.mergeStates.get(key);
   if (cached) return cached;
+  // #2537: on a request-local miss, check the DURABLE cross-webhook cache before hitting GitHub — this is the
+  // readiness/freshness-guard path, not the act-boundary disposition (that's refreshLiveMergeState below, which
+  // NEVER routes through the durable cache). A durable hit is itself memoized request-locally for the rest of
+  // this pass via facts.mergeStates, same as a live fetch would be.
   const next = evictLiveFactOnReject(
     facts.mergeStates,
     key,
-    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
+    cachedFetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
   return next;
 }
 
+// #4220 contradiction: the stored pr.mergeableState lags GitHub's async recompute, so a base-conflicting PR could
+// read clean here (safe to merge) while the disposition reads the live dirty and auto-CLOSES it. This ALWAYS
+// force-refetches live from GitHub and MUST NEVER be routed through the durable pull_request_detail_sync_state
+// cache added by #2537 — both act-boundary-adjacent callers (runAgentMaintenancePlanAndExecute's disposition
+// input, and the unified-comment mirror) depend on this staying live and uncached.
 function refreshLiveMergeState(
   env: Env,
   repoFullName: string,
@@ -2188,6 +2203,10 @@ async function reReviewStoredPullRequest(
     resyncAdmissionKey,
   );
   primeLiveMergeState(liveFacts, repoFullName, prNumber, resyncToken, live?.mergeable_state);
+  // #2537: this resync ALREADY paid for a bare GET /pulls/{n} — persist it to the durable cross-webhook cache so
+  // the readiness/dup-winner/gate-override readers below (and future webhook deliveries) don't re-fetch it.
+  // Best-effort, never blocks the sweep on a write hiccup.
+  await primeDurablePrStateCache(env, repoFullName, prNumber, live).catch(() => undefined);
   // Terminal early-exit (#1942): the PR is CLOSED/merged on GitHub even though the stored row still reads open — a
   // dropped `closed` webhook (relay down). Reconcile the stored row from the live payload and RETURN before the
   // expensive resync (files) + readiness + re-review reads. A stale sweep must never spend GitHub budget — or post
@@ -4225,6 +4244,14 @@ async function processGitHubWebhook(
         repoFullName,
         payload.pull_request,
       );
+      // #2537: the durable PR-state cache (mergeable_state/state) goes stale exactly when GitHub recomputes them —
+      // synchronize (new head → new mergeable_state recompute), closed (state flips), reopened (state flips back).
+      // Clear explicitly (null, not omitted — PARTIAL-UPDATE CONTRACT) so the next cached read is a forced live
+      // miss; other pull_request actions (labeled, edited, etc.) don't change these fields and are left untouched
+      // to avoid spurious cache churn / extra writes on high-frequency low-signal actions.
+      if (eventName === "pull_request" && (payload.action === "synchronize" || payload.action === "closed" || payload.action === "reopened")) {
+        await invalidatePrStateCache(env, repoFullName, pr.number).catch(() => undefined);
+      }
       // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
       // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
       // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
@@ -4322,6 +4349,14 @@ async function processGitHubWebhook(
         installationId &&
         shouldProcessPullRequestPublicSurface(eventName, payload.action)
       ) {
+        // #2537: reviews only actually change on a pull_request_review webhook (submitted/edited/dismissed) — not
+        // on every sweep tick / unrelated pull_request action — so invalidate the durable review cache HERE,
+        // before the refreshPullRequestDetails call below reads it, rather than on head-SHA change (reviews are
+        // independent of head). shouldProcessPullRequestPublicSurface already gates pull_request_review to
+        // exactly these 3 actions.
+        if (eventName === "pull_request_review") {
+          await invalidatePrReviewsCache(env, repoFullName, pr.number).catch(() => undefined);
+        }
         if (
           shouldCollectSlopEvidence(settings) ||
           settings.manifestPolicyGateMode !== "off" ||
@@ -5615,7 +5650,9 @@ export async function reconcileLiveDuplicateSiblings(
   const staleClosed = new Set<number>();
   await Promise.all(
     lowerOverlapping.map(async (sibling) => {
-      const liveState = await fetchLivePullRequestState(
+      // #2537: durable-cached — this is a non-authoritative reconcile read (not the act-boundary decision), so
+      // repeat calls across webhook deliveries for an unchanged sibling can reuse the cross-webhook cache.
+      const liveState = await cachedFetchLivePullRequestState(
         env,
         repoFullName,
         sibling.number,
@@ -7390,6 +7427,8 @@ async function recordGithubProductUsage(
  * THAT commit (the neutral check-run is per-commit by design). FAIL-OPEN: an unreadable live fetch returns the
  * cached head, so a transient GitHub hiccup never strands the override — it just targets the stored SHA as before.
  * Mirrors the rebase path's live re-fetch (prReadyForReview) and the dup-winner live reconcile.
+ * #2537: durable-cached — a separate `issue_comment` webhook handler with no request-local `liveFacts`, so the
+ * cross-webhook cache is a pure win here (not the act-boundary merge/close decision).
  */
 export async function resolveOverrideHeadSha(
   env: Env,
@@ -7402,7 +7441,7 @@ export async function resolveOverrideHeadSha(
       () => undefined,
     )) ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
-  const liveHeadSha = await fetchLivePullRequestHeadSha(
+  const liveHeadSha = await cachedFetchLivePullRequestHeadSha(
     env,
     repoFullName,
     pr.number,

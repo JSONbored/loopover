@@ -874,6 +874,10 @@ export type PullRequestDetailSyncStateRecord = {
   lastSyncedAt?: string | null | undefined;
   errorSummary?: string | null | undefined;
   updatedAt?: string | null | undefined;
+  // #2537: durable bare-PR-state cache fields (mergeable_state/state from GET /pulls/{n}).
+  prMergeableState?: string | null | undefined;
+  prState?: string | null | undefined;
+  prStateFetchedAt?: string | null | undefined;
 };
 
 export type GitHubRateLimitObservationRecord = {

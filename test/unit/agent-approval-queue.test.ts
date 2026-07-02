@@ -350,6 +350,45 @@ describe("agent approval queue (#779)", () => {
     expect(audit?.detail).toContain("no longer ineligible");
   });
 
+  it("REGRESSION: accept supersedes a staged linked-issue hard-rule close for an owner PR when closeOwnerAuthors is turned off before accept (flagged by the gate's own review of #2452, second pass)", async () => {
+    // Staged while closeOwnerAuthors was true (planner confirmed eligibility at staging time); by accept time a
+    // maintainer flipped the setting off. The head SHA never moved, so the freshness pin above doesn't catch
+    // this -- only re-deriving closeEligible against CURRENT settings does. The hard rule itself is still
+    // violated (it must not even be consulted once eligibility fails, mirroring the merge-side exemption).
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" }, closeOwnerAuthors: false });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "owner" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "would still violate, but must not even be checked" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "ineligible", closeKind: "linked-issue-hard-rule", expectedHeadSha: "h7" }, reason: "linked issue ineligible" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("no_longer_close_eligible");
+    expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
+    const { closePullRequest: closeNoLongerEligible } = await import("../../src/github/pr-actions");
+    expect(closeNoLongerEligible).not.toHaveBeenCalled();
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("no longer close-eligible");
+  });
+
+  it("accept still executes a staged linked-issue hard-rule close for an owner PR when closeOwnerAuthors is (still) true at accept time", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" }, closeOwnerAuthors: true });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "owner" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "still ineligible" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "ineligible", closeKind: "linked-issue-hard-rule", expectedHeadSha: "h7" }, reason: "linked issue ineligible" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest: closeStillEligible } = await import("../../src/github/pr-actions");
+    expect(closeStillEligible).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
   it("accept tolerates a slash-less repoFullName for a staged linked-issue hard-rule close (defensive fallback)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { close: "auto_with_approval" } });

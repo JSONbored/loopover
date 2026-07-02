@@ -41,7 +41,7 @@ pg_enabled() {
 }
 
 pg_scalar() {
-  psql "$PG_DB" -X -q -t -A -v ON_ERROR_STOP=1 -c "$1"
+  PGDATABASE="$PG_DB" psql -X -q -t -A -v ON_ERROR_STOP=1 -c "$1"
 }
 
 pg_table_exists() {
@@ -63,7 +63,7 @@ pg_column_exists() {
 pg_copy_csv() {
   query="$1"
   out="$2"
-  psql "$PG_DB" -X -q -v ON_ERROR_STOP=1 -c "COPY ($query) TO STDOUT WITH CSV" >"$out"
+  PGDATABASE="$PG_DB" psql -X -q -v ON_ERROR_STOP=1 -c "COPY ($query) TO STDOUT WITH CSV" >"$out"
 }
 
 sqlite_import_csv() {

@@ -8,7 +8,7 @@ import {
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
 } from "../../src/db/repositories";
-import { backfillOpenPullRequestDetails, backfillRepositorySegment, refreshPullRequestDetails } from "../../src/github/backfill";
+import { backfillOpenPullRequestDetails, backfillRegisteredRepositories, backfillRepositorySegment, refreshPullRequestDetails } from "../../src/github/backfill";
 import { clearGitHubResponseCacheForTest } from "../../src/github/client";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -347,5 +347,31 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
     // Bounded: only the 3 known caller values appear, never a per-PR-number label.
     const callerLines = metrics.split("\n").filter((line) => line.startsWith("gittensory_github_pull_request_files_fetch_total{"));
     expect(callerLines).toHaveLength(3);
+  });
+
+  it("populates the head-SHA snapshot from the monolithic backfillRegisteredRepositories path so a later run reuses it (regression: the /run admin endpoint's PR-detail loop must WRITE the cache it reads)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    let filesCallCount = 0;
+    stubFetchTracking((url) => {
+      if (url.endsWith("/repos/JSONbored/gittensory")) return Response.json({ name: "gittensory", full_name: "JSONbored/gittensory", default_branch: "main", owner: { login: "JSONbored" } });
+      if (url.includes("/pulls?state=open")) {
+        return Response.json([{ number: 60, title: "Open PR", state: "open", user: { login: "a" }, head: { sha: "head-60" }, labels: [], body: "" }]);
+      }
+      if (url.includes("/pulls/60/files")) {
+        filesCallCount += 1;
+        return Response.json([{ filename: "src/x.ts", status: "modified", additions: 1, deletions: 0, changes: 1 }]);
+      }
+      return Response.json([]);
+    });
+
+    // First run: cold cache, must fetch and then WRITE the snapshot marker.
+    await backfillRegisteredRepositories(env, { repoFullName: "JSONbored/gittensory", limits: { issues: 10, pullRequests: 10, recentMergedPullRequests: 10, pullRequestDetails: 10 } });
+    expect(filesCallCount).toBe(1);
+    expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 60)).toMatchObject({ headSha: "head-60", status: "complete" });
+
+    // Second run, same head: the cache this path itself just wrote must be reused, not re-fetched.
+    await backfillRegisteredRepositories(env, { repoFullName: "JSONbored/gittensory", force: true, limits: { issues: 10, pullRequests: 10, recentMergedPullRequests: 10, pullRequestDetails: 10 } });
+    expect(filesCallCount).toBe(1);
   });
 });

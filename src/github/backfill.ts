@@ -1806,7 +1806,25 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const detailTargets = normalizedPullRequests.slice(0, limits.pullRequestDetails);
     const detailWarningStart = warnings.length;
     await mapWithConcurrency(detailTargets, limits.detailConcurrency, async (pr) => {
+      const before = warnings.length;
       await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
+      // Persist the repo+PR+headSha snapshot marker (#audit-rate-headroom) so a later call through ANY
+      // cache-aware path (open-PR convergence, live review) can skip refetching this PR's files while its
+      // head is unchanged — without this write, fetchAndStorePullRequestDetails's cache check always misses
+      // for PRs only ever touched by this monolithic backfill path.
+      const syncedAt = nowIso();
+      const newWarnings = warnings.slice(before);
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: repo.fullName,
+        pullNumber: pr.number,
+        status: newWarnings.length > 0 ? "partial" : "complete",
+        headSha: pr.headSha,
+        filesSyncedAt: syncedAt,
+        reviewsSyncedAt: syncedAt,
+        checksSyncedAt: syncedAt,
+        lastSyncedAt: syncedAt,
+        errorSummary: newWarnings.at(-1),
+      });
     });
     const fileWarnings = warnings.slice(mergedFileWarningStart).filter((warning) => /File sync failed/i.test(warning));
     const reviewWarnings = warnings.slice(detailWarningStart).filter((warning) => /Review sync failed/i.test(warning));

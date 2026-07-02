@@ -190,6 +190,46 @@ describe("GitHub check runs", () => {
     expect(mints).toBe(1);
   });
 
+  it("REGRESSION (#2453): evicts a rejected App JWT and retries the mint once instead of failing outright", async () => {
+    // Unlike installation tokens (evicted + retried once by withInstallationTokenRetry), the App JWT itself had
+    // no eviction path before #2453: mintInstallationToken threw straight through on the first non-ok response,
+    // with no retry attempt at all, leaving the poisoned JWT cached for up to APP_JWT_REUSE_MS (8 min) and
+    // failing every installation-token mint on the instance in the meantime. Before this fix, mintCalls would be
+    // 1 and the overall call would reject; after it, exactly one retry recovers the mint.
+    const privateKey = await generatePrivateKeyPem();
+    let mintCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mintCalls += 1;
+        if (mintCalls === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
+        return Response.json({ token: "fresh-installation-token", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(createInstallationToken(env, 777)).resolves.toBe("fresh-installation-token");
+    expect(mintCalls).toBe(2); // exactly one bounded retry, not zero (old behavior) or unbounded
+  });
+
+  it("REGRESSION (#2453): does not infinite-loop when the retried App JWT is ALSO rejected", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mintCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mintCalls += 1;
+        return Response.json({ message: "Bad credentials" }, { status: 401 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(createInstallationToken(env, 777)).rejects.toThrow(/Failed to create GitHub installation token \(401\)/);
+    expect(mintCalls).toBe(2); // bounded to exactly one retry, never an unbounded loop
+  });
+
   it("expires a rejected cached installation token and retries check-run publication once", async () => {
     const privateKey = await generatePrivateKeyPem();
     let mints = 0;

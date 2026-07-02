@@ -192,6 +192,21 @@ export async function withInstallationTokenRetry<T>(
   }
 }
 
+/** POST the App-installations access-token endpoint with a given JWT. Extracted so mintInstallationToken can
+ *  issue the same request twice — once with the cached JWT, once with a freshly-signed one on a 401 (#2453). */
+function requestInstallationTokenWithJwt(
+  jwt: string,
+  installationId: number,
+): Promise<Response> {
+  return timeoutFetch(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: githubHeaders(`Bearer ${jwt}`),
+    },
+  );
+}
+
 /** Mint a fresh installation token (broker or local App-JWT) and cache it. `cached` is the expired/absent prior
  *  entry, consulted only for the brokered stale-token grace. Extracted from createInstallationToken so that
  *  function can single-flight concurrent cold-cache callers onto one mint (see inFlightMints). */
@@ -242,13 +257,26 @@ async function mintInstallationToken(
     }
   }
   const jwt = await createAppJwt(env);
-  const response = await timeoutFetch(
-    `https://api.github.com/app/installations/${installationId}/access_tokens`,
-    {
-      method: "POST",
-      headers: githubHeaders(`Bearer ${jwt}`),
-    },
-  );
+  let response = await requestInstallationTokenWithJwt(jwt, installationId);
+  if (response.status === 401) {
+    // The cached App JWT itself was rejected (a transient GitHub-side validation hiccup, a clock-skew edge case,
+    // or a brief App suspend/reinstate) while env.GITHUB_APP_PRIVATE_KEY is unchanged. Unlike installation tokens
+    // (evicted + retried once by withInstallationTokenRetry), the App JWT had no eviction path at all: every mint
+    // attempt across EVERY installation on the instance kept reusing the SAME poisoned cache entry for up to
+    // APP_JWT_REUSE_MS (8 minutes), stalling merges/comments/check-runs/approvals fleet-wide (#2453). Evict + retry
+    // once with a freshly-signed JWT, mirroring withInstallationTokenRetry's identical bounded-once pattern.
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "github_app_jwt_rejected",
+        appId: env.GITHUB_APP_ID,
+        status: response.status,
+      }),
+    );
+    expireCachedAppJwt(env.GITHUB_APP_ID);
+    const freshJwt = await createAppJwt(env);
+    response = await requestInstallationTokenWithJwt(freshJwt, installationId);
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new Error(
@@ -377,6 +405,13 @@ export async function getRepositoryCollaboratorPermission(
 // now-revoked old key (a stale-key JWT would fail every App-level read once the old key is revoked). (#1940)
 const APP_JWT_REUSE_MS = 8 * 60_000;
 const appJwtCache = new Map<string, { privateKey: string; jwt: string; expiresAtMs: number }>();
+
+/** Evict the cached App JWT for `appId` so the NEXT createAppJwt call re-signs, instead of continuing to serve a
+ *  JWT GitHub just rejected for up to APP_JWT_REUSE_MS more (#2453). Mirrors expireCachedInstallationToken's
+ *  identical eviction-on-rejection pattern for installation tokens. */
+function expireCachedAppJwt(appId: string): void {
+  appJwtCache.delete(appId);
+}
 
 async function createAppJwt(env: Env): Promise<string> {
   if (!env.GITHUB_APP_PRIVATE_KEY) {

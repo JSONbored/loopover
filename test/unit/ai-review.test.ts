@@ -1892,4 +1892,12 @@ describe("buildTestEvidencePromptSection (#2558)", () => {
       ]),
     ).toBeUndefined();
   });
+
+  it("de-duplicates a repeated file path so the section doesn't get noisier than the actual changed-file set", () => {
+    const section = buildTestEvidencePromptSection([
+      { path: "src/a.ts" },
+      { path: "src/a.ts" },
+    ]);
+    expect(section?.match(/src\/a\.ts/g)).toHaveLength(1);
+  });
 });

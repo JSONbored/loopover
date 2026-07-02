@@ -517,7 +517,7 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
  * change is not "zero evidence") — only a fully test-free PR touching real code files gets a section.
  */
 export function buildTestEvidencePromptSection(files: ReadonlyArray<{ path: string }>): string | undefined {
-  const codePaths = files.map((file) => file.path).filter(Boolean).filter(isCodeFile);
+  const codePaths = [...new Set(files.map((file) => file.path).filter(Boolean).filter(isCodeFile))];
   if (codePaths.length === 0) return undefined;
   if (files.some((file) => isTestPath(file.path))) return undefined;
   return `Test evidence (engine classifier): this PR has NO test-path changes. The following changed code file(s) have zero test-path evidence: ${codePaths.join(", ")}.`;

@@ -3536,6 +3536,20 @@ function summarizeSegments(
   };
 }
 
+// #2543: this is the ONLY call site of recordGitHubRateLimitObservation -- one row per outbound GitHub REST/
+// GraphQL response. DELIBERATELY left un-batched (documented decision, not an oversight): the write rate is
+// bounded by GitHub's own REST budget for a single App installation (~5000/hour ≈ 1.4/s sustained, further
+// capped in practice by QUEUE_CONCURRENCY's small worker-pool size), nowhere near a volume where single-row
+// Postgres INSERTs meaningfully pressure the connection pool. shouldWaitForGitHubRateLimit (rate-limit.ts)
+// reads the LATEST row from this exact table for admission control across every self-host queue worker
+// (including in a multi-instance/shared-Postgres deployment, where a buffering instance would make its own
+// writes stale to every OTHER instance's reads, not just its own) -- a batching window here trades a real,
+// bounded-scale write-volume concern for a genuine risk to the admission-control freshness the #1936 rate-
+// limit-reliability campaign was built around: a stale "remaining: 500" observation would let a queue worker
+// admit a job it should have deferred, right when conserving the budget matters most. Revisit ONLY if this
+// table's write volume is ever independently measured to actually pressure the pool -- the table-level
+// autovacuum tuning (tuneGithubRateLimitObservationsAutovacuum, src/selfhost/pg-adapter.ts) already addresses
+// the dead-tuple-bloat half of this issue, which is the part that was actually observable/anticipated.
 async function recordGitHubResponse(
   env: Env,
   repoFullName: string | null,

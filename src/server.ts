@@ -50,7 +50,7 @@ import {
 } from "./selfhost/health";
 import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
-import { createPgAdapter } from "./selfhost/pg-adapter";
+import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { resolvePostgresPoolMax } from "./selfhost/queue-common";
@@ -370,6 +370,9 @@ async function main(): Promise<void> {
   console.log(
     JSON.stringify({ event: "selfhost_migrations_applied", count: applied }),
   );
+  // #2543: Postgres-only, applied AFTER migrations (the table must already exist). No-op on SQLite, which has
+  // no autovacuum concept at all -- gated on the same usePostgres check the backend was built from.
+  if (usePostgres) await tuneGithubRateLimitObservationsAutovacuum(backend.db);
 
   const ai = createSelfHostAi(process.env);
   if (ai)

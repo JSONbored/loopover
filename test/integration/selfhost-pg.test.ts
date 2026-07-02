@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { runSelfHostMigrations } from "../../src/selfhost/migrate";
-import { createPgAdapter } from "../../src/selfhost/pg-adapter";
+import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "../../src/selfhost/pg-adapter";
 import { pruneExpiredRecords } from "../../src/db/retention";
 import { processJob } from "../../src/queue/processors";
 
@@ -83,5 +83,19 @@ suite("Postgres backend (#977) — real Postgres", () => {
     await expect(processJob(env, { type: "prune-retention", requestedBy: "schedule" })).resolves.toBeUndefined();
     const audit = await db.prepare("SELECT outcome FROM audit_events WHERE event_type = ?").bind("retention.prune").first<{ outcome: string }>();
     expect(audit?.outcome).toBe("success");
+  });
+
+  it("tunes github_rate_limit_observations autovacuum below Postgres's default, idempotently (#2543)", async () => {
+    const db = createPgAdapter(pool);
+
+    await tuneGithubRateLimitObservationsAutovacuum(db);
+    await tuneGithubRateLimitObservationsAutovacuum(db); // idempotent -- a second apply must not throw
+
+    const row = await pool.query<{ reloptions: string[] | null }>(
+      "SELECT reloptions FROM pg_class WHERE relname = 'github_rate_limit_observations'",
+    );
+    const options = row.rows[0]?.reloptions ?? [];
+    expect(options).toContain("autovacuum_vacuum_scale_factor=0.05");
+    expect(options).toContain("autovacuum_vacuum_threshold=50");
   });
 });

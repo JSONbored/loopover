@@ -4,11 +4,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const bin = join(process.cwd(), "packages/gittensory-miner/bin/gittensory-miner.js");
+export const bin = join(
+  process.cwd(),
+  "packages/gittensory-miner/bin/gittensory-miner.js",
+);
 let server: Server | null = null;
 
 export async function closeFixtureServer() {
-  if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
+  if (server)
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
   server = null;
 }
 
@@ -57,24 +61,42 @@ export function runAsync(args: string[], env: Record<string, string> = {}) {
   });
 }
 
-export async function startRegistryFixture(options: { latestVersion?: string; npmStatus?: number } = {}) {
+export async function startRegistryFixture(
+  options: {
+    latestVersion?: string;
+    npmStatus?: number;
+    delayMs?: number;
+  } = {},
+) {
   server = createServer((request, response) => {
-    response.setHeader("content-type", "application/json");
-    if (request.url && request.url.includes("gittensory-miner/latest")) {
-      if (options.npmStatus && options.npmStatus >= 400) {
-        response.statusCode = options.npmStatus;
-        response.end(JSON.stringify({ error: "registry_error" }));
+    const respond = () => {
+      response.setHeader("content-type", "application/json");
+      if (request.url && request.url.includes("gittensory-miner/latest")) {
+        if (options.npmStatus && options.npmStatus >= 400) {
+          response.statusCode = options.npmStatus;
+          response.end(JSON.stringify({ error: "registry_error" }));
+          return;
+        }
+        response.end(
+          JSON.stringify({ version: options.latestVersion ?? "0.1.0" }),
+        );
         return;
       }
-      response.end(JSON.stringify({ version: options.latestVersion ?? "0.1.0" }));
+      response.statusCode = 404;
+      response.end(JSON.stringify({ error: "not_found" }));
+    };
+    if (options.delayMs && options.delayMs > 0) {
+      setTimeout(respond, options.delayMs);
       return;
     }
-    response.statusCode = 404;
-    response.end(JSON.stringify({ error: "not_found" }));
+    respond();
   });
-  await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+  await new Promise<void>((resolve) =>
+    server?.listen(0, "127.0.0.1", () => resolve()),
+  );
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("fixture server failed to bind");
+  if (!address || typeof address === "string")
+    throw new Error("fixture server failed to bind");
   return `http://127.0.0.1:${address.port}`;
 }
 

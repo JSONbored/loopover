@@ -121,6 +121,141 @@ rees_analyzer_config_invalid`}
 docker compose logs gittensory | grep selfhost_job_dead`}
       />
 
+      <h2>GitHub rate-limit responses or admission deferrals</h2>
+      <p>
+        Two independent signals cover this:{" "}
+        <code>gittensory_github_rest_rate_limit_responses_total</code> counts actual 403/429
+        responses from GitHub, and the{" "}
+        <code>gittensory_jobs_rate_limit_admission_deferred_total</code> /{" "}
+        <code>gittensory_jobs_rate_limit_budget_deferred_total</code> /{" "}
+        <code>gittensory_jobs_rate_limited_by_type_total</code> counters track jobs the queue itself
+        held back <em>before</em> making a request, to avoid tripping a limit. All three job-side
+        counters carry the same three labels — <code>kind</code> (<code>webhook</code> or{" "}
+        <code>background</code>), <code>key_scope</code> (<code>installation</code>,{" "}
+        <code>public</code>, <code>global</code>, or <code>other</code>), and <code>job_type</code>{" "}
+        (the queue job's type, e.g. <code>agent-regate-pr</code>) — so you can break a spike down to
+        exactly which token pool and which job type is under pressure.
+      </p>
+      <p>
+        A short burst of deferrals is expected and self-resolving: the queue is deliberately trading
+        a few seconds of delay to avoid a real 429. Treat it as a real problem only once it&apos;s
+        <strong> sustained</strong> — which is exactly what{" "}
+        <code>GittensoryGitHubRateLimitResponses</code> (real 403/429s observed) and{" "}
+        <code>GittensoryQueueRateLimitDeferralsHigh</code> (a sustained deferral rate, not a blip)
+        are tuned to alert on, rather than firing on every brief admission hold.
+      </p>
+      <CodeBlock
+        lang="promql"
+        code={`# Deferrals broken down by token pool and job type over the last 10m
+sum by (key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[10m]))
+
+# Is one key_scope (e.g. a single installation token) the bottleneck?
+topk(5, sum by (key_scope) (rate(gittensory_jobs_rate_limit_budget_deferred_total[10m])))
+
+# Real rate-limit responses from GitHub itself (not just internal deferrals)
+sum(rate(gittensory_github_rest_rate_limit_responses_total[10m]))`}
+      />
+      <p>
+        If a single <code>key_scope=installation</code> pool is consistently the bottleneck, the fix
+        is usually spreading load across more installation tokens (fewer repos per installation) or
+        raising the GitHub App&apos;s own rate-limit tier, not code changes here.
+      </p>
+
+      <h2>Low GitHub response-cache hit rate</h2>
+      <p>
+        <code>gittensory_github_response_cache_total</code> (REST) and{" "}
+        <code>gittensory_github_graphql_cache_total</code> (GraphQL) both carry a{" "}
+        <code>result</code> label — <code>hit</code>, <code>miss</code>, <code>set</code>,{" "}
+        <code>coalesced</code>, <code>bypassed</code>, or <code>error</code> — and a{" "}
+        <code>class</code> label identifying the endpoint family. A healthy cache should show most
+        traffic as <code>hit</code> for endpoints that are read repeatedly in one review/maintenance
+        pass (PR reads, check-run lookups); a low hit rate on those specific classes, not the
+        overall average, is the useful signal.
+      </p>
+      <CodeBlock
+        lang="promql"
+        code={`# Hit rate by endpoint class over the last 15m
+sum by (class) (rate(gittensory_github_response_cache_total{result="hit"}[15m]))
+/
+sum by (class) (rate(gittensory_github_response_cache_total[15m]))`}
+      />
+
+      <h2>Qdrant / vector-store errors</h2>
+      <p>
+        <code>gittensory_qdrant_errors_total</code> carries an <code>op</code> label (
+        <code>upsert</code>, <code>query</code>, or <code>delete</code>) so you can tell whether
+        indexing or retrieval is failing. <code>GittensoryQdrantErrorRateHigh</code> fires on a
+        sustained error ratio, not an isolated blip.
+      </p>
+      <ul>
+        <li>
+          Confirm <code>QDRANT_URL</code> (e.g. <code>http://qdrant:6333</code>) is reachable from
+          the app container and the <code>qdrant</code> Compose profile is running.
+        </li>
+        <li>
+          If Qdrant requires auth, confirm <code>QDRANT_API_KEY</code> is set and matches the Qdrant
+          deployment&apos;s configuration.
+        </li>
+        <li>
+          A dimension-mismatch error means the existing collection was created with a different
+          embedding model than the one currently configured (<code>AI_EMBED_MODEL</code>) — recreate
+          the collection (drop it in Qdrant and let the next index run recreate it at the current
+          width) rather than trying to reuse it across embedding models.
+        </li>
+      </ul>
+      <CodeBlock
+        lang="bash"
+        code={`curl "$QDRANT_URL/collections"
+docker compose --profile qdrant ps qdrant`}
+      />
+
+      <h2>Orb export or relay problems</h2>
+      <p>
+        For brokered self-host deployments, <code>gittensory_orb_events_exported_total</code> and{" "}
+        <code>gittensory_orb_export_errors_total</code> track the hourly outcome-export loop;{" "}
+        <code>GittensoryOrbExportErrorRateHigh</code> fires on a sustained error ratio there. The
+        pull-mode relay loop (for installations receiving events outbound from Orb) reports through{" "}
+        <code>gittensory_orb_relay_drains_total</code> (<code>result=events</code> when it drained
+        something, <code>result=empty</code> otherwise) and{" "}
+        <code>gittensory_orb_webhook_total</code> (<code>event</code> + <code>result</code> labels)
+        for what happened to each relayed event once enqueued locally.
+      </p>
+      <p>
+        If exports are failing but the relay itself looks healthy, the export loop&apos;s Sentry
+        cron monitor (see <Link to="/docs/self-hosting-operations">Self-host operations</Link>) is
+        the fastest way to confirm whether the loop is even running, before digging into the error
+        counters.
+      </p>
+
+      <h2>AI provider circuit breaker keeps opening</h2>
+      <p>
+        Each AI provider (self-host <code>AI_PROVIDER</code> entries) has its own circuit breaker:
+        after 3 consecutive failures it stops attempting real calls to that provider for 60 seconds,
+        recorded as <code>gittensory_ai_provider_circuit_open_total{'{provider="..."}'}</code>{" "}
+        (skipped calls) alongside{" "}
+        <code>gittensory_ai_provider_failures_total{'{provider="..."}'}</code> (real failures). It
+        self-heals automatically — there is no manual reset — but it will reopen immediately if the
+        underlying problem is still there.
+      </p>
+      <ul>
+        <li>
+          Search logs for <code>circuit_open: provider "..."</code> to confirm which provider
+          tripped, and <code>selfhost_ai_provider_failed_in_chain</code> for the real error each
+          failed attempt hit before the breaker opened.
+        </li>
+        <li>
+          A provider that keeps re-tripping after its cooldown almost always means a persistent
+          problem, not a transient blip: an expired/invalid API key, a CLI binary missing from the
+          image (see <code>selfhost_ai_cli_missing</code> at boot), or the endpoint being genuinely
+          unreachable from the container.
+        </li>
+        <li>
+          <code>GittensoryAiProviderCircuitOpen</code> fires on any circuit-open event in a
+          15-minute window — a single trip during a real but brief outage is expected; a rule that
+          keeps firing across multiple windows points at the persistent case above.
+        </li>
+      </ul>
+
       <h2>Grafana traces error or show no data</h2>
       <p>
         The trace path is app or smoke process → OTEL collector → Tempo → Grafana. Tempo is only

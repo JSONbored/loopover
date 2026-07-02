@@ -54,11 +54,16 @@ test("rankOpportunityScore: every positive factor clamps out-of-range/non-finite
   }
 });
 
-test("rankOpportunityScore: dupRisk clamps in-range but FAILS CLOSED on out-of-range/non-finite input", () => {
+test("rankOpportunityScore: dupRisk clamps finite values; only a non-finite value fails closed", () => {
   closeTo(rankOpportunityScore({ ...full, dupRisk: 0.25 }), 0.75); // in-range penalty applies: 1 - 0.25
-  // Any risk outside [0,1] — above OR below range — is malformed and fails closed to MAX risk (1) → (1 - 1) = 0,
-  // so a bad contention signal can't preserve a high score. (Contrast the positive factors, which degrade to 0.)
-  for (const bad of [1.4, -2, ...NON_FINITE]) {
+  // A FINITE out-of-range dupRisk is clamped like every field: above-range → 1 (full penalty → score 0),
+  // below-range → 0 (no penalty → score 1). So -0.1 reads as no contention, matching the documented formula.
+  assert.equal(rankOpportunityScore({ ...full, dupRisk: 1.4 }), 0);
+  assert.equal(rankOpportunityScore({ ...full, dupRisk: -0.1 }), 1);
+  assert.equal(rankOpportunityScore({ ...full, dupRisk: -2 }), 1);
+  // A NON-finite dupRisk can't be clamped, so it fails closed to MAX risk (1) → (1 - 1) = 0: a broken contention
+  // signal must not look safe. This is the one asymmetry vs the positive factors, which degrade to 0.
+  for (const bad of NON_FINITE) {
     assert.equal(rankOpportunityScore({ ...full, dupRisk: bad }), 0, `dupRisk=${bad} must fail closed to 0`);
   }
 });

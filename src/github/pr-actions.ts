@@ -17,9 +17,11 @@ const REVIEW_PAGE_LIMIT = 10;
 // recorded, not swallowed.
 
 function splitRepo(repoFullName: string): { owner: string; repo: string } {
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
-  return { owner, repo };
+  const parts = repoFullName.trim().split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(`Invalid repository full name: ${repoFullName}`);
+  }
+  return { owner: parts[0], repo: parts[1] };
 }
 
 export type PullRequestReviewEvent = "REQUEST_CHANGES" | "APPROVE" | "COMMENT";

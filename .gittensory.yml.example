@@ -270,3 +270,6 @@ settings:
   # force-clear a cap that a dashboard/DB write previously set.
   # contributorOpenPrCap: 2
   # contributorOpenIssueCap: 5
+
+  # Label applied to a PR/issue closed for exceeding a cap above. String. Default: over-contributor-limit.
+  # contributorCapLabel: over-contributor-limit

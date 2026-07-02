@@ -91,6 +91,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // Per-contributor open PR/issue caps (#2270, anti-abuse): null = no cap (default). Enforcement lands separately.
   contributorOpenPrCap: integer("contributor_open_pr_cap"),
   contributorOpenIssueCap: integer("contributor_open_issue_cap"),
+  contributorCapLabel: text("contributor_cap_label").notNull().default("over-contributor-limit"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

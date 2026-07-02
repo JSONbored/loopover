@@ -1861,6 +1861,29 @@ async function runAgentMaintenancePlanAndExecute(
     settings.contributorBlacklist,
   );
 
+  // Per-contributor open-PR cap (#2270, anti-abuse): count this author's OTHER currently-open PRs on this repo
+  // (otherOpenPullRequests already excludes the current PR — see reconcileLiveDuplicateSiblings) plus this one,
+  // ranked by PR NUMBER (GitHub's own creation order, not webhook-arrival order) so a burst of near-simultaneous
+  // opens still ranks deterministically. Only matches when THIS PR's number is among the ones over the cap — an
+  // older sibling that was already under the cap when it was opened stays open. The owner/admin/automation-bot
+  // exemption is applied by the planner itself (defense-in-depth, mirroring how blacklistEntry above is resolved
+  // unconditionally and exempted only inside planAgentMaintenanceActions). Disabled (null/undefined cap, the
+  // default) ⇒ this block is a no-op.
+  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number } | undefined;
+  const contributorOpenPrCap = settings.contributorOpenPrCap;
+  if (typeof contributorOpenPrCap === "number" && pr.authorLogin) {
+    const authorLoginLower = pr.authorLogin.toLowerCase();
+    const authorOpenPrNumbers = otherOpenPullRequests
+      .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower)
+      .map((other) => other.number)
+      .concat(pr.number)
+      .sort((a, b) => a - b);
+    const overCapNumbers = new Set(authorOpenPrNumbers.slice(contributorOpenPrCap));
+    if (overCapNumbers.has(pr.number)) {
+      contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: authorOpenPrNumbers.length, cap: contributorOpenPrCap };
+    }
+  }
+
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -1885,6 +1908,10 @@ async function runAgentMaintenancePlanAndExecute(
       : {}),
     // Always threaded (the DB layer populates it, default "slop"); the planner applies its own fallback.
     blacklistLabel: settings.blacklistLabel,
+    ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
+    // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
+    // own fallback.
+    contributorCapLabel: settings.contributorCapLabel,
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
     // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
     // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).

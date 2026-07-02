@@ -1356,6 +1356,18 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.contributorOpenIssueCap).toBeNull();
   });
 
+  it("parses + resolves contributorCapLabel from the settings: block, overlaying the DB (#2270)", () => {
+    const manifest = parseFocusManifest({ settings: { contributorCapLabel: "spam-cap" } });
+    expect(manifest.settings.contributorCapLabel).toBe("spam-cap");
+    const eff = resolveEffectiveSettings({ contributorCapLabel: "db-label" } as unknown as RepositorySettings, manifest);
+    expect(eff.contributorCapLabel).toBe("spam-cap"); // yml overlays DB
+    const noOverride = resolveEffectiveSettings({ contributorCapLabel: "db-label" } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(noOverride.contributorCapLabel).toBe("db-label"); // omitted in yml ⇒ DB survives
+    const blank = parseFocusManifest({ settings: { contributorCapLabel: "   " } });
+    expect(blank.settings.contributorCapLabel).toBeUndefined();
+    expect(blank.warnings.some((w) => /settings\.contributorCapLabel/.test(w))).toBe(true);
+  });
+
   it("resolves contributor blacklist by unioning the shared/global list with effective per-repo settings", () => {
     const manifest = parseFocusManifest({ settings: { contributorBlacklist: [{ login: "repo-only", reason: "manifest" }, { login: "Global-Repo", reason: "manifest-overrides-global" }] } });
     const eff = resolveEffectiveSettings(

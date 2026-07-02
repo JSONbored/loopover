@@ -318,6 +318,12 @@ describe("data spine repositories", () => {
     expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
     await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: Number.NaN as never });
     expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
+    // contributorCapLabel (#2270) round-trips and defaults to "over-contributor-limit".
+    expect((await getRepositorySettings(env, "missing/repo")).contributorCapLabel).toBe("over-contributor-limit");
+    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorCapLabel: "spam-cap" });
+    expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("spam-cap");
+    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorCapLabel: "renamed-cap" });
+    expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("renamed-cap"); // update persists
     expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();

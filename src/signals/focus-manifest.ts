@@ -127,6 +127,7 @@ export type FocusManifestSettings = Partial<
     | "blacklistLabel"
     | "contributorOpenPrCap"
     | "contributorOpenIssueCap"
+    | "contributorCapLabel"
   >
 >;
 
@@ -815,6 +816,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     const contributorOpenIssueCap = normalizeOptionalPositiveInteger(r.contributorOpenIssueCap, "settings.contributorOpenIssueCap", warnings);
     if (contributorOpenIssueCap !== null) out.contributorOpenIssueCap = contributorOpenIssueCap;
   }
+  const contributorCapLabel = normalizeOptionalString(r.contributorCapLabel, "settings.contributorCapLabel", warnings);
+  if (contributorCapLabel !== null) out.contributorCapLabel = contributorCapLabel;
   return out;
 }
 

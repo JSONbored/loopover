@@ -23,6 +23,10 @@ export const AGENT_LABEL_CHANGES = "gittensory:changes-requested";
 // configurable per-repo via `.gittensory.yml` (`settings.blacklistLabel`); the planner uses the resolved label
 // and falls back to this default, so the disposition works regardless of the label a repo sets.
 export const DEFAULT_BLACKLIST_LABEL = "slop";
+// Default label applied to a PR/issue closed for exceeding the per-contributor open-item cap (#2270). Same
+// configurable-with-fallback shape as DEFAULT_BLACKLIST_LABEL — a repo can override it via
+// `.gittensory.yml` (`settings.contributorCapLabel`); this is only the fallback when unset.
+export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
 // A PR that PASSES the gate but touches a hard-guardrail path is NOT ready to auto-merge — it is withheld
 // for a human (the merge/approve/close dispositions are suppressed below). Labeling it `ready-to-merge`
 // would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets
@@ -61,7 +65,7 @@ export type PlannedAgentAction = {
   // duplicate / slop / CI). The breaker downgrades ONLY "heuristic" closes; the deterministic close is EXEMPT
   // (silently holding a close whose comment already promised closure would be incoherent). Absent on non-close
   // actions; treated as a heuristic close only when explicitly tagged "heuristic".
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "heuristic";
   expectedHeadSha?: string;
   // For an `approve` action: retract the bot's own prior approval instead of posting a new one — a later commit
   // no longer qualifies for approval, but the PR isn't merging or closing this pass, so the stale APPROVE
@@ -140,6 +144,17 @@ export type AgentActionPlanInput = {
   // The repo-configured label applied to a blacklisted author's PR (#1425), resolved from `.gittensory.yml`.
   // Absent ⇒ the default (`DEFAULT_BLACKLIST_LABEL` = "slop"), so the disposition works regardless of the label set.
   blacklistLabel?: string | undefined;
+  // Per-contributor open-PR/open-issue cap (#2270, anti-abuse): when the incoming PR pushes its author over the
+  // repo's configured `contributorOpenPrCap`, the disposition SHORT-CIRCUITS to a deterministic label + close
+  // ahead of ALL merit/CI/AI analysis — same zero-hallucination shape as blacklistMatch, so its close is tagged
+  // `closeKind: "contributor_cap"` (immune to the close-precision breaker like blacklist/linked-issue-hard-rule).
+  // Fires for a CONTRIBUTOR only (owner/admin/automation bots are NEVER auto-closed by this). `openCount` and
+  // `cap` are PUBLIC (the author's own open-item count on a public repo, and the repo's own configured limit),
+  // so — unlike the blacklist's private-reason close — they ARE interpolated into the public close comment.
+  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number } | undefined;
+  // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.gittensory.yml`.
+  // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit").
+  contributorCapLabel?: string | undefined;
   // Flag-then-close double-check for the linked-issue hard rule (#linked-issue-verify-before-close). When
   // `verifyBeforeClose` is true (the default), a violation FLAGS the PR (pending-closure label + warning comment)
   // on first detection and only CLOSES on a LATER evaluation when the violation STILL holds AND the PR already
@@ -252,6 +267,14 @@ function blacklistCloseMessage(): string {
   return "Gittensory is closing this pull request on the maintainer's behalf. This account is blocked from contributing to this repository, so the change was not reviewed on its merits. This is an automated maintenance action.";
 }
 
+// The close comment for exceeding the per-contributor open-item cap (#2270). Unlike blacklistCloseMessage, this
+// DOES interpolate authorLogin/openCount/cap — none of that is private (the author's own login and their own
+// open-item count on a public repo are already public/derivable from GitHub itself), and stating the exact
+// numbers is the point: a deterministic, contributor-visible cap, not a silent quality-based hold.
+function contributorCapCloseMessage(authorLogin: string, openCount: number, cap: number, itemNoun: "pull requests" | "issues"): string {
+  return `Gittensory closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above this repository's configured limit of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
+}
+
 /**
  * Plan the maintainer auto-maintain actions for one PR. Returns a COHERENT set (never both approve and
  * request-changes; never both merge and close), each entry already filtered to an acting autonomy class.
@@ -283,6 +306,26 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "blacklisted contributor", label, labelOp: "add" });
     if (acting("close")) {
       actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: "blacklisted contributor", closeComment: sanitizePublicComment(blacklistCloseMessage()), closeKind: "blacklist" });
+    }
+    return actions;
+  }
+
+  // Per-contributor open-item cap (#2270): same zero-hallucination short-circuit shape as the blacklist above —
+  // fires ahead of ALL merit/CI/AI analysis, for a CONTRIBUTOR only. Re-checks the owner/admin/bot exemption
+  // independently of the caller (defense-in-depth, matching the blacklist block's own redundant check above).
+  const capContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
+  if (input.contributorCapMatch?.matched === true && capContributor) {
+    const { authorLogin, openCount, cap } = input.contributorCapMatch;
+    const label = input.contributorCapLabel ?? DEFAULT_CONTRIBUTOR_CAP_LABEL;
+    if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "over the per-contributor open-item cap", label, labelOp: "add" });
+    if (acting("close")) {
+      actions.push({
+        actionClass: "close",
+        requiresApproval: approval("close"),
+        reason: "over the per-contributor open-item cap",
+        closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, "pull requests")),
+        closeKind: "contributor_cap",
+      });
     }
     return actions;
   }

@@ -503,6 +503,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
       contributorOpenPrCap: null,
       contributorOpenIssueCap: null,
+      contributorCapLabel: "over-contributor-limit",
     };
   }
   return {
@@ -549,6 +550,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
     contributorOpenPrCap: normalizeOpenItemCap(row.contributorOpenPrCap),
     contributorOpenIssueCap: normalizeOpenItemCap(row.contributorOpenIssueCap),
+    contributorCapLabel: row.contributorCapLabel,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -627,6 +629,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     autoMaintain: normalizeAutoMaintainPolicy(settings.autoMaintain),
     contributorOpenPrCap: normalizeOpenItemCap(settings.contributorOpenPrCap),
     contributorOpenIssueCap: normalizeOpenItemCap(settings.contributorOpenIssueCap),
+    contributorCapLabel: settings.contributorCapLabel ?? "over-contributor-limit",
   };
   const db = getDb(env.DB);
   await db
@@ -675,6 +678,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       autoMaintainJson: jsonString(resolved.autoMaintain),
       contributorOpenPrCap: resolved.contributorOpenPrCap,
       contributorOpenIssueCap: resolved.contributorOpenIssueCap,
+      contributorCapLabel: resolved.contributorCapLabel,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -724,6 +728,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         autoMaintainJson: jsonString(resolved.autoMaintain),
         contributorOpenPrCap: resolved.contributorOpenPrCap,
         contributorOpenIssueCap: resolved.contributorOpenIssueCap,
+        contributorCapLabel: resolved.contributorCapLabel,
         updatedAt: nowIso(),
       },
     });

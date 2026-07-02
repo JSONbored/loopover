@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
@@ -836,5 +836,63 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     const plan = planAgentMaintenanceActions(blacklisted({ blacklistMatch: { matched: true, reason: privateReason } }));
     expect(plan[1]?.closeComment).not.toContain(privateReason);
     expect(plan[1]?.closeComment).toContain("blocked from contributing");
+  });
+});
+
+describe("per-contributor open-item cap short-circuit (#2270)", () => {
+  const overCap = (extra: Partial<AgentActionPlanInput> = {}) =>
+    input({
+      conclusion: "success",
+      autonomy: { label: "auto", close: "auto", approve: "auto", merge: "auto" },
+      contributorCapMatch: { matched: true, authorLogin: "farmer99", openCount: 3, cap: 2 },
+      ...extra,
+    });
+
+  it("labels + closes an over-cap contributor's PR, winning over a passing gate (no merit review / merge)", () => {
+    const plan = planAgentMaintenanceActions(overCap());
+    expect(classes(plan)).toEqual(["label", "close"]); // short-circuit: no approve/merge despite a SUCCESS gate
+    expect(plan[0]).toMatchObject({ actionClass: "label", label: DEFAULT_CONTRIBUTOR_CAP_LABEL, labelOp: "add" });
+    expect(plan[1]).toMatchObject({ actionClass: "close", closeKind: "contributor_cap" });
+  });
+
+  it("interpolates the (public) login/count/cap into the close comment — unlike blacklist's static-only comment", () => {
+    const plan = planAgentMaintenanceActions(overCap());
+    expect(plan[1]?.closeComment).toContain("@farmer99");
+    expect(plan[1]?.closeComment).toContain("3 open pull requests");
+    expect(plan[1]?.closeComment).toContain("limit of 2");
+  });
+
+  it("uses the repo-configured contributorCapLabel, defaulting to 'over-contributor-limit' when unset", () => {
+    expect(planAgentMaintenanceActions(overCap({ contributorCapLabel: "spam-cap" }))[0]).toMatchObject({ label: "spam-cap" });
+    expect(DEFAULT_CONTRIBUTOR_CAP_LABEL).toBe("over-contributor-limit");
+    expect(planAgentMaintenanceActions(overCap())[0]).toMatchObject({ label: "over-contributor-limit" });
+  });
+
+  it("fires AHEAD of CI — closes even while CI is still pending (not the pending early-return)", () => {
+    expect(classes(planAgentMaintenanceActions(overCap({ ciState: "pending" })))).toEqual(["label", "close"]);
+  });
+
+  it("NEVER fires for the owner, an admin login, or an automation bot (standing rule) — the PR falls through to normal disposition", () => {
+    expect(classes(planAgentMaintenanceActions(overCap({ authorIsOwner: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(overCap({ authorIsAdmin: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(overCap({ authorIsAutomationBot: true })))).not.toContain("close");
+  });
+
+  it("no-ops when the author is not matched (normal disposition runs)", () => {
+    expect(classes(planAgentMaintenanceActions(overCap({ contributorCapMatch: { matched: false, authorLogin: "farmer99", openCount: 1, cap: 2 } })))).not.toContain("close");
+  });
+
+  it("respects autonomy: observe plans nothing (still short-circuits); label-only labels but does not close", () => {
+    expect(planAgentMaintenanceActions(overCap({ autonomy: {} }))).toEqual([]);
+    expect(classes(planAgentMaintenanceActions(overCap({ autonomy: { label: "auto" } })))).toEqual(["label"]);
+  });
+
+  it("is independent of the blacklist short-circuit — a matched blacklist entry still wins when both are present", () => {
+    // Blacklist is checked first in the planner; a PR that is BOTH blacklisted and over-cap gets the
+    // blacklist's closeKind, not contributor_cap (order matters only when both conditions are true).
+    const plan = planAgentMaintenanceActions(
+      overCap({ blacklistMatch: { matched: true, reason: "plagiarism" } }),
+    );
+    expect(plan[1]).toMatchObject({ closeKind: "blacklist" });
   });
 });

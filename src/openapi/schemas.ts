@@ -632,6 +632,7 @@ export const RepositorySettingsSchema = z
     agentDryRun: z.boolean().optional(),
     contributorOpenPrCap: z.number().int().positive().nullable().optional(),
     contributorOpenIssueCap: z.number().int().positive().nullable().optional(),
+    contributorCapLabel: z.string().optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })

@@ -8601,6 +8601,9 @@
             "nullable": true,
             "minimum": 0,
             "exclusiveMinimum": true
+          },
+          "contributorCapLabel": {
+            "type": "string"
           }
         },
         "required": [

@@ -27,17 +27,23 @@ const BINARY_OPERATORS = ["==", "!=", ">=", "<=", ">", "<", "+", "-", "*", "/", 
 // an expression left dangling on a binary operator with no right-hand side (e.g. "up ==").
 function promqlSanityIssue(expr) {
   const trimmed = expr.trim();
-  let depth = 0;
+  // A stack, not a depth counter: a depth counter only checks NESTING COUNT, so "sum(foo[5m))" -- opened
+  // with "(" and "[", closed with ")" and ")" -- reaches depth 0 and would wrongly look balanced. The
+  // stack checks each closer against the delimiter it's actually supposed to match.
   const pairs = { ")": "(", "]": "[", "}": "{" };
   const opens = new Set(["(", "[", "{"]);
+  const stack = [];
   for (const ch of trimmed) {
-    if (opens.has(ch)) depth++;
-    else if (ch in pairs) {
-      depth--;
-      if (depth < 0) return `unbalanced brackets (unexpected "${ch}")`;
+    if (opens.has(ch)) {
+      stack.push(ch);
+    } else if (ch in pairs) {
+      const top = stack.pop();
+      if (top !== pairs[ch]) {
+        return `unbalanced brackets (unexpected "${ch}"${top ? `, expected the match for "${top}"` : ""})`;
+      }
     }
   }
-  if (depth !== 0) return "unbalanced brackets";
+  if (stack.length > 0) return `unbalanced brackets (unclosed "${stack[stack.length - 1]}")`;
   const lastToken = trimmed.split(/\s+/).pop() ?? "";
   if (BINARY_OPERATORS.includes(lastToken)) {
     return `expression ends in the binary operator "${lastToken}" with no right-hand side`;

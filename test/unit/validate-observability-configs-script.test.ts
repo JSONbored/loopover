@@ -165,6 +165,15 @@ describe("validate-observability-configs (#1943)", () => {
       expect(errors.some((e) => e.includes("unbalanced brackets"))).toBe(true);
     });
 
+    it("flags mismatched bracket TYPES even when nesting depth balances out (REGRESSION)", () => {
+      // sum(foo[5m)) -- opened with "(" and "[", closed with ")" and ")". A naive depth counter (net
+      // opens - closes = 0) wrongly calls this balanced; the closer must match its actual opener.
+      const errors = validateAlertRules(ruleFile("sum(foo[5m))"));
+      expect(errors.some((e) => e.includes("unbalanced brackets") && e.includes('expected the match for "["'))).toBe(
+        true,
+      );
+    });
+
     it("passes well-formed real-shaped PromQL expressions", () => {
       for (const expr of [
         "up == 0",

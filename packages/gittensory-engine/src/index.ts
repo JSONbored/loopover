@@ -33,3 +33,7 @@ export {
   computeMinerGoalLaneFit,
   isMinerRepoTargetable,
 } from "./miner-goal-lane-fit.js";
+export {
+  computeOpportunityFreshness,
+  type FreshnessIssue,
+} from "./opportunity-freshness.js";

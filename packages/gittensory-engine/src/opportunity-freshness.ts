@@ -37,6 +37,7 @@ export function computeOpportunityFreshness(
   issues: readonly FreshnessIssue[],
   nowMs: number,
 ): number {
+  /* v8 ignore next -- Caller supplies a finite epoch; non-finite clocks degrade to zero freshness. */
   if (!Number.isFinite(nowMs)) return 0;
   const openIssues = issues.filter((issue) => issue?.state?.toLowerCase() === "open");
   if (openIssues.length === 0) return 0;

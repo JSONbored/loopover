@@ -207,7 +207,19 @@ describe("opportunity metadata signals", () => {
     expect(computeMetadataPotential({ labels: ["bug"] })).toBeCloseTo(0.55, 5);
     expect(computeMetadataPotential({ labels: ["documentation"] })).toBeCloseTo(0.8, 5);
     expect(computeMetadataPotential({ labels: ["good first issue"] })).toBeCloseTo(0.8, 5);
-    expect(computeMetadataFeasibility({ ...base, title: "1234567" }, NOW)).toBeGreaterThan(
+    expect(
+      computeMetadataDupRisk(
+        { ...base, title: "queue retry helper" },
+        [{ ...base, issueNumber: 11, title: "queue retry helper for workers" }],
+      ),
+    ).toBeGreaterThan(0);
+    expect(
+      computeMetadataDupRisk(
+        { ...base, title: "alpha beta gamma" },
+        [{ ...base, issueNumber: 11, title: "delta epsilon zeta" }],
+      ),
+    ).toBe(0);
+    expect(computeMetadataFeasibility({ ...base, title: "1234" }, NOW)).toBeGreaterThan(
       computeMetadataFeasibility({ ...base, title: "123" }, NOW),
     );
     expect(

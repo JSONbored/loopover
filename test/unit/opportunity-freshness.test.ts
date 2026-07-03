@@ -38,4 +38,19 @@ describe("computeOpportunityFreshness", () => {
       0,
     );
   });
+
+  it("falls back cleanly when timestamps are absent or non-string", () => {
+    expect(
+      computeOpportunityFreshness(
+        [{ state: "open", updatedAt: null, createdAt: "   " }],
+        NOW,
+      ),
+    ).toBe(1);
+    expect(
+      computeOpportunityFreshness(
+        [{ state: "open", updatedAt: 123 as unknown as string, createdAt: "2026-07-03T00:00:00.000Z" }],
+        NOW,
+      ),
+    ).toBeGreaterThan(0.8);
+  });
 });

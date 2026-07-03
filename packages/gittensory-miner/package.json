@@ -31,7 +31,7 @@
     "lib"
   ],
   "scripts": {
-    "build": "node --check bin/gittensory-miner.js && node --check lib/cli.js && node --check lib/deny-check.js && node --check lib/update-check.js && node --check lib/opportunity-fanout.js && node --check lib/ci-poller.js && node --check lib/run-state.js && node --check lib/deny-hooks.js"
+    "build": "node --check bin/gittensory-miner.js && node --check lib/cli.js && node --check lib/deny-check.js && node --check lib/update-check.js && node --check lib/opportunity-fanout.js && node --check lib/ci-poller.js && node --check lib/run-state.js && node --check lib/deny-hooks.js && node --check lib/event-ledger.js && node --check lib/claim-ledger.js"
   },
   "dependencies": {
     "@jsonbored/gittensory-engine": "0.1.0"

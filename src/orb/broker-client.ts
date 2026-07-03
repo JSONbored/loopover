@@ -75,6 +75,25 @@ export async function fetchBrokeredInstallationToken(
   return { token: payload.token, installationId: payload.installationId ?? 0, expiresAtMs };
 }
 
+// Diagnosing a broker register failure (#selfhost-runtime-drift) needs more than a bare status code, but the
+// response body is attacker/operator-adjacent (the broker, or anything on-path to it) and must never be logged
+// verbatim. Only a short, structured hint is ever surfaced: a JSON body's own `error`/`message` string field,
+// bounded in length -- never raw bytes/headers, so there is nothing here for a secret to hide inside.
+const ORB_RELAY_REGISTER_ERROR_BODY_MAX_BYTES = 2_000;
+const ORB_RELAY_REGISTER_ERROR_HINT_MAX_CHARS = 200;
+
+async function safeOrbRelayRegisterErrorHint(res: Response): Promise<string | undefined> {
+  try {
+    const text = await res.text();
+    if (!text) return undefined;
+    const parsed = JSON.parse(text.slice(0, ORB_RELAY_REGISTER_ERROR_BODY_MAX_BYTES)) as { error?: unknown; message?: unknown };
+    const hint = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : undefined;
+    return hint ? hint.slice(0, ORB_RELAY_REGISTER_ERROR_HINT_MAX_CHARS) : undefined;
+  } catch {
+    return undefined; // non-JSON / unreadable body — the status code alone still carries the failure
+  }
+}
+
 /** Self-register this container's PUBLIC relay URL with the central Orb on boot, so the Orb forwards this install's
  *  events to us (the event half of brokered review). BEST-EFFORT: skipped unless broker mode + a public origin are
  *  configured, and any failure (Orb down, install not registered yet, non-public origin rejected) just means no
@@ -99,16 +118,59 @@ export async function registerOrbRelayTarget(
       body: JSON.stringify({ relayUrl, mode }),
       signal: AbortSignal.timeout(10_000),
     });
-    // Carry WHY it failed (HTTP status) so the caller's log — and Sentry — show a real reason, not "(no message)".
-    return res.ok
-      ? { status: "registered" }
-      : { status: "failed", reason: `http_${res.status}` };
+    if (res.ok) return { status: "registered" };
+    // Carry WHY it failed (HTTP status + an optional sanitized hint) so the caller's log — and Sentry — show a
+    // real reason, not "(no message)".
+    const hint = await safeOrbRelayRegisterErrorHint(res);
+    return { status: "failed", reason: hint ? `http_${res.status}: ${hint}` : `http_${res.status}` };
   } catch (error) {
     return {
       status: "failed",
       reason: error instanceof Error ? error.message : "fetch_threw",
     };
   }
+}
+
+export type OrbRelayRegistrationState = { registered: boolean; lastAttemptAtMs: number | null; attempts: number };
+
+export function createOrbRelayRegistrationState(): OrbRelayRegistrationState {
+  return { registered: false, lastAttemptAtMs: null, attempts: 0 };
+}
+
+// Mirrors RELAY_RETRY_BACKOFF_MINUTES (src/orb/relay.ts) for the same reason: a sustained broker outage must not
+// re-attempt registration on every ~1min tick -- fleet-wide, that is a synchronized retry storm against a
+// central Orb that is already degraded.
+export const ORB_RELAY_REGISTER_RETRY_BACKOFF_MS = 5 * 60_000;
+
+/** Stateful retry wrapper around {@link registerOrbRelayTarget} (#selfhost-runtime-drift): a one-shot boot-time
+ *  registration that never retries leaves a container permanently deaf to its relay after a single transient
+ *  broker 500 -- the ONLY way it recovers is a process restart. Call this on a recurring timer (e.g. every
+ *  minute) instead: it no-ops once registered, and otherwise re-attempts at most once per
+ *  {@link ORB_RELAY_REGISTER_RETRY_BACKOFF_MS} so a persistent outage degrades to a bounded, sane retry rate
+ *  rather than spamming the broker. `state` is mutated in place so the caller can hold one instance for the
+ *  process lifetime. */
+export async function registerOrbRelayTargetWithRetry(
+  env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined; PUBLIC_API_ORIGIN?: string | undefined; ORB_RELAY_MODE?: string | undefined },
+  state: OrbRelayRegistrationState,
+  nowMs: number = Date.now(),
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ status: "registered" | "already_registered" | "skipped" | "backoff" | "failed"; reason?: string }> {
+  if (!isOrbBrokerMode(env)) return { status: "skipped" };
+  if (state.registered) return { status: "already_registered" };
+  if (state.lastAttemptAtMs !== null && nowMs - state.lastAttemptAtMs < ORB_RELAY_REGISTER_RETRY_BACKOFF_MS) {
+    return { status: "backoff" };
+  }
+  state.lastAttemptAtMs = nowMs;
+  state.attempts += 1;
+  const result = await registerOrbRelayTarget(env, fetchImpl);
+  if (result.status === "skipped") return { status: "skipped" };
+  if (result.status === "registered") {
+    state.registered = true;
+    return { status: "registered" };
+  }
+  /* v8 ignore next -- registerOrbRelayTarget's own "failed" returns always set a string reason (http_NNN or an
+   * error message); the undefined arm only satisfies exactOptionalPropertyTypes for the shared result shape. */
+  return result.reason !== undefined ? { status: "failed", reason: result.reason } : { status: "failed" };
 }
 
 /** Pull-mode drain (#secure-relay): fetch this install's queued events from the Orb, acking the previous batch's

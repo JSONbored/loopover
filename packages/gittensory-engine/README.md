@@ -58,6 +58,18 @@ rankOpportunities(candidates); // sorted by descending score, each annotated wit
 `rankOpportunities` is a stable sort with an explicit index tie-break: candidates with an equal score keep their
 input order.
 
+## Plan templates
+
+`plan-templates.ts` exports one builder per miner lifecycle stage (`analyze`, `plan`, `prepare`, `create`, `manage`).
+Each builder returns `RawPlanStep[]` in the shape accepted by `gittensory_build_plan`. Templates are pure data — they
+describe step ordering via `dependsOn` but never actuate anything.
+
+## Opportunity competition
+
+`computeOpportunityCompetition(highRiskDuplicateClusters, openPullRequests)` mirrors the hosted
+`opportunityCompetitionFactor` in `src/signals/reward-risk.ts`, producing a `[0, 1]` signal suitable for the ranker's
+`dupRisk` input.
+
 ## AI Policy Map
 
 `scanAiPolicyText` and `resolveAiPolicyVerdict` provide the deterministic policy gate used by miner discovery.

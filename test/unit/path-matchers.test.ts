@@ -41,7 +41,15 @@ describe("isGeneratedFile", () => {
 
 describe("isVendoredFile", () => {
   it("matches vendored / third-party directories", () => {
-    for (const path of ["vendor/lib.go", "vendored/x.js", "third_party/y.py", "third-party/z.ts", "node_modules/pkg/index.js"]) {
+    for (const path of [
+      "vendor/lib.go",
+      "vendored/x.js",
+      "third_party/y.py",
+      "third-party/z.ts",
+      "node_modules/pkg/index.js",
+      "bower_components/jquery/dist/jquery.js", // Bower
+      "jspm_packages/npm/lodash/index.js", // JSPM
+    ]) {
       expect(isVendoredFile(path)).toBe(true);
     }
   });

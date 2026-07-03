@@ -164,6 +164,8 @@ import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPoli
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
+import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
+import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig } from "../review/linked-issue-label-propagation";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { errorMessage, jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
@@ -489,6 +491,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       closeOwnerAuthors: false,
       autoLabelEnabled: true,
       typeLabelsEnabled: true,
+      typeLabels: { ...DEFAULT_TYPE_LABELS },
+      linkedIssueLabelPropagation: { ...DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, mappings: [] },
       gittensorLabel: "gittensor",
       blacklistLabel: "slop",
       createMissingLabel: true,
@@ -551,6 +555,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     closeOwnerAuthors: row.closeOwnerAuthors,
     autoLabelEnabled: row.autoLabelEnabled,
     typeLabelsEnabled: row.typeLabelsEnabled,
+    typeLabels: parseTypeLabelSet(row.typeLabelsJson),
+    linkedIssueLabelPropagation: parseLinkedIssueLabelPropagationConfig(row.linkedIssueLabelPropagationJson),
     gittensorLabel: row.gittensorLabel,
     blacklistLabel: row.blacklistLabel,
     createMissingLabel: row.createMissingLabel,
@@ -649,6 +655,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     closeOwnerAuthors: settings.closeOwnerAuthors ?? false,
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     typeLabelsEnabled: settings.typeLabelsEnabled ?? true,
+    typeLabels: normalizeTypeLabelSet(settings.typeLabels, []),
+    linkedIssueLabelPropagation: normalizeLinkedIssueLabelPropagationConfig(settings.linkedIssueLabelPropagation, []),
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     blacklistLabel: settings.blacklistLabel ?? "slop",
     createMissingLabel: settings.createMissingLabel ?? true,
@@ -713,6 +721,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       closeOwnerAuthors: resolved.closeOwnerAuthors,
       autoLabelEnabled: resolved.autoLabelEnabled,
       typeLabelsEnabled: resolved.typeLabelsEnabled,
+      typeLabelsJson: jsonString(resolved.typeLabels),
+      linkedIssueLabelPropagationJson: jsonString(resolved.linkedIssueLabelPropagation),
       gittensorLabel: resolved.gittensorLabel,
       blacklistLabel: resolved.blacklistLabel,
       createMissingLabel: resolved.createMissingLabel,
@@ -778,6 +788,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         closeOwnerAuthors: resolved.closeOwnerAuthors,
         autoLabelEnabled: resolved.autoLabelEnabled,
         typeLabelsEnabled: resolved.typeLabelsEnabled,
+        typeLabelsJson: jsonString(resolved.typeLabels),
+        linkedIssueLabelPropagationJson: jsonString(resolved.linkedIssueLabelPropagation),
         gittensorLabel: resolved.gittensorLabel,
         blacklistLabel: resolved.blacklistLabel,
         createMissingLabel: resolved.createMissingLabel,
@@ -5967,6 +5979,14 @@ function parsePublicSurface(value: string): RepositorySettings["publicSurface"] 
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
   return normalizeCommandAuthorizationPolicy(parseJson<unknown>(value, null)).policy;
+}
+
+function parseTypeLabelSet(value: string): RepositorySettings["typeLabels"] {
+  return normalizeTypeLabelSet(parseJson<unknown>(value, null), []);
+}
+
+function parseLinkedIssueLabelPropagationConfig(value: string): RepositorySettings["linkedIssueLabelPropagation"] {
+  return normalizeLinkedIssueLabelPropagationConfig(parseJson<unknown>(value, null), []);
 }
 
 function parseContributorBlacklist(value: string): RepositorySettings["contributorBlacklist"] {

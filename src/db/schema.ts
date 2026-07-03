@@ -87,6 +87,11 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // #label-decoupling: independently gates the per-PR TYPE label (gittensor:bug/feature/priority),
   // distinct from autoLabelEnabled (the base gittensor context label) and the public-surface gate.
   typeLabelsEnabled: integer("type_labels_enabled", { mode: "boolean" }).notNull().default(true),
+  // Per-repo override of the three TYPE label NAMES (#priority-linked-issue-gate): { bug, feature, priority }.
+  typeLabelsJson: text("type_labels_json").notNull().default("{}"),
+  // Linked-issue label propagation (#priority-linked-issue-gate): the only mechanism that can select the
+  // configured priority label -- never inferred from title/files/AI/PR-labels. Default disabled, no mappings.
+  linkedIssueLabelPropagationJson: text("linked_issue_label_propagation_json").notNull().default("{}"),
   publicSurface: text("public_surface").notNull().default("comment_and_label"),
   includeMaintainerAuthors: integer("include_maintainer_authors", { mode: "boolean" }).notNull().default(false),
   requireLinkedIssue: integer("require_linked_issue", { mode: "boolean" }).notNull().default(false),

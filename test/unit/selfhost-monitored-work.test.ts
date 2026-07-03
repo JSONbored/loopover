@@ -13,10 +13,12 @@ vi.mock("../../src/selfhost/sentry", () => ({
 
 import {
   drainOrbRelayWithMonitor,
+  registerOrbRelayWithMonitor,
   runOrbExportWithMonitor,
   runScheduledLoopWithMonitor,
   type OrbRelayDrainState,
 } from "../../src/selfhost/monitored-work";
+import type { OrbRelayRegistrationState } from "../../src/orb/broker-client";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 beforeEach(() => {
@@ -180,5 +182,110 @@ describe("self-host monitored recurring work", () => {
     ).rejects.toThrow("broker down");
 
     expect(state.pendingAck).toEqual(["previous-delivery"]);
+  });
+
+  describe("registerOrbRelayWithMonitor", () => {
+    const freshState = (): OrbRelayRegistrationState => ({ registered: false, lastAttemptAtMs: null, attempts: 0 });
+
+    it("logs and records the registered metric on the first successful attempt", async () => {
+      const log = vi.fn();
+      const state = freshState();
+      state.attempts = 1; // the injected register() already bumped attempts before returning
+      const register = vi.fn().mockResolvedValue({ status: "registered" });
+
+      await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "push" }, state, register, log });
+
+      expect(mocks.withSentryMonitor).toHaveBeenCalledWith(
+        "orb-relay-register",
+        { jobType: "orb-relay-register" },
+        expect.any(Function),
+      );
+      expect(log).toHaveBeenCalledWith(
+        JSON.stringify({ event: "selfhost_orb_relay_register", mode: "push", attempts: 1 }),
+      );
+      expect(await renderMetrics()).toContain('gittensory_orb_relay_register_total{mode="push",result="registered"} 1');
+    });
+
+    it("logs a distinct recovered event when registration succeeds after prior failures", async () => {
+      const log = vi.fn();
+      const state = freshState();
+      state.attempts = 3; // two prior failed attempts before this one succeeded
+      const register = vi.fn().mockResolvedValue({ status: "registered" });
+
+      await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register, log });
+
+      expect(log).toHaveBeenCalledWith(
+        JSON.stringify({ event: "selfhost_orb_relay_register_recovered", mode: "pull", attempts: 3 }),
+      );
+    });
+
+    it("warns (not errors) on a pull-mode failure, and records the failed metric", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const state = freshState();
+        state.attempts = 1;
+        const register = vi.fn().mockResolvedValue({ status: "failed", reason: "http_500" });
+
+        await registerOrbRelayWithMonitor({ env: { ORB_RELAY_MODE: "pull" }, state, register });
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          JSON.stringify({ level: "warn", event: "selfhost_orb_relay_register_failed", mode: "pull", error: "http_500", attempts: 1 }),
+        );
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(await renderMetrics()).toContain('gittensory_orb_relay_register_total{mode="pull",result="failed"} 1');
+      } finally {
+        errorSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("errors (not warns) on a push-mode failure, defaulting the reason to 'unknown' when absent", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const state = freshState();
+        state.attempts = 1;
+        const register = vi.fn().mockResolvedValue({ status: "failed" });
+
+        await registerOrbRelayWithMonitor({ env: {}, state, register });
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          JSON.stringify({ level: "error", event: "selfhost_orb_relay_register_failed", mode: "push", error: "unknown", attempts: 1 }),
+        );
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("stays silent (no log, no metric) for skipped / already-registered / backoff outcomes", async () => {
+      const log = vi.fn();
+      for (const status of ["skipped", "already_registered", "backoff"] as const) {
+        const register = vi.fn().mockResolvedValue({ status });
+        await registerOrbRelayWithMonitor({ env: {}, state: freshState(), register, log });
+      }
+      expect(log).not.toHaveBeenCalled();
+      expect(await renderMetrics()).not.toContain("gittensory_orb_relay_register_total");
+    });
+
+    it("uses console.log as the default logger", async () => {
+      const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        const state = freshState();
+        state.attempts = 1;
+        await registerOrbRelayWithMonitor({
+          env: { ORB_RELAY_MODE: "push" },
+          state,
+          register: vi.fn().mockResolvedValue({ status: "registered" }),
+        });
+        expect(consoleLog).toHaveBeenCalledWith(
+          JSON.stringify({ event: "selfhost_orb_relay_register", mode: "push", attempts: 1 }),
+        );
+      } finally {
+        consoleLog.mockRestore();
+      }
+    });
   });
 });

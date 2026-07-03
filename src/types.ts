@@ -672,18 +672,29 @@ export type RepositorySettings = {
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;
-  /** #label-decoupling: independently gates the per-PR TYPE/taxonomy label (exactly one of
-   *  `gittensor:bug`/`gittensor:feature`/`gittensor:priority`, classified from the PR title +
-   *  changed paths — see `resolvePrTypeLabel` in `settings/pr-type-label.ts`). Distinct from
-   *  {@link autoLabelEnabled} (which governs only the base {@link gittensorLabel} context label) and
-   *  from `decidePublicSurface`'s public-surface gate (miner detection / `publicAudienceMode` /
-   *  `includeMaintainerAuthors` / bot-author exclusion) — type labels are internal triage metadata
-   *  applied unconditionally to every PR, not a contributor-facing signal, so neither of those
-   *  public-surface conditions should suppress them. Default TRUE (matches the prior de-facto
-   *  behavior before this field existed, when type labels were gated by `autoLabelEnabled` nested
-   *  inside the public-surface check). Always populated by the DB layer; optional so existing
-   *  settings fixtures/callers need not be touched. */
+  /** #label-decoupling: independently gates the per-PR TYPE/taxonomy label (bug/feature by the PR
+   *  title, or priority via linked-issue label propagation — see `resolvePrTypeLabel` in
+   *  `settings/pr-type-label.ts`). Distinct from {@link autoLabelEnabled} (which governs only the
+   *  base {@link gittensorLabel} context label) and from `decidePublicSurface`'s public-surface gate
+   *  (miner detection / `publicAudienceMode` / `includeMaintainerAuthors` / bot-author exclusion) —
+   *  type labels are internal triage metadata applied unconditionally to every PR, not a
+   *  contributor-facing signal, so neither of those public-surface conditions should suppress them.
+   *  Default TRUE (matches the prior de-facto behavior before this field existed, when type labels
+   *  were gated by `autoLabelEnabled` nested inside the public-surface check). Always populated by
+   *  the DB layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabelsEnabled?: boolean | undefined;
+  /** Per-repo override of the three TYPE/taxonomy label NAMES (#priority-linked-issue-gate). Defaults
+   *  to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`) in
+   *  `settings/pr-type-label.ts` — a repo can override just one name (e.g. only `priority`) and keep
+   *  the other two default. Always populated by the DB layer; optional so existing settings
+   *  fixtures/callers need not be touched. */
+  typeLabels?: PrTypeLabelSet | undefined;
+  /** Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can ever
+   *  select the configured priority label (or any other configured mapping's PR label) — never
+   *  inferred from a PR's title, changed files, AI output, or existing PR labels. Default disabled
+   *  (`enabled: false`, no mappings) — a self-hoster opts in per repo. Always populated by the DB
+   *  layer; optional so existing settings fixtures/callers need not be touched. */
+  linkedIssueLabelPropagation?: LinkedIssueLabelPropagationConfig | undefined;
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
   requireLinkedIssue: boolean;
@@ -823,6 +834,35 @@ export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_autho
 export type RepositoryCommandAuthorizationPolicy = {
   default: CommandAuthorizationRole[];
   commands: Record<string, CommandAuthorizationRole[]>;
+};
+
+/** The three per-repo-configurable TYPE/taxonomy label names (#priority-linked-issue-gate). See
+ *  `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
+export type PrTypeLabelSet = {
+  bug: string;
+  feature: string;
+  priority: string;
+};
+
+/** One linked-issue → PR label mapping (#priority-linked-issue-gate). See
+ *  `LinkedIssueLabelPropagationConfig` below and `review/linked-issue-label-propagation.ts`. */
+export type LinkedIssueLabelPropagationMapping = {
+  issueLabel: string;
+  prLabel: string;
+  removeOtherTypeLabels: boolean;
+};
+
+export type LinkedIssueLabelPropagationMode = "exclusive_type_label";
+
+/** Config-driven propagation of a linked/closing issue's GitHub label onto the PR
+ *  (#priority-linked-issue-gate). Built so a maintainer-reward/bonus label (e.g. `gittensor:priority`)
+ *  can never be inferred from a PR's title, changed files, AI output, or existing PR labels -- only
+ *  ever copied from a linked issue that already carries it. See
+ *  `review/linked-issue-label-propagation.ts` for the normalizer and the fetch orchestrator. */
+export type LinkedIssueLabelPropagationConfig = {
+  enabled: boolean;
+  mode: LinkedIssueLabelPropagationMode;
+  mappings: LinkedIssueLabelPropagationMapping[];
 };
 
 /** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional maintainer metadata. The converged

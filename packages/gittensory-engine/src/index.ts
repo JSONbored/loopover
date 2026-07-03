@@ -37,3 +37,4 @@ export {
   computeOpportunityFreshness,
   type FreshnessIssue,
 } from "./opportunity-freshness.js";
+export { computeOpportunityCompetition } from "./opportunity-competition.js";

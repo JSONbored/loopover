@@ -26,11 +26,7 @@ export default defineConfig({
     ...(junitPath ? { outputFile: { junit: junitPath } } : {}),
     coverage: {
       provider: "v8",
-      include: [
-        "src/**/*.ts",
-        "review-enrichment/src/analyzers/codeowners.ts",
-        "packages/gittensory-engine/src/**/*.ts",
-      ],
+      include: ["src/**/*.ts", "review-enrichment/src/analyzers/codeowners.ts"],
       exclude: ["src/env.d.ts", "apps/**"],
       // Emit lcov for Codecov to compute patch (changed-lines) coverage.
       reporter: ["text", "lcov"],

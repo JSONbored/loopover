@@ -56,8 +56,12 @@ export function renderBrief(
   if (licenses.length) {
     lines.push("### Dependency licenses (verify compatibility)");
     for (const lic of licenses) {
+      // `lic.licenses` is the package's DECLARED license text, passed through verbatim from deps.dev (npm et al.
+      // don't validate it), so it can carry backticks/newlines. Escape it — and the package@version — through the
+      // same helper every sibling section uses, so a hostile license string can't break out of the code span and
+      // inject its own lines into the shared brief (which is spliced into the reviewer's prompt).
       lines.push(
-        `- \`${lic.package}@${lic.version}\` (${lic.ecosystem}): ${lic.licenses.join("/") || "none"} — **${lic.classification}**`,
+        `- ${safeCodeSpan(`${lic.package}@${lic.version}`)} (${lic.ecosystem}): ${safeCodeSpan(lic.licenses.join("/") || "none")} — **${lic.classification}**`,
       );
     }
   }

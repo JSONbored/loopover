@@ -31,6 +31,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // GitLab personal/project/group access token: `glpat-` + 20 base64url chars.
+    kind: "gitlab_token",
+    re: /\bglpat-[0-9A-Za-z_-]{20}\b/,
+    confidence: "high",
+  },
+  {
+    // npm automation/publish token: `npm_` + 36 base62 chars.
+    kind: "npm_token",
+    re: /\bnpm_[A-Za-z0-9]{36}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

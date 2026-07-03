@@ -15,6 +15,8 @@ const awsKeyFragmentA = "AKIA" + "IOSFODNN7"; // 13 chars — too short alone to
 const awsKeyFragmentB = "EXAMPLE"; // matches no RULES pattern alone
 const fakeAwsKey = awsKeyFragmentA + awsKeyFragmentB;
 const fakeStripeKey = ["sk_live_", "abcdefghijklmnop1234567890"].join("");
+const fakeGitlabToken = "glpat-" + "aBcDeFgHiJkLmNoPqRsT"; // 20 chars after the prefix
+const fakeNpmToken = "npm_" + "a".repeat(36);
 
 test("scanPatch flags a single-line AWS access key with high confidence", () => {
   const findings = scanPatch("src/config.ts", hunk([`const key = "${fakeAwsKey}";`]));
@@ -29,6 +31,20 @@ test("scanPatch flags a private key header", () => {
   const findings = scanPatch("id_rsa", hunk(["-----BEGIN RSA PRIVATE KEY-----"]));
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "private_key");
+});
+
+test("scanPatch flags a GitLab access token with high confidence", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const gl = "${fakeGitlabToken}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "gitlab_token");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch flags an npm token with high confidence", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const registryAuth = "${fakeNpmToken}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "npm_token");
+  assert.equal(findings[0].confidence, "high");
 });
 
 test("scanPatch flags a generic secret assignment", () => {

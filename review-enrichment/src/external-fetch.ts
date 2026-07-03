@@ -58,6 +58,10 @@ export function safeEndpointCategory(category: string): string {
 // instead of re-attempting a currently-unhealthy endpoint from a cold state.
 const CIRCUIT_FAILURE_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 30_000;
+// Longer cooldown for endpoints known to enforce strict rate limits (e.g. bundlephobia).
+const CIRCUIT_COOLDOWN_MS_BY_CATEGORY: Record<string, number> = {
+  "bundlephobia-size": 60_000,
+};
 const circuits = new Map<string, { failures: number; cooldownUntil: number }>();
 
 export function resetExternalFetchCircuitBreakerForTest(): void {
@@ -80,9 +84,11 @@ function recordCircuitFailure(endpointCategory: string): void {
     cooldownUntil: 0,
   };
   const failures = circuit.failures + 1;
+  const cooldownMs =
+    CIRCUIT_COOLDOWN_MS_BY_CATEGORY[endpointCategory] ?? CIRCUIT_COOLDOWN_MS;
   const cooldownUntil =
     failures >= CIRCUIT_FAILURE_THRESHOLD
-      ? Date.now() + CIRCUIT_COOLDOWN_MS
+      ? Date.now() + cooldownMs
       : circuit.cooldownUntil;
   circuits.set(endpointCategory, { failures, cooldownUntil });
 }

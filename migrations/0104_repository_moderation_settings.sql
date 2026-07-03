@@ -1,5 +1,5 @@
 -- Per-repo overrides for the moderation-rules engine (#selfhost-mod-engine), layered over
--- global_moderation_config (0101). moderation_gate_mode defaults to 'inherit' (defers to the global master
+-- global_moderation_config (0103). moderation_gate_mode defaults to 'inherit' (defers to the global master
 -- switch) -- 'off'/'enabled' let one repo opt out of or into the whole layer regardless of the global default,
 -- e.g. an operator piloting the feature on a single repo before flipping the global default on. The three
 -- override columns are nullable: NULL means "inherit the global value", never "unset to empty/off" -- an

@@ -717,15 +717,17 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
   it("4 violations -> warning only; the 5th (default threshold) escalates to mod:banned + auto-blacklists the login", async () => {
     const env = createTestEnv({});
     await upsertGlobalModerationConfig(env, { enabled: true });
+    // Each iteration is a DIFFERENT PR (distinct pullNumber) -- 4 separate enforcement actions, not the same
+    // one replayed 4 times (the idempotency fix above correctly collapses same-target replays to ONE violation).
     for (let i = 0; i < 4; i++) {
       vi.clearAllMocks();
-      await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
-      expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
-      expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+      await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 100 + i }), [coupledClose, coupledLabel]);
+      expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 100 + i, "mod:warning", { createMissingLabel: true });
+      expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 100 + i, "mod:banned", expect.anything());
     }
     vi.clearAllMocks();
-    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 104 }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 104, "mod:banned", { createMissingLabel: true });
     const blacklist = await getGlobalContributorBlacklist(env);
     expect(blacklist?.map((entry) => entry.login)).toContain("farmer99");
   });
@@ -742,8 +744,10 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
   it("does not double-add an actor who is already on the global blacklist", async () => {
     const env = createTestEnv({});
     await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1 });
-    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
-    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [{ ...coupledClose }, { ...coupledLabel }]);
+    // Two DISTINCT PRs (different pullNumber) -- two genuinely separate violations, not a same-target replay
+    // (which the idempotency fix would correctly no-op before ever reaching the blacklist-membership check).
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 7 }), [coupledClose, coupledLabel]);
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 8 }), [{ ...coupledClose }, { ...coupledLabel }]);
     const blacklist = await getGlobalContributorBlacklist(env);
     expect(blacklist?.filter((entry) => entry.login === "farmer99")).toHaveLength(1);
   });
@@ -833,6 +837,27 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
     // Only the JUST-recorded violation counts (1 < banThreshold 2) -> warning, not banned.
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
     expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("REGRESSION (gate-flagged): a webhook redelivery / queue retry that re-executes the SAME close (same repo+number) does not double-count the violation or escalate past what the single real enforcement action warrants", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 2 });
+    // First pass: this contributor's ONLY violation -> warning (1 < threshold 2).
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+    vi.clearAllMocks();
+    vi.mocked(closePullRequest).mockResolvedValue({ state: "closed" });
+    // A REPLAY of the exact same close (same pullNumber, same repo) -- e.g. GitHub redelivers the webhook, or
+    // the queue job retries after the mutation already succeeded. Must NOT count as a 2nd violation.
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("REGRESSION (gate-flagged): an absurdly large violationDecayDays does not throw on the live close path (clamped before it ever reaches Date arithmetic)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, violationDecayDays: Number.MAX_SAFE_INTEGER });
+    await expect(executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel])).resolves.not.toThrow();
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
   });
 });
 

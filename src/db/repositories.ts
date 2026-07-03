@@ -163,7 +163,7 @@ import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPO
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
-import { DEFAULT_GLOBAL_MODERATION_CONFIG, normalizeModerationLabel, normalizeModerationRules, type GlobalModerationConfig, type ModerationRuleType } from "../settings/moderation-rules";
+import { DEFAULT_GLOBAL_MODERATION_CONFIG, MAX_MODERATION_VIOLATION_DECAY_DAYS, normalizeModerationLabel, normalizeModerationRules, type GlobalModerationConfig, type ModerationRuleType } from "../settings/moderation-rules";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig } from "../review/linked-issue-label-propagation";
@@ -2385,10 +2385,32 @@ export async function countModerationViolationsForActor(env: Env, actor: string,
   return row.count;
 }
 
+/** Moderation-rules engine: whether a violation has ALREADY been recorded for this EXACT (actor, eventType,
+ *  targetKey) tuple. Deliberately NO time window (unlike hasRecentAuditEvent's sinceIso) -- "this PR/issue
+ *  already contributed a violation of this kind to the tally" is permanently true once recorded, not
+ *  something that should re-count on a later replay just because time has passed. */
+export async function hasModerationViolationForTarget(env: Env, actor: string, eventType: string, targetKey: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), eq(auditEvents.targetKey, targetKey)))
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** Moderation-rules engine: record one violation for `actor` under the given rule's `eventType` (see
- *  `MODERATION_VIOLATION_EVENT_TYPE` in settings/moderation-rules.ts). `targetKey` carries the repo#number for
- *  audit-trail/evidence purposes only -- the COUNT query above deliberately does not scope by it. */
-export async function recordModerationViolation(env: Env, args: { eventType: string; actor: string; targetKey: string; repoFullName: string; ruleReason: string }): Promise<void> {
+ *  `MODERATION_VIOLATION_EVENT_TYPE` in settings/moderation-rules.ts). `targetKey` carries the repo#number,
+ *  and -- unlike the COUNT query above, which deliberately does not scope by it -- IS the idempotency key here
+ *  (#gate-flagged): a webhook redelivery or queue retry that re-executes an already-recorded close must not
+ *  double-count the SAME enforcement action toward the ban threshold. Returns whether a NEW row was actually
+ *  inserted (false for an already-recorded duplicate), so the caller can skip redundant escalation work
+ *  (re-labeling, re-checking the ban threshold) when nothing new actually happened. Best-effort, not a hard
+ *  guarantee under true concurrency (no unique constraint on audit_events for this) -- matches this
+ *  codebase's other check-then-act coalescing helpers, and is more than sufficient for the sequential
+ *  redelivery/retry pattern it defends against. */
+export async function recordModerationViolation(env: Env, args: { eventType: string; actor: string; targetKey: string; repoFullName: string; ruleReason: string }): Promise<boolean> {
+  if (await hasModerationViolationForTarget(env, args.actor, args.eventType, args.targetKey)) return false;
   await recordAuditEvent(env, {
     eventType: args.eventType,
     actor: args.actor,
@@ -2397,11 +2419,25 @@ export async function recordModerationViolation(env: Env, args: { eventType: str
     detail: args.ruleReason,
     metadata: { repoFullName: args.repoFullName },
   });
+  return true;
 }
 
-/** Read the singleton global moderation-rules engine config (#selfhost-mod-engine). Missing table or malformed
- *  JSON fail open to {@link DEFAULT_GLOBAL_MODERATION_CONFIG} (`enabled: false`) -- a DB hiccup on this path
- *  must never accidentally turn ON a layer capable of auto-banning a contributor across every gated repo. */
+// #gate-flagged: same non-clamping, non-rounding shape as normalizeOpenItemCap, PLUS an upper bound --
+// unlike an ordinary open-item cap, this value feeds Date arithmetic on the LIVE close path
+// (`Date.now() - violationDecayDays * 86400000`); an unbounded value (e.g. a typo adding extra zeros) can
+// overflow into an Invalid Date, and calling .toISOString() on an Invalid Date THROWS, crashing the close.
+// Clamped (Math.min), not dropped to null, mirroring normalizeReviewNagCooldownDays' own clamping shape for
+// the same "still meaningful, just bounded" family of day-count settings.
+function normalizeModerationDecayDays(value: number | null | undefined): number | null {
+  const parsed = normalizeOpenItemCap(value);
+  return parsed === null ? null : Math.min(parsed, MAX_MODERATION_VIOLATION_DECAY_DAYS);
+}
+
+/** Read the singleton global moderation-rules engine config (#selfhost-mod-engine). A missing table/row fails
+ *  open to the FULL {@link DEFAULT_GLOBAL_MODERATION_CONFIG} (`enabled: false`) -- a DB hiccup on this path
+ *  must never accidentally turn ON a layer capable of auto-banning a contributor across every gated repo.
+ *  Malformed JSON in an otherwise-present row is narrower: only `rules_json` degrades (to an empty rules
+ *  list, via `normalizeModerationRules`), while every other column is still read from the row as normal. */
 export async function getGlobalModerationConfig(env: Env): Promise<GlobalModerationConfig> {
   try {
     const row = await env.DB.prepare(
@@ -2422,7 +2458,7 @@ export async function getGlobalModerationConfig(env: Env): Promise<GlobalModerat
       warningLabel: normalizeModerationLabel(row.warning_label) ?? DEFAULT_GLOBAL_MODERATION_CONFIG.warningLabel,
       bannedLabel: normalizeModerationLabel(row.banned_label) ?? DEFAULT_GLOBAL_MODERATION_CONFIG.bannedLabel,
       banThreshold: normalizePositiveIntWithDefault(row.ban_threshold, DEFAULT_GLOBAL_MODERATION_CONFIG.banThreshold),
-      violationDecayDays: normalizeOpenItemCap(row.violation_decay_days),
+      violationDecayDays: normalizeModerationDecayDays(row.violation_decay_days),
       autoBlacklistOnBan: row.auto_blacklist_on_ban === 1,
     };
   } catch {
@@ -2443,7 +2479,7 @@ export async function upsertGlobalModerationConfig(
     warningLabel: normalizeModerationLabel(input.warningLabel) ?? current.warningLabel,
     bannedLabel: normalizeModerationLabel(input.bannedLabel) ?? current.bannedLabel,
     banThreshold: input.banThreshold !== undefined ? normalizePositiveIntWithDefault(input.banThreshold, current.banThreshold) : current.banThreshold,
-    violationDecayDays: input.violationDecayDays !== undefined ? normalizeOpenItemCap(input.violationDecayDays) : current.violationDecayDays,
+    violationDecayDays: input.violationDecayDays !== undefined ? normalizeModerationDecayDays(input.violationDecayDays) : current.violationDecayDays,
     autoBlacklistOnBan: input.autoBlacklistOnBan ?? current.autoBlacklistOnBan,
   };
   await env.DB.prepare(

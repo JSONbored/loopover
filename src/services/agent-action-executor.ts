@@ -324,7 +324,13 @@ async function maybeEscalateModeration(
   if (!effectiveRules.includes(rule)) return;
 
   const targetKey = `${args.repoFullName}#${args.number}`;
-  await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE[rule], actor: args.authorLogin, targetKey, repoFullName: args.repoFullName, ruleReason: `${rule} violation` }).catch(() => undefined);
+  // #gate-flagged: idempotent per (actor, eventType, targetKey) -- a webhook redelivery or queue retry that
+  // re-executes an ALREADY-recorded close is not a new violation, so skip the rest of escalation entirely
+  // (re-labeling/re-checking the ban threshold off a stale "nothing new happened" pass is redundant, not just
+  // harmless). A write failure fails OPEN (treated as "new"), matching this function's existing best-effort
+  // philosophy elsewhere -- a lost write should not also silently suppress the escalation it was recording for.
+  const isNewViolation = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE[rule], actor: args.authorLogin, targetKey, repoFullName: args.repoFullName, ruleReason: `${rule} violation` }).catch(() => true);
+  if (!isNewViolation) return;
 
   // #gate-flagged: count only the CURRENTLY-effective rule types, not every rule type ever recorded. A rule
   // an operator has excluded (globally or for this repo) must not go on influencing the ban decision just

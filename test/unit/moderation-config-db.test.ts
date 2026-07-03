@@ -3,12 +3,13 @@ import {
   countModerationViolationsForActor,
   getGlobalModerationConfig,
   getRepositorySettings,
+  hasModerationViolationForTarget,
   recordModerationViolation,
   upsertGlobalModerationConfig,
   upsertRepositorySettings,
 } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
-import { DEFAULT_GLOBAL_MODERATION_CONFIG, MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
+import { DEFAULT_GLOBAL_MODERATION_CONFIG, MAX_MODERATION_VIOLATION_DECAY_DAYS, MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
 
 describe("global moderation config DB round-trip (#selfhost-mod-engine)", () => {
   it("defaults to DEFAULT_GLOBAL_MODERATION_CONFIG (off) for a fresh install", async () => {
@@ -79,6 +80,29 @@ describe("global moderation config DB round-trip (#selfhost-mod-engine)", () => 
     expect(resolved.banThreshold).toBe(DEFAULT_GLOBAL_MODERATION_CONFIG.banThreshold);
     expect(resolved.warningLabel).toBe(DEFAULT_GLOBAL_MODERATION_CONFIG.warningLabel);
   });
+
+  it("REGRESSION (gate-flagged): violationDecayDays above MAX_MODERATION_VIOLATION_DECAY_DAYS is CLAMPED, not passed through raw -- an unbounded value overflows Date arithmetic on the live close path", async () => {
+    const env = createTestEnv();
+    const resolved = await upsertGlobalModerationConfig(env, { violationDecayDays: MAX_MODERATION_VIOLATION_DECAY_DAYS + 1_000_000 });
+    expect(resolved.violationDecayDays).toBe(MAX_MODERATION_VIOLATION_DECAY_DAYS);
+    expect(await getGlobalModerationConfig(env)).toEqual(resolved);
+    // Confirms the clamp actually keeps Date arithmetic sane -- this would throw (RangeError: Invalid time
+    // value) if the raw unclamped input were used instead.
+    expect(() => new Date(Date.now() - resolved.violationDecayDays! * 24 * 60 * 60 * 1000).toISOString()).not.toThrow();
+  });
+
+  it("a violationDecayDays AT the max is preserved unclamped (boundary, not just strictly-under)", async () => {
+    const env = createTestEnv();
+    const resolved = await upsertGlobalModerationConfig(env, { violationDecayDays: MAX_MODERATION_VIOLATION_DECAY_DAYS });
+    expect(resolved.violationDecayDays).toBe(MAX_MODERATION_VIOLATION_DECAY_DAYS);
+  });
+
+  it("a raw DB row with an over-max violation_decay_days is also clamped on READ (not just on write)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("UPDATE global_moderation_config SET violation_decay_days = ? WHERE id = 'singleton'").bind(MAX_MODERATION_VIOLATION_DECAY_DAYS * 10).run();
+    const resolved = await getGlobalModerationConfig(env);
+    expect(resolved.violationDecayDays).toBe(MAX_MODERATION_VIOLATION_DECAY_DAYS);
+  });
 });
 
 describe("moderation violation ledger (#selfhost-mod-engine)", () => {
@@ -116,6 +140,46 @@ describe("moderation violation ledger (#selfhost-mod-engine)", () => {
     const env = createTestEnv();
     const count = await countModerationViolationsForActor(env, "nobody", Object.values(MODERATION_VIOLATION_EVENT_TYPE));
     expect(count).toBe(0);
+  });
+
+  it("REGRESSION (gate-flagged): recordModerationViolation is idempotent per (actor, eventType, targetKey) -- a webhook replay/queue retry re-recording the SAME close must not double-count it", async () => {
+    const env = createTestEnv();
+    const args = { eventType: MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, actor: "farmer99", targetKey: "owner/repo#42", repoFullName: "owner/repo", ruleReason: "contributor_cap violation" };
+    const firstInsert = await recordModerationViolation(env, args);
+    const secondInsert = await recordModerationViolation(env, args); // simulates a redelivered webhook / retried queue job
+    const thirdInsert = await recordModerationViolation(env, args);
+    expect(firstInsert).toBe(true); // a genuinely new violation
+    expect(secondInsert).toBe(false); // already recorded -- no-op
+    expect(thirdInsert).toBe(false);
+    const count = await countModerationViolationsForActor(env, "farmer99", [MODERATION_VIOLATION_EVENT_TYPE.contributor_cap]);
+    expect(count).toBe(1); // NOT 3
+  });
+
+  it("a DIFFERENT targetKey (a different PR/issue) for the SAME actor+eventType is a genuinely new violation, not deduped", async () => {
+    const env = createTestEnv();
+    const first = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, actor: "farmer99", targetKey: "owner/repo#42", repoFullName: "owner/repo", ruleReason: "cap" });
+    const second = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, actor: "farmer99", targetKey: "owner/repo#43", repoFullName: "owner/repo", ruleReason: "cap" });
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    const count = await countModerationViolationsForActor(env, "farmer99", [MODERATION_VIOLATION_EVENT_TYPE.contributor_cap]);
+    expect(count).toBe(2);
+  });
+
+  it("a DIFFERENT eventType on the SAME targetKey (e.g. a PR that trips both cap and blacklist) is a genuinely new violation, not deduped", async () => {
+    const env = createTestEnv();
+    const cap = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, actor: "farmer99", targetKey: "owner/repo#42", repoFullName: "owner/repo", ruleReason: "cap" });
+    const blacklist = await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE.blacklist, actor: "farmer99", targetKey: "owner/repo#42", repoFullName: "owner/repo", ruleReason: "blacklist" });
+    expect(cap).toBe(true);
+    expect(blacklist).toBe(true);
+  });
+
+  describe("hasModerationViolationForTarget", () => {
+    it("returns false before any violation is recorded, true after, with NO time window (unlike hasRecentAuditEvent)", async () => {
+      const env = createTestEnv();
+      expect(await hasModerationViolationForTarget(env, "farmer99", MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, "owner/repo#42")).toBe(false);
+      await recordModerationViolation(env, { eventType: MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, actor: "farmer99", targetKey: "owner/repo#42", repoFullName: "owner/repo", ruleReason: "cap" });
+      expect(await hasModerationViolationForTarget(env, "farmer99", MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, "owner/repo#42")).toBe(true);
+    });
   });
 });
 

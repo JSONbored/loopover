@@ -54,9 +54,9 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
       [
         rawIssue(),
         rawIssue(),
-        { ...rawIssue(), issueNumber: "nope" },
+        { ...rawIssue(), issueNumber: "nope" as unknown as number },
         { ...rawIssue(), repoFullName: "" },
-        null,
+        null as unknown as ReturnType<typeof rawIssue>,
       ],
       { nowMs: NOW },
     );
@@ -82,9 +82,12 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
   });
 
   it("summary reports skipped invalid rows and default goal-spec usage", () => {
-    const summary = rankCandidateIssuesWithSummary([rawIssue(), { bad: true }, rawIssue({ issueNumber: 0 })], {
-      nowMs: NOW,
-    });
+    const summary = rankCandidateIssuesWithSummary(
+      [rawIssue(), { bad: true } as unknown as ReturnType<typeof rawIssue>, rawIssue({ issueNumber: 0 })],
+      {
+        nowMs: NOW,
+      },
+    );
     expect(summary.issues).toHaveLength(1);
     expect(summary.skippedInvalid).toBe(2);
     expect(summary.usedDefaultGoalSpec).toBe(true);

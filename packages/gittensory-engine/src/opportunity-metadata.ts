@@ -170,5 +170,5 @@ export function rankMetadataOpportunities<T extends MetadataCandidateIssue>(
     ...candidate,
     ...buildMetadataRankInput(candidate, candidates, context),
   }));
-  return rankOpportunities(annotated);
+  return rankOpportunities(annotated) as Array<T & OpportunityRankInput & { rankScore: number }>;
 }

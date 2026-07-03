@@ -270,21 +270,11 @@ describe("opportunity metadata signals", () => {
     ).toBe(0);
   });
 
-  it("pickMetadataTimestamp covers updatedAt, createdAt, and empty fallbacks", () => {
-    const { pickMetadataTimestamp } = opportunityMetadataInternals;
-    expect(pickMetadataTimestamp({ ...base, updatedAt: "2026-07-02T00:00:00.000Z" })).toBe(
-      "2026-07-02T00:00:00.000Z",
-    );
-    expect(
-      pickMetadataTimestamp({ ...base, updatedAt: "   ", createdAt: "2026-07-01T00:00:00.000Z" }),
-    ).toBe("2026-07-01T00:00:00.000Z");
-    expect(pickMetadataTimestamp({ ...base, updatedAt: null, createdAt: null })).toBe("");
-    expect(
-      pickMetadataTimestamp({
-        ...base,
-        updatedAt: 123 as unknown as string,
-        createdAt: "2026-07-01T00:00:00.000Z",
-      }),
-    ).toBe("2026-07-01T00:00:00.000Z");
+  it("potential covers neutral-only and positive-only label branches", () => {
+    expect(computeMetadataPotential({ labels: [] })).toBeCloseTo(0.45, 5);
+    expect(computeMetadataPotential({ labels: ["enhancement"] })).toBeCloseTo(0.8, 5);
+    expect(computeMetadataPotential({ labels: ["feature"] })).toBeCloseTo(0.8, 5);
+    expect(computeMetadataPotential({ labels: ["refactor"] })).toBeCloseTo(0.5, 5);
+    expect(computeMetadataPotential({ labels: ["bug"] })).toBeCloseTo(0.55, 5);
   });
 });

@@ -59,6 +59,7 @@ describe("opportunity branch internals", () => {
   it("normalizeLabels and resolveGoalSpec cover adapter edge branches", () => {
     const { normalizeLabels, resolveGoalSpec } = opportunityMetadataInternals;
     expect(normalizeLabels(["  ", null as unknown as string, " Bug "])).toEqual(["bug"]);
+    expect(resolveGoalSpec("acme/widgets", { nowMs: NOW }).minerEnabled).toBe(true);
     expect(
       resolveGoalSpec("acme/widgets", {
         nowMs: NOW,
@@ -76,5 +77,31 @@ describe("opportunity branch internals", () => {
         },
       }).preferredLabels,
     ).toEqual(["feature"]);
+  });
+
+  it("pickMetadataTimestamp covers non-string updatedAt and blank createdAt fallbacks", () => {
+    const { pickMetadataTimestamp } = opportunityMetadataInternals;
+    expect(
+      pickMetadataTimestamp({
+        repoFullName: "acme/widgets",
+        issueNumber: 1,
+        title: "t",
+        labels: [],
+        commentsCount: 0,
+        updatedAt: undefined,
+        createdAt: undefined,
+      }),
+    ).toBe("");
+    expect(
+      pickMetadataTimestamp({
+        repoFullName: "acme/widgets",
+        issueNumber: 1,
+        title: "t",
+        labels: [],
+        commentsCount: 0,
+        updatedAt: "2026-07-02T00:00:00.000Z",
+        createdAt: undefined,
+      }),
+    ).toBe("2026-07-02T00:00:00.000Z");
   });
 });

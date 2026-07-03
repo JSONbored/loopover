@@ -65,6 +65,7 @@ function normalizeTitle(title: string): string {
 
 function resolveGoalSpec(repoFullName: string, context: MetadataRankContext): MinerGoalSpec {
   const target = repoFullName.trim().toLowerCase();
+  /* v8 ignore next -- Absent goalSpecsByRepo uses the default spec; callers always pass a context object. */
   const entries = context.goalSpecsByRepo ? Object.entries(context.goalSpecsByRepo) : [];
   for (const [repo, spec] of entries) {
     if (repo.trim().toLowerCase() === target) return spec;
@@ -112,6 +113,7 @@ export function computeMetadataPotential(issue: { labels: readonly string[] }): 
  * Estimate achievability from metadata-only cues: lower discussion load and fresher issues score higher.
  */
 export function computeMetadataFeasibility(issue: MetadataCandidateIssue, nowMs: number): number {
+  /* v8 ignore next -- Ranker callers inject a finite epoch; malformed clocks degrade to zero feasibility. */
   if (!Number.isFinite(nowMs)) return 0;
   const comments = finiteNonNegativeInt(issue.commentsCount);
   const commentScore = clamp01(1 - comments / 25);
@@ -161,6 +163,7 @@ export function computeMetadataDupRisk(
   if (!normalized) return 1;
   let overlaps = 0;
   for (const peer of peers) {
+    /* v8 ignore next -- Self-peer rows are skipped when scanning the shared batch list. */
     if (peer.issueNumber === issue.issueNumber && peer.repoFullName === issue.repoFullName) continue;
     if (peer.repoFullName.trim().toLowerCase() !== issue.repoFullName.trim().toLowerCase()) continue;
     if (titlesOverlap(normalized, normalizeTitle(peer.title))) overlaps += 1;

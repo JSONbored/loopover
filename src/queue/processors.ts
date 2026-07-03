@@ -2088,7 +2088,7 @@ async function runAgentMaintenancePlanAndExecute(
         repoFullName,
         number: pr.number,
         kind: "pull_request",
-      });
+      }, globalCap);
       if (globalOpenCount > globalCap) {
         // verifiedGlobalOpenItemCount sums BOTH open PRs and open issues -- reporting this as "pull requests"
         // when the author's over-cap total may include issues would be a factually wrong close message.
@@ -3972,26 +3972,24 @@ async function isOpenItemRowStillLiveOpen(
   return livePr?.state === "open";
 }
 
-// A contributor can have thousands of open rows across a large install -- an unbounded Promise.all over every
-// one of them would fire that many concurrent GitHub API calls from a single webhook, exhausting the
-// installation's rate limit for every OTHER repo it gates. Bounded worker-pool fan-out, mirroring the same
-// fixed-concurrency shape already used elsewhere in this codebase for GitHub fan-out.
+// A contributor can have thousands of open rows across a large install. Verify in fixed-size batches and stop
+// once the caller has enough confirmed-open siblings to prove the cap is exceeded, preserving stale-row safety
+// without letting one webhook drain the installation rate-limit bucket.
 const GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY = 10;
 
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await mapper(items[index] as T);
-      }
-    }),
-  );
-  return results;
+async function countLiveOpenWithConcurrencyUntil(
+  rows: OpenItemAcrossInstallRow[],
+  concurrency: number,
+  stopAfterConfirmedOpen: number,
+  mapper: (row: OpenItemAcrossInstallRow) => Promise<boolean>,
+): Promise<number> {
+  let confirmedOpenCount = 0;
+  for (let start = 0; start < rows.length && confirmedOpenCount <= stopAfterConfirmedOpen; start += concurrency) {
+    const batch = rows.slice(start, start + concurrency);
+    const results = await Promise.all(batch.map(mapper));
+    confirmedOpenCount += results.filter(Boolean).length;
+  }
+  return confirmedOpenCount;
 }
 
 /**
@@ -4005,6 +4003,7 @@ async function verifiedGlobalOpenItemCount(
   installationId: number,
   authorLogin: string,
   currentItem: { repoFullName: string; number: number; kind: "pull_request" | "issue" },
+  globalCap: number,
 ): Promise<number> {
   const rows = await listOpenItemsForAuthorAcrossInstall(env, installationId, authorLogin);
   const otherRows = rows.filter(
@@ -4013,10 +4012,13 @@ async function verifiedGlobalOpenItemCount(
   const token = await createInstallationToken(env, installationId).catch(() => undefined);
   const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
-  const confirmedOpen = await mapWithConcurrency(otherRows, GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY, (row) =>
-    isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey),
+  const confirmedOpenCount = await countLiveOpenWithConcurrencyUntil(
+    otherRows,
+    GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY,
+    globalCap - 1,
+    (row) => isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey),
   );
-  return confirmedOpen.filter(Boolean).length + 1;
+  return confirmedOpenCount + 1;
 }
 
 /**
@@ -4073,7 +4075,7 @@ async function maybeCloseIssueOverContributorCap(
       repoFullName,
       number: issue.number,
       kind: "issue",
-    });
+    }, globalCap);
     if (globalOpenCount > globalCap) {
       const planned = planAgentMaintenanceActions({
         conclusion: "skipped",

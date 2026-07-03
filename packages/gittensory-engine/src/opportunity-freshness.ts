@@ -19,10 +19,12 @@ function pickTimestamp(issue: FreshnessIssue): string | null {
   return created || null;
 }
 
+const STALE_AGE_DAYS = 9999;
+
 function issueAgeDays(value: string | null, nowMs: number): number {
-  if (!value) return 0;
+  if (!value) return STALE_AGE_DAYS;
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return 0;
+  if (!Number.isFinite(parsed)) return STALE_AGE_DAYS;
   return Math.floor((nowMs - parsed) / 86_400_000);
 }
 

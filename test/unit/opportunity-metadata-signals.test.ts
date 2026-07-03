@@ -90,6 +90,9 @@ describe("opportunity metadata signals", () => {
     expect(computeOpportunityFreshness([{ state: "open", updatedAt: "2026-07-03T00:00:00.000Z" }], NOW)).toBeGreaterThan(
       0.8,
     );
+    expect(
+      computeOpportunityFreshness([{ state: "open", createdAt: "not-a-date", updatedAt: "also-bad" }], NOW),
+    ).toBe(0.05);
   });
 
   it("buildMetadataRankInput uses repo competition when it exceeds batch overlap", () => {
@@ -120,6 +123,9 @@ describe("opportunity metadata signals", () => {
     expect(
       computeMetadataFeasibility({ ...base, updatedAt: null, createdAt: "2026-07-03T00:00:00.000Z" }, NOW),
     ).toBeGreaterThan(0);
+    expect(
+      computeMetadataFeasibility({ ...base, updatedAt: "not-a-date", createdAt: null }, NOW),
+    ).toBeLessThan(computeMetadataFeasibility(base, NOW));
   });
 
   it("treats blank titles as maximum dup risk and exact title matches as overlaps", () => {

@@ -94,6 +94,12 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     expect(summary.defaultGoalSpec.minerEnabled).toBe(true);
   });
 
+  it("summary does not count deduplicated valid rows as skipped invalid", () => {
+    const summary = rankCandidateIssuesWithSummary([rawIssue(), rawIssue()], { nowMs: NOW });
+    expect(summary.issues).toHaveLength(1);
+    expect(summary.skippedInvalid).toBe(0);
+  });
+
   it("prefers fresher, better-labeled opportunities over stale question threads", () => {
     const ranked = rankCandidateIssues(
       [

@@ -8927,6 +8927,10 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
+          },
+          "contributorCapCancelCi": {
+            "type": "boolean",
+            "nullable": true
           }
         },
         "required": [

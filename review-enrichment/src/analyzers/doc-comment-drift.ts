@@ -347,8 +347,10 @@ export async function scanDocCommentDrift(
 ): Promise<DocCommentDriftFinding[]> {
   const { repoFullName, githubToken, headSha, files = [] } = req;
   if (!githubToken || !headSha) return [];
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
+  const parts = repoFullName.split("/");
+  const owner = parts[0];
+  const repo = parts[1];
+  if (parts.length !== 2 || !owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${githubToken}`,

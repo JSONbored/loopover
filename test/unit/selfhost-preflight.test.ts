@@ -66,7 +66,7 @@ describe("self-host environment preflight (#2080)", () => {
     expect(
       preflightEnv({
         REDIS_URL: "redis://redis:6379",
-        SELFHOST_SETUP_TOKEN: "setup-secret",
+        SELFHOST_SETUP_TOKEN: "setup-secret-with-enough-entropy-1",
         PUBLIC_API_ORIGIN: "https://selfhost.example",
       }),
     ).toEqual({ ok: true, problems: [] });
@@ -88,7 +88,7 @@ describe("self-host environment preflight (#2080)", () => {
     ]) {
       const result = preflightEnv({
         REDIS_URL: "redis://redis:6379",
-        SELFHOST_SETUP_TOKEN: "setup-secret",
+        SELFHOST_SETUP_TOKEN: "setup-secret-with-enough-entropy-1",
         PUBLIC_API_ORIGIN,
       });
 
@@ -108,7 +108,7 @@ describe("self-host environment preflight (#2080)", () => {
     ]) {
       const result = preflightEnv({
         REDIS_URL,
-        SELFHOST_SETUP_TOKEN: "setup-secret",
+        SELFHOST_SETUP_TOKEN: "setup-secret-with-enough-entropy-1",
         PUBLIC_API_ORIGIN: "https://selfhost.example",
       });
 
@@ -202,10 +202,108 @@ describe("self-host environment preflight (#2080)", () => {
     expect(JSON.stringify(secretBearing)).not.toContain("super-secret-db");
   });
 
+  describe("critical secrets (Codex security finding: shipped placeholder tokens)", () => {
+    const baseEnv = {
+      REDIS_URL: "redis://redis:6379",
+      GITHUB_APP_ID: "123",
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+    };
+
+    it("rejects each critical secret when it is still the exact placeholder shipped in .env.selfhost.example / .env.example", () => {
+      for (const [name, placeholder] of [
+        ["GITHUB_WEBHOOK_SECRET", "change-this-long-random-value"],
+        ["GITTENSORY_API_TOKEN", "change-this-32-byte-random-token"],
+        ["GITTENSORY_MCP_TOKEN", "change-this-32-byte-random-token"],
+        ["INTERNAL_JOB_TOKEN", "change-this-32-byte-random-token"],
+        ["SELFHOST_SETUP_TOKEN", "change-this-long-random-value"],
+      ] as const) {
+        const result = preflightEnv({ ...baseEnv, [name]: placeholder });
+        expect(result.ok).toBe(false);
+        expect(result).toEqual({
+          ok: false,
+          problems: [expect.objectContaining({ var: name })],
+        });
+        if (!result.ok) expect(JSON.stringify(result.problems)).not.toContain(placeholder);
+      }
+    });
+
+    it("rejects a critical secret that is non-blank but shorter than the minimum safe length", () => {
+      const result = preflightEnv({ ...baseEnv, GITHUB_WEBHOOK_SECRET: "weakvalue123" });
+      expect(result).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "GITHUB_WEBHOOK_SECRET", message: expect.stringContaining("too short") })],
+      });
+      expect(JSON.stringify(result)).not.toContain("weakvalue123");
+    });
+
+    it("accepts a critical secret at exactly the minimum length, and one character below it still fails", () => {
+      const exactly20 = "a".repeat(20);
+      expect(preflightEnv({ ...baseEnv, GITHUB_WEBHOOK_SECRET: exactly20 })).toEqual({ ok: true, problems: [] });
+
+      const nineteen = "a".repeat(19);
+      const result = preflightEnv({ ...baseEnv, GITHUB_WEBHOOK_SECRET: nineteen });
+      expect(result).toEqual({
+        ok: false,
+        problems: [expect.objectContaining({ var: "GITHUB_WEBHOOK_SECRET" })],
+      });
+    });
+
+    it("does not require any critical secret to be present — only judges strength when one is set", () => {
+      expect(preflightEnv(baseEnv)).toEqual({ ok: true, problems: [] });
+    });
+
+    it("rejects two critical secrets that reuse the identical value, without echoing it", () => {
+      const sharedSecret = "a-perfectly-strong-random-value-1234";
+      const result = preflightEnv({
+        ...baseEnv,
+        GITTENSORY_API_TOKEN: sharedSecret,
+        GITTENSORY_MCP_TOKEN: sharedSecret,
+      });
+      expect(result).toEqual({
+        ok: false,
+        problems: [
+          expect.objectContaining({
+            var: "GITTENSORY_MCP_TOKEN",
+            message: expect.stringContaining("must not reuse the same value as GITTENSORY_API_TOKEN"),
+          }),
+        ],
+      });
+      expect(JSON.stringify(result)).not.toContain(sharedSecret);
+    });
+
+    it("accepts every critical secret when each is a distinct, sufficiently long real value", () => {
+      expect(
+        preflightEnv({
+          ...baseEnv,
+          GITHUB_WEBHOOK_SECRET: "webhook-secret-value-with-plenty-of-entropy",
+          GITTENSORY_API_TOKEN: "api-token-value-with-plenty-of-entropy-2",
+          GITTENSORY_MCP_TOKEN: "mcp-token-value-with-plenty-of-entropy-3",
+          INTERNAL_JOB_TOKEN: "internal-job-token-with-plenty-of-entropy-4",
+          SELFHOST_SETUP_TOKEN: "setup-token-value-with-plenty-of-entropy-5",
+        }),
+      ).toEqual({ ok: true, problems: [] });
+    });
+
+    it("collects a placeholder/weak-secret problem for EVERY affected critical secret, not just the first", () => {
+      const result = preflightEnv({
+        ...baseEnv,
+        GITHUB_WEBHOOK_SECRET: "change-this-long-random-value",
+        GITTENSORY_API_TOKEN: "change-this-32-byte-random-token",
+      });
+      expect(result).toEqual({
+        ok: false,
+        problems: [
+          expect.objectContaining({ var: "GITHUB_WEBHOOK_SECRET" }),
+          expect.objectContaining({ var: "GITTENSORY_API_TOKEN" }),
+        ],
+      });
+    });
+  });
+
   it("flags blank values and invalid DATABASE_URL while never echoing supplied secrets", () => {
     const result = preflightEnv({
       REDIS_URL: "   ",
-      SELFHOST_SETUP_TOKEN: "secret-setup-token",
+      SELFHOST_SETUP_TOKEN: "secret-setup-token-with-enough-entropy",
       PUBLIC_API_ORIGIN: "https://selfhost.example",
       DATABASE_URL: "sqlite:///tmp/gittensory.sqlite?password=super-secret-db",
     });
@@ -218,7 +316,7 @@ describe("self-host environment preflight (#2080)", () => {
       ],
     });
     const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain("secret-setup-token");
+    expect(serialized).not.toContain("secret-setup-token-with-enough-entropy");
     expect(serialized).not.toContain("super-secret-db");
     expect(serialized).not.toContain("sqlite:///tmp");
   });

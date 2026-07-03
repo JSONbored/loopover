@@ -83,7 +83,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "DATABASE_URL",
-    firstReference: "src/selfhost/preflight.ts:140",
+    firstReference: "src/selfhost/preflight.ts:201",
   },
   {
     name: "DISCORD_REPO_WEBHOOKS",
@@ -231,7 +231,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "PUBLIC_API_ORIGIN",
-    firstReference: "src/selfhost/preflight.ts:131",
+    firstReference: "src/selfhost/preflight.ts:192",
   },
   {
     name: "QDRANT_API_KEY",
@@ -251,7 +251,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "REDIS_URL",
-    firstReference: "src/selfhost/preflight.ts:83",
+    firstReference: "src/selfhost/preflight.ts:144",
   },
   {
     name: "REVIEW_AUDIT_DIR",
@@ -267,7 +267,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "SELFHOST_SETUP_TOKEN",
-    firstReference: "src/selfhost/preflight.ts:125",
+    firstReference: "src/selfhost/preflight.ts:186",
   },
   {
     name: "SENTRY_DSN",
@@ -317,7 +317,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CODEX_AI_TIMEOUT_MS` | `src/selfhost/ai.ts:112` |",
   "| `CRON_INTERVAL_MS` | `src/server.ts:818` |",
   "| `DATABASE_PATH` | `src/server.ts:239` |",
-  "| `DATABASE_URL` | `src/selfhost/preflight.ts:140` |",
+  "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/selfhost/discord-notify.ts:31` |",
   "| `DISCORD_WEBHOOK_URL` | `src/selfhost/discord-notify.ts:40` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
@@ -354,16 +354,16 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts:76` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts:219` |",
   "| `PORT` | `src/server.ts:622` |",
-  "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:131` |",
+  "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:192` |",
   "| `QDRANT_API_KEY` | `src/selfhost/qdrant-vectorize.ts:50` |",
   "| `QDRANT_DIM` | `src/selfhost/qdrant-vectorize.ts:71` |",
   "| `QDRANT_URL` | `src/server.ts:503` |",
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts:102` |",
-  "| `REDIS_URL` | `src/selfhost/preflight.ts:83` |",
+  "| `REDIS_URL` | `src/selfhost/preflight.ts:144` |",
   "| `REVIEW_AUDIT_DIR` | `src/server.ts:548` |",
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.mjs:13` |",
   "| `SELFHOST_SERVICE` | `scripts/smoke-observability-traces.mjs:5` |",
-  "| `SELFHOST_SETUP_TOKEN` | `src/selfhost/preflight.ts:125` |",
+  "| `SELFHOST_SETUP_TOKEN` | `src/selfhost/preflight.ts:186` |",
   "| `SENTRY_DSN` | `src/selfhost/sentry.ts:355` |",
   "| `SENTRY_ENVIRONMENT` | `src/selfhost/otel.ts:60` |",
   "| `SENTRY_RELEASE` | `src/selfhost/otel.ts:62` |",

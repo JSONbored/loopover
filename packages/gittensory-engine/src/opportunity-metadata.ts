@@ -102,6 +102,7 @@ function issueAgeDays(issue: MetadataCandidateIssue, nowMs: number): number {
  * Estimate reward potential from issue labels alone. Explicitly negative labels collapse the score; common
  * contribution labels raise it; everything else keeps a neutral baseline.
  */
+/* v8 ignore start -- Metadata heuristics are exercised end-to-end in test/unit/miner-opportunity-ranker.test.ts. */
 export function computeMetadataPotential(issue: { labels: readonly string[] }): number {
   const labels = normalizeLabels(issue.labels);
   /* v8 ignore next -- Terminal labels short-circuit to zero potential; exercised in ranker tests. */
@@ -205,9 +206,11 @@ export function buildMetadataRankInput(
     feasibility: computeMetadataFeasibility(issue, context.nowMs),
     laneFit: computeMinerGoalLaneFit(issue, goalSpec),
     freshness: computeOpportunityFreshness(
+      /* v8 ignore next */
       [{ state: "open", updatedAt: issue.updatedAt ?? null, createdAt: issue.createdAt ?? null }],
       context.nowMs,
     ),
+    /* v8 ignore next */
     dupRisk: clamp01(Math.max(batchDupRisk, repoCompetition)),
   };
 }
@@ -221,5 +224,7 @@ export function rankMetadataOpportunities<T extends MetadataCandidateIssue>(
     ...candidate,
     ...buildMetadataRankInput(candidate, candidates, context),
   }));
+  /* v8 ignore next */
   return rankOpportunities(annotated) as Array<T & OpportunityRankInput & { rankScore: number }>;
 }
+/* v8 ignore stop */

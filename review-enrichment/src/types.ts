@@ -301,6 +301,21 @@ export interface BlameLinkFinding {
   lastTouchedByShaPrefix?: string;
 }
 
+/** A review/approval integrity signal, read from structured PR-reviews API fields only (state, commit_id,
+ *  user.login, submitted_at) — never diff/file content. `stale-approval`: the reviewer's latest APPROVED review
+ *  predates the PR's current head commit. `self-approval`: the PR author approved their own PR.
+ *  `outstanding-changes-requested`: the reviewer's CURRENT (most recent) review is still CHANGES_REQUESTED, not
+ *  yet superseded by a later review from the same person. */
+export type ApprovalIntegrityFinding =
+  | {
+      reviewer: string;
+      kind: "stale-approval";
+      /** Short prefix of the stale review's commit SHA (prefix only — never the full SHA). */
+      reviewedShaPrefix: string;
+    }
+  | { reviewer: string; kind: "self-approval" }
+  | { reviewer: string; kind: "outstanding-changes-requested" };
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -325,6 +340,7 @@ export interface BriefFindings {
   duplication?: DuplicationFinding[];
   churnHotspot?: ChurnHotspotFinding[];
   blameLink?: BlameLinkFinding[];
+  approvalIntegrity?: ApprovalIntegrityFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

@@ -380,6 +380,7 @@ export function renderBrief(
   }
 
   lines.push(...renderDescriptorSection("blameLink", findings.blameLink));
+  lines.push(...renderDescriptorSection("approvalIntegrity", findings.approvalIntegrity));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

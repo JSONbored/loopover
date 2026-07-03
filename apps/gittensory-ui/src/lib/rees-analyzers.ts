@@ -584,6 +584,30 @@ export const REES_ANALYZERS = [
         "File-level, not per-line: it reports each file's most recent prior toucher, never claiming a specific line's origin. Fail-safe and partial on cap.",
     },
   },
+  {
+    name: "approvalIntegrity",
+    title: "Review/approval integrity",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["github-token", "head-sha"],
+    limits: {
+      maxPages: 10,
+      reviewsPerPage: 100,
+    },
+    docs: {
+      summary:
+        "Flags review/approval integrity signals: an APPROVED review that predates the current head commit, the author approving their own PR, and a reviewer whose current review is still CHANGES_REQUESTED.",
+      looksAt:
+        "The PR's reviews (walked page by page, bounded), reduced to each reviewer's most recent submitted review — GitHub's own semantics for a reviewer's current vote.",
+      reports:
+        "Reviewer login, the finding kind, and (for a stale approval) a short commit-SHA prefix — never review body text.",
+      network: "Calls the GitHub PR-reviews API, paginated and bounded to a fixed page cap.",
+      notes:
+        "Structured-fields-only: reads state/commit_id/user.login/submitted_at, never diff or review-body text. Fail-safe on missing token/head SHA/fetch error.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

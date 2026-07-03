@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv } from "../../src/selfhost/ai";
+import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv } from "../../src/selfhost/ai";
 import { labelSelfHostReviewerModel } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
@@ -70,7 +70,7 @@ afterEach(() => {
   resetAiProviderCircuitBreakerForTest();
 });
 
-type SpawnResult = { stdout: string; code: number | null; stderr?: string };
+type SpawnResult = { stdout: string; code: number | null; stderr?: string; timedOut?: boolean };
 type StubSpawn = (
   cmd: string,
   args: string[],
@@ -796,6 +796,59 @@ describe("subscription CLI helpers + fail-safe", () => {
     ).rejects.toThrow(/codex_empty_output/);
     const metrics = await renderMetrics();
     expect(metrics).toContain('gittensory_ai_requests_total{effort="high",model="gpt-5",provider="codex"} 1');
+  });
+
+  it("Claude Code throws subscription_cli_timeout when the CLI is killed for exceeding its deadline", async () => {
+    const timedOut: StubSpawn = async () => ({ stdout: "", code: null, timedOut: true });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, timedOut).run("m", { prompt: "x" })).rejects.toThrow(
+      /subscription_cli_timeout/,
+    );
+  });
+
+  it("Codex on timeout prefers the JSONL error, then falls back to stderr, then a literal when both are empty", async () => {
+    const withJsonlError: StubSpawn = async () => ({
+      stdout: `${JSON.stringify({ type: "other" })}\n${JSON.stringify({ error: "model unavailable" })}`,
+      code: null,
+      stderr: "Reading prompt from stdin...",
+      timedOut: true,
+    });
+    await expect(
+      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, withJsonlError).run("m", { prompt: "x" }),
+    ).rejects.toThrow(/codex_timeout: model unavailable/);
+
+    const stderrOnly: StubSpawn = async () => ({ stdout: "", code: null, stderr: "connection reset", timedOut: true });
+    await expect(
+      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, stderrOnly).run("m", { prompt: "x" }),
+    ).rejects.toThrow(/codex_timeout: connection reset/);
+
+    const neitherOutput: StubSpawn = async () => ({ stdout: "", code: null, timedOut: true });
+    await expect(
+      createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, neitherOutput).run("m", { prompt: "x" }),
+    ).rejects.toThrow(/codex_timeout: no output/);
+  });
+
+  it("codexErrorFromStdout: scans JSONL lines in reverse for the first human-readable detail, across all shapes", () => {
+    // top-level `error` string
+    expect(codexErrorFromStdout(JSON.stringify({ error: "top-level error" }))).toBe("top-level error");
+    // top-level `message` string
+    expect(codexErrorFromStdout(JSON.stringify({ message: "top-level message" }))).toBe("top-level message");
+    // top-level `msg` string
+    expect(codexErrorFromStdout(JSON.stringify({ msg: "top-level msg" }))).toBe("top-level msg");
+    // nested error.message string
+    expect(codexErrorFromStdout(JSON.stringify({ error: { message: "nested error message" } }))).toBe("nested error message");
+    // reverse scan: starting from the last line, non-JSON / blank / no-detail lines are skipped until an
+    // earlier line yields a detail (also covers the `errorObj.message` non-string false path).
+    const multiline = [
+      JSON.stringify({ msg: "earliest usable detail" }),
+      "",
+      "not json at all {",
+      JSON.stringify({ error: { code: 500 } }), // error present but not a string and no nested string message either
+      JSON.stringify({ type: "other" }),
+    ].join("\n");
+    expect(codexErrorFromStdout(multiline)).toBe("earliest usable detail");
+    // no line yields a usable detail anywhere → null
+    expect(codexErrorFromStdout(JSON.stringify({ type: "other" }))).toBeNull();
+    expect(codexErrorFromStdout("")).toBeNull();
   });
 
   it("Codex fails closed when a mounted OAuth home would be exposed to the review sandbox", async () => {

@@ -414,11 +414,12 @@ export function codexErrorFromStdout(stdout: string): string | null {
     if (!line?.trim()) continue;
     try {
       const o = JSON.parse(line) as Record<string, unknown>;
+      const errorObj = o.error as Record<string, unknown> | undefined;
       const detail =
         (typeof o.error === "string" && o.error) ||
         (typeof o.message === "string" && o.message) ||
         (typeof o.msg === "string" && o.msg) ||
-        (o.error && typeof (o.error as Record<string, unknown>).message === "string" && (o.error as Record<string, unknown>).message as string) ||
+        (errorObj && typeof errorObj.message === "string" ? errorObj.message : null) ||
         null;
       if (detail) return detail.slice(0, 500);
     } catch {
@@ -601,7 +602,7 @@ export function createCodexAi(parentEnv: Record<string, string | undefined>, spa
         stdoutForMetrics = stdout;
         if (timedOut) {
           // Include whatever the JSONL stream captured before the kill — codex writes errors there, not to stderr.
-          const detail = codexErrorFromStdout(stdout) ?? redactSecrets(stderr ?? "").slice(0, 200) || "no output";
+          const detail = codexErrorFromStdout(stdout) ?? (redactSecrets(stderr ?? "").slice(0, 200) || "no output");
           throw new Error(`codex_timeout: ${detail}`);
         }
         if (code !== 0) {

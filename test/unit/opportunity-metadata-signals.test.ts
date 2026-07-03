@@ -244,4 +244,10 @@ describe("opportunity metadata signals", () => {
       ),
     ).toBeGreaterThan(0.5);
   });
+
+  it("potential covers neutral, positive-only, and bonus label branches", () => {
+    expect(computeMetadataPotential({ labels: ["enhancement"] })).toBeCloseTo(0.8, 5);
+    expect(computeMetadataPotential({ labels: ["feature"] })).toBeCloseTo(0.8, 5);
+    expect(computeMetadataPotential({ labels: ["refactor"] })).toBeCloseTo(0.5, 5);
+  });
 });

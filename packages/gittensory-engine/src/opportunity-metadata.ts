@@ -130,6 +130,8 @@ function titlesOverlap(left: string, right: string): boolean {
 /** Branch coverage helpers for unit tests. */
 export const opportunityMetadataInternals = {
   titlesOverlap,
+  normalizeLabels,
+  resolveGoalSpec,
 };
 
 /**

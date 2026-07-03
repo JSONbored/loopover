@@ -1,12 +1,17 @@
 import { pollCheckRuns } from "./ci-poller.js";
 
-function parsePositiveInt(flag, value, fallback) {
-  if (value === undefined) return fallback;
+const CI_WAIT_USAGE =
+  "Usage: gittensory-miner ci wait <owner/repo> <pr-number> [--json] [--max-attempts N] [--min-interval-ms N] [--max-interval-ms N]";
+
+function parsePositiveInt(flag, value) {
+  if (value === undefined) {
+    return { error: `Missing value for ${flag}.` };
+  }
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`invalid_${flag}`);
+    return { error: `Invalid value for ${flag}: must be a positive integer.` };
   }
-  return parsed;
+  return { value: parsed };
 }
 
 export function parseCiWaitArgs(args) {
@@ -25,15 +30,21 @@ export function parseCiWaitArgs(args) {
       continue;
     }
     if (token === "--max-attempts") {
-      options.maxAttempts = parsePositiveInt("max_attempts", args[++index], undefined);
+      const parsed = parsePositiveInt("--max-attempts", args[++index]);
+      if ("error" in parsed) return { error: parsed.error };
+      options.maxAttempts = parsed.value;
       continue;
     }
     if (token === "--min-interval-ms") {
-      options.minIntervalMs = parsePositiveInt("min_interval_ms", args[++index], undefined);
+      const parsed = parsePositiveInt("--min-interval-ms", args[++index]);
+      if ("error" in parsed) return { error: parsed.error };
+      options.minIntervalMs = parsed.value;
       continue;
     }
     if (token === "--max-interval-ms") {
-      options.maxIntervalMs = parsePositiveInt("max_interval_ms", args[++index], undefined);
+      const parsed = parsePositiveInt("--max-interval-ms", args[++index]);
+      if ("error" in parsed) return { error: parsed.error };
+      options.maxIntervalMs = parsed.value;
       continue;
     }
     if (token.startsWith("-")) {
@@ -43,7 +54,7 @@ export function parseCiWaitArgs(args) {
   }
 
   if (positional.length !== 2) {
-    return { error: "Usage: gittensory-miner ci wait <owner/repo> <pr-number> [--json]" };
+    return { error: CI_WAIT_USAGE };
   }
 
   const prNumber = Number(positional[1]);

@@ -5,10 +5,10 @@ import * as ciPoller from "../../packages/gittensory-miner/lib/ci-poller.js";
 describe("gittensory-miner ci wait command", () => {
   it("parseCiWaitArgs requires owner/repo and pr number", () => {
     expect(parseCiWaitArgs([])).toEqual({
-      error: "Usage: gittensory-miner ci wait <owner/repo> <pr-number> [--json]",
+      error: expect.stringContaining("Usage: gittensory-miner ci wait"),
     });
     expect(parseCiWaitArgs(["acme/widgets"])).toEqual({
-      error: "Usage: gittensory-miner ci wait <owner/repo> <pr-number> [--json]",
+      error: expect.stringContaining("Usage: gittensory-miner ci wait"),
     });
     expect(parseCiWaitArgs(["acme/widgets", "0"])).toEqual({
       error: "PR number must be a positive integer.",
@@ -19,6 +19,23 @@ describe("gittensory-miner ci wait command", () => {
       json: true,
       maxAttempts: undefined,
       minIntervalMs: undefined,
+      maxIntervalMs: undefined,
+    });
+  });
+
+  it("parseCiWaitArgs validates polling option flags", () => {
+    expect(parseCiWaitArgs(["acme/widgets", "42", "--max-attempts"])).toEqual({
+      error: "Missing value for --max-attempts.",
+    });
+    expect(parseCiWaitArgs(["acme/widgets", "42", "--max-attempts", "0"])).toEqual({
+      error: "Invalid value for --max-attempts: must be a positive integer.",
+    });
+    expect(parseCiWaitArgs(["acme/widgets", "42", "--min-interval-ms", "2500"])).toEqual({
+      repoFullName: "acme/widgets",
+      prNumber: 42,
+      json: false,
+      maxAttempts: undefined,
+      minIntervalMs: 2500,
       maxIntervalMs: undefined,
     });
   });
@@ -48,7 +65,7 @@ describe("gittensory-miner ci wait command", () => {
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await expect(
-      runCiWait(["acme/widgets", "42", "--json"], {
+      runCiWait(["acme/widgets", "42", "--json", "--max-attempts", "3"], {
         env: { GITHUB_TOKEN: "github-token" },
       }),
     ).resolves.toBe(0);
@@ -57,7 +74,20 @@ describe("gittensory-miner ci wait command", () => {
     );
     expect(ciPoller.pollCheckRuns).toHaveBeenCalledWith("acme/widgets", 42, {
       githubToken: "github-token",
+      maxAttempts: 3,
     });
+  });
+
+  it("runCiWait returns exit code 2 for invalid polling flags", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      runCiWait(["acme/widgets", "42", "--max-attempts", "nope"], {
+        env: { GITHUB_TOKEN: "github-token" },
+      }),
+    ).resolves.toBe(2);
+    expect(error).toHaveBeenCalledWith(
+      "Invalid value for --max-attempts: must be a positive integer.",
+    );
   });
 
   it("runCiWait exits 1 when CI fails", async () => {

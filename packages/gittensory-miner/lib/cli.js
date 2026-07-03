@@ -14,7 +14,7 @@ export function printHelp(input) {
       "  gittensory-miner --version",
       "  gittensory-miner help",
       "  gittensory-miner version",
-      "  gittensory-miner ci wait <owner/repo> <pr-number> [--json]",
+      "  gittensory-miner ci wait <owner/repo> <pr-number> [--json] [--max-attempts N] [--min-interval-ms N] [--max-interval-ms N]",
       "",
       "Options:",
       "  --no-update-check  Skip the npm registry version nudge (also GITTENSORY_MINER_NO_UPDATE_CHECK=1)",

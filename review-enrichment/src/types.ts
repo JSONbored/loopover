@@ -325,6 +325,14 @@ export type CiCheckSignalFinding =
   | { checkName: string; kind: "retried-after-failure"; failedAttempts: number }
   | { checkName: string; kind: "long-running-check"; durationMinutes: number };
 
+/** A PR whose head is significantly behind the repo's CURRENT default branch, read from structured GitHub repo
+ *  (`default_branch`) and compare (`behind_by`) API fields only — never diff/file content. A branch far behind
+ *  is more likely to hide a subtle semantic conflict a clean `mergeable` check alone would miss. */
+export interface StaleBranchFinding {
+  defaultBranch: string;
+  behindBy: number;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -351,6 +359,7 @@ export interface BriefFindings {
   blameLink?: BlameLinkFinding[];
   approvalIntegrity?: ApprovalIntegrityFinding[];
   ciCheckSignals?: CiCheckSignalFinding[];
+  staleBranch?: StaleBranchFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

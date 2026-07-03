@@ -21,6 +21,7 @@ import { scanProvenance } from "./provenance.js";
 import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
 import { scanSecretLog } from "./secret-log.js";
+import { scanStaleBranch } from "./stale-branch.js";
 import { scanTyposquat } from "./typosquat.js";
 import type {
   AnalyzerDescriptor,
@@ -553,6 +554,36 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanCiCheckSignals(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "staleBranch",
+    title: "Stale branch signal",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["github-token", "head-sha"],
+    limits: { behindThreshold: 100 },
+    docs: {
+      summary:
+        "Flags a PR whose head is significantly behind the repo's current default branch — a staleness risk a clean `mergeable` check alone would not surface.",
+      looksAt: "The repo's current default branch and how many commits behind it the PR's head is (the GitHub compare API).",
+      reports: "The default branch name and the commit count behind it — never commit content.",
+      network: "Calls the GitHub repo API once and the compare API once.",
+      notes:
+        "Structured-fields-only: reads default_branch and behind_by, never diff or commit text. Fail-safe on missing token/head SHA/either fetch failing.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Stale branch signal"];
+      for (const item of findings) {
+        lines.push(
+          `- This PR is ${item.behindBy} commits behind ${helpers.safeCodeSpan(item.defaultBranch)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanStaleBranch(req, fetch, { signal, analysis, diagnostics }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

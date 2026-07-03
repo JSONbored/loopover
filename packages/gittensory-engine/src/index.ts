@@ -34,3 +34,16 @@ export {
   isMinerRepoTargetable,
 } from "./miner-goal-lane-fit.js";
 export { computeOpportunityCompetition } from "./opportunity-competition.js";
+export {
+  computeOpportunityFreshness,
+  type FreshnessIssue,
+} from "./opportunity-freshness.js";
+export {
+  buildMetadataRankInput,
+  computeMetadataDupRisk,
+  computeMetadataFeasibility,
+  computeMetadataPotential,
+  rankMetadataOpportunities,
+  type MetadataCandidateIssue,
+  type MetadataRankContext,
+} from "./opportunity-metadata.js";

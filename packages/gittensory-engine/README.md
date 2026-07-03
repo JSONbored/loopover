@@ -70,6 +70,19 @@ describe step ordering via `dependsOn` but never actuate anything.
 `opportunityCompetitionFactor` in `src/signals/reward-risk.ts`, producing a `[0, 1]` signal suitable for the ranker's
 `dupRisk` input.
 
+## Metadata opportunity signals
+
+`opportunity-metadata.ts` turns fan-out issue metadata into the five normalized ranker inputs:
+
+- `computeMetadataPotential` — label-based upside estimate
+- `computeMetadataFeasibility` — comment load + issue age + title quality
+- `computeMetadataDupRisk` — same-repo title overlap inside a candidate batch
+- `buildMetadataRankInput` — composes freshness, competition, lane fit, and the metadata heuristics
+- `rankMetadataOpportunities` — sorts candidates with `rankOpportunities`
+
+`computeOpportunityFreshness` and `computeOpportunityCompetition` mirror the hosted reward-risk helpers with pure,
+injected-clock semantics for local miners.
+
 ## AI Policy Map
 
 `scanAiPolicyText` and `resolveAiPolicyVerdict` provide the deterministic policy gate used by miner discovery.

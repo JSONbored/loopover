@@ -233,18 +233,30 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
  *  scope gap surfaces the same way those already do. Never throws -- both recordAuditEvent calls are
  *  best-effort (`.catch(() => undefined)`), since a failure to WRITE the audit record must not retroactively
  *  affect the close this already ran after. */
+async function auditContributorCapCiCancelled(
+  env: Env,
+  targetKey: string,
+  repoFullName: string,
+  headSha: string,
+  outcome: { cancelledCount: number; totalFound: number },
+): Promise<void> {
+  const detail = `cancelled ${outcome.cancelledCount} of ${outcome.totalFound} in-flight workflow run(s)`;
+  const metadata = { repoFullName, headSha, cancelledCount: outcome.cancelledCount, totalFound: outcome.totalFound };
+  const write = recordAuditEvent(env, { eventType: "github_app.contributor_cap_ci_cancelled", actor: AGENT_ACTOR, targetKey, outcome: "completed", detail, metadata });
+  await write.catch(() => undefined);
+}
+
+async function auditContributorCapCiCancelPermissionMissing(env: Env, targetKey: string, repoFullName: string, headSha: string, reason: string, warning: string): Promise<void> {
+  const metadata = { repoFullName, headSha, reason };
+  const write = recordAuditEvent(env, { eventType: "github_app.contributor_cap_ci_cancel_permission_missing", actor: AGENT_ACTOR, targetKey, outcome: "error", detail: warning, metadata });
+  await write.catch(() => undefined);
+}
+
 async function recordContributorCapCiCancelOutcome(env: Env, ctx: AgentActionExecutionContext, headSha: string): Promise<void> {
   const targetKey = `${ctx.repoFullName}#${ctx.pullNumber}`;
   const outcome = await cancelInFlightWorkflowRunsForHeadSha(env, ctx.installationId, ctx.repoFullName, headSha);
   if (outcome.kind === "cancelled") {
-    await recordAuditEvent(env, {
-      eventType: "github_app.contributor_cap_ci_cancelled",
-      actor: AGENT_ACTOR,
-      targetKey,
-      outcome: "completed",
-      detail: `cancelled ${outcome.cancelledCount} of ${outcome.totalFound} in-flight workflow run(s)`,
-      metadata: { repoFullName: ctx.repoFullName, headSha, cancelledCount: outcome.cancelledCount, totalFound: outcome.totalFound },
-    }).catch(() => undefined);
+    await auditContributorCapCiCancelled(env, targetKey, ctx.repoFullName, headSha, outcome);
     return;
   }
   console.error(
@@ -257,14 +269,7 @@ async function recordContributorCapCiCancelOutcome(env: Env, ctx: AgentActionExe
       message: outcome.warning,
     }),
   );
-  await recordAuditEvent(env, {
-    eventType: "github_app.contributor_cap_ci_cancel_permission_missing",
-    actor: AGENT_ACTOR,
-    targetKey,
-    outcome: "error",
-    detail: outcome.warning,
-    metadata: { repoFullName: ctx.repoFullName, headSha, reason: outcome.kind },
-  }).catch(() => undefined);
+  await auditContributorCapCiCancelPermissionMissing(env, targetKey, ctx.repoFullName, headSha, outcome.kind, outcome.warning);
 }
 
 export type IssueActionExecutionContext = {

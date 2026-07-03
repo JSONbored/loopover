@@ -426,6 +426,20 @@ describe("MCP tool calls return schema-valid structured content", () => {
     }
   });
 
+  it("gittensory_find_opportunities handles empty goalSpec (no minRankScore field)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 1, title: "Open issue", state: "open", labels: [{ name: "bug" }], user: { login: "alice" } });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_find_opportunities",
+      arguments: { targets: [{ owner: "octo", repo: "demo" }], goalSpec: {} },
+    });
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    expect(Array.isArray(data.ranked)).toBe(true);
+  });
+
   it("gittensory_remediation_plan returns validated structured content", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });

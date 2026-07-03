@@ -37,10 +37,11 @@ import {
   type SelfHostQueueSnapshot,
 } from "./queue-common";
 
-// PostgreSQL error codes and Node.js error codes that indicate a dead/terminated connection rather
-// than an application-level failure. When these occur, the job should be left for the
-// reclaimExpiredProcessingJobs() mechanism to reset rather than cascading into a secondary error.
-const PG_CONNECTION_ERROR_CODES = new Set([
+// PostgreSQL SQLSTATE codes that unambiguously indicate a dead/terminated Postgres connection.
+// Unlike generic Node.js network codes (ECONNRESET etc.), these can ONLY come from the pg driver
+// talking to Postgres, so they're safe to use anywhere an error might come from — including code
+// that also runs unrelated network calls (e.g. GitHub API requests inside consume()).
+const PG_SQLSTATE_CONNECTION_CODES = new Set([
   "57P01", // terminating connection due to administrator command
   "57P02", // crash shutdown
   "57P03", // cannot connect now
@@ -48,18 +49,35 @@ const PG_CONNECTION_ERROR_CODES = new Set([
   "08003", // connection does not exist
   "08001", // unable to establish connection
   "08004", // rejected connection
-  "ECONNRESET",
-  "ECONNREFUSED",
-  "EPIPE",
 ]);
 
-function isPgConnectionError(err: unknown): boolean {
+// Generic Node.js error codes that ALSO indicate a dead connection, but only when we already know
+// the error came from our own pool.query() call (e.g. inside retryPoolQuery) — these codes are
+// ambiguous on their own, since any network call (not just Postgres) can throw them.
+const NODE_CONNECTION_ERROR_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "EPIPE"]);
+
+function hasErrorCode(err: unknown, codes: Set<string>): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as Record<string, unknown>;
-  if (typeof e["code"] === "string" && PG_CONNECTION_ERROR_CODES.has(e["code"])) return true;
+  if (typeof e["code"] === "string" && codes.has(e["code"])) return true;
   // node-postgres wraps some errors; check cause too
-  if (e["cause"] && isPgConnectionError(e["cause"])) return true;
+  if (e["cause"] && hasErrorCode(e["cause"], codes)) return true;
   return false;
+}
+
+/** Use ONLY on errors known to come from our own pool.query() calls (e.g. inside retryPoolQuery) —
+ *  covers both unambiguous Postgres SQLSTATE codes and generic Node network codes. */
+function isPgConnectionError(err: unknown): boolean {
+  return hasErrorCode(err, PG_SQLSTATE_CONNECTION_CODES) || hasErrorCode(err, NODE_CONNECTION_ERROR_CODES);
+}
+
+/** Safe to use on ANY caught error, including one thrown by arbitrary application logic (consume()) that
+ *  may make its own unrelated network calls — only matches codes that can exclusively mean "Postgres
+ *  connection lost" (excludes generic Node codes like ECONNRESET, which a non-PG network failure could
+ *  also throw and would otherwise be wrongly left in 'processing' instead of going through normal
+ *  retry/dead-letter handling). */
+function isPgSqlStateConnectionError(err: unknown): boolean {
+  return hasErrorCode(err, PG_SQLSTATE_CONNECTION_CODES);
 }
 
 /** Retry a pool query up to `retries` times on transient connection errors, with a short delay
@@ -684,8 +702,10 @@ export function createPgQueue(
         // If the connection was lost during job processing itself (consume() made its own PG calls), leave
         // the job in 'processing' state for the reclaim mechanism to reset rather than cascading into a
         // secondary error trying to reschedule it over a dead connection. Still warn so operators can
-        // correlate with DB restart events.
-        if (isPgConnectionError(error)) {
+        // correlate with DB restart events. Uses the STRICT (SQLSTATE-only) check here, since consume() can
+        // throw generic network codes (ECONNRESET etc.) from its own unrelated calls (e.g. GitHub API) that
+        // must still go through normal retry/dead-letter handling, not be silently left unattempted.
+        if (isPgSqlStateConnectionError(error)) {
           console.warn(
             JSON.stringify({
               level: "warn",

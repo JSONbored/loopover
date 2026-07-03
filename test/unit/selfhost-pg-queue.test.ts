@@ -611,6 +611,24 @@ describe("createPgQueue (durable #977)", () => {
     expect(calls.some((sql) => sql.includes("attempts=$1, run_after=$2"))).toBe(false);
   });
 
+  it("regression: a GENERIC network error from consume() (e.g. GitHub API, not Postgres) still goes through normal retry, not silent reclaim", async () => {
+    // ECONNRESET/ECONNREFUSED/EPIPE are NOT unique to Postgres -- consume() can throw them from its own
+    // unrelated network calls. Only unambiguous Postgres SQLSTATE codes should trigger the reclaim path here.
+    const m = makePool();
+    m.enqueueJob("1", { type: "review" });
+    const consume = vi.fn().mockImplementation(async () => {
+      const err = new Error("socket hang up") as Error & { code: string };
+      err.code = "ECONNRESET";
+      throw err;
+    });
+    const q = createPgQueue(m.pool, consume);
+    await q.init();
+    await q.drain();
+    const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[0]));
+    // attempts=1 (first failure, under maxRetries) -> the normal pending-retry UPDATE must have run.
+    expect(calls.some((sql) => sql.includes("attempts=$1, run_after=$2"))).toBe(true);
+  });
+
   it("copies carried webhook trace ids into job audit logs", async () => {
     const m = makePool();
     const writes: string[] = [];

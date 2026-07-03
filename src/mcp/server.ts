@@ -206,11 +206,11 @@ const findOpportunitiesShape = {
         repo: z.string().min(1),
       }),
     )
+    .max(20)
     .optional(),
   searchQuery: z.string().min(1).max(500).optional(),
   goalSpec: z
     .object({
-      lane: z.string().min(1).optional(),
       minRankScore: z.number().min(0).max(100).optional(),
     })
     .optional(),
@@ -2086,13 +2086,11 @@ export class GittensoryMcp {
   private async findOpportunities(input: {
     targets?: Array<{ owner: string; repo: string }> | undefined;
     searchQuery?: string | undefined;
-    goalSpec?: { lane?: string | undefined; minRankScore?: number | undefined; languages?: string[] | undefined } | undefined;
+    goalSpec?: { minRankScore?: number | undefined } | undefined;
     limit?: number | undefined;
   }): Promise<ToolPayload> {
     const limit = input.limit ?? 10;
-    const goalSpec = input.goalSpec;
-    const minRankScore = goalSpec?.minRankScore ?? 0;
-    const goalLane = goalSpec?.lane;
+    const minRankScore = input.goalSpec?.minRankScore ?? 0;
     const searchQuery = (input.searchQuery ?? "").toLowerCase();
     const repos = input.targets ?? [];
     if (repos.length === 0) {
@@ -2128,10 +2126,9 @@ export class GittensoryMcp {
         const updatedMs = issue.updatedAt ? new Date(issue.updatedAt).getTime() : Date.now();
         const ageDays = Math.max(0, (Date.now() - updatedMs) / 86400000);
         const freshness = Math.max(0, 1 - ageDays / 30);
-        const laneFit = goalLane ? 0.7 : 0.5;
         const potential = 0.6;
         const feasibility = issue.labels.length > 0 ? 0.7 : 0.5;
-        const score = rankOpportunityScore({ potential, feasibility, laneFit, freshness, dupRisk });
+        const score = rankOpportunityScore({ potential, feasibility, laneFit: 0.5, freshness, dupRisk });
         if (score * 100 < minRankScore) continue;
         allCandidates.push({
           owner: target.owner,
@@ -2140,7 +2137,7 @@ export class GittensoryMcp {
           title: issue.title ?? "",
           labels: issue.labels,
           rankScore: Math.round(score * 100),
-          laneFit,
+          laneFit: 0.5,
           freshness: Math.round(freshness * 100) / 100,
           dupRisk: Math.round(dupRisk * 100) / 100,
           aiPolicyAllowed: true as const,

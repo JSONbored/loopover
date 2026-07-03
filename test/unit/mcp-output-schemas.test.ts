@@ -377,21 +377,18 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(ranked.length).toBe(0);
   });
 
-  it("gittensory_find_opportunities applies goalSpec.lane for laneFit scoring", async () => {
+  it("gittensory_find_opportunities applies goalSpec.minRankScore filter", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     await upsertIssueFromGitHub(env, "octo/demo", { number: 1, title: "Open unlabeled issue", state: "open", labels: [], user: { login: "alice" } });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
       name: "gittensory_find_opportunities",
-      arguments: { targets: [{ owner: "octo", repo: "demo" }], goalSpec: { lane: "scoring" } },
+      arguments: { targets: [{ owner: "octo", repo: "demo" }], goalSpec: { minRankScore: 99 } },
     });
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.status).toBe("ok");
-    const ranked = data.ranked as Array<Record<string, unknown>>;
-    if (ranked.length > 0) {
-      expect(ranked[0]?.laneFit).toBe(0.7);
-    }
+    expect((data.ranked as unknown[]).length).toBe(0);
   });
 
   it("gittensory_find_opportunities filters issues by searchQuery within targets", async () => {

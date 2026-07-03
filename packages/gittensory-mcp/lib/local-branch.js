@@ -598,14 +598,14 @@ export function isTestFile(file) {
     /(^|\/)src\/test\//i.test(file) ||
     /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file) ||
-    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|js|jsx)$/i.test(file) ||
+    /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
+    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
     /(^|\/)__snapshots__\//i.test(file)
   );
 }
 
 export function isCodeFile(file) {
-  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
 }
 
 function numberValue(value) {

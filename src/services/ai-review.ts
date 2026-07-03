@@ -30,6 +30,7 @@ import { errorMessage } from "../utils/json";
 import type { ReviewProfile } from "../signals/focus-manifest";
 import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
+import type { CombineStrategy, OnMerge } from "../types";
 
 /**
  * The best free Workers-AI model pair for review accuracy — two different families for independence,
@@ -79,17 +80,36 @@ export type AiReviewProviderKey = {
   model?: string | null | undefined;
 };
 
+// `CombineStrategy` / `OnMerge` (#dual-ai-combiner) are defined in ../types.ts, not here, and re-exported for
+// backward compat: both this file's own callers AND signals/focus-manifest.ts + types.ts's RepositorySettings
+// need the type, but focus-manifest.ts/types.ts are imported by the UI workspace, which lacks the ambient
+// Cloudflare Workers types (`Env`, `D1Database`, …) this file's runtime code depends on — a type-only
+// `import("../services/ai-review")` reference from either would still drag this whole module graph into the UI's
+// typecheck and break it (#2567 follow-up fix). See ../types.ts for the full doc comment.
+export type { CombineStrategy, OnMerge } from "../types";
+
 /**
- * How the independent reviewer opinions are combined into ONE gate decision (#dual-ai-combiner):
- *   • `single`     — one reviewer; its verdict IS the decision (a named blocker blocks).
- *   • `consensus`  — two reviewers; block ONLY when BOTH name a blocker; lone blocker → split (hold). The
- *                    historical cloud behavior — the default, so an unset `combine` is byte-identical.
- *   • `synthesis`  — two reviewers run separately, then merge into ONE decision (no split/hold-on-disagree):
- *                    `onMerge: either` blocks if EITHER flags a blocker; `both` only if all do.
+ * Resolve the EFFECTIVE `onMerge` rule for a review call, enforcing that a per-repo `.gittensory.yml
+ * gate.aiReview.onMerge` override (#2567) can only TIGHTEN the self-host operator's `AI_REVIEW_PLAN.onMerge`
+ * floor, never loosen it. `either` is the STRICTER rule (any one reviewer's blocker blocks/holds); `both` is
+ * more PERMISSIVE (requires every reviewer to agree before a blocker counts). So:
+ *   - operator floor `either` + repo override `both`  → CLAMPED to `either` (an attempted loosening).
+ *   - operator floor `either` + repo override `either` → `either` (a no-op tightening).
+ *   - operator floor `both` (or unset)                → the repo override (or the operator's own value) wins
+ *     unclamped — there is no stricter floor to violate.
+ * Returns the resolved value alongside whether a clamp fired, so the caller can log/surface it (a maintainer
+ * who configured a loosening override should see it was not honored, not have it silently ignored).
  */
-export type CombineStrategy = "single" | "consensus" | "synthesis";
-/** Synthesis merge rule — block if `either` reviewer flags a blocker, or only when `both` agree. */
-export type OnMerge = "either" | "both";
+export function resolveEffectiveAiReviewOnMerge(
+  repoOverride: OnMerge | null | undefined,
+  operatorFloor: OnMerge | null | undefined,
+): { onMerge: OnMerge | null | undefined; clamped: boolean } {
+  if (repoOverride == null) return { onMerge: operatorFloor, clamped: false };
+  if (operatorFloor === "either" && repoOverride === "both") {
+    return { onMerge: "either", clamped: true };
+  }
+  return { onMerge: repoOverride, clamped: false };
+}
 
 export type GittensoryAiReviewInput = {
   repoFullName: string;
@@ -1115,7 +1135,15 @@ export async function runGittensoryAiReview(
   const secondaryFallback = secondary.fallback ?? secondary.model;
   const combine: CombineStrategy =
     input.combine ?? plan?.combine ?? "consensus";
-  const onMerge: OnMerge | null | undefined = input.onMerge ?? plan?.onMerge;
+  // `onMerge` is a per-repo REFINEMENT of the operator's plan, never a bypass (#2567): a repo can only TIGHTEN
+  // the operator's floor (never loosen `either` down to `both`). resolveEffectiveAiReviewOnMerge enforces the
+  // clamp; a fired clamp increments a metric so it is surfaced, not silently ignored (mirrors the
+  // gittensory_ai_review_inconclusive_total pattern below).
+  const onMergeResolution = resolveEffectiveAiReviewOnMerge(input.onMerge, plan?.onMerge);
+  const onMerge = onMergeResolution.onMerge;
+  if (onMergeResolution.clamped) {
+    incr("gittensory_ai_review_onmerge_clamped_total", { mode: input.mode });
+  }
   const dual = combine !== "single" && (!configured || configured.length > 1);
   const freeAiCalls =
     (input.mode === "block" ? (dual ? 2 : 1) : 0) + (input.providerKey ? 0 : 1);

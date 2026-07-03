@@ -1267,7 +1267,7 @@ export function isTestFile(file: string): boolean {
 }
 
 export function isCodeFile(file: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
 }
 
 function sameRepo(left: string, right: string): boolean {

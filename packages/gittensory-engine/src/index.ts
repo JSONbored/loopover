@@ -20,6 +20,9 @@ export {
 } from "./ai-policy-map.js";
 export {
   DEFAULT_MINER_GOAL_SPEC,
+  parseMinerGoalSpec,
+  parseMinerGoalSpecContent,
   type MinerGoalSpec,
   type MinerIssueDiscoveryPolicy,
+  type ParsedMinerGoalSpec,
 } from "./miner-goal-spec.js";

@@ -1746,13 +1746,22 @@ describe("local MCP git metadata collection", () => {
     }
     // Regression: Cypress/e2e and snapshot files must count as tests; before this they fell through to
     // isCodeFile and were wrongly counted as source in the local packet.
-    for (const file of ["components/Button.cy.ts", "e2e/login.e2e.tsx", "src/__snapshots__/Button.snap.ts"]) {
+    for (const file of ["components/Button.cy.ts", "e2e/login.e2e.tsx", "src/__snapshots__/Button.snap.ts", "e2e/checkout.cy.mts", "e2e/flow.e2e.mjs"]) {
       expect(isTestFile(file)).toBe(true);
       expect(isCodeFile(file)).toBe(false);
     }
     // Plain source stays source.
     expect(isTestFile("src/app.ts")).toBe(false);
     expect(isCodeFile("src/app.ts")).toBe(true);
+    // Node/TypeScript ESM + CommonJS module files are code; their .test/.spec variants are tests.
+    for (const file of ["src/loader.mjs", "src/legacy.cjs", "src/config.mts", "src/setup.cts"]) {
+      expect(isCodeFile(file)).toBe(true);
+      expect(isTestFile(file)).toBe(false);
+    }
+    for (const file of ["src/loader.test.mts", "src/legacy.spec.cjs"]) {
+      expect(isTestFile(file)).toBe(true);
+      expect(isCodeFile(file)).toBe(false);
+    }
   });
 
   it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {

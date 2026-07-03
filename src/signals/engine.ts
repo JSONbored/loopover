@@ -26,7 +26,7 @@ import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { labelMatchesPattern, projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
-import { hasLocalTestEvidence } from "./test-evidence";
+import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFailingCheckSummary } from "./local-branch";
 import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
@@ -5500,17 +5500,13 @@ function sanitizeOutcomeDimensionKey(key: string): string {
 }
 
 function isCodeFile(file: string): boolean {
-  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
 }
 
 function isTestFile(file: string): boolean {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
-    /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
-    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
-  );
+  // Single-sourced with the canonical matcher (test-evidence.ts isTestPath), mirroring local-branch.ts's
+  // isTestFile — so cy/e2e, __snapshots__, and module extensions stay in sync and can't drift.
+  return isTestPath(file);
 }
 
 function riskRank(risk: CollisionCluster["risk"]): number {

@@ -3,9 +3,10 @@ export function isTestPath(file: string): boolean {
     /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
     /(^|\/)src\/test\//i.test(file) ||
     /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
+    /(^|\/)test_[^/]*\.py$/i.test(file) || // pytest's default `test_*.py` prefix convention (the suffix rule above only catches `*_test.py`)
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file) ||
-    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|js|jsx)$/i.test(file) ||
+    /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
+    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
     /(^|\/)__snapshots__\//i.test(file)
   );
 }

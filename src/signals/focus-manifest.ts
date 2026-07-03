@@ -45,6 +45,23 @@ export type FocusManifestGateConfig = {
   /** `gate.aiReview.closeConfidence` (#7): minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK
    *  under `aiReview.mode: block`. null (unset) ⇒ the gate's 0.93 default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence: number | null;
+  /** `gate.aiReview.combine` (#2567): per-repo override of the self-host operator's `AI_REVIEW_PLAN.combine`
+   *  boot default (single/consensus/synthesis). null (unset) ⇒ the operator's plan (or `consensus`). A
+   *  REFINEMENT only — see {@link aiReviewOnMerge} for the operator-floor clamp `runGittensoryAiReview` applies
+   *  to the paired `onMerge` field; `combine` itself is not floor-clamped (the three strategies are not ordered
+   *  by strictness, so there is no single "loosening" direction to clamp). */
+  aiReviewCombine: import("../types").CombineStrategy | null;
+  /** `gate.aiReview.onMerge` (#2567): per-repo override of the `synthesis` merge rule. `either` is the STRICTER
+   *  rule (any one reviewer's blocker blocks/holds); `both` is more PERMISSIVE (requires every reviewer to
+   *  agree). null (unset) ⇒ the operator's `AI_REVIEW_PLAN.onMerge`. A repo may only TIGHTEN the operator's
+   *  floor (never loosen `either` down to `both`) — `runGittensoryAiReview` enforces the clamp at resolve time,
+   *  since only it can see both the per-repo value and the operator's plan. */
+  aiReviewOnMerge: import("../types").OnMerge | null;
+  /** `gate.aiReview.reviewers` (#2567): per-repo override of the named reviewer pair(s) to run, in place of the
+   *  operator's `AI_REVIEW_PLAN.reviewers` (or the free Workers-AI pair when the operator configured none). null
+   *  (unset) ⇒ the operator's plan. No operator floor applies to WHICH reviewers run (only `onMerge` gates
+   *  strictness), so this always wins unclamped when set. */
+  aiReviewReviewers: ReadonlyArray<{ model: string; fallback?: string | null | undefined }> | null;
   mergeReadiness: GateRuleMode | null;
   manifestPolicy: GateRuleMode | null;
   selfAuthoredLinkedIssue: GateRuleMode | null;
@@ -320,6 +337,9 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewModel: null,
   aiReviewAllAuthors: null,
   aiReviewCloseConfidence: null,
+  aiReviewCombine: null,
+  aiReviewOnMerge: null,
+  aiReviewReviewers: null,
   mergeReadiness: null,
   manifestPolicy: null,
   selfAuthoredLinkedIssue: null,
@@ -494,6 +514,49 @@ function normalizeOptionalConfidence(value: JsonValue | undefined, field: string
   return Math.max(0, Math.min(1, value));
 }
 
+// A hard cap on `gate.aiReview.reviewers` entries — the combiner only ever addresses reviewer[0]/[1] (single runs
+// one, consensus/synthesis run two), so anything beyond 2 is inert; capping at 4 leaves headroom without letting a
+// hostile/huge manifest bloat the parsed config for no functional gain.
+const MAX_AI_REVIEW_REVIEWERS = 4;
+
+/** Normalize `gate.aiReview.reviewers` (#2567) — a list of `{ model, fallback? }` entries naming self-host
+ *  providers (e.g. `claude-code`, `codex`) to run in place of the operator's `AI_REVIEW_PLAN.reviewers`. Each
+ *  entry needs a non-empty string `model`; `fallback` is optional and, when present, must also be a non-empty
+ *  string. Invalid entries are dropped with a warning rather than failing the whole list, mirroring the other
+ *  manifest list parsers. Absent/empty/all-invalid ⇒ null (so the resolver's `??` fallback to the operator's
+ *  plan is untouched). */
+function normalizeOptionalReviewers(
+  value: JsonValue | undefined,
+  field: string,
+  warnings: string[],
+): ReadonlyArray<{ model: string; fallback?: string | null | undefined }> | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) {
+    warnings.push(`Manifest gate field "${field}" must be a list of { model, fallback? }; ignoring it.`);
+    return null;
+  }
+  const out: Array<{ model: string; fallback?: string | null | undefined }> = [];
+  for (const [index, entry] of value.entries()) {
+    if (out.length >= MAX_AI_REVIEW_REVIEWERS) {
+      warnings.push(`Manifest gate field "${field}" is capped at ${MAX_AI_REVIEW_REVIEWERS} entries; dropping the rest.`);
+      break;
+    }
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      warnings.push(`Manifest gate field "${field}[${index}]" must be a mapping with a "model" string; ignoring it.`);
+      continue;
+    }
+    const e = entry as Record<string, JsonValue>;
+    const model = typeof e.model === "string" ? e.model.trim() : "";
+    if (!model) {
+      warnings.push(`Manifest gate field "${field}[${index}].model" must be a non-empty string; ignoring the entry.`);
+      continue;
+    }
+    const fallback = typeof e.fallback === "string" && e.fallback.trim() ? e.fallback.trim() : undefined;
+    out.push(fallback ? { model, fallback } : { model });
+  }
+  return out.length > 0 ? out : null;
+}
+
 /**
  * Parse the optional `gate:` mapping. Every field stays `null` when unset so the resolver can layer
  * this OVER DB settings without clobbering. A nested `readiness: { mode, minScore }` block is accepted.
@@ -544,6 +607,9 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
     aiReviewAllAuthors: normalizeOptionalBoolean(aiReviewRecord?.allAuthors, "gate.aiReview.allAuthors", warnings),
     aiReviewCloseConfidence: normalizeOptionalConfidence(aiReviewRecord?.closeConfidence, "gate.aiReview.closeConfidence", warnings),
+    aiReviewCombine: normalizeOptionalEnum(aiReviewRecord?.combine, "gate.aiReview.combine", ["single", "consensus", "synthesis"] as const, warnings),
+    aiReviewOnMerge: normalizeOptionalEnum(aiReviewRecord?.onMerge, "gate.aiReview.onMerge", ["either", "both"] as const, warnings),
+    aiReviewReviewers: normalizeOptionalReviewers(aiReviewRecord?.reviewers, "gate.aiReview.reviewers", warnings),
     mergeReadiness: normalizeOptionalGateMode(record.mergeReadiness, "gate.mergeReadiness", warnings),
     manifestPolicy: normalizeOptionalGateMode(record.manifestPolicy, "gate.manifestPolicy", warnings),
     selfAuthoredLinkedIssue: normalizeOptionalGateMode(record.selfAuthoredLinkedIssue, "gate.selfAuthoredLinkedIssue", warnings),
@@ -577,6 +643,9 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewModel !== null ||
     gate.aiReviewAllAuthors !== null ||
     gate.aiReviewCloseConfidence !== null ||
+    gate.aiReviewCombine !== null ||
+    gate.aiReviewOnMerge !== null ||
+    gate.aiReviewReviewers !== null ||
     gate.mergeReadiness !== null ||
     gate.manifestPolicy !== null ||
     gate.selfAuthoredLinkedIssue !== null ||
@@ -613,7 +682,17 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.slopAiAdvisory !== null) slop.aiAdvisory = gate.slopAiAdvisory;
     out.slop = slop;
   }
-  if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null || gate.aiReviewAllAuthors !== null || gate.aiReviewCloseConfidence !== null) {
+  if (
+    gate.aiReviewMode !== null ||
+    gate.aiReviewByok !== null ||
+    gate.aiReviewProvider !== null ||
+    gate.aiReviewModel !== null ||
+    gate.aiReviewAllAuthors !== null ||
+    gate.aiReviewCloseConfidence !== null ||
+    gate.aiReviewCombine !== null ||
+    gate.aiReviewOnMerge !== null ||
+    gate.aiReviewReviewers !== null
+  ) {
     const aiReview: Record<string, JsonValue> = {};
     if (gate.aiReviewMode !== null) aiReview.mode = gate.aiReviewMode;
     if (gate.aiReviewByok !== null) aiReview.byok = gate.aiReviewByok;
@@ -621,6 +700,13 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
     if (gate.aiReviewAllAuthors !== null) aiReview.allAuthors = gate.aiReviewAllAuthors;
     if (gate.aiReviewCloseConfidence !== null) aiReview.closeConfidence = gate.aiReviewCloseConfidence;
+    if (gate.aiReviewCombine !== null) aiReview.combine = gate.aiReviewCombine;
+    if (gate.aiReviewOnMerge !== null) aiReview.onMerge = gate.aiReviewOnMerge;
+    if (gate.aiReviewReviewers !== null) {
+      aiReview.reviewers = gate.aiReviewReviewers.map((r) =>
+        r.fallback ? { model: r.model, fallback: r.fallback } : { model: r.model },
+      ) as JsonValue;
+    }
     out.aiReview = aiReview;
   }
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
@@ -1272,6 +1358,14 @@ export function resolveEffectiveSettings(
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
   if (gate.aiReviewAllAuthors !== null) effective.aiReviewAllAuthors = gate.aiReviewAllAuthors;
   if (gate.aiReviewCloseConfidence !== null) effective.aiReviewCloseConfidence = gate.aiReviewCloseConfidence;
+  // Dual-AI combine/onMerge/reviewers overrides (#2567) are projected onto `effective` unclamped here — they are
+  // a REFINEMENT of the operator's AI_REVIEW_PLAN, not a replacement for it, so the actual operator-floor clamp
+  // (onMerge can only TIGHTEN, never loosen) happens where both the per-repo value AND the operator's plan are
+  // visible: `resolveEffectiveAiReviewOnMerge` in services/ai-review.ts, called from the review call site. This
+  // resolver has no access to `env.AI_REVIEW_PLAN`, so it cannot itself enforce the floor.
+  if (gate.aiReviewCombine !== null) effective.aiReviewCombine = gate.aiReviewCombine;
+  if (gate.aiReviewOnMerge !== null) effective.aiReviewOnMerge = gate.aiReviewOnMerge;
+  if (gate.aiReviewReviewers !== null) effective.aiReviewReviewers = gate.aiReviewReviewers;
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
   if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;

@@ -68,4 +68,8 @@ missing, or empty policy text stays allowed so discovery does not invent a ban.
 
 `MinerGoalSpec` is the type surface for a repo's `.gittensory-miner.yml` (miner-side analogue of `.gittensory.yml`).
 `DEFAULT_MINER_GOAL_SPEC` is the safe default a repo with no file behaves as — minable (`minerEnabled: true`, an
-explicit opt-out), no path/label preferences, one concurrent claim, `neutral` discovery. Parsing is a separate module.
+explicit opt-out), no path/label preferences, one concurrent claim, `neutral` discovery.
+
+`parseMinerGoalSpec(raw)` and `parseMinerGoalSpecContent(content)` are the tolerant parser pair for that file. They
+never throw on malformed JSON/YAML; instead they return `{ present, spec, warnings }`, where `spec` is normalized to
+safe defaults and `warnings` explains any dropped or invalid fields.

@@ -313,6 +313,167 @@
           "isPrivate"
         ]
       },
+      "PublicRepoStats": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "htmlUrl": {
+            "type": "string"
+          },
+          "stargazers_count": {
+            "type": "number"
+          },
+          "forks_count": {
+            "type": "number"
+          },
+          "fetched_at": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github",
+              "cache",
+              "stale_cache"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "htmlUrl",
+          "stargazers_count",
+          "forks_count",
+          "fetched_at",
+          "source",
+          "stale"
+        ]
+      },
+      "PublicStats": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "handled": {
+                "type": "number"
+              },
+              "reviewed": {
+                "type": "number"
+              },
+              "merged": {
+                "type": "number"
+              },
+              "closed": {
+                "type": "number"
+              },
+              "commented": {
+                "type": "number"
+              },
+              "ignored": {
+                "type": "number"
+              },
+              "manual": {
+                "type": "number"
+              },
+              "error": {
+                "type": "number"
+              },
+              "reversed": {
+                "type": "number"
+              },
+              "filteredPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "accuracyPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "minutesSaved": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "handled",
+              "reviewed",
+              "merged",
+              "closed",
+              "commented",
+              "ignored",
+              "manual",
+              "error",
+              "reversed",
+              "filteredPct",
+              "accuracyPct",
+              "minutesSaved"
+            ]
+          },
+          "weekly": {
+            "type": "object",
+            "properties": {
+              "reviewed": {
+                "type": "number"
+              },
+              "merged": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "reviewed",
+              "merged"
+            ]
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "project": {
+                  "type": "string"
+                },
+                "reviewed": {
+                  "type": "number"
+                },
+                "merged": {
+                  "type": "number"
+                },
+                "closed": {
+                  "type": "number"
+                },
+                "accuracyPct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "project",
+                "reviewed",
+                "merged",
+                "closed",
+                "accuracyPct"
+              ]
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "updatedAt",
+          "totals",
+          "weekly",
+          "byProject"
+        ]
+      },
       "Advisory": {
         "type": "object",
         "properties": {
@@ -1434,18 +1595,6 @@
               "unknown"
             ]
           },
-          "reasons": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "multiplierTier": {
             "type": "string",
             "enum": [
@@ -1459,6 +1608,18 @@
               "ready",
               "maintainer_wip"
             ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -2362,6 +2523,9 @@
               "accepted": {
                 "type": "number"
               },
+              "rejected": {
+                "type": "number"
+              },
               "ignored": {
                 "type": "number"
               },
@@ -2385,9 +2549,6 @@
               },
               "maintainerLaneTotal": {
                 "type": "number"
-              },
-              "rejected": {
-                "type": "number"
               }
             },
             "required": [
@@ -2402,6 +2563,21 @@
               "positive",
               "negative",
               "maintainerLaneTotal"
+            ]
+          },
+          "sources": {
+            "type": "object",
+            "properties": {
+              "explicit": {
+                "type": "number"
+              },
+              "inferred": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "explicit",
+              "inferred"
             ]
           },
           "states": {
@@ -2436,21 +2612,6 @@
           },
           "privateSummary": {
             "type": "string"
-          },
-          "sources": {
-            "type": "object",
-            "properties": {
-              "explicit": {
-                "type": "number"
-              },
-              "inferred": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "explicit",
-              "inferred"
-            ]
           }
         },
         "required": [
@@ -2504,6 +2665,9 @@
           "accepted": {
             "type": "number"
           },
+          "rejected": {
+            "type": "number"
+          },
           "ignored": {
             "type": "number"
           },
@@ -2540,9 +2704,6 @@
               "mixed",
               "neutral"
             ]
-          },
-          "rejected": {
-            "type": "number"
           }
         },
         "required": [
@@ -4255,15 +4416,6 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
-                      "estimatedMergedScore": {
-                        "type": "number"
-                      },
-                      "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
-                        "type": "number"
-                      },
                       "openIssueMultiplier": {
                         "type": "number"
                       },
@@ -4271,6 +4423,15 @@
                         "type": "number"
                       },
                       "issueDiscoveryHistoryMultiplier": {
+                        "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
+                      "estimatedMergedScore": {
+                        "type": "number"
+                      },
+                      "pendingSaturationScore": {
                         "type": "number"
                       }
                     },
@@ -4306,13 +4467,13 @@
                       "collateralFraction": {
                         "type": "number"
                       },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
+                      },
                       "credibilityFloor": {
                         "type": "number"
                       },
                       "credibilityObserved": {
-                        "type": "number"
-                      },
-                      "reviewCollateralMultiplier": {
                         "type": "number"
                       },
                       "openIssueThreshold": {
@@ -4564,15 +4725,6 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
-                      "estimatedMergedScore": {
-                        "type": "number"
-                      },
-                      "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
-                        "type": "number"
-                      },
                       "openIssueMultiplier": {
                         "type": "number"
                       },
@@ -4580,6 +4732,15 @@
                         "type": "number"
                       },
                       "issueDiscoveryHistoryMultiplier": {
+                        "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
+                      "estimatedMergedScore": {
+                        "type": "number"
+                      },
+                      "pendingSaturationScore": {
                         "type": "number"
                       }
                     },
@@ -4615,13 +4776,13 @@
                       "collateralFraction": {
                         "type": "number"
                       },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
+                      },
                       "credibilityFloor": {
                         "type": "number"
                       },
                       "credibilityObserved": {
-                        "type": "number"
-                      },
-                      "reviewCollateralMultiplier": {
                         "type": "number"
                       },
                       "openIssueThreshold": {
@@ -4873,15 +5034,6 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
-                      "estimatedMergedScore": {
-                        "type": "number"
-                      },
-                      "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
-                        "type": "number"
-                      },
                       "openIssueMultiplier": {
                         "type": "number"
                       },
@@ -4889,6 +5041,15 @@
                         "type": "number"
                       },
                       "issueDiscoveryHistoryMultiplier": {
+                        "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
+                      "estimatedMergedScore": {
+                        "type": "number"
+                      },
+                      "pendingSaturationScore": {
                         "type": "number"
                       }
                     },
@@ -4924,13 +5085,13 @@
                       "collateralFraction": {
                         "type": "number"
                       },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
+                      },
                       "credibilityFloor": {
                         "type": "number"
                       },
                       "credibilityObserved": {
-                        "type": "number"
-                      },
-                      "reviewCollateralMultiplier": {
                         "type": "number"
                       },
                       "openIssueThreshold": {
@@ -5182,15 +5343,6 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
-                      "estimatedMergedScore": {
-                        "type": "number"
-                      },
-                      "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
-                        "type": "number"
-                      },
                       "openIssueMultiplier": {
                         "type": "number"
                       },
@@ -5198,6 +5350,15 @@
                         "type": "number"
                       },
                       "issueDiscoveryHistoryMultiplier": {
+                        "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
+                      "estimatedMergedScore": {
+                        "type": "number"
+                      },
+                      "pendingSaturationScore": {
                         "type": "number"
                       }
                     },
@@ -5233,13 +5394,13 @@
                       "collateralFraction": {
                         "type": "number"
                       },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
+                      },
                       "credibilityFloor": {
                         "type": "number"
                       },
                       "credibilityObserved": {
-                        "type": "number"
-                      },
-                      "reviewCollateralMultiplier": {
                         "type": "number"
                       },
                       "openIssueThreshold": {
@@ -5491,15 +5652,6 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
-                      "estimatedMergedScore": {
-                        "type": "number"
-                      },
-                      "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
-                        "type": "number"
-                      },
                       "openIssueMultiplier": {
                         "type": "number"
                       },
@@ -5507,6 +5659,15 @@
                         "type": "number"
                       },
                       "issueDiscoveryHistoryMultiplier": {
+                        "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
+                      "estimatedMergedScore": {
+                        "type": "number"
+                      },
+                      "pendingSaturationScore": {
                         "type": "number"
                       }
                     },
@@ -5542,13 +5703,13 @@
                       "collateralFraction": {
                         "type": "number"
                       },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
+                      },
                       "credibilityFloor": {
                         "type": "number"
                       },
                       "credibilityObserved": {
-                        "type": "number"
-                      },
-                      "reviewCollateralMultiplier": {
                         "type": "number"
                       },
                       "openIssueThreshold": {
@@ -6379,15 +6540,6 @@
               "openPrMultiplier": {
                 "type": "number"
               },
-              "estimatedMergedScore": {
-                "type": "number"
-              },
-              "pendingSaturationScore": {
-                "type": "number"
-              },
-              "timeDecayMultiplier": {
-                "type": "number"
-              },
               "openIssueMultiplier": {
                 "type": "number"
               },
@@ -6395,6 +6547,15 @@
                 "type": "number"
               },
               "issueDiscoveryHistoryMultiplier": {
+                "type": "number"
+              },
+              "timeDecayMultiplier": {
+                "type": "number"
+              },
+              "estimatedMergedScore": {
+                "type": "number"
+              },
+              "pendingSaturationScore": {
                 "type": "number"
               }
             },
@@ -6507,13 +6668,13 @@
               "collateralFraction": {
                 "type": "number"
               },
+              "reviewCollateralMultiplier": {
+                "type": "number"
+              },
               "credibilityFloor": {
                 "type": "number"
               },
               "credibilityObserved": {
-                "type": "number"
-              },
-              "reviewCollateralMultiplier": {
                 "type": "number"
               },
               "openIssueThreshold": {
@@ -6764,15 +6925,6 @@
                     "openPrMultiplier": {
                       "type": "number"
                     },
-                    "estimatedMergedScore": {
-                      "type": "number"
-                    },
-                    "pendingSaturationScore": {
-                      "type": "number"
-                    },
-                    "timeDecayMultiplier": {
-                      "type": "number"
-                    },
                     "openIssueMultiplier": {
                       "type": "number"
                     },
@@ -6780,6 +6932,15 @@
                       "type": "number"
                     },
                     "issueDiscoveryHistoryMultiplier": {
+                      "type": "number"
+                    },
+                    "timeDecayMultiplier": {
+                      "type": "number"
+                    },
+                    "estimatedMergedScore": {
+                      "type": "number"
+                    },
+                    "pendingSaturationScore": {
                       "type": "number"
                     }
                   },
@@ -6815,13 +6976,13 @@
                     "collateralFraction": {
                       "type": "number"
                     },
+                    "reviewCollateralMultiplier": {
+                      "type": "number"
+                    },
                     "credibilityFloor": {
                       "type": "number"
                     },
                     "credibilityObserved": {
-                      "type": "number"
-                    },
-                    "reviewCollateralMultiplier": {
                       "type": "number"
                     },
                     "openIssueThreshold": {
@@ -7311,6 +7472,15 @@
           "repoFullName": {
             "type": "string"
           },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "tip",
+              "info"
+            ]
+          },
           "priorityScore": {
             "type": "number"
           },
@@ -7343,15 +7513,6 @@
             "items": {
               "type": "string"
             }
-          },
-          "severity": {
-            "type": "string",
-            "enum": [
-              "critical",
-              "warning",
-              "tip",
-              "info"
-            ]
           }
         },
         "required": [
@@ -8319,10 +8480,190 @@
               "enabled"
             ]
           },
+          "gatePack": {
+            "type": "string",
+            "enum": [
+              "gittensor",
+              "oss-anti-slop"
+            ]
+          },
+          "linkedIssueGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "duplicatePrGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMinScore": {
+            "type": "number",
+            "nullable": true
+          },
+          "slopGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "sizeGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "lockfileIntegrityGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "gateDryRun": {
+            "type": "boolean"
+          },
+          "premergeContentRecheck": {
+            "type": "boolean"
+          },
+          "requireFreshRebaseWindowMinutes": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "mergeReadinessGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "manifestPolicyGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "selfAuthoredLinkedIssueGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "firstTimeContributorGrace": {
+            "type": "boolean"
+          },
+          "slopGateMinScore": {
+            "type": "number",
+            "nullable": true
+          },
+          "slopAiAdvisory": {
+            "type": "boolean"
+          },
+          "aiReviewMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "aiReviewByok": {
+            "type": "boolean"
+          },
+          "aiReviewProvider": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "anthropic",
+              "openai",
+              null
+            ]
+          },
+          "aiReviewModel": {
+            "type": "string",
+            "nullable": true
+          },
+          "aiReviewAllAuthors": {
+            "type": "boolean"
+          },
+          "aiReviewCloseConfidence": {
+            "type": "number",
+            "nullable": true
+          },
+          "aiReviewCombine": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "single",
+              "consensus",
+              "synthesis",
+              null
+            ]
+          },
+          "aiReviewOnMerge": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "either",
+              "both",
+              null
+            ]
+          },
+          "aiReviewReviewers": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "fallback": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "model"
+              ]
+            }
+          },
+          "closeOwnerAuthors": {
+            "type": "boolean"
+          },
           "autoLabelEnabled": {
             "type": "boolean"
           },
           "gittensorLabel": {
+            "type": "string"
+          },
+          "blacklistLabel": {
             "type": "string"
           },
           "createMissingLabel": {
@@ -8347,6 +8688,9 @@
             "type": "boolean"
           },
           "privateTrustEnabled": {
+            "type": "boolean"
+          },
+          "badgeEnabled": {
             "type": "boolean"
           },
           "commandAuthorization": {
@@ -8385,82 +8729,31 @@
               "commands"
             ]
           },
-          "createdAt": {
-            "type": "string",
-            "nullable": true
-          },
-          "updatedAt": {
-            "type": "string",
-            "nullable": true
-          },
-          "linkedIssueGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "duplicatePrGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "qualityGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "qualityGateMinScore": {
-            "type": "number",
-            "nullable": true
-          },
-          "gatePack": {
-            "type": "string",
-            "enum": [
-              "gittensor",
-              "oss-anti-slop"
-            ]
-          },
-          "slopGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "slopGateMinScore": {
-            "type": "number",
-            "nullable": true
-          },
-          "slopAiAdvisory": {
-            "type": "boolean"
-          },
-          "mergeReadinessGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "firstTimeContributorGrace": {
-            "type": "boolean"
-          },
-          "manifestPolicyGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
+          "contributorBlacklist": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "login": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "addedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "login"
+              ]
+            }
           },
           "autonomy": {
             "type": "object",
@@ -8553,43 +8846,6 @@
           "agentDryRun": {
             "type": "boolean"
           },
-          "selfAuthoredLinkedIssueGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "contributorBlacklist": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "login": {
-                  "type": "string"
-                },
-                "reason": {
-                  "type": "string"
-                },
-                "evidence": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "addedAt": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "login"
-              ]
-            }
-          },
-          "blacklistLabel": {
-            "type": "string"
-          },
           "contributorOpenPrCap": {
             "type": "integer",
             "nullable": true,
@@ -8601,6 +8857,9 @@
             "nullable": true,
             "minimum": 0,
             "exclusiveMinimum": true
+          },
+          "contributorCapLabel": {
+            "type": "string"
           },
           "reviewNagPolicy": {
             "type": "string",
@@ -8629,66 +8888,6 @@
             "items": {
               "type": "string"
             }
-          },
-          "contributorCapLabel": {
-            "type": "string"
-          },
-          "sizeGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "gateDryRun": {
-            "type": "boolean"
-          },
-          "premergeContentRecheck": {
-            "type": "boolean"
-          },
-          "aiReviewMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "aiReviewByok": {
-            "type": "boolean"
-          },
-          "aiReviewProvider": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "anthropic",
-              "openai",
-              null
-            ]
-          },
-          "aiReviewModel": {
-            "type": "string",
-            "nullable": true
-          },
-          "aiReviewAllAuthors": {
-            "type": "boolean"
-          },
-          "aiReviewCloseConfidence": {
-            "type": "number",
-            "nullable": true
-          },
-          "closeOwnerAuthors": {
-            "type": "boolean"
-          },
-          "badgeEnabled": {
-            "type": "boolean"
-          },
-          "requireFreshRebaseWindowMinutes": {
-            "type": "integer",
-            "nullable": true,
-            "minimum": 0,
-            "exclusiveMinimum": true
           },
           "accountAgeThresholdDays": {
             "type": "integer",
@@ -8721,13 +8920,13 @@
             "minimum": 0,
             "exclusiveMinimum": true
           },
-          "lockfileIntegrityGateMode": {
+          "createdAt": {
             "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [
@@ -9222,10 +9421,87 @@
                   "enabled"
                 ]
               },
+              "gatePack": {
+                "type": "string",
+                "enum": [
+                  "gittensor",
+                  "oss-anti-slop"
+                ]
+              },
+              "linkedIssueGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "duplicatePrGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMinScore": {
+                "type": "number",
+                "nullable": true
+              },
+              "slopGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "mergeReadinessGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "manifestPolicyGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "selfAuthoredLinkedIssueGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "firstTimeContributorGrace": {
+                "type": "boolean"
+              },
+              "slopGateMinScore": {
+                "type": "number",
+                "nullable": true
+              },
               "autoLabelEnabled": {
                 "type": "boolean"
               },
               "gittensorLabel": {
+                "type": "string"
+              },
+              "blacklistLabel": {
                 "type": "string"
               },
               "createMissingLabel": {
@@ -9235,6 +9511,31 @@
                 "type": "boolean"
               },
               "requireLinkedIssue": {
+                "type": "boolean"
+              },
+              "badgeEnabled": {
+                "type": "boolean"
+              },
+              "aiReviewMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "aiReviewByok": {
+                "type": "boolean"
+              },
+              "aiReviewProvider": {
+                "type": "string",
+                "nullable": true
+              },
+              "aiReviewModel": {
+                "type": "string",
+                "nullable": true
+              },
+              "aiReviewAllAuthors": {
                 "type": "boolean"
               },
               "commandAuthorization": {
@@ -9284,108 +9585,6 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
-              },
-              "linkedIssueGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "duplicatePrGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "qualityGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "qualityGateMinScore": {
-                "type": "number",
-                "nullable": true
-              },
-              "gatePack": {
-                "type": "string",
-                "enum": [
-                  "gittensor",
-                  "oss-anti-slop"
-                ]
-              },
-              "slopGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "slopGateMinScore": {
-                "type": "number",
-                "nullable": true
-              },
-              "mergeReadinessGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "firstTimeContributorGrace": {
-                "type": "boolean"
-              },
-              "manifestPolicyGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "selfAuthoredLinkedIssueGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "blacklistLabel": {
-                "type": "string"
-              },
-              "badgeEnabled": {
-                "type": "boolean"
-              },
-              "aiReviewMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "aiReviewByok": {
-                "type": "boolean"
-              },
-              "aiReviewProvider": {
-                "type": "string",
-                "nullable": true
-              },
-              "aiReviewModel": {
-                "type": "string",
-                "nullable": true
-              },
-              "aiReviewAllAuthors": {
-                "type": "boolean"
               }
             },
             "required": [
@@ -12839,167 +13038,6 @@
           "maintainerNextSteps",
           "privateSummary"
         ]
-      },
-      "PublicRepoStats": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "htmlUrl": {
-            "type": "string"
-          },
-          "stargazers_count": {
-            "type": "number"
-          },
-          "forks_count": {
-            "type": "number"
-          },
-          "fetched_at": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "github",
-              "cache",
-              "stale_cache"
-            ]
-          },
-          "stale": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "htmlUrl",
-          "stargazers_count",
-          "forks_count",
-          "fetched_at",
-          "source",
-          "stale"
-        ]
-      },
-      "PublicStats": {
-        "type": "object",
-        "properties": {
-          "generatedAt": {
-            "type": "string"
-          },
-          "updatedAt": {
-            "type": "string"
-          },
-          "totals": {
-            "type": "object",
-            "properties": {
-              "handled": {
-                "type": "number"
-              },
-              "merged": {
-                "type": "number"
-              },
-              "closed": {
-                "type": "number"
-              },
-              "reversed": {
-                "type": "number"
-              },
-              "accuracyPct": {
-                "type": "number",
-                "nullable": true
-              },
-              "commented": {
-                "type": "number"
-              },
-              "ignored": {
-                "type": "number"
-              },
-              "manual": {
-                "type": "number"
-              },
-              "error": {
-                "type": "number"
-              },
-              "reviewed": {
-                "type": "number"
-              },
-              "filteredPct": {
-                "type": "number",
-                "nullable": true
-              },
-              "minutesSaved": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "handled",
-              "reviewed",
-              "merged",
-              "closed",
-              "commented",
-              "ignored",
-              "manual",
-              "error",
-              "reversed",
-              "filteredPct",
-              "accuracyPct",
-              "minutesSaved"
-            ]
-          },
-          "weekly": {
-            "type": "object",
-            "properties": {
-              "merged": {
-                "type": "number"
-              },
-              "reviewed": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "reviewed",
-              "merged"
-            ]
-          },
-          "byProject": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "project": {
-                  "type": "string"
-                },
-                "merged": {
-                  "type": "number"
-                },
-                "closed": {
-                  "type": "number"
-                },
-                "accuracyPct": {
-                  "type": "number",
-                  "nullable": true
-                },
-                "reviewed": {
-                  "type": "number"
-                }
-              },
-              "required": [
-                "project",
-                "reviewed",
-                "merged",
-                "closed",
-                "accuracyPct"
-              ]
-            }
-          }
-        },
-        "required": [
-          "generatedAt",
-          "updatedAt",
-          "totals",
-          "weekly",
-          "byProject"
-        ]
       }
     },
     "parameters": {},
@@ -13046,6 +13084,68 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/public/stats": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicStats"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)"
+          },
+          "503": {
+            "description": "Public stats are temporarily unavailable"
+          }
+        }
+      }
+    },
+    "/v1/public/github/repos/{owner}/{repo}/stats": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicRepoStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or non-allowlisted GitHub repository"
+          },
+          "503": {
+            "description": "GitHub repository stats are unavailable"
           }
         }
       }
@@ -13736,6 +13836,173 @@
         ]
       }
     },
+    "/v1/repos/{owner}/{repo}/focus-manifest": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Repo focus manifest and compiled policy for maintainers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Persist API-backed focus manifest for a repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON request body"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/focus-manifest/refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Refresh the persisted focus manifest cache from the repo file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/agent/audit-feed": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Maintainer-scoped agent audit feed (#784): executed actions + approval-queue decisions, newest first, public-safe action posture only. Supports ?since=ISO-8601&limit=1-200.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repoFullName": {
+                      "type": "string"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "eventType": {
+                            "type": "string"
+                          },
+                          "pullNumber": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "actor": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "eventType",
+                          "pullNumber",
+                          "outcome",
+                          "actor",
+                          "detail",
+                          "createdAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repoFullName",
+                    "events"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed since (not ISO-8601) or limit (not an integer in 1-200)"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/app/self-dogfood/registration-pack": {
       "get": {
         "responses": {
@@ -13817,6 +14084,39 @@
           },
           "404": {
             "description": "Repository is not accepted or preview unavailable"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or explicit create without dryRun false"
+          },
+          "403": {
+            "description": "Insufficient role"
           }
         },
         "security": [
@@ -14498,6 +14798,26 @@
             "description": "Invalid webhook signature"
           }
         }
+      }
+    },
+    "/v1/orb/ingest": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Batch accepted; returns { accepted: number }"
+          },
+          "400": {
+            "description": "Malformed JSON or invalid payload shape"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
       }
     },
     "/v1/auth/github/start": {
@@ -15578,288 +15898,6 @@
           },
           "401": {
             "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/public/github/repos/{owner}/{repo}/stats": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicRepoStats"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid or non-allowlisted GitHub repository"
-          },
-          "503": {
-            "description": "GitHub repository stats are unavailable"
-          }
-        }
-      }
-    },
-    "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request or explicit create without dryRun false"
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/focus-manifest": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Repo focus manifest and compiled policy for maintainers",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      },
-      "put": {
-        "responses": {
-          "200": {
-            "description": "Persist API-backed focus manifest for a repo",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Malformed JSON request body"
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/focus-manifest/refresh": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Refresh the persisted focus manifest cache from the repo file",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/agent/audit-feed": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Maintainer-scoped agent audit feed (#784): executed actions + approval-queue decisions, newest first, public-safe action posture only. Supports ?since=ISO-8601&limit=1-200.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "repoFullName": {
-                      "type": "string"
-                    },
-                    "events": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "eventType": {
-                            "type": "string"
-                          },
-                          "pullNumber": {
-                            "type": "number",
-                            "nullable": true
-                          },
-                          "outcome": {
-                            "type": "string"
-                          },
-                          "actor": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "detail": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "createdAt": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "eventType",
-                          "pullNumber",
-                          "outcome",
-                          "actor",
-                          "detail",
-                          "createdAt"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "repoFullName",
-                    "events"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Malformed since (not ISO-8601) or limit (not an integer in 1-200)"
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/public/stats": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicStats"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)"
-          },
-          "503": {
-            "description": "Public stats are temporarily unavailable"
-          }
-        }
-      }
-    },
-    "/v1/orb/ingest": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Batch accepted; returns { accepted: number }"
-          },
-          "400": {
-            "description": "Malformed JSON or invalid payload shape"
           }
         },
         "security": [

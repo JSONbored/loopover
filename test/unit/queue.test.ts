@@ -15525,8 +15525,9 @@ describe("one-shot reopen prevention", () => {
     expect(audit?.outcome).toBe("completed");
   });
 
-  it("REGRESSION: re-closes when the reopener is hidden beyond the inspected event window", async () => {
+  it("REGRESSION: denies when a maintainer reopener is hidden beyond the inspected event window", async () => {
     const calls: Array<{ url: string; method: string }> = [];
+    const eventPages: number[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
@@ -15535,11 +15536,13 @@ describe("one-shot reopen prevention", () => {
       if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
       if (url.includes("/issues/42/events")) {
         const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        eventPages.push(page);
         if (page === 1) {
           return Response.json([{ event: "closed", actor: { login: "maintainer" } }, { event: "reopened", actor: { login: "contributor" } }], {
-            headers: { link: '<https://api.github.com/repos/owner/repo/issues/42/events?per_page=100&page=12>; rel="last"' },
+            headers: { link: '<https://api.github.com/repos/owner/repo/issues/42/events?per_page=100&page=22>; rel="last"' },
           });
         }
+        if (page === 12) return Response.json([{ event: "reopened", actor: { login: "second-maintainer" } }]);
         return Response.json([{ event: "renamed", actor: { login: "contributor" } }]);
       }
       if (url.endsWith("/issues/42/comments")) return Response.json({ id: 99 }, { status: 201 });
@@ -15551,11 +15554,13 @@ describe("one-shot reopen prevention", () => {
 
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-window-stuffed", eventName: "pull_request", payload: reopenedPayload("contributor") });
 
-    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
-    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+    expect(eventPages).toContain(22);
+    expect(eventPages).not.toContain(12);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(false);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
-    expect(audit?.outcome).toBe("completed");
-    expect(audit?.detail).toContain("beyond the inspected event window");
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("the current reopener is now unknown, not contributor");
   });
 
   it("REGRESSION: fails CLOSED (denies the re-close) when the reopener-timeline read errors (#2369)", async () => {

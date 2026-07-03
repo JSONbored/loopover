@@ -496,7 +496,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
@@ -804,7 +804,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1020,6 +1020,69 @@ describe("parseFocusManifest gate config", () => {
     const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
     expect(noFlag.gate.aiReviewCloseConfidence).toBeNull();
     expect(resolveEffectiveSettings({ aiReviewCloseConfidence: 0.6 } as unknown as RepositorySettings, noFlag).aiReviewCloseConfidence).toBe(0.6);
+  });
+
+  it("parses gate.aiReview.combine, makes the gate present, round-trips + resolves it, and warns on a bad value (#2567)", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { combine: "synthesis" } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewCombine).toBe("synthesis");
+    expect((gateConfigToJson(m.gate) as { aiReview: { combine: string } }).aiReview.combine).toBe("synthesis");
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    expect(parseFocusManifest({ gate: { aiReview: { combine: "loud" } } }).warnings.some((w) => /gate\.aiReview\.combine/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { aiReview: { combine: "loud" } } }).gate.aiReviewCombine).toBeNull();
+    const eff = resolveEffectiveSettings({ aiReviewCombine: undefined } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewCombine).toBe("synthesis");
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewCombine).toBeNull();
+    // Absent ⇒ the resolver leaves the DB/default value untouched.
+    expect(resolveEffectiveSettings({ aiReviewCombine: "consensus" } as unknown as RepositorySettings, noFlag).aiReviewCombine).toBe("consensus");
+  });
+
+  it("parses gate.aiReview.onMerge, makes the gate present, round-trips + resolves it, and warns on a bad value (#2567)", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { onMerge: "both" } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewOnMerge).toBe("both");
+    expect((gateConfigToJson(m.gate) as { aiReview: { onMerge: string } }).aiReview.onMerge).toBe("both");
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    expect(parseFocusManifest({ gate: { aiReview: { onMerge: "any" } } }).warnings.some((w) => /gate\.aiReview\.onMerge/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { aiReview: { onMerge: "any" } } }).gate.aiReviewOnMerge).toBeNull();
+    // resolveEffectiveSettings projects the raw override unclamped — the operator-floor clamp itself is enforced
+    // downstream in services/ai-review.ts (resolveEffectiveAiReviewOnMerge), which this resolver cannot see.
+    const eff = resolveEffectiveSettings({ aiReviewOnMerge: undefined } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewOnMerge).toBe("both");
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewOnMerge).toBeNull();
+    expect(resolveEffectiveSettings({ aiReviewOnMerge: "either" } as unknown as RepositorySettings, noFlag).aiReviewOnMerge).toBe("either");
+  });
+
+  it("parses gate.aiReview.reviewers, makes the gate present, round-trips + resolves it, caps entries, and drops invalid ones (#2567)", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { reviewers: [{ model: "claude-code" }, { model: "codex", fallback: "ollama" }] } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewReviewers).toEqual([{ model: "claude-code" }, { model: "codex", fallback: "ollama" }]);
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    const eff = resolveEffectiveSettings({ aiReviewReviewers: undefined } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewReviewers).toEqual([{ model: "claude-code" }, { model: "codex", fallback: "ollama" }]);
+    // Absent ⇒ null ⇒ the DB/default value is left untouched.
+    const noFlag = parseFocusManifest({ gate: { aiReview: { mode: "advisory" } } });
+    expect(noFlag.gate.aiReviewReviewers).toBeNull();
+    expect(resolveEffectiveSettings({ aiReviewReviewers: [{ model: "existing" }] } as unknown as RepositorySettings, noFlag).aiReviewReviewers).toEqual([{ model: "existing" }]);
+    // Non-array ⇒ warns, stays null.
+    expect(parseFocusManifest({ gate: { aiReview: { reviewers: "claude-code" } } }).warnings.some((w) => /gate\.aiReview\.reviewers/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { aiReview: { reviewers: "claude-code" } } }).gate.aiReviewReviewers).toBeNull();
+    // A non-mapping entry and a blank-model entry are dropped, but valid siblings survive.
+    const mixed = parseFocusManifest({ gate: { aiReview: { reviewers: [{ model: "claude-code" }, "nope", { model: "  " }, { fallback: "x" }] } } });
+    expect(mixed.gate.aiReviewReviewers).toEqual([{ model: "claude-code" }]);
+    expect(mixed.warnings.some((w) => /gate\.aiReview\.reviewers\[1\]/.test(w))).toBe(true);
+    expect(mixed.warnings.some((w) => /gate\.aiReview\.reviewers\[2\]\.model/.test(w))).toBe(true);
+    expect(mixed.warnings.some((w) => /gate\.aiReview\.reviewers\[3\]\.model/.test(w))).toBe(true);
+    // All-invalid list ⇒ null (not an empty array), matching every other manifest "absent means null" contract.
+    expect(parseFocusManifest({ gate: { aiReview: { reviewers: ["nope"] } } }).gate.aiReviewReviewers).toBeNull();
+    // Over the cap: only the first 4 entries survive, with a warning.
+    const over = parseFocusManifest({
+      gate: { aiReview: { reviewers: [{ model: "a" }, { model: "b" }, { model: "c" }, { model: "d" }, { model: "e" }] } },
+    });
+    expect(over.gate.aiReviewReviewers).toEqual([{ model: "a" }, { model: "b" }, { model: "c" }, { model: "d" }]);
+    expect(over.warnings.some((w) => /gate\.aiReview\.reviewers" is capped/.test(w))).toBe(true);
   });
 
   it("parses the features: block (per-repo converged-feature toggles), round-trips it, and makes the manifest present", () => {

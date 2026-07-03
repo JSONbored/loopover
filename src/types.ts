@@ -519,6 +519,24 @@ export type GateRuleMode = "off" | "advisory" | "block";
  *  consensus) block ANY author, with no emissions/registry/Gittensor coupling — so the gate runs on any repo. */
 export type GatePolicyPack = "gittensor" | "oss-anti-slop";
 
+/**
+ * How the independent AI-reviewer opinions are combined into ONE gate decision (#dual-ai-combiner). Canonical
+ * definition lives here (not in `services/ai-review.ts`, which re-exports it) because both `RepositorySettings`
+ * below and `signals/focus-manifest.ts` need it, and BOTH are imported by the UI workspace — `services/ai-review.ts`
+ * pulls in ambient Cloudflare Workers types (`Env`, `D1Database`, …) the UI's tsconfig `lib` doesn't declare, so a
+ * `import("../services/ai-review").CombineStrategy` type-only reference from either file would still drag that
+ * whole module graph into the UI's typecheck and break it (#2567 follow-up fix).
+ *   • `single`     — one reviewer; its verdict IS the decision (a named blocker blocks).
+ *   • `consensus`  — two reviewers; block ONLY when BOTH name a blocker; lone blocker → split (hold). The
+ *                    historical cloud behavior — the default, so an unset `combine` is byte-identical.
+ *   • `synthesis`  — two reviewers run separately, then merge into ONE decision (no split/hold-on-disagree):
+ *                    `onMerge: either` blocks if EITHER flags a blocker; `both` only if all do.
+ */
+export type CombineStrategy = "single" | "consensus" | "synthesis";
+/** Synthesis merge rule — block if `either` reviewer flags a blocker, or only when `both` agree. See
+ *  {@link CombineStrategy} for why the canonical definition lives here rather than `services/ai-review.ts`. */
+export type OnMerge = "either" | "both";
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
@@ -611,6 +629,27 @@ export type RepositorySettings = {
    *  gate.aiReview.closeConfidence` (no dashboard/DB column); unset ⇒ the gate uses the 0.93 default. Clamped to
    *  [0,1] at parse time. */
   aiReviewCloseConfidence?: number | null | undefined;
+  /** Per-repo dual-AI combine-strategy override (#2567). Config-as-code only — set via `.gittensory.yml
+   *  gate.aiReview.combine` (no dashboard/DB column); unset ⇒ the self-host operator's `AI_REVIEW_PLAN.combine`
+   *  boot config (or `consensus` if the operator set nothing). A REFINEMENT of the operator's plan, not a
+   *  bypass — `runGittensoryAiReview` clamps the resolved `onMerge` to the operator's floor (see
+   *  {@link aiReviewOnMerge}); `combine` itself carries no floor semantics (single/consensus/synthesis are not
+   *  ordered by strictness). */
+  aiReviewCombine?: CombineStrategy | null | undefined;
+  /** Per-repo `synthesis` merge-rule override (#2567): `either` blocks on ANY one reviewer's blocker (the
+   *  STRICTER rule); `both` blocks only when every reviewer agrees (the more PERMISSIVE rule). Config-as-code
+   *  only — set via `.gittensory.yml gate.aiReview.onMerge` (no dashboard/DB column). A repo override can only
+   *  TIGHTEN the operator's `AI_REVIEW_PLAN.onMerge` floor (e.g. `either` → `either` is a no-op; `both` → an
+   *  attempted loosening is clamped back to `either`). When the operator has not set an `onMerge` floor, any
+   *  per-repo value is honored unclamped. See `resolveEffectiveAiReviewOnMerge` in `services/ai-review.ts`. */
+  aiReviewOnMerge?: OnMerge | null | undefined;
+  /** Per-repo reviewer-pair override (#2567): named self-host providers (e.g. `{ model: "claude-code" }`,
+   *  `{ model: "codex" }`) to run instead of the operator's `AI_REVIEW_PLAN.reviewers` (or the free Workers-AI
+   *  pair when the operator configured none). Config-as-code only — set via `.gittensory.yml
+   *  gate.aiReview.reviewers` (no dashboard/DB column). Unlike {@link aiReviewOnMerge}, WHICH reviewers run
+   *  carries no operator floor to violate (the floor is what triggers a hold/block, not who evaluates it), so a
+   *  repo override always wins unclamped when set. */
+  aiReviewReviewers?: ReadonlyArray<{ model: string; fallback?: string | null | undefined }> | null | undefined;
   /** When TRUE, the repo OWNER's (and maintainer's) own PRs are eligible for auto-CLOSE like a contributor's
    *  (still subject to the `close` autonomy class + the same adverse-signal conditions). Default FALSE — owner
    *  PRs are exempt from auto-close (merge or manual-hold only). Per-repo configurable so maintainers choose

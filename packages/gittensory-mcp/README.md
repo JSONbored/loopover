@@ -58,6 +58,7 @@ gittensory-mcp repo-decision --login jsonbored --repo we-promise/sure --json
 gittensory-mcp analyze-branch --login jsonbored --json
 gittensory-mcp preflight --login jsonbored --json
 gittensory-mcp lint-pr-text --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json
+gittensory-mcp slop-risk --changed-file src/widget.ts:80:2 --description "Adds retry handling." --test-file test/unit/widget.test.ts --json
 gittensory-mcp agent plan --login jsonbored --json
 gittensory-mcp agent packet --login jsonbored --json
 gittensory-mcp agent status <run-id> --json

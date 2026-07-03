@@ -12,9 +12,26 @@ describe("test evidence helpers", () => {
     expect(isTestPath("integration/api_flow.cy.ts")).toBe(true);
     expect(isTestPath("playwright/smoke.spec.ts")).toBe(true);
     expect(isTestPath("cypress/e2e/checkout.cy.js")).toBe(true);
+    // Cypress/Playwright e2e tests in Node/TS module extensions.
+    expect(isTestPath("cypress/e2e/checkout.cy.mts")).toBe(true);
+    expect(isTestPath("e2e/flow.e2e.mjs")).toBe(true);
     expect(isTestPath("components/__snapshots__/Card.tsx.snap")).toBe(true);
+    // .test/.spec files in Node/TS ESM + CommonJS module extensions.
+    expect(isTestPath("src/loader.test.mts")).toBe(true);
+    expect(isTestPath("src/legacy.spec.cjs")).toBe(true);
+    expect(isTestPath("src/config.test.cts")).toBe(true);
+    expect(isTestPath("src/widget.spec.mjs")).toBe(true);
     expect(isTestPath("src/state.snap")).toBe(false);
     expect(isTestPath("src/widget.rs")).toBe(false);
+  });
+
+  it("detects pytest's default test_*.py prefix convention, not just the *_test.py suffix", () => {
+    expect(isTestPath("mypackage/test_utils.py")).toBe(true); // pytest default, sitting next to source
+    expect(isTestPath("src/app/test_auth.py")).toBe(true);
+    expect(isTestPath("test_top_level.py")).toBe(true); // repo-root test file
+    expect(isTestPath("internal/cache_test.py")).toBe(true); // the pre-existing suffix form still matches
+    expect(isTestPath("src/app/latest_config.py")).toBe(false); // `test_` mid-segment ⇒ not a test
+    expect(isTestPath("src/app/testing.py")).toBe(false); // no `test_` boundary ⇒ not a test
   });
 
   it("does not treat framework or integration directory names alone as test evidence", () => {

@@ -256,6 +256,54 @@ describe("runAiReviewForAdvisory", () => {
     expect(result?.notes).toContain("Likely crash.");
   });
 
+  it("threads settings.aiReviewCombine/aiReviewOnMerge/aiReviewReviewers (#2567) into the AI review call", async () => {
+    // settings.aiReviewCombine/OnMerge/Reviewers are resolved from `.gittensory.yml gate.aiReview.*` upstream by
+    // resolveEffectiveSettings; runAiReviewForAdvisory must forward them into runGittensoryAiReview's input so a
+    // per-repo override actually reaches the reviewer selection (in place of any env.AI_REVIEW_PLAN default).
+    const adv = advisory();
+    const seen: string[] = [];
+    const run = (async (model: string) => {
+      seen.push(model);
+      // Only "codex" flags a blocker; under a "single" combine strategy only reviewer[0] ("codex") is addressed.
+      return { response: model === "codex" ? defectJson() : notesOnlyJson() };
+    }) as unknown as () => Promise<unknown>;
+    const result = await runAiReviewForAdvisory(aiEnv(run), {
+      settings: {
+        aiReviewMode: "block",
+        aiReviewCombine: "single",
+        aiReviewReviewers: [{ model: "codex" }],
+      } as unknown as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(seen).toEqual(["codex"]); // the per-repo reviewer override ran instead of the default Workers-AI pair
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
+    expect(result?.notes).toContain("Likely crash.");
+  });
+
+  it("a repo without an aiReviewCombine/OnMerge/Reviewers override sees zero behavior change (default Workers-AI pair + consensus)", async () => {
+    const adv = advisory();
+    const seen: string[] = [];
+    const run = (async (model: string) => {
+      seen.push(model);
+      return { response: defectJson() };
+    }) as unknown as () => Promise<unknown>;
+    const result = await runAiReviewForAdvisory(aiEnv(run), {
+      settings: { aiReviewMode: "block" } as RepositorySettings, // no aiReviewCombine/OnMerge/Reviewers set
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect([...seen].sort()).toEqual([...BEST_REVIEW_MODELS].sort()); // default Workers-AI pair, byte-identical
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
+    expect(result?.notes).toContain("Likely crash.");
+  });
+
   it("threads the calibrated MIN consensus confidence onto the ai_consensus_defect finding (#8)", async () => {
     const adv = advisory();
     // Two reviewers agree on a blocker but with DIFFERENT confidences (0.95 vs 0.6) → the finding carries the min.

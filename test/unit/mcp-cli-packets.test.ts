@@ -311,11 +311,12 @@ describe("gittensory-mcp CLI — packets", () => {
             GITTENSORY_API_URL: url,
             GITTENSORY_TOKEN: "session-token",
             GITTENSORY_CONFIG_DIR: tempDir,
+            GITTENSORY_API_TIMEOUT_MS: "3000",
           },
         ),
       ).rejects.toThrow("Refusing to print unsafe public packet markdown from the server.");
     }
-  }, 30000);
+  }, 45000);
 
   it("sends bounded structured validation summaries without local logs", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));

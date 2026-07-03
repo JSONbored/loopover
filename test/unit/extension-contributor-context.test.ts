@@ -120,4 +120,20 @@ describe("buildExtensionPrStatus", () => {
     });
     expect(status.components[0]!.band).toBe("unmet");
   });
+
+  it("bands a component at the readiness rubric's partial cutoff (ratio >= 0.45) as partial, not unmet", () => {
+    // scoreResultIcon in the readiness table treats ratio >= 0.45 as ⚠️ (partial); the extension band must agree,
+    // otherwise a component scored in [0.45, 0.5) is shown as fully unmet in the overlay while the table shows partial.
+    const status = buildExtensionPrStatus({
+      repoFullName: "octo/demo",
+      pullNumber: 1,
+      readiness: readiness(55, {
+        components: [
+          { key: "validation", label: "Validation", score: 9, max: 20, evidence: "Some tests.", action: "Add tests." }, // ratio 0.45 (boundary)
+          { key: "change_scope", label: "Change scope", score: 49, max: 100, evidence: "Large diff.", action: "Split it." }, // ratio 0.49
+        ],
+      }),
+    });
+    expect(status.components.map((component) => component.band)).toEqual(["partial", "partial"]);
+  });
 });

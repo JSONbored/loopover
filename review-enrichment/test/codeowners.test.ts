@@ -54,3 +54,14 @@ test("scanCodeowners: reports files where the author is not listed as an owner",
   );
   assert.deepEqual(out, [{ file: "src/a.ts", owners: ["@bob"] }]);
 });
+
+test("scanCodeowners: a trailing-slash directory rule owns files at any depth", async () => {
+  // `config/` has only a trailing slash, so per gitignore/CODEOWNERS semantics it must match at
+  // any depth — not just repo-root `config/…`. Regression for the anchoring being computed after
+  // the `config/` → `config/**` expansion, which wrongly treated the rule as root-anchored.
+  const out = await scanCodeowners(
+    req({ author: "alice", files: [{ path: "services/api/config/settings.yaml" }] }),
+    async () => new Response("config/ @bob\n", { status: 200 }),
+  );
+  assert.deepEqual(out, [{ file: "services/api/config/settings.yaml", owners: ["@bob"] }]);
+});

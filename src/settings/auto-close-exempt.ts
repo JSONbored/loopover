@@ -6,7 +6,12 @@
 // settings (`.gittensory.yml` > DB), never hard-coded for any repo. Mirrors contributor-blacklist.ts's shape
 // (normalize → validated list + warnings), minus the reason/evidence metadata a ban carries that an exemption
 // doesn't need.
-const GITHUB_LOGIN = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/;
+// A trailing `[bot]` is a real, common GitHub App-actor login shape (e.g. `dependabot[bot]`, `sentry[bot]`) --
+// this is exactly the kind of third-party automation identity a maintainer needs to exempt (a repo-specific bot
+// integration the hardcoded, install-wide well-known-bot set in agent-actions.ts has no way to know about), so
+// the base GitHub-login pattern (1-39 chars, alphanumeric/single-hyphens) is extended with an optional literal
+// `[bot]` suffix rather than rejecting every bot-shaped login outright.
+const GITHUB_LOGIN = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}(?:\[bot\])?$/;
 const MAX_ENTRIES = 500;
 
 /** Normalize a raw exempt-logins value (DB JSON or `.gittensory.yml`) into a validated, de-duplicated list of

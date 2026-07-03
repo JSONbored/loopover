@@ -15,10 +15,16 @@ describe("normalizeAutoCloseExemptLogins (#2463)", () => {
     expect(logins).toEqual(["a-b", "user123", "a".repeat(39)]);
   });
 
+  it("accepts a `[bot]`-suffixed App-actor login (e.g. a third-party automation integration like sentry[bot]) — a maintainer must be able to exempt a repo-specific bot the hardcoded well-known-bot set doesn't know about", () => {
+    const { logins, warnings } = normalizeAutoCloseExemptLogins(["sentry[bot]", "dependabot[bot]", "github-actions[bot]"]);
+    expect(logins).toEqual(["sentry[bot]", "dependabot[bot]", "github-actions[bot]"]);
+    expect(warnings).toEqual([]);
+  });
+
   it("drops non-string and invalid-login entries with a warning", () => {
-    const { logins, warnings } = normalizeAutoCloseExemptLogins([42, "-bad", "bad-", "a--b", "has space", "a".repeat(40)]);
+    const { logins, warnings } = normalizeAutoCloseExemptLogins([42, "-bad", "bad-", "a--b", "has space", "a".repeat(40), "sentry[Bot]", "[bot]", "weird[bot][bot]"]);
     expect(logins).toEqual([]);
-    expect(warnings.length).toBeGreaterThanOrEqual(5);
+    expect(warnings.length).toBeGreaterThanOrEqual(8);
   });
 
   it("trims whitespace around a login", () => {

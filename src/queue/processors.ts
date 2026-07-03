@@ -2045,7 +2045,13 @@ async function runAgentMaintenancePlanAndExecute(
     isNewAccount && typeof settings.contributorOpenPrCap === "number"
       ? Math.max(1, Math.ceil(settings.contributorOpenPrCap / 2))
       : settings.contributorOpenPrCap;
-  if (typeof contributorOpenPrCap === "number" && pr.authorLogin) {
+  // #2270/#2463-parity: the per-repo cap now honors the SAME shared `autoCloseExemptLogins` allowlist the
+  // install-wide cap (below) and review-nag cooldown already do -- previously only the owner/admin/automation-bot
+  // exemption (applied later, inside planAgentMaintenanceActions) protected an author here, so a maintainer-named
+  // trusted-but-not-a-recognized-bot login (e.g. a third-party automation App like Sentry's Seer fix bot) had no
+  // way to opt out of the PER-REPO cap specifically, even though `.gittensory.yml`'s own doc comment already
+  // promised this reuse (auto-close-exempt.ts).
+  if (typeof contributorOpenPrCap === "number" && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
     const authorLoginLower = pr.authorLogin.toLowerCase();
     const authorOpenPrNumbers = otherOpenPullRequests
       .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower)
@@ -4096,7 +4102,9 @@ async function maybeCloseIssueOverContributorCap(
     }
   }
 
-  if (typeof cap !== "number") return;
+  // #2270/#2463-parity: same shared `autoCloseExemptLogins` allowlist the install-wide cap above and review-nag
+  // cooldown already honor -- see the matching comment on the PR-side per-repo cap in the PR maintenance path.
+  if (typeof cap !== "number" || isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) return;
 
   const otherOpenIssues = await listOpenIssues(env, repoFullName);
   const authorLoginLower = authorLogin.toLowerCase();

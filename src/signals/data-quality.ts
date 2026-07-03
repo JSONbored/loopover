@@ -309,7 +309,11 @@ export function buildSignalFidelity(repoCount: number, states: RepoSyncStateReco
   const rateLimitResetValues = segments.flatMap((segment) =>
     (segment.status === "rate_limited" || segment.status === "waiting_rate_limit") && segment.rateLimitResetAt && !hasEffectiveSegmentCoverage(segment) ? [segment.rateLimitResetAt] : [],
   );
-  const missingRepoCount = Math.max(repoCount - states.length, 0);
+  // Count repos we have no signal for at all against the union of state+segment repos,
+  // matching buildCoreSignalFidelity. A segment-only repo already surfaces as an
+  // unknown-status quality above, so keying missingRepoCount off states.length would
+  // charge it twice and let degradedRepos exceed repoCount.
+  const missingRepoCount = Math.max(repoCount - repoNames.length, 0);
   const status: SignalFidelity["status"] =
     repoCount === 0 || qualities.length === 0
       ? "unknown"

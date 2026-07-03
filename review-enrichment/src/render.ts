@@ -116,8 +116,13 @@ export function renderBrief(
     lines.push("### End-of-life runtimes (upgrade before merging)");
     for (const item of eol) {
       const label = item.status === "eol" ? "END-OF-LIFE" : "EOL soon";
+      // item.file (a diff path) and item.product/item.version (parsed from the pinned file's own contents) are
+      // attacker-controlled, and this brief is spliced into the reviewer's prompt. Carry them in code spans via
+      // safeCodeSpan (the actionPin sibling above does the same) so a backtick/control char can't break out — it
+      // escapes only backticks/control chars, leaving version punctuation like `.`/`-` intact. item.eol is a
+      // trusted endoflife.date value rendered in prose, so it stays as-is.
       lines.push(
-        `- \`${item.file}\` pins ${item.product} ${item.version} — **${label}** (EOL ${item.eol})`,
+        `- ${safeCodeSpan(item.file)} pins ${safeCodeSpan(`${item.product} ${item.version}`)} — **${label}** (EOL ${item.eol})`,
       );
     }
   }

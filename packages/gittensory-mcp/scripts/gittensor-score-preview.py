@@ -8,39 +8,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
+# Every rule is an END/SEGMENT-anchored regex, a faithful mirror of the server isTestPath
+# (src/signals/test-evidence.ts). Plain substring tokens over-matched: "/__snapshots__/" missed a root-level
+# dir, and ".test.mjs" matched non-tests like `dist/widget.test.mjs.map` where the extension is not end-of-path.
+_TEST_PATH_RES = (
+    re.compile(r"(?:^|/)(?:tests?|spec|__tests__|__snapshots__|src/test)/", re.IGNORECASE),  # dir conventions
+    re.compile(r"(?:^|/)[^/]+_test\.(?:go|py|rb)$", re.IGNORECASE),  # go/py/rb *_test suffix
+    re.compile(r"(?:^|/)test_[^/]*\.py$", re.IGNORECASE),  # pytest test_*.py prefix
+    re.compile(r"(?:^|/)[^/]+_spec\.rb$", re.IGNORECASE),  # RSpec *_spec.rb suffix
+    re.compile(r"\.(?:test|spec)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$", re.IGNORECASE),  # .test/.spec.<ext>
+    re.compile(r"(?:^|/)[^/]+\.(?:cy|e2e)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$", re.IGNORECASE),  # Cypress/Playwright
+    re.compile(r"(?:^|/)\w*(?:Tests?|Spec)\.(?:java|kt|kts|scala|cs|swift|groovy)$"),  # JVM/.NET/Swift (case-sensitive)
+)
+
 
 def is_test_file(path: str) -> bool:
-    lowered = path.lower()
-    basename = lowered.rsplit("/", 1)[-1]
-    patterns = (
-        "/test/",
-        "/tests/",
-        "/spec/",
-        "/__tests__/",
-        "/src/test/",
-        "_test.go",
-        "_test.py",
-        "_test.rb",
-        "_spec.rb",
-        ".test.ts",
-        ".test.tsx",
-        ".test.js",
-        ".test.jsx",
-        ".test.py",
-        ".test.rb",
-        ".test.rs",
-        ".spec.ts",
-        ".spec.tsx",
-        ".spec.js",
-        ".spec.jsx",
-        ".spec.py",
-        ".spec.rb",
-        ".spec.rs",
-    )
-    return any(token in lowered for token in patterns) or any(basename.endswith(suffix) for suffix in ("_test.go", "_test.py", "_test.rb"))
+    return any(rx.search(path) for rx in _TEST_PATH_RES)
 
 
 def load_gittensor(gittensor_root: str):
@@ -152,7 +139,7 @@ def metadata_fallback(metadata: dict) -> dict:
         lines = max(int(entry.get("additions") or 0) + int(entry.get("deletions") or 0), 0)
         if is_test_file(path):
             tests += lines
-        elif path.endswith((".ts", ".tsx", ".js", ".jsx", ".py", ".rb", ".rs", ".go", ".java", ".kt", ".scala", ".sql")):
+        elif path.endswith((".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rb", ".rs", ".go", ".java", ".kt", ".scala", ".sql", ".cs", ".swift", ".groovy")):
             source += lines
         else:
             non_code += lines

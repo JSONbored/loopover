@@ -230,6 +230,7 @@ import {
   isRegateSweepDraining,
   selectRegateCandidates,
 } from "../settings/agent-sweep";
+import { selectBacklogConvergenceCandidates } from "../selfhost/backlog-convergence";
 import {
   MAINTENANCE_RESERVED_HEADROOM,
   delayUntil,
@@ -866,6 +867,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         return;
       }
       await sweepRepoRegate(env, message.repoFullName, message.requestedBy);
+      return;
+    case "backlog-convergence-sweep":
+      if (!message.repoFullName && message.requestedBy !== "test") {
+        await fanOutBacklogConvergenceSweepJobs(env, message.requestedBy);
+        return;
+      }
+      await sweepRepoBacklogConvergence(env, message.repoFullName, message.requestedBy);
       return;
     case "agent-regate-pr":
       // One bounded re-gate unit fanned out by the sweep (#audit-sweep-fanout): re-review + stamp a single PR.
@@ -1525,6 +1533,122 @@ async function sweepRepoRegate(
   });
 }
 
+// #selfhost-backlog-convergence: the cron (index.ts) enqueues one fan-out trigger periodically; this enqueues a
+// per-repo sweep job for every repo eligible for convergence (the SAME repo selection as the re-gate sweep, so
+// a repo that opted the agent in — or is explicitly convergence-allowlisted — gets both). Deliberately has no
+// fan-out dedup CAS (contrast fanOutAgentRegateSweepJobs): unlike that sweep, this one stamps nothing
+// optimistically, so a second overlapping trigger just re-reads current state and re-enqueues, which coalesces
+// harmlessly into the same pending agent-regate-pr rows (queue-common.ts's job_key coalescing) rather than
+// duplicating work.
+async function fanOutBacklogConvergenceSweepJobs(
+  env: Env,
+  requestedBy: "schedule" | "api" | "test",
+): Promise<void> {
+  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const byKey = new Map<string, { fullName: string; installationId?: number }>();
+  for (const repo of repositoriesByKey.values())
+    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
+  for (const fullName of listConvergenceRepos(env)) {
+    const repo = repositoriesByKey.get(fullName.toLowerCase());
+    byKey.set(fullName.toLowerCase(), {
+      fullName,
+      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
+    });
+  }
+  const configured: Array<{ fullName: string; installationId?: number }> = [];
+  for (const repo of byKey.values()) {
+    const settings = await resolveRepositorySettings(env, repo.fullName);
+    if (isConvergenceRepoAllowed(env, repo.fullName) || isAgentConfigured(settings.autonomy)) {
+      configured.push(repo);
+    }
+  }
+  await Promise.all(
+    configured.map((repo, index) => {
+      const message: JobMessage = {
+        type: "backlog-convergence-sweep",
+        requestedBy,
+        repoFullName: repo.fullName,
+        ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}),
+      };
+      const delaySeconds = Math.min(index * 10, 600);
+      return delaySeconds > 0
+        ? env.JOBS.send(message, { delaySeconds })
+        : env.JOBS.send(message);
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "agent.sweep.backlog_convergence.fanout",
+    outcome: "queued",
+    metadata: { repoCount: configured.length, requestedBy },
+  });
+}
+
+// #selfhost-backlog-convergence: sweep one repo's open PRs for a stale/missing public review surface at the
+// current head (see selfhost/backlog-convergence.ts for why this is a distinct signal from the re-gate sweep's
+// own staleness check) and fan out one `agent-regate-pr` job per candidate, tagged with a `backlog-convergence:`
+// deliveryId prefix so the claim-time fairness lane (queue-fairness.ts, PR2) can prioritize it as backlog-drain
+// work. No installation → nothing can be re-reviewed; skip quietly (mirrors sweepRepoRegate).
+async function sweepRepoBacklogConvergence(
+  env: Env,
+  repoFullName: string | undefined,
+  requestedBy: "schedule" | "api" | "test",
+): Promise<void> {
+  if (!repoFullName) return;
+  const settings = await resolveRepositorySettings(env, repoFullName);
+  if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return;
+  const mode = resolveAgentActionMode({
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    agentPaused: settings.agentPaused,
+    agentDryRun: settings.agentDryRun,
+  });
+  if (mode === "paused") {
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.backlog_convergence",
+      actor: "gittensory",
+      targetKey: repoFullName,
+      outcome: "denied",
+      detail: "agent actions paused — backlog-convergence sweep skipped",
+      metadata: { repoFullName, mode },
+    });
+    return;
+  }
+  const repo = await getRepository(env, repoFullName);
+  const sweepInstallationId = repo?.installationId ?? null;
+  if (sweepInstallationId == null) return;
+  const openPullRequests = await listOpenPullRequests(env, repoFullName);
+  const candidates = selectBacklogConvergenceCandidates({ pulls: openPullRequests });
+  if (candidates.length === 0) return;
+  await Promise.all(
+    candidates.map((pr, index) => {
+      const job: JobMessage = {
+        type: "agent-regate-pr",
+        deliveryId: `backlog-convergence:${repoFullName}#${pr.number}`,
+        repoFullName,
+        prNumber: pr.number,
+        installationId: sweepInstallationId,
+      };
+      const delaySeconds = Math.min(index * 10, 600);
+      return delaySeconds > 0
+        ? env.JOBS.send(job, { delaySeconds })
+        : env.JOBS.send(job);
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "agent.sweep.backlog_convergence",
+    actor: "gittensory",
+    targetKey: repoFullName,
+    outcome: "completed",
+    detail: `backlog-convergence sweep found ${candidates.length} open PR(s) with a stale/missing public surface`,
+    metadata: {
+      repoFullName,
+      mode,
+      openCount: openPullRequests.length,
+      examined: candidates.length,
+      candidatePulls: candidates.map((pr) => pr.number),
+    },
+  });
+}
+
 // #audit-sweep-fanout: one per-PR re-gate unit fanned out by sweepRepoRegate. Re-reviews a single PR as its own
 // bounded, retryable queue message. Routes through the #1258 chokepoint so a repo that paused or switched to
 // dry-run between fan-out and processing stays inert. Self-contained: resolves the repo settings to mirror the
@@ -2089,7 +2213,7 @@ async function runAgentMaintenancePlanAndExecute(
         repoFullName,
         number: pr.number,
         kind: "pull_request",
-      });
+      }, globalCap);
       if (globalOpenCount > globalCap) {
         // verifiedGlobalOpenItemCount sums BOTH open PRs and open issues -- reporting this as "pull requests"
         // when the author's over-cap total may include issues would be a factually wrong close message.
@@ -2220,6 +2344,12 @@ async function runAgentMaintenancePlanAndExecute(
       // CI-run cancellation on a contributor_cap close (#2462): the repo's own explicit setting always wins;
       // null/undefined (unset) falls back to the install-wide CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var.
       contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
+      moderationSettings: {
+        moderationGateMode: settings.moderationGateMode,
+        moderationRules: settings.moderationRules,
+        moderationWarningLabel: settings.moderationWarningLabel,
+        moderationBannedLabel: settings.moderationBannedLabel,
+      },
     },
     breakerOnPlan,
   );
@@ -3973,26 +4103,24 @@ async function isOpenItemRowStillLiveOpen(
   return livePr?.state === "open";
 }
 
-// A contributor can have thousands of open rows across a large install -- an unbounded Promise.all over every
-// one of them would fire that many concurrent GitHub API calls from a single webhook, exhausting the
-// installation's rate limit for every OTHER repo it gates. Bounded worker-pool fan-out, mirroring the same
-// fixed-concurrency shape already used elsewhere in this codebase for GitHub fan-out.
+// A contributor can have thousands of open rows across a large install. Verify in fixed-size batches and stop
+// once the caller has enough confirmed-open siblings to prove the cap is exceeded, preserving stale-row safety
+// without letting one webhook drain the installation rate-limit bucket.
 const GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY = 10;
 
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await mapper(items[index] as T);
-      }
-    }),
-  );
-  return results;
+async function countLiveOpenWithConcurrencyUntil(
+  rows: OpenItemAcrossInstallRow[],
+  concurrency: number,
+  stopAfterConfirmedOpen: number,
+  mapper: (row: OpenItemAcrossInstallRow) => Promise<boolean>,
+): Promise<number> {
+  let confirmedOpenCount = 0;
+  for (let start = 0; start < rows.length && confirmedOpenCount <= stopAfterConfirmedOpen; start += concurrency) {
+    const batch = rows.slice(start, start + concurrency);
+    const results = await Promise.all(batch.map(mapper));
+    confirmedOpenCount += results.filter(Boolean).length;
+  }
+  return confirmedOpenCount;
 }
 
 /**
@@ -4006,6 +4134,7 @@ async function verifiedGlobalOpenItemCount(
   installationId: number,
   authorLogin: string,
   currentItem: { repoFullName: string; number: number; kind: "pull_request" | "issue" },
+  globalCap: number,
 ): Promise<number> {
   const rows = await listOpenItemsForAuthorAcrossInstall(env, installationId, authorLogin);
   const otherRows = rows.filter(
@@ -4014,10 +4143,13 @@ async function verifiedGlobalOpenItemCount(
   const token = await createInstallationToken(env, installationId).catch(() => undefined);
   const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
-  const confirmedOpen = await mapWithConcurrency(otherRows, GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY, (row) =>
-    isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey),
+  const confirmedOpenCount = await countLiveOpenWithConcurrencyUntil(
+    otherRows,
+    GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY,
+    globalCap - 1,
+    (row) => isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey),
   );
-  return confirmedOpen.filter(Boolean).length + 1;
+  return confirmedOpenCount + 1;
 }
 
 /**
@@ -4074,7 +4206,7 @@ async function maybeCloseIssueOverContributorCap(
       repoFullName,
       number: issue.number,
       kind: "issue",
-    });
+    }, globalCap);
     if (globalOpenCount > globalCap) {
       const planned = planAgentMaintenanceActions({
         conclusion: "skipped",
@@ -4095,7 +4227,16 @@ async function maybeCloseIssueOverContributorCap(
       if (planned.length > 0) {
         await executeIssueMaintenanceActions(
           env,
-          { installationId, repoFullName, issueNumber: issue.number, autonomy: settings.autonomy, agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun },
+          {
+            installationId,
+            repoFullName,
+            issueNumber: issue.number,
+            autonomy: settings.autonomy,
+            agentPaused: settings.agentPaused,
+            agentDryRun: settings.agentDryRun,
+            authorLogin,
+            moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+          },
           planned,
         );
       }
@@ -4164,7 +4305,16 @@ async function maybeCloseIssueOverContributorCap(
   for (const overCapNumber of overCapNumbers) {
     await executeIssueMaintenanceActions(
       env,
-      { installationId, repoFullName, issueNumber: overCapNumber, autonomy: settings.autonomy, agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun },
+      {
+        installationId,
+        repoFullName,
+        issueNumber: overCapNumber,
+        autonomy: settings.autonomy,
+        agentPaused: settings.agentPaused,
+        agentDryRun: settings.agentDryRun,
+        authorLogin,
+        moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+      },
       planned,
     );
   }
@@ -9468,6 +9618,7 @@ async function maybeThrottleReviewNagPing(
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
+      moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
     },
     planned,
   );
@@ -9632,6 +9783,7 @@ async function maybeThrottleMonitoredMentions(
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
+      moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
     },
     planned,
   );

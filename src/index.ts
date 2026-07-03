@@ -158,6 +158,13 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     }
     jobs.push({ type: "repair-data-fidelity", requestedBy: "schedule" });
     jobs.push({ type: "refresh-installation-health", requestedBy: "schedule" });
+    // #selfhost-backlog-convergence: catches open PRs whose public review surface was never published for their
+    // current head — a blind spot the ~2-min re-gate sweep's dispatch-time `lastRegatedAt` stamping can miss (see
+    // selfhost/backlog-convergence.ts). Runs on the same conservative 30-min cadence as the other maintenance-band
+    // jobs above: it is a backstop for a rare stranding, not the primary convergence path, so it does not need the
+    // sweep's ~2-min cadence. Self-host only (mirrors "agent-regate-sweep") — the trigger job itself is maintenance-
+    // classified (MAINTENANCE_JOB_TYPES) so it defers under live-work pressure like every other periodic sweep here.
+    if (selfHostedReviews) jobs.push({ type: "backlog-convergence-sweep", requestedBy: "schedule" });
   }
   if (isHourly) {
     jobs.push({ type: "refresh-registry", requestedBy: "schedule" });

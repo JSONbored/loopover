@@ -20,9 +20,11 @@ const MAX_FINDINGS = 30; // keep the brief bounded
 // Compiled/non-source binary artifact extensions.
 const BINARY_EXT_RE =
   /\.(exe|dll|so|dylib|bin|pyc|pyo|class|jar|war|ear|wasm|o|a)$/i;
-// Vendored / embedded third-party source trees.
+// Vendored / embedded third-party source trees. bower_components (Bower) and jspm_packages (JSPM) are
+// installed-dependency directories — the same vendored case as node_modules — so a committed tree under either
+// is a vendored artifact, not contributor source (mirrors src/signals/path-matchers.ts's vendored classifier).
 const VENDORED_PATH_RE =
-  /(?:^|\/)(?:vendor|node_modules|third[_-]party|vendors)\//;
+  /(?:^|\/)(?:vendor|vendors|node_modules|bower_components|jspm_packages|third[_-]party)\//;
 // Minified files carry no reviewable source in the diff (effectively vendored).
 const MINIFIED_RE = /\.min\.[cm]?[jt]s$|\.min\.css$/i;
 

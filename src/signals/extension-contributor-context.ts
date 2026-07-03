@@ -105,7 +105,10 @@ function componentBand(score: number, max: number): ExtensionReadinessComponentB
   if (max <= 0) return "unmet";
   const ratio = score / max;
   if (ratio >= 0.85) return "met";
-  if (ratio >= 0.5) return "partial";
+  // Mirror the readiness rubric's ⚠️ cutoff (scoreResultIcon in engine.ts: ratio >= 0.45). A stricter 0.5 here
+  // showed a component scored in [0.45, 0.5) as fully "unmet" in the extension overlay while the maintainer-facing
+  // readiness table rendered the same component as ⚠️ (partial) — the two surfaces must agree on the same score.
+  if (ratio >= 0.45) return "partial";
   return "unmet";
 }
 

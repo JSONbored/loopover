@@ -33,7 +33,7 @@ test("does not open the circuit before the failure streak threshold — every re
     assert.equal(brief.analyzerStatus.history, "degraded");
   }
   assert.equal(calls, 2);
-  assert.equal(isAnalyzerCircuitOpen("history"), false);
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), false);
 });
 
 test("opens the circuit after 3 consecutive failures and SKIPS the analyzer on the next request — zero calls to the broken dependency", async () => {
@@ -43,7 +43,7 @@ test("opens the circuit after 3 consecutive failures and SKIPS the analyzer on t
     await buildBrief(baseReq, failing);
   }
   assert.equal(calls, 3);
-  assert.equal(isAnalyzerCircuitOpen("history"), true);
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), true);
 
   const brief = await buildBrief(baseReq, failing);
 
@@ -61,7 +61,7 @@ test("a timeout counts as a circuit-breaker failure, same as a thrown error", as
     const brief = await buildBrief(timeoutReq, hanging);
     assert.equal(brief.analyzerStatus.history, "timeout");
   }
-  assert.equal(isAnalyzerCircuitOpen("history"), true);
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), true);
 });
 
 test("a non-throwing DEGRADED/partial result does NOT count as a circuit-breaker failure (the dependency responded)", async () => {
@@ -74,20 +74,20 @@ test("a non-throwing DEGRADED/partial result does NOT count as a circuit-breaker
     assert.equal(brief.analyzerStatus.secret, "degraded");
     assert.notEqual(brief.analyzerStatus.secret, "skipped");
   }
-  assert.equal(isAnalyzerCircuitOpen("secret"), false);
+  assert.equal(isAnalyzerCircuitOpen("secret", baseReq), false);
 });
 
 test("a success resets the streak so it does not carry over into a LATER, separate run of failures", async () => {
-  recordAnalyzerCircuitFailure("history");
-  recordAnalyzerCircuitFailure("history");
-  recordAnalyzerCircuitSuccess("history");
+  recordAnalyzerCircuitFailure("history", baseReq);
+  recordAnalyzerCircuitFailure("history", baseReq);
+  recordAnalyzerCircuitSuccess("history", baseReq);
   let calls = 0;
   const failing = { history: async () => { calls += 1; throw new Error("boom"); } };
   // Two MORE failures after the reset — still below the streak threshold on their own.
   await buildBrief(baseReq, failing);
   await buildBrief(baseReq, failing);
   assert.equal(calls, 2);
-  assert.equal(isAnalyzerCircuitOpen("history"), false);
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), false);
 });
 
 test("REGRESSION: a circuit-expired analyzer is tried again rather than staying open forever", async () => {
@@ -96,22 +96,22 @@ test("REGRESSION: a circuit-expired analyzer is tried again rather than staying 
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
-    assert.equal(isAnalyzerCircuitOpen("history"), true);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), true);
 
     fakeNow = realNow + 5 * 60_000 + 1; // past the cooldown window
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false);
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false);
   } finally {
     Date.now = originalNow;
   }
 });
 
 test("recordAnalyzerCircuitSuccess on an analyzer with no prior failures is a safe no-op", () => {
-  assert.doesNotThrow(() => recordAnalyzerCircuitSuccess("secret"));
-  assert.equal(isAnalyzerCircuitOpen("secret"), false);
+  assert.doesNotThrow(() => recordAnalyzerCircuitSuccess("secret", baseReq));
+  assert.equal(isAnalyzerCircuitOpen("secret", baseReq), false);
 });
 
 test("an EXPLICITLY requested analyzer (req.analyzers) is still skipped while its circuit is open — the explicit request can't fix a down dependency", async () => {
@@ -136,11 +136,11 @@ test("REGRESSION: below the failure-streak threshold, isAnalyzerCircuitOpen neve
   // Before the fix, isAnalyzerCircuitOpen claimed probeClaimed for ANY existing state (cooldownUntilMs <=
   // nowMs is true even at cooldownUntilMs === 0, i.e. never-tripped), so a circuit with only 1-2 recorded
   // failures would spuriously block a second concurrent caller — even though the breaker never actually opened.
-  recordAnalyzerCircuitFailure("history");
-  recordAnalyzerCircuitFailure("history"); // 2 failures — still below the 3-failure trip threshold
+  recordAnalyzerCircuitFailure("history", baseReq);
+  recordAnalyzerCircuitFailure("history", baseReq); // 2 failures — still below the 3-failure trip threshold
 
-  assert.equal(isAnalyzerCircuitOpen("history"), false); // first caller — not open
-  assert.equal(isAnalyzerCircuitOpen("history"), false); // second, concurrent caller — also not open
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // first caller — not open
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // second, concurrent caller — also not open
 
   let calls = 0;
   const failing = { history: async () => { calls += 1; throw new Error("boom"); } };
@@ -157,13 +157,13 @@ test("half-open: only the FIRST caller after cooldown expiry gets to probe — a
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
     fakeNow = realNow + 5 * 60_000 + 1; // past the cooldown window
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false); // first caller claims the probe
-    assert.equal(isAnalyzerCircuitOpen("history"), true); // second caller, same instant — still blocked
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // first caller claims the probe
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), true); // second caller, same instant — still blocked
   } finally {
     Date.now = originalNow;
   }
@@ -175,15 +175,15 @@ test("half-open: a successful probe fully closes the circuit — a later caller 
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
     fakeNow = realNow + 5 * 60_000 + 1;
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false); // claims the probe
-    recordAnalyzerCircuitSuccess("history");
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // claims the probe
+    recordAnalyzerCircuitSuccess("history", baseReq);
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false); // fully closed, not "another probe"
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // fully closed, not "another probe"
   } finally {
     Date.now = originalNow;
   }
@@ -195,15 +195,15 @@ test("half-open: a failed probe re-extends the cooldown and immediately blocks n
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
     fakeNow = realNow + 5 * 60_000 + 1;
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false); // claims the probe
-    recordAnalyzerCircuitFailure("history", fakeNow);
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // claims the probe
+    recordAnalyzerCircuitFailure("history", baseReq, fakeNow);
 
-    assert.equal(isAnalyzerCircuitOpen("history"), true); // re-tripped, new cooldown active
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), true); // re-tripped, new cooldown active
   } finally {
     Date.now = originalNow;
   }
@@ -215,27 +215,27 @@ test("releaseAnalyzerCircuitProbe frees a claimed slot without recording an outc
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
-    recordAnalyzerCircuitFailure("history");
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
+    recordAnalyzerCircuitFailure("history", baseReq);
     fakeNow = realNow + 5 * 60_000 + 1;
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false); // claims the probe
-    assert.equal(isAnalyzerCircuitOpen("history"), true); // second caller blocked
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // claims the probe
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), true); // second caller blocked
 
-    releaseAnalyzerCircuitProbe("history"); // e.g. the probing analyzer never ran (budget-capped)
+    releaseAnalyzerCircuitProbe("history", baseReq); // e.g. the probing analyzer never ran (budget-capped)
 
-    assert.equal(isAnalyzerCircuitOpen("history"), false); // released — a fresh probe can be claimed
+    assert.equal(isAnalyzerCircuitOpen("history", baseReq), false); // released — a fresh probe can be claimed
   } finally {
     Date.now = originalNow;
   }
 });
 
 test("releaseAnalyzerCircuitProbe on an analyzer with no circuit state, or no claimed probe, is a safe no-op", () => {
-  assert.doesNotThrow(() => releaseAnalyzerCircuitProbe("secret"));
-  recordAnalyzerCircuitFailure("secret");
-  assert.doesNotThrow(() => releaseAnalyzerCircuitProbe("secret")); // tripped but cooling down, no probe claimed
-  assert.equal(isAnalyzerCircuitOpen("secret"), false); // below the streak threshold — unaffected either way
+  assert.doesNotThrow(() => releaseAnalyzerCircuitProbe("secret", baseReq));
+  recordAnalyzerCircuitFailure("secret", baseReq);
+  assert.doesNotThrow(() => releaseAnalyzerCircuitProbe("secret", baseReq)); // tripped but cooling down, no probe claimed
+  assert.equal(isAnalyzerCircuitOpen("secret", baseReq), false); // below the streak threshold — unaffected either way
 });
 
 test("end-to-end: two concurrent buildBrief calls right after cooldown expiry — only the FIRST invokes the analyzer, the second is skipped as circuit_open", async () => {
@@ -244,9 +244,9 @@ test("end-to-end: two concurrent buildBrief calls right after cooldown expiry �
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("secret");
-    recordAnalyzerCircuitFailure("secret");
-    recordAnalyzerCircuitFailure("secret");
+    recordAnalyzerCircuitFailure("secret", baseReq);
+    recordAnalyzerCircuitFailure("secret", baseReq);
+    recordAnalyzerCircuitFailure("secret", baseReq);
     fakeNow = realNow + 5 * 60_000 + 1;
 
     let calls = 0;
@@ -277,9 +277,9 @@ test("REGRESSION: a half-open probe claim is not leaked when the SAME planning p
   const originalNow = Date.now;
   try {
     Date.now = () => fakeNow;
-    recordAnalyzerCircuitFailure("secret");
-    recordAnalyzerCircuitFailure("secret");
-    recordAnalyzerCircuitFailure("secret");
+    recordAnalyzerCircuitFailure("secret", baseReq);
+    recordAnalyzerCircuitFailure("secret", baseReq);
+    recordAnalyzerCircuitFailure("secret", baseReq);
     fakeNow = realNow + 5 * 60_000 + 1; // past the cooldown window
 
     // A pure deletion (no `+` line) — "secret" requires added lines, so this is skipped as "no_added_lines",
@@ -306,4 +306,62 @@ test("REGRESSION: a half-open probe claim is not leaked when the SAME planning p
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("REGRESSION: repoFullName casing does not split one repository's failures across separate circuit entries", async () => {
+  let calls = 0;
+  const failing = { history: async () => { calls += 1; throw new Error("boom"); } };
+  const lowerReq = { ...baseReq, repoFullName: "jsonbored/gittensory" };
+  const upperReq = { ...baseReq, repoFullName: "JSONbored/Gittensory" };
+  await buildBrief(lowerReq, failing);
+  await buildBrief(upperReq, failing);
+  await buildBrief(lowerReq, failing);
+
+  assert.equal(calls, 3);
+  assert.equal(isAnalyzerCircuitOpen("history", lowerReq), true);
+  assert.equal(isAnalyzerCircuitOpen("history", upperReq), true);
+});
+
+test("REGRESSION: an idle circuit entry is evicted rather than retained forever, bounding the breaker map's size", async () => {
+  const realNow = Date.now();
+  let fakeNow = realNow;
+  const originalNow = Date.now;
+  try {
+    Date.now = () => fakeNow;
+    // Trips the circuit for one repo, then goes idle -- no further failures ever recorded for it.
+    const staleReq = { ...baseReq, repoFullName: "stale/abandoned-repo" };
+    recordAnalyzerCircuitFailure("history", staleReq, fakeNow);
+    recordAnalyzerCircuitFailure("history", staleReq, fakeNow);
+    recordAnalyzerCircuitFailure("history", staleReq, fakeNow);
+    assert.equal(isAnalyzerCircuitOpen("history", staleReq, fakeNow), true);
+
+    // Far past both the cooldown AND the idle-eviction window -- another repo's failure should sweep it.
+    fakeNow = realNow + 6 * 5 * 60_000 + 1;
+    recordAnalyzerCircuitFailure("history", baseReq, fakeNow);
+
+    // The stale entry is gone: isAnalyzerCircuitOpen sees no state at all, not a lingering (expired) cooldown.
+    assert.equal(isAnalyzerCircuitOpen("history", staleReq, fakeNow), false);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("REGRESSION: failures for one repository do not open the analyzer circuit for another repository", async () => {
+  let attackerCalls = 0;
+  const failing = { history: async () => { attackerCalls += 1; throw new Error("boom"); } };
+  const attackerReq = { ...baseReq, repoFullName: "attacker/failure-seed" };
+  for (let i = 0; i < 3; i += 1) {
+    await buildBrief(attackerReq, failing);
+  }
+  assert.equal(attackerCalls, 3);
+  assert.equal(isAnalyzerCircuitOpen("history", attackerReq), true);
+  assert.equal(isAnalyzerCircuitOpen("history", baseReq), false);
+
+  let victimCalls = 0;
+  const healthy = { history: async () => { victimCalls += 1; return []; } };
+  const victimReq = { ...baseReq, repoFullName: "victim/security-critical" };
+  const victimBrief = await buildBrief(victimReq, healthy);
+
+  assert.equal(victimCalls, 1);
+  assert.notEqual(victimBrief.analyzerStatus.history, "skipped");
 });

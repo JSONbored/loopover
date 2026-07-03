@@ -21,6 +21,7 @@ import {
   extractBrowserSessionToken,
   extractCookieValue,
   isAuthorizedGitHubSessionLogin,
+  isMcpReadUnscoped,
   revokeSession,
   timingSafeEqual,
   type AuthIdentity,
@@ -4979,6 +4980,14 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before contributor-scoped route guards. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
+  // The shared, end-user-obtainable GITTENSORY_MCP_TOKEN (static `mcp` identity) must NOT read an ARBITRARY
+  // contributor's private decision pack / profile / notifications over HTTP either — this mirrors the MCP tool
+  // surface's guard for the identical data (GittensoryMcp.requireContributorAccess, #2455). Without this, the
+  // HTTP surface silently grants what the MCP surface explicitly denies for the very same token. Only the full
+  // MCP_READ_REPO_ALLOWLIST wildcard opt-in unlocks it; operator-only `api`/`internal` tokens stay trusted by design.
+  if (identity.kind === "static" && identity.actor === "mcp" && !isMcpReadUnscoped(c.env.MCP_READ_REPO_ALLOWLIST)) {
+    return c.json({ error: "forbidden_contributor" }, 403);
+  }
   return null;
 }
 

@@ -213,6 +213,17 @@ export type JobMessage =
       // Enqueued by the cron every sweep cycle (≈2 min) ONLY when ORB_BROKER_ENABLED is set.
       type: "retry-orb-relay";
       requestedBy: "schedule" | "test";
+    }
+  | {
+      // Self-host backlog-convergence sweep (#selfhost-backlog-convergence): finds open PRs whose public review
+      // surface was never published for their current head (a blind spot the periodic re-gate sweep's dispatch-
+      // time stamping can miss — see selfhost/backlog-convergence.ts) and fans out one `agent-regate-pr` job per
+      // candidate. No `repoFullName` = fan-out: enqueue one per convergence-eligible repo, mirroring
+      // "agent-regate-sweep". With `repoFullName` = sweep that one repo's stale-surface open PRs.
+      type: "backlog-convergence-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
+      installationId?: number;
     };
 
 export type GitHubWebhookPayload = {
@@ -825,6 +836,21 @@ export type RepositorySettings = {
   /** Per-repo dry-run/shadow mode (#776): when true, the action layer records what it WOULD do without
    *  performing any GitHub mutation. Default false. */
   agentDryRun?: boolean | undefined;
+  /** Moderation-rules engine (#selfhost-mod-engine): whether the whole layer runs on THIS repo. `"inherit"`
+   *  (the DB default) defers to `global_moderation_config.enabled`; `"off"`/`"enabled"` force this repo
+   *  regardless of the global default. Always populated by the DB layer; optional so existing settings
+   *  fixtures/callers need not be touched. */
+  moderationGateMode?: "inherit" | "off" | "enabled" | undefined;
+  /** Moderation-rules engine: a per-repo override of WHICH of the three existing anti-abuse mechanisms
+   *  (contributor cap, blacklist, review-nag) feed a contributor's shared, cross-repo violation tally.
+   *  `undefined`/absent ⇒ inherit the global rule set (`resolveEffectiveModerationRules`'s default shape). */
+  moderationRules?: ("contributor_cap" | "blacklist" | "review_nag")[] | undefined;
+  /** Moderation-rules engine: per-repo override of the label applied at >=1 lifetime violation. `undefined` ⇒
+   *  the global config's `warningLabel` (itself defaulting to `"mod:warning"`). */
+  moderationWarningLabel?: string | undefined;
+  /** Moderation-rules engine: per-repo override of the label applied at >= the ban threshold. `undefined` ⇒
+   *  the global config's `bannedLabel` (itself defaulting to `"mod:banned"`). */
+  moderationBannedLabel?: string | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };

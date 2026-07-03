@@ -117,6 +117,23 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.updatedAt).toBe(out.generatedAt);
   });
 
+  it("breaks byProject ties on project name so equal-reviewed repos keep a deterministic order", async () => {
+    // Two repos share reviewed=10, fed in reverse-alphabetical input order; the busier repo
+    // still leads and the tied pair must come out alphabetically, not in arbitrary SQL order.
+    const tied = (sql: string): Row[] => {
+      if (isDispositions(sql)) {
+        return [
+          { project: "JSONbored/zed", reviewed: 10, merged: 5, closed: 3, inReview: 2 },
+          { project: "JSONbored/alpha", reviewed: 10, merged: 5, closed: 3, inReview: 2 },
+          { project: "JSONbored/beta", reviewed: 50, merged: 30, closed: 10, inReview: 10 },
+        ];
+      }
+      return [];
+    };
+    const out = await getPublicStats(stubEnv(tied), NOW);
+    expect(out.byProject.map((p) => p.project)).toEqual(["JSONbored/beta", "JSONbored/alpha", "JSONbored/zed"]);
+  });
+
   it("folds Orb installs into the global totals on top of the own-ledger totals", async () => {
     const withOrb = (sql: string): Row[] =>
       sql.includes("orb_pr_outcomes") ? [{ merged: 50, closed: 30, total: 80 }] : ledger(sql);

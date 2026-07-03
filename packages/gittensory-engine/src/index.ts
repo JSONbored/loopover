@@ -38,3 +38,21 @@ export {
   computeLaneFit,
   type GoalModelInput,
 } from "./goal-model.js";
+  classifyContributorFit,
+  type ContributorFit,
+  type ContributorFitCheck,
+  type ContributorFitProfile,
+} from "./contributor-fit.js";
+export {
+  computeOpportunityFreshness,
+  type FreshnessIssue,
+} from "./opportunity-freshness.js";
+export {
+  buildMetadataRankInput,
+  computeMetadataDupRisk,
+  computeMetadataFeasibility,
+  computeMetadataPotential,
+  rankMetadataOpportunities,
+  type MetadataCandidateIssue,
+  type MetadataRankContext,
+} from "./opportunity-metadata.js";

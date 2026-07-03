@@ -306,6 +306,7 @@ describe("worker entrypoint", () => {
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
+      { type: "backlog-convergence-sweep", requestedBy: "schedule" },
     ]);
     expect(snapshotCalled).toBe(true);
   });
@@ -334,6 +335,7 @@ describe("worker entrypoint", () => {
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
+      { type: "backlog-convergence-sweep", requestedBy: "schedule" },
     ]);
   });
 
@@ -465,6 +467,7 @@ describe("worker entrypoint", () => {
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
+      { type: "backlog-convergence-sweep", requestedBy: "schedule" },
       { type: "refresh-registry", requestedBy: "schedule" },
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
@@ -491,6 +494,7 @@ describe("worker entrypoint", () => {
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "full" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
+      { type: "backlog-convergence-sweep", requestedBy: "schedule" },
       { type: "refresh-registry", requestedBy: "schedule" },
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
@@ -534,6 +538,7 @@ describe("worker entrypoint", () => {
       "backfill-registered-repos",
       "repair-data-fidelity",
       "refresh-installation-health",
+      "backlog-convergence-sweep",
       "refresh-registry",
       "refresh-scoring-model",
       "refresh-upstream-drift",

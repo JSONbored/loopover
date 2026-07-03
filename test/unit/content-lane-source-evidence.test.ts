@@ -290,6 +290,27 @@ describe("extractSubmittedSourceUrls — frontmatter parsing edge cases", () => 
     );
   });
 
+  it("does not surface any block-scalar header on a list field as a bogus URL (both indicator orders)", () => {
+    // `retrievalSources` is a list field; a block-scalar header is not a URL. The old guard only skipped the bare
+    // `|`/`>`, so `|-` leaked as the literal url "|-". YAML allows chomping and the indentation digit in EITHER
+    // order, so `|2-`/`>2+` (indent-then-chomp) and bare chomping `|+`/`|-` must all be skipped too.
+    const indicators = ["|", ">", "|-", ">-", "|+", ">+", "|2", ">2", "|-2", "|2-", ">2+", ">2-"];
+    for (const indicator of indicators) {
+      const src = ["---", `retrievalSources: ${indicator}`, "  https://a.example/1", "  https://b.example/2", "---", "", "body"].join("\n");
+      const urls = extractSubmittedSourceUrls(src);
+      expect(urls.some((u) => u.url === indicator)).toBe(false);
+    }
+    // A block-scalar header may carry a trailing inline comment (`|- # sources below`) — still a header, not a URL.
+    for (const indicator of ["|-", ">", "|2-"]) {
+      const src = ["---", `retrievalSources: ${indicator} # sources below`, "  https://a.example/1", "---", "", "body"].join("\n");
+      const urls = extractSubmittedSourceUrls(src);
+      expect(urls.some((u) => u.url === indicator || u.url.includes("#"))).toBe(false);
+    }
+    // A real URL carrying a trailing inline comment is still read (the comment is stripped, the fragment kept).
+    const commented = extractSubmittedSourceUrls(["---", "retrievalSources: https://a.example/p#frag # note", "---", "", "body"].join("\n"));
+    expect(commented.map((u) => u.url)).toContain("https://a.example/p#frag");
+  });
+
   it("reads an INLINE bracketed list on a retrievalSources key line", () => {
     const src = [
       "---",

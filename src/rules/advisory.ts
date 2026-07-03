@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import type { CollisionCluster, CollisionReport } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
+import { isCodeFile } from "../signals/local-branch";
 import { isTestPath } from "../signals/test-evidence";
 import { nowIso } from "../utils/json";
 import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
@@ -354,7 +355,12 @@ export function buildCheckRunAnnotations(
   };
 
   const annotatableFiles = annotatablePullRequestFiles(annotationContext.files);
-  const codeFiles = annotatableFiles.filter((file) => !isTestPath(file.path));
+  // "Code" for the missing-test signal is GENUINE source (isCodeFile), not merely "anything that isn't a test":
+  // annotatableFiles is gated by isCodePath, which admits docs/config/data (.md/.yaml/.yml/.json/.toml), so a
+  // docs-, config-, or manifest-only PR would otherwise be flagged "Missing test evidence" for changing files
+  // that have nothing to cover. Mirrors the isCodeFile source predicate #2722 aligned the missing_tests check to
+  // (contributor-open-pr-monitor.ts) and slop.ts's buildMissingTestEvidenceFinding.
+  const codeFiles = annotatableFiles.filter((file) => isCodeFile(file.path));
   const testFiles = annotatableFiles.filter((file) => isTestPath(file.path));
   if (codeFiles.length > 0 && testFiles.length === 0) {
     for (const file of codeFiles) {

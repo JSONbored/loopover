@@ -8970,6 +8970,31 @@
           "typeLabelsEnabled": {
             "type": "boolean"
           },
+          "moderationGateMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
+            ]
+          },
+          "moderationRules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "contributor_cap",
+                "blacklist",
+                "review_nag"
+              ]
+            }
+          },
+          "moderationWarningLabel": {
+            "type": "string"
+          },
+          "moderationBannedLabel": {
+            "type": "string"
+          },
           "typeLabels": {
             "type": "object",
             "properties": {

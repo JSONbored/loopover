@@ -1578,6 +1578,42 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(noOverride.autoCloseExemptLogins).toEqual(["keep-me"]);
   });
 
+  it("parses + resolves the moderation-rules engine settings from the settings: block, overlaying the DB (#selfhost-mod-engine)", () => {
+    const manifest = parseFocusManifest({ settings: { moderationGateMode: "enabled", moderationRules: ["blacklist", "not-a-rule" as never], moderationWarningLabel: "repo:warn", moderationBannedLabel: "repo:ban" } });
+    expect(manifest.settings.moderationGateMode).toBe("enabled");
+    expect(manifest.settings.moderationRules).toEqual(["blacklist"]); // invalid entry dropped
+    expect(manifest.settings.moderationWarningLabel).toBe("repo:warn");
+    expect(manifest.settings.moderationBannedLabel).toBe("repo:ban");
+    // yml overlays (replaces) the DB-configured values.
+    const eff = resolveEffectiveSettings({ moderationGateMode: "off", moderationRules: ["review_nag"], moderationWarningLabel: "db:warn", moderationBannedLabel: "db:ban" } as unknown as RepositorySettings, manifest);
+    expect(eff.moderationGateMode).toBe("enabled");
+    expect(eff.moderationRules).toEqual(["blacklist"]);
+    expect(eff.moderationWarningLabel).toBe("repo:warn");
+    expect(eff.moderationBannedLabel).toBe("repo:ban");
+    // Omitted in yml ⇒ the DB-configured values survive untouched.
+    const noOverride = resolveEffectiveSettings({ moderationGateMode: "off", moderationWarningLabel: "db:warn" } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(noOverride.moderationGateMode).toBe("off");
+    expect(noOverride.moderationWarningLabel).toBe("db:warn");
+    // An intentional EMPTY moderationRules override (opting every rule out for this repo) still applies --
+    // distinct from an all-invalid block, which is dropped instead (see autoCloseExemptLogins above).
+    const emptyOverride = resolveEffectiveSettings({ moderationRules: ["blacklist"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: [] } }));
+    expect(emptyOverride.moderationRules).toEqual([]);
+    // REGRESSION (gate-flagged): an ALL-INVALID moderationRules block (every entry fails validation, so
+    // normalizeModerationRules ALSO degrades it to an empty array) must NOT be treated as the intentional
+    // empty-list case above -- it is malformed input, not a real opt-out, so the DB-configured value survives.
+    const allInvalidPreserved = resolveEffectiveSettings({ moderationRules: ["blacklist"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: ["not-a-rule", "also-not-a-rule"] as never } }));
+    expect(allInvalidPreserved.moderationRules).toEqual(["blacklist"]);
+    // REGRESSION (gate-flagged): a non-array moderationRules value (e.g. a typo'd bare string) is malformed
+    // the same way -- must not silently disable every rule for this repo either.
+    const nonArrayPreserved = resolveEffectiveSettings({ moderationRules: ["review_nag"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: "blacklist" as never } }));
+    expect(nonArrayPreserved.moderationRules).toEqual(["review_nag"]);
+    // An invalid enum / blank label is dropped with a warning rather than silently coerced.
+    const invalid = parseFocusManifest({ settings: { moderationGateMode: "sometimes" as never, moderationWarningLabel: "   " } });
+    expect(invalid.settings.moderationGateMode).toBeUndefined();
+    expect(invalid.settings.moderationWarningLabel).toBeUndefined();
+    expect(invalid.warnings.some((w) => /settings\.moderationGateMode/.test(w))).toBe(true);
+  });
+
   it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {
     // Omitted key preserves the DB value (already covered above); an explicit `null` must ALSO be able to
     // override a DB-configured cap back to "no cap" — the documented `yml > DB > null` precedence otherwise

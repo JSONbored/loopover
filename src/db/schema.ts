@@ -137,6 +137,13 @@ export const repositorySettings = sqliteTable("repository_settings", {
   commandRateLimitMaxPerWindow: integer("command_rate_limit_max_per_window").notNull().default(20),
   commandRateLimitAiMaxPerWindow: integer("command_rate_limit_ai_max_per_window").notNull().default(5),
   commandRateLimitWindowHours: integer("command_rate_limit_window_hours").notNull().default(24),
+  // Moderation-rules engine (#selfhost-mod-engine): per-repo overrides layered over global_moderation_config.
+  // 'inherit' (default) defers to the global master switch; 'off'/'enabled' force this repo regardless of it.
+  moderationGateMode: text("moderation_gate_mode").notNull().default("inherit"),
+  // Nullable: null = inherit the global rule set / label text, never "unset to empty".
+  moderationRulesJson: text("moderation_rules_json"),
+  moderationWarningLabel: text("moderation_warning_label"),
+  moderationBannedLabel: text("moderation_banned_label"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });

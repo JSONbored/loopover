@@ -8282,6 +8282,63 @@ describe("queue processors", () => {
     expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
   });
 
+  it("install-wide contributor open-item cap (#2562): stops live verification after the cap is exceeded", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP: "1" });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo-a", full_name: "JSONbored/repo-a", private: false, owner: { login: "JSONbored" } }],
+    });
+    for (let number = 1; number <= 30; number += 1) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/repo-a", { number, title: `Farmer PR ${number}`, state: "open", user: { login: "farmer99" }, head: { sha: `fa${number}` }, labels: [], body: "x" });
+    }
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/repo-a",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    const seen = { closed: false, livePullReads: [] as number[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      const siblingPull = url.match(/\/repos\/JSONbored\/repo-a\/pulls\/(\d+)$/);
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+      if (siblingPull && siblingPull[1] !== "55") { seen.livePullReads.push(Number(siblingPull[1])); return Response.json({ number: Number(siblingPull[1]), state: "open" }); }
+      if (url.includes("/pulls/55/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/55/reviews")) return Response.json([]);
+      if (url.includes("/pulls/55/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/55") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 55, state: "closed" }); }
+      if (url.endsWith("/pulls/55")) return Response.json({ number: 55, state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, mergeable_state: "clean" });
+      if (url.includes("/commits/f55/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/f55/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/55/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/55/labels") && method === "POST") return Response.json([]);
+      if (url.includes("/issues/55/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/issues/55/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "global-contributor-cap-short-circuit",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "repo-a", full_name: "JSONbored/repo-a", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer's 31st PR install-wide", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(seen.livePullReads).toHaveLength(10);
+    expect(seen.livePullReads).not.toContain(11);
+  });
+
   it("install-wide contributor open-item cap (#2562): off by default (env var unset) — a spread-across-repos actor is never closed", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() }); // no GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP
     await upsertInstallation(env, {
@@ -18553,5 +18610,143 @@ describe("enrichOpenPullRequestsWithChangedFiles (#2653)", () => {
     const result = await enrichOpenPullRequestsWithChangedFiles(env, "owner/repo", input);
 
     expect(result).toBe(input);
+  });
+});
+
+describe("backlog-convergence sweep (#selfhost-backlog-convergence)", () => {
+  it("fans out to acting-autonomy repos, skipping a non-acting/non-allowlisted repo", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "",
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } });
+    await upsertRepositoryFromGitHub(env, { name: "plain-repo", full_name: "owner/plain-repo", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { merge: "auto" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/plain-repo", autonomy: { review: "observe" } });
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: "backlog-convergence-sweep", repoFullName: "owner/agent-a" });
+    const fanout = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?")
+      .bind("agent.sweep.backlog_convergence.fanout")
+      .first<{ outcome: string; metadata_json: string }>();
+    expect(fanout?.outcome).toBe("queued");
+    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, requestedBy: "schedule" });
+  });
+
+  it("also fans out to an allowlisted repo regardless of autonomy mode (#sweep-all-modes parity)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "owner/advisory-repo", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertRepositoryFromGitHub(env, { name: "advisory-repo", full_name: "owner/advisory-repo", private: false, owner: { login: "owner" } }, 9502);
+    await upsertRepositorySettings(env, { repoFullName: "owner/advisory-repo", autonomy: { merge: "observe" } });
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+
+    expect(sent).toEqual([expect.objectContaining({ type: "backlog-convergence-sweep", repoFullName: "owner/advisory-repo", installationId: 9502 })]);
+  });
+
+  it("fans out to an allowlisted repo that was never registered locally (no installationId) and staggers a second repo's delay", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_REPOS: "owner/never-registered",
+      JOBS: { async send(m: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) { sent.push({ message: m, ...(options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds }) }); } } as unknown as Queue,
+    });
+    await upsertRepositoryFromGitHub(env, { name: "agent-a", full_name: "owner/agent-a", private: false, owner: { login: "owner" } }, 9506);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-a", autonomy: { merge: "auto" } });
+    // owner/never-registered is allowlisted but has no local repository row at all -> no installationId to attach.
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule" });
+
+    expect(sent).toHaveLength(2);
+    const neverRegistered = sent.find((s) => s.message.type === "backlog-convergence-sweep" && s.message.repoFullName === "owner/never-registered");
+    expect(neverRegistered?.message).not.toHaveProperty("installationId");
+    // Whichever entry landed second (index 1) carries a nonzero stagger delay.
+    expect(sent.some((s) => (s.delaySeconds ?? 0) > 0)).toBe(true);
+  });
+
+  it("no-ops safely on a missing repo arg or an un-configured repo", async () => {
+    const env = createTestEnv({});
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test" });
+    await upsertRepositoryFromGitHub(env, { name: "plain-repo", full_name: "owner/plain-repo", private: false, owner: { login: "owner" } });
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/plain-repo" });
+
+    const count = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.sweep.backlog_convergence").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("respects the global pause kill-switch: a paused repo records a denial and enqueues nothing", async () => {
+    const env = createTestEnv({});
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9503);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, agentPaused: true });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale surface", state: "open", user: { login: "contributor" }, head: { sha: "abc" }, labels: [], body: "x" });
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    const audit = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ?")
+      .bind("agent.sweep.backlog_convergence")
+      .first<{ outcome: string; detail: string; metadata_json: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toMatch(/paused/i);
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ mode: "paused" });
+  });
+
+  it("stays quiet (no audit, no enqueue) with no installation to act with", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }); // no installationId
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale surface", state: "open", user: { login: "contributor" }, head: { sha: "abc" }, labels: [], body: "x" });
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    expect(sent).toEqual([]);
+    const count = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.sweep.backlog_convergence").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("stays quiet when every open PR's surface is already published at its current head", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9504, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9504);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Converged", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "x" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 7, "a7");
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    expect(sent).toEqual([]);
+  });
+
+  it("fans out one agent-regate-pr per stale-surface candidate, tagged with the backlog-convergence deliveryId prefix", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9505, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9505);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    // #7 never had its surface published; #8 was published at an OLDER head than its current one; #9 is fully converged.
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Never published", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 8, title: "Stale surface", state: "open", user: { login: "contributor" }, head: { sha: "b8" }, labels: [], body: "x" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 8, "old-b8");
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 9, title: "Converged", state: "open", user: { login: "contributor" }, head: { sha: "a9" }, labels: [], body: "x" });
+    await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 9, "a9");
+
+    await processJob(env, { type: "backlog-convergence-sweep", requestedBy: "schedule", repoFullName: "owner/agent-repo" });
+
+    const fanned = sent.filter((job): job is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => job.type === "agent-regate-pr");
+    expect(fanned.map((job) => job.prNumber).sort()).toEqual([7, 8]);
+    for (const job of fanned) {
+      expect(job.deliveryId).toBe(`backlog-convergence:owner/agent-repo#${job.prNumber}`);
+      expect(job.installationId).toBe(9505);
+    }
+    const audit = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = ?")
+      .bind("agent.sweep.backlog_convergence")
+      .first<{ outcome: string; detail: string; metadata_json: string }>();
+    expect(audit?.outcome).toBe("completed");
+    const meta = JSON.parse(audit?.metadata_json ?? "{}");
+    expect(meta).toMatchObject({ repoFullName: "owner/agent-repo", openCount: 3, examined: 2 });
+    expect(meta.candidatePulls.sort()).toEqual([7, 8]);
   });
 });

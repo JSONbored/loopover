@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildManifest } from "../../src/selfhost/setup-wizard";
 
 const DOCS_PATH = "apps/gittensory-ui/src/routes/docs.self-hosting-github-app.tsx";
+const ENV_EXAMPLE_PATH = ".env.example";
 
 // docs.self-hosting-github-app.tsx claims its manual permission list "is generated from the identical
 // source the wizard's manifest uses, so the two can never drift apart again" (#2542). That claim is only
@@ -21,6 +22,19 @@ const PERMISSION_LABELS: Record<string, string> = {
 };
 
 describe("self-host GitHub App manifest <-> docs parity (#2542)", () => {
+  it("documents setup-token entry without putting the secret in the URL", () => {
+    const docsSource = readFileSync(DOCS_PATH, "utf8");
+    const envExample = readFileSync(ENV_EXAMPLE_PATH, "utf8");
+
+    expect(docsSource).toContain('open "https://reviews.example.com/setup"');
+    expect(docsSource).toContain("x-setup-token");
+    expect(docsSource).toContain("Authorization: Bearer");
+    expect(envExample).toContain("enter the token in the browser form");
+    expect(envExample).toContain("x-setup-token / Bearer header");
+    expect(envExample).toContain("Never put this token in");
+    expect(`${docsSource}\n${envExample}`).not.toMatch(/\/setup\?token|\?token=<|token=</);
+  });
+
   it("the docs page's manual permission list names every buildManifest permission at the correct access level", () => {
     const manifest = buildManifest("https://example.com", "state") as { default_permissions: Record<string, string> };
     const docsSource = readFileSync(DOCS_PATH, "utf8");

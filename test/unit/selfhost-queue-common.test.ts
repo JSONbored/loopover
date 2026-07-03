@@ -56,6 +56,7 @@ describe("self-host queue common helpers", () => {
     expect(jobPriority(payload({ type: "recapture-preview" }))).toBe(9);
     expect(jobPriority(payload({ type: "agent-regate-sweep" }))).toBe(8);
     expect(jobPriority(payload({ type: "rag-index-repo" }))).toBe(0);
+    expect(jobPriority(payload({ type: "backlog-convergence-sweep" }))).toBe(0);
     expect(jobPriority("{}")).toBe(0);
     expect(jobPriority("not-json")).toBe(0);
   });
@@ -597,6 +598,8 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "agent-regate-pr", repoFullName: "JSONbored/Gittensory" }))).toBeNull();
     expect(jobCoalesceKey(payload({ type: "agent-regate-sweep", requestedBy: "schedule" }))).toBe("agent-regate-sweep:all");
     expect(jobCoalesceKey(payload({ type: "agent-regate-sweep", repoFullName: "JSONbored/Gittensory" }))).toBe("agent-regate-sweep:jsonbored/gittensory");
+    expect(jobCoalesceKey(payload({ type: "backlog-convergence-sweep", requestedBy: "schedule" }))).toBe("backlog-convergence-sweep:all");
+    expect(jobCoalesceKey(payload({ type: "backlog-convergence-sweep", repoFullName: "JSONbored/Gittensory" }))).toBe("backlog-convergence-sweep:jsonbored/gittensory");
     expect(jobCoalesceKey(payload({ type: "recapture-preview", repoFullName: "JSONbored/Gittensory", prNumber: 7, attempt: 2 }))).toBe("recapture-preview:jsonbored/gittensory#7:2");
     expect(jobCoalesceKey(payload({ type: "recapture-preview", repoFullName: "JSONbored/Gittensory", prNumber: 7 }))).toBeNull();
     expect(

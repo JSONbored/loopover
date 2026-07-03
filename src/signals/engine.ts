@@ -5515,7 +5515,13 @@ function sanitizeOutcomeDimensionKey(key: string): string {
 }
 
 function isCodeFile(file: string): boolean {
-  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
+  // Mirrors isCodeFile in local-branch.ts — kept in sync (cs/swift/groovy added
+  // so C#/Swift/Groovy source counts as code, matching the test conventions
+  // isTestPath already recognizes).
+  return (
+    /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy)$/i.test(file) &&
+    !isTestFile(file)
+  );
 }
 
 function isTestFile(file: string): boolean {

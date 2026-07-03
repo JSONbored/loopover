@@ -39,6 +39,7 @@ const MIGRATIONS_DIR = process.env.CHECK_SCHEMA_DRIFT_DIR || "migrations";
 export const RAW_SQL_ONLY_TABLES = new Set([
   "global_agent_controls",
   "global_contributor_blacklist",
+  "global_moderation_config",
   "orb_enrollments",
   "orb_export_cursor",
   "orb_github_installations",

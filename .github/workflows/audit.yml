@@ -21,7 +21,7 @@ concurrency:
 jobs:
   audit:
     name: audit
-    runs-on: [self-hosted, gittensory]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout

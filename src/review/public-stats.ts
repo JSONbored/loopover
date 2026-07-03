@@ -271,7 +271,10 @@ export async function getPublicStats(
       };
     })
     .filter((r) => r.reviewed > 0)
-    .sort((a, b) => b.reviewed - a.reviewed);
+    // Tie-break on project so repos with an equal reviewed count keep a stable,
+    // deterministic published order instead of following arbitrary SQL row order,
+    // matching the localeCompare tie-breaks used by the parity/auto-tune reports.
+    .sort((a, b) => b.reviewed - a.reviewed || a.project.localeCompare(b.project));
 
   // Global counter: fold in every REGISTERED Orb install's outcomes on top of the own-ledger totals above, so the
   // homepage reflects the whole fleet. No excludeAccount here (see the file header) -- reversals/weekly stay

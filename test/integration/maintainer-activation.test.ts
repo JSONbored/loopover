@@ -150,6 +150,28 @@ describe("maintainer activation routes", () => {
     expect(await response.json()).toMatchObject({ autonomy: { merge: "auto_with_approval" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" } });
   });
 
+  it("persists selfAuthoredLinkedIssueGateMode from the settings PUT (API/OpenAPI parity)", async () => {
+    // The dashboard save path (maintainerSettingsSchema) omitted this DB-backed gate mode, so a maintainer
+    // setting it to `block` via the API had it silently stripped by the validator — while its OpenAPI schema
+    // and config-as-code path both accept it, and the gate genuinely enforces `block`. Prove the round-trip.
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRepo(env, "owner", "repo", 202);
+    stubMinerFetch();
+    mockedPermission.mockResolvedValue("write");
+    const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 202 });
+    const response = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
+      method: "PUT",
+      headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ selfAuthoredLinkedIssueGateMode: "block" }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ selfAuthoredLinkedIssueGateMode: "block" });
+    const persisted = await getRepositorySettings(env, FULL_NAME);
+    expect(persisted.selfAuthoredLinkedIssueGateMode).toBe("block");
+  });
+
   it("forbids a non-maintainer session from the activation preview", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "operator-admin" });

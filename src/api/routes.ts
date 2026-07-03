@@ -664,6 +664,7 @@ const maintainerSettingsSchema = z
     qualityGateMinScore: z.number().int().min(0).max(100).nullable(),
     mergeReadinessGateMode: z.enum(["off", "advisory", "block"]),
     manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),
+    selfAuthoredLinkedIssueGateMode: z.enum(["off", "advisory", "block"]),
     firstTimeContributorGrace: z.boolean(),
     slopGateMode: z.enum(["off", "advisory", "block"]),
     slopGateMinScore: z.number().int().min(0).max(100).nullable(),

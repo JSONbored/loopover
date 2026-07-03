@@ -4,6 +4,7 @@ import {
   addedLinesForSecretScan,
   buildSecretScanDiff,
   enrichSecretScanFilesWithPatchFallback,
+  incompletePatchLessSecretScanFinding,
   maybeAddSecretLeakFinding,
 } from "../../src/queue/processors";
 import type { FileFetcher } from "../../src/review/review-grounding";
@@ -769,7 +770,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     expect(secretLeakFinding(buildSecretScanDiff(enriched))).toBeNull();
   });
 
-  it("leaves a patch-less file unchanged when fetched content exceeds the scan cap", async () => {
+  it("marks a patch-less file incomplete when fetched content exceeds the scan cap", async () => {
     const oversized = "x".repeat(512_001);
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
@@ -794,6 +795,8 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
       fetcher,
     });
     expect(enriched[0]?.payload.patch).toBeUndefined();
+    expect(enriched[0]?.payload.secretScanIncomplete).toBe(true);
+    expect(incompletePatchLessSecretScanFinding(enriched)?.code).toBe("secret_leak");
   });
 
   it("leaves one patch-less file unchanged when its fetch rejects without blocking siblings", async () => {
@@ -949,5 +952,42 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     });
     spy.mockRestore();
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
+  });
+
+  it("blocks when patch-less enrichment cannot fully scan an oversized file", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    const oversized = "x".repeat(512_001);
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "secrets.env",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
+    ];
+    const groundingWire = await import("../../src/review/grounding-wire");
+    const fetcher: FileFetcher = {
+      async getFileContent(path, ref) {
+        if (path === "secrets.env" && ref === "head-sha") return oversized;
+        return null;
+      },
+    };
+    const spy = vi.spyOn(groundingWire, "makeGithubFileFetcher").mockResolvedValue(fetcher);
+    await maybeAddSecretLeakFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      files,
+      installationId: 1,
+      headSha: "head-sha",
+      baseSha: "base-sha",
+    });
+    spy.mockRestore();
+    expect(adv.findings.some((f) => f.title.includes("could not be fully scanned"))).toBe(true);
   });
 });

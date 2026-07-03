@@ -5490,6 +5490,8 @@ export function buildSecretScanDiff(
 
 /** Per-file cap when synthesizing a patch for GitHub's patch-less (binary/large) PR files. */
 const SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS = 512_000;
+/** Bound concurrent Contents API reads during patch-less secret-scan enrichment. */
+const SECRET_SCAN_PATCH_FALLBACK_MAX_CONCURRENT = 4;
 
 /** Lines present in `head` but not in `base` (multiset), for scanning only the additions on a modified file. */
 export function addedLinesForSecretScan(base: string, head: string): string[] {
@@ -5517,10 +5519,52 @@ function isOverSecretScanContentLimit(content: string): boolean {
   return content.length > SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS;
 }
 
+function markPatchLessSecretScanIncomplete<T extends { payload?: Record<string, unknown> }>(file: T): T {
+  return {
+    ...file,
+    payload: { ...file.payload, secretScanIncomplete: true },
+  };
+}
+
+export function incompletePatchLessSecretScanFinding(
+  files: Awaited<ReturnType<typeof listPullRequestFiles>>,
+): AdvisoryFinding | null {
+  const paths = files
+    .filter((file) => file.payload?.secretScanIncomplete === true)
+    .map((file) => file.path);
+  if (paths.length === 0) return null;
+  return {
+    code: "secret_leak",
+    severity: "critical",
+    title: `Patch-less file(s) could not be fully scanned for secrets (${paths.length})`,
+    detail: `GitHub omitted inline diff for: ${paths.join(", ")}. Fetched content exceeded the ${SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS}-char scan cap, so leaked-secret verification is incomplete. Shrink the change, split the file, or ensure the diff is reviewable before merge.`,
+    action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
+  };
+}
+
+async function mapPatchLessSecretScanFilesWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 /** When GitHub omits inline `patch` (binary/large files), fetch post-change content and synthesize `+` lines so
  *  the unconditional `secret_leak` hard blocker can still inspect committed credentials. Added files scan only
- *  genuinely new lines; modified/renamed files multiset-diff against base when `baseSha` is known. Unfetchable,
- *  truncated, or baseline-unknown content leaves the file header-only so pre-existing secrets are not mis-flagged.
+ *  genuinely new lines; modified/renamed files multiset-diff against base when `baseSha` is known. Unfetchable
+ *  or baseline-unknown content leaves the file header-only so pre-existing secrets are not mis-flagged; content
+ *  over the per-file cap is marked incomplete so the gate fails closed instead of scanning a truncated prefix.
  */
 export async function enrichSecretScanFilesWithPatchFallback(
   files: Awaited<ReturnType<typeof listPullRequestFiles>>,
@@ -5532,8 +5576,10 @@ export async function enrichSecretScanFilesWithPatchFallback(
 ): Promise<Awaited<ReturnType<typeof listPullRequestFiles>>> {
   const headSha = args.headSha?.trim();
   if (!headSha) return files;
-  return Promise.all(
-    files.map(async (file) => {
+  return mapPatchLessSecretScanFilesWithConcurrency(
+    files,
+    SECRET_SCAN_PATCH_FALLBACK_MAX_CONCURRENT,
+    async (file) => {
       try {
         const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
         if (existingPatch) return file;
@@ -5544,7 +5590,8 @@ export async function enrichSecretScanFilesWithPatchFallback(
           headSha,
           SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
         );
-        if (!headContent || isOverSecretScanContentLimit(headContent)) return file;
+        if (!headContent) return file;
+        if (isOverSecretScanContentLimit(headContent)) return markPatchLessSecretScanIncomplete(file);
         let addedLines: string[];
         if (status === "added") {
           addedLines = headContent.split("\n");
@@ -5557,7 +5604,8 @@ export async function enrichSecretScanFilesWithPatchFallback(
             baseSha,
             SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
           );
-          if (!baseContent || isOverSecretScanContentLimit(baseContent)) return file;
+          if (!baseContent) return file;
+          if (isOverSecretScanContentLimit(baseContent)) return markPatchLessSecretScanIncomplete(file);
           addedLines = addedLinesForSecretScan(baseContent, headContent);
         } else if (status === "modified" && args.baseSha?.trim()) {
           const baseContent = await args.fetcher.getFileContent(
@@ -5565,7 +5613,8 @@ export async function enrichSecretScanFilesWithPatchFallback(
             args.baseSha.trim(),
             SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
           );
-          if (!baseContent || isOverSecretScanContentLimit(baseContent)) return file;
+          if (!baseContent) return file;
+          if (isOverSecretScanContentLimit(baseContent)) return markPatchLessSecretScanIncomplete(file);
           addedLines = addedLinesForSecretScan(baseContent, headContent);
         } else {
           return file;
@@ -5578,7 +5627,7 @@ export async function enrichSecretScanFilesWithPatchFallback(
       } catch {
         return file;
       }
-    }),
+    },
   );
 }
 
@@ -6168,6 +6217,8 @@ export async function maybeAddSecretLeakFinding(
         scanFiles = files;
       }
     }
+    const incompleteFinding = incompletePatchLessSecretScanFinding(scanFiles);
+    if (incompleteFinding) args.advisory.findings.push(incompleteFinding);
     const finding = secretLeakFinding(buildSecretScanDiff(scanFiles));
     if (finding) args.advisory.findings.push(finding);
   } catch (error) {

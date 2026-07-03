@@ -146,4 +146,25 @@ describe("opportunity metadata signals", () => {
       computeOpportunityFreshness([{ state: "open", createdAt: "2026-07-03T00:00:00.000Z" }], NOW),
     ).toBeGreaterThan(0.8);
   });
+
+  it("only counts substring overlaps when the shared segment is at least 12 characters", () => {
+    const shared = "queue retry helper";
+    expect(
+      computeMetadataDupRisk(
+        { ...base, title: `${shared} for worker` },
+        [{ ...base, issueNumber: 11, title: shared }],
+      ),
+    ).toBeGreaterThan(0);
+    expect(
+      computeMetadataDupRisk(
+        { ...base, title: "tiny" },
+        [{ ...base, issueNumber: 11, title: "tiny extra" }],
+      ),
+    ).toBe(0);
+  });
+
+  it("combines bug and positive labels without exceeding one", () => {
+    expect(computeMetadataPotential({ labels: ["help wanted", "bug"] })).toBeLessThanOrEqual(1);
+    expect(buildMetadataRankInput(base, [base], { nowMs: NOW }).dupRisk).toBe(0);
+  });
 });

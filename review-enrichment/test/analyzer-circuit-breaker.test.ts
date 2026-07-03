@@ -308,6 +308,44 @@ test("REGRESSION: a half-open probe claim is not leaked when the SAME planning p
   }
 });
 
+test("REGRESSION: repoFullName casing does not split one repository's failures across separate circuit entries", async () => {
+  let calls = 0;
+  const failing = { history: async () => { calls += 1; throw new Error("boom"); } };
+  const lowerReq = { ...baseReq, repoFullName: "jsonbored/gittensory" };
+  const upperReq = { ...baseReq, repoFullName: "JSONbored/Gittensory" };
+  await buildBrief(lowerReq, failing);
+  await buildBrief(upperReq, failing);
+  await buildBrief(lowerReq, failing);
+
+  assert.equal(calls, 3);
+  assert.equal(isAnalyzerCircuitOpen("history", lowerReq), true);
+  assert.equal(isAnalyzerCircuitOpen("history", upperReq), true);
+});
+
+test("REGRESSION: an idle circuit entry is evicted rather than retained forever, bounding the breaker map's size", async () => {
+  const realNow = Date.now();
+  let fakeNow = realNow;
+  const originalNow = Date.now;
+  try {
+    Date.now = () => fakeNow;
+    // Trips the circuit for one repo, then goes idle -- no further failures ever recorded for it.
+    const staleReq = { ...baseReq, repoFullName: "stale/abandoned-repo" };
+    recordAnalyzerCircuitFailure("history", staleReq, fakeNow);
+    recordAnalyzerCircuitFailure("history", staleReq, fakeNow);
+    recordAnalyzerCircuitFailure("history", staleReq, fakeNow);
+    assert.equal(isAnalyzerCircuitOpen("history", staleReq, fakeNow), true);
+
+    // Far past both the cooldown AND the idle-eviction window -- another repo's failure should sweep it.
+    fakeNow = realNow + 6 * 5 * 60_000 + 1;
+    recordAnalyzerCircuitFailure("history", baseReq, fakeNow);
+
+    // The stale entry is gone: isAnalyzerCircuitOpen sees no state at all, not a lingering (expired) cooldown.
+    assert.equal(isAnalyzerCircuitOpen("history", staleReq, fakeNow), false);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("REGRESSION: failures for one repository do not open the analyzer circuit for another repository", async () => {
   let attackerCalls = 0;
   const failing = { history: async () => { attackerCalls += 1; throw new Error("boom"); } };

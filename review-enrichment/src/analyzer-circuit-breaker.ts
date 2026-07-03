@@ -20,11 +20,16 @@ import type { AnalyzerName } from "./analyzers/types.js";
 
 const ANALYZER_CIRCUIT_FAILURE_STREAK = 3;
 const ANALYZER_CIRCUIT_COOLDOWN_MS = 5 * 60_000;
+// A repo×analyzer entry with no new failure in this long is assumed dead (the repo stopped sending PRs, or
+// started succeeding via a path that never calls recordAnalyzerCircuitSuccess, e.g. a skip for an unrelated
+// reason). Comfortably longer than the cooldown so a still-cooling-down entry is never swept mid-cooldown.
+const ANALYZER_CIRCUIT_IDLE_EVICTION_MS = 6 * ANALYZER_CIRCUIT_COOLDOWN_MS;
 
 interface AnalyzerCircuitState {
   consecutiveFailures: number;
   cooldownUntilMs: number;
   probeClaimed: boolean;
+  lastFailureMs: number;
 }
 
 /** Scope the in-memory breaker to the repository whose request produced the failures. */
@@ -34,8 +39,24 @@ export interface AnalyzerCircuitScope {
 
 const analyzerCircuits = new Map<string, AnalyzerCircuitState>();
 
+// GitHub repository full names are case-insensitive, so "Org/Repo" and "org/repo" must key the same breaker
+// bucket -- otherwise casing drift across callers would silently split one repository's failure history
+// across multiple never-tripping entries, and each entry would also count separately against the eviction
+// sweep below.
 function analyzerCircuitKey(name: AnalyzerName, scope: AnalyzerCircuitScope): string {
-  return `${scope.repoFullName}\0${name}`;
+  return `${scope.repoFullName.trim().toLowerCase()}\0${name}`;
+}
+
+/** Bound the map's size by dropping entries that have not failed recently, regardless of whether they ever
+ *  tripped -- otherwise a long-lived worker retains one entry per repo×analyzer pair that has EVER failed
+ *  even once, forever. Runs on every recorded failure (the only path that grows the map) rather than on a
+ *  timer, so it stays correct in tests that fake `Date.now` and needs no background interval to manage. */
+function evictIdleAnalyzerCircuits(nowMs: number): void {
+  for (const [key, state] of analyzerCircuits) {
+    if (state.lastFailureMs + ANALYZER_CIRCUIT_IDLE_EVICTION_MS < nowMs) {
+      analyzerCircuits.delete(key);
+    }
+  }
 }
 
 /** True while `name`'s breaker should skip the caller: either still within the full cooldown window, or past
@@ -78,10 +99,12 @@ export function recordAnalyzerCircuitFailure(
   scope: AnalyzerCircuitScope,
   nowMs = Date.now(),
 ): void {
+  evictIdleAnalyzerCircuits(nowMs);
   const key = analyzerCircuitKey(name, scope);
-  const state = analyzerCircuits.get(key) ?? { consecutiveFailures: 0, cooldownUntilMs: 0, probeClaimed: false };
+  const state = analyzerCircuits.get(key) ?? { consecutiveFailures: 0, cooldownUntilMs: 0, probeClaimed: false, lastFailureMs: nowMs };
   state.consecutiveFailures += 1;
   state.probeClaimed = false;
+  state.lastFailureMs = nowMs;
   if (state.consecutiveFailures >= ANALYZER_CIRCUIT_FAILURE_STREAK) {
     state.cooldownUntilMs = nowMs + ANALYZER_CIRCUIT_COOLDOWN_MS;
   }

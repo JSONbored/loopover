@@ -12465,7 +12465,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
         if (url.includes(`/issues/${issueNumber}/comments`) && method === "GET") return Response.json([]);
         if (url.includes(`/issues/${issueNumber}/comments`) && method === "POST") {
@@ -12592,8 +12592,10 @@ describe("queue processors", () => {
 
       const invocations = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.command_invocation'").first<{ n: number }>();
       expect(invocations?.n).toBe(1); // only ONE invocation recorded despite two processing passes
-      expect(seen.comments).toHaveLength(2); // both deliveries got the normal answer card — neither was held
+      expect(seen.comments).toHaveLength(1); // the replay is suppressed entirely — no second answer card
       expect(seen.comments.every((c) => !c.includes("rate limit"))).toBe(true);
+      const suppressed = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.command_redelivery_suppressed'").first<{ n: number }>();
+      expect(suppressed?.n).toBe(1);
     });
   });
 

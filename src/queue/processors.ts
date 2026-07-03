@@ -8979,7 +8979,24 @@ async function maybeThrottleGittensoryCommand(
   // genuine redelivery lands within seconds/minutes, not hours later.
   const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
   const alreadySeen = await hasAuditEventForDelivery(env, args.commenter, COMMAND_RATE_LIMIT_EVENT_TYPE, targetKey, args.deliveryId, redeliverySinceIso);
-  if (alreadySeen) return false; // redelivered event, already counted once — let it pass through unchanged
+  // Gate review finding: returning `false` here let a redelivered webhook fall through to normal dispatch — a
+  // SECOND run of the (possibly cost-bearing) command for one real invocation, uncounted and unheld. The
+  // original delivery already ran the command and posted its own answer, so short-circuit the replay entirely
+  // (no dispatch, no comment) rather than treating it as an under-threshold pass-through.
+  if (alreadySeen) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.command_redelivery_suppressed",
+      actor: args.commenter,
+      targetKey,
+      outcome: "completed",
+      detail: `redelivered ${args.command} invocation suppressed (deliveryId ${args.deliveryId})`,
+      metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, command: args.command },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the redelivery suppression itself */
+      () => undefined,
+    );
+    return true;
+  }
 
   const aiCostBearing = isAiCostBearingCommand(args.command);
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */

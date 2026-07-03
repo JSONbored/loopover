@@ -115,3 +115,34 @@ export function backlogRepoCandidatesFromJobKeys(
   }
   return [...oldestAgeByRepo.entries()].map(([repo, oldestPendingAgeMs]) => ({ repo, oldestPendingAgeMs }));
 }
+
+export type BacklogRepoCount = { repo: string; count: number };
+
+/**
+ * Top-N repos by backlog-convergence pending DEPTH (count), for the observability dashboard's per-repo backlog
+ * panel (#selfhost-lane-observability) -- deliberately a SEPARATE aggregate from
+ * {@link backlogRepoCandidatesFromJobKeys} (which tracks oldest-age for the claim-time round-robin) rather than
+ * widening that already-shipped, tested shape: the two callers want different rollups of the same raw rows and
+ * have no reason to share a return type. Reuses the identical `agent-regate-pr:{repo}#{pr}` job_key parsing
+ * idiom so a row with no/malformed job_key is skipped the same way in both places. Sorted by count DESCENDING,
+ * ties broken by repo name ascending (deterministic rendering — two repos with an identical backlog depth must
+ * not reorder between scrapes). `limit` bounds the returned array so a large multi-repo self-host install can
+ * never explode the dashboard's per-repo label cardinality (#selfhost-lane-observability). Pure. */
+export function topBacklogRepoCounts(
+  rows: readonly { jobKey: string | null | undefined }[],
+  limit: number,
+): BacklogRepoCount[] {
+  const countByRepo = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.jobKey || !row.jobKey.startsWith(AGENT_REGATE_PR_JOB_KEY_PREFIX)) continue;
+    const rest = row.jobKey.slice(AGENT_REGATE_PR_JOB_KEY_PREFIX.length);
+    const hashIndex = rest.indexOf("#");
+    const repo = hashIndex === -1 ? rest : rest.slice(0, hashIndex);
+    if (!repo) continue;
+    countByRepo.set(repo, (countByRepo.get(repo) ?? 0) + 1);
+  }
+  return [...countByRepo.entries()]
+    .map(([repo, count]) => ({ repo, count }))
+    .sort((a, b) => b.count - a.count || a.repo.localeCompare(b.repo))
+    .slice(0, Math.max(0, limit));
+}

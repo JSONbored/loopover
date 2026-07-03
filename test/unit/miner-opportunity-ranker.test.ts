@@ -166,7 +166,7 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
           updatedAt: "2026-07-02T00:00:00.000Z",
           aiPolicyAllowed: true,
           aiPolicySource: "AI-USAGE.md",
-        } as ReturnType<typeof rawIssue>,
+        } as unknown as ReturnType<typeof rawIssue>,
       ],
       {
         nowMs: NOW,

@@ -37,6 +37,30 @@ describe("isGeneratedFile", () => {
       expect(isGeneratedFile(path)).toBe(false);
     }
   });
+
+  it("matches source maps for every first-class JS/TS bundle extension", () => {
+    // `.mjs`/`.cjs` are recognized code extensions (isCodeFile), so their bundlers' source
+    // maps are generated output too — the same as `.js.map` / `.tsx.map`.
+    for (const path of ["dist/bundle.mjs.map", "dist/bundle.cjs.map", "lib/index.jsx.map"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+  });
+
+  it("matches C++ protobuf output alongside the Go/TS/JS plugins", () => {
+    for (const path of ["proto/service.pb.cc", "proto/service.pb.h", "gen/messages.pb.cc"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+    // The `.pb` infix keeps hand-written headers/sources from matching.
+    for (const path of ["src/service.h", "include/foo.h", "src/service.cc"]) {
+      expect(isGeneratedFile(path)).toBe(false);
+    }
+  });
+
+  it("matches Python gRPC protobuf stubs alongside the message stubs", () => {
+    for (const path of ["gen/service_pb2_grpc.py", "gen/service_pb2_grpc.pyi"]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+  });
 });
 
 describe("isVendoredFile", () => {

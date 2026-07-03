@@ -4,6 +4,11 @@
 // structurally malformed dashboard/rule before it silently fails to load in the running stack -- Grafana
 // and Prometheus both fail OPEN on a malformed file (skip it, log a warning), so nothing else would catch
 // this until an operator notices a panel or alert is simply missing.
+//
+// The alert-rule `expr` check is a lightweight sanity check (balanced brackets, no dangling binary
+// operator), NOT a real PromQL parser -- this repo has no promtool/PromQL-grammar dependency, and adding
+// one is out of scope for this "if available" deliverable. It catches the obvious copy-paste/typo class
+// of mistake; it does not validate PromQL semantics (unknown functions, wrong label matchers, etc.).
 import { readFileSync, readdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -13,6 +18,31 @@ import { parse as parseYaml } from "yaml";
 // below goes through this guard first.
 function isObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const BINARY_OPERATORS = ["==", "!=", ">=", "<=", ">", "<", "+", "-", "*", "/", "%", "^", "and", "or", "unless"];
+
+// A deliberately lightweight PromQL sanity check -- NOT a real parser (no promtool dependency; see the
+// module doc comment). Catches the class of mistake a copy-paste/typo produces: unbalanced brackets, or
+// an expression left dangling on a binary operator with no right-hand side (e.g. "up ==").
+function promqlSanityIssue(expr) {
+  const trimmed = expr.trim();
+  let depth = 0;
+  const pairs = { ")": "(", "]": "[", "}": "{" };
+  const opens = new Set(["(", "[", "{"]);
+  for (const ch of trimmed) {
+    if (opens.has(ch)) depth++;
+    else if (ch in pairs) {
+      depth--;
+      if (depth < 0) return `unbalanced brackets (unexpected "${ch}")`;
+    }
+  }
+  if (depth !== 0) return "unbalanced brackets";
+  const lastToken = trimmed.split(/\s+/).pop() ?? "";
+  if (BINARY_OPERATORS.includes(lastToken)) {
+    return `expression ends in the binary operator "${lastToken}" with no right-hand side`;
+  }
+  return null;
 }
 
 export function validateDashboards(dir) {
@@ -83,6 +113,9 @@ export function validateAlertRules(path) {
       }
       if (typeof rule.expr !== "string" || !rule.expr) {
         errors.push(`${path}: rule "${label}" is missing a non-empty "expr"`);
+      } else {
+        const issue = promqlSanityIssue(rule.expr);
+        if (issue) errors.push(`${path}: rule "${label}" has a suspect "expr" — ${issue}`);
       }
       if (typeof rule.labels?.severity !== "string" || !rule.labels.severity) {
         errors.push(`${path}: rule "${label}" is missing "labels.severity"`);

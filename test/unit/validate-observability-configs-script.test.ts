@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -132,6 +132,48 @@ describe("validate-observability-configs (#1943)", () => {
       const path = tmpAlertFile(["groups:", "  - name: test-group", "    rules:", "      - null"].join("\n"));
       const errors = validateAlertRules(path);
       expect(errors.some((e) => e.includes("rules[0]") && e.includes("must be an object"))).toBe(true);
+    });
+
+    function ruleFile(expr: string): string {
+      return tmpAlertFile(
+        [
+          "groups:",
+          "  - name: test-group",
+          "    rules:",
+          "      - alert: TestAlert",
+          `        expr: ${expr}`,
+          "        labels:",
+          "          severity: warning",
+          "        annotations:",
+          "          summary: test",
+        ].join("\n"),
+      );
+    }
+
+    it("flags an expr with a dangling binary operator", () => {
+      const errors = validateAlertRules(ruleFile("up =="));
+      expect(errors.some((e) => e.includes("dangling") || e.includes('binary operator "=="'))).toBe(true);
+    });
+
+    it("flags an expr with unbalanced brackets", () => {
+      const errors = validateAlertRules(ruleFile("sum(rate(foo[5m])"));
+      expect(errors.some((e) => e.includes("unbalanced brackets"))).toBe(true);
+    });
+
+    it("flags an expr with an unexpected closing bracket", () => {
+      const errors = validateAlertRules(ruleFile("up)"));
+      expect(errors.some((e) => e.includes("unbalanced brackets"))).toBe(true);
+    });
+
+    it("passes well-formed real-shaped PromQL expressions", () => {
+      for (const expr of [
+        "up == 0",
+        "sum(rate(gittensory_jobs_total[5m])) by (status) > 10",
+        'histogram_quantile(0.95, rate(gittensory_http_duration_seconds_bucket{route="/health"}[5m]))',
+        "(a + b) / c",
+      ]) {
+        expect(validateAlertRules(ruleFile(expr))).toEqual([]);
+      }
     });
   });
 });

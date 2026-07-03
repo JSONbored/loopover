@@ -1,5 +1,5 @@
 # ============================================================================
-# .gittensory-miner.yml — per-repo miner configuration (EXAMPLE)
+# .gittensory-miner.yml - per-repo miner configuration (EXAMPLE)
 # ============================================================================
 # A repo owner drops this file in to tell an autonomous Gittensory miner what to
 # look for and how to behave when targeting their repo. It is the MINER-side
@@ -7,12 +7,12 @@
 #
 # Every field is OPTIONAL and has a safe default (shown as "Default: X" below).
 # The file is parsed tolerantly: an unknown key is ignored, and a single
-# malformed field falls back to its default with a warning — a broken file never
+# malformed field falls back to its default with a warning - a broken file never
 # hard-fails the miner, it just falls back to the defaults.
 #
 # Discovery order (first match wins):
-#   .gittensory-miner.yml → .github/gittensory-miner.yml
-#   → .gittensory-miner.json → .github/gittensory-miner.json
+#   .gittensory-miner.yml -> .github/gittensory-miner.yml
+#   -> .gittensory-miner.json -> .github/gittensory-miner.json
 #
 # Copy to `.gittensory-miner.yml` and edit. YAML or JSON are both accepted.
 

@@ -25,6 +25,17 @@ test("discoverMinerGoalSpecPath: returns the first existing candidate, first mat
   assert.equal(discoverMinerGoalSpecPath((p) => p === ".gittensory-miner.json"), ".gittensory-miner.json");
 });
 
+test("discoverMinerGoalSpecPath: short-circuits — stops probing once a candidate matches", () => {
+  const probed: string[] = [];
+  const result = discoverMinerGoalSpecPath((p) => {
+    probed.push(p);
+    return p === ".github/gittensory-miner.yml"; // the 2nd candidate matches
+  });
+  assert.equal(result, ".github/gittensory-miner.yml");
+  // only the first two candidates are probed; the later .json variants are never reached
+  assert.deepEqual(probed, [".gittensory-miner.yml", ".github/gittensory-miner.yml"]);
+});
+
 test("discoverMinerGoalSpecPath: returns null when no candidate exists, and never probes unlisted paths", () => {
   const probed: string[] = [];
   const result = discoverMinerGoalSpecPath((p) => {

@@ -212,7 +212,6 @@ const findOpportunitiesShape = {
     .object({
       lane: z.string().min(1).optional(),
       minRankScore: z.number().min(0).max(100).optional(),
-      languages: z.array(z.string()).optional(),
     })
     .optional(),
   limit: z.number().int().min(1).max(50).optional(),

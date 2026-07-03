@@ -168,18 +168,34 @@ function reviewContextFolders(repoFullName: string): string[] {
   return [join(`${owner}__${repo}`, "review"), join(repo, "review")];
 }
 
+/** Read a `name:` / `when:` frontmatter value robustly. The value text (everything after the key on its line) is
+ *  parsed as a standalone YAML scalar, so the real parser handles quoting, escaped `\"` / doubled `''` quotes, and a
+ *  trailing inline comment — `"SQL #1 Rubric"` keeps its internal `#`, `SQL Rubric  # note` drops the comment. A
+ *  value the YAML parser rejects standalone — notably an unquoted glob that begins with a `*` wildcard — falls back
+ *  to a lenient strip (drop an inline comment and any surrounding quote) so those globs keep working. */
+function reviewSkillScalar(rawValue: string): string {
+  try {
+    const parsed = parseYaml(rawValue);
+    if (typeof parsed === "string") return parsed.trim();
+  } catch {
+    // not a standalone-parseable scalar (e.g. an unquoted *-leading glob) — fall through to the lenient strip
+  }
+  return rawValue.replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "").trim();
+}
+
 /** Parse a skill markdown file into {name, when, body}. YAML frontmatter (`---\nname:\nwhen:\n---`) is optional; name
- *  defaults to the filename and `when` to "always". */
+ *  defaults to the filename and `when` to "always". `name`/`when` are decoded through the YAML parser (see
+ *  reviewSkillScalar) so a quoted value keeps its contents (incl. an internal `#`) while a trailing inline comment is
+ *  dropped — an unstripped comment corrupts the label and turns `when` into a glob that never matches, silently
+ *  disabling the rubric. */
 export function parseReviewSkill(filename: string, text: string): RepoReviewSkill {
   const fm = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(text);
   const head = fm?.[1] ?? "";
   const body = (fm?.[2] ?? text).trim();
-  // Strip surrounding quotes on `name` too, symmetric with `when` below — a quoted scalar
-  // (`name: "SQL Rubric"`) is ordinary YAML frontmatter, so the quotes must not survive into the label.
-  const nameRaw = /(?:^|\n)name:\s*(.+)/.exec(head)?.[1]?.trim();
-  const name = (nameRaw ?? "").replace(/^["']|["']$/g, "") || filename.replace(/\.md$/i, "");
-  const whenRaw = /(?:^|\n)when:\s*(.+)/.exec(head)?.[1]?.trim();
-  const when = (whenRaw ?? "always").replace(/^["']|["']$/g, "") || "always";
+  const nameRaw = /(?:^|\n)name:\s*(.+)/.exec(head)?.[1];
+  const name = (nameRaw !== undefined ? reviewSkillScalar(nameRaw) : "") || filename.replace(/\.md$/i, "");
+  const whenRaw = /(?:^|\n)when:\s*(.+)/.exec(head)?.[1];
+  const when = (whenRaw !== undefined ? reviewSkillScalar(whenRaw) : "always") || "always";
   return { name, when, body };
 }
 

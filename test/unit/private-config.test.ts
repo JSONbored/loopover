@@ -226,6 +226,25 @@ describe("parseReviewSkill (#review-skills)", () => {
     expect(parseReviewSkill("y.md", "---\nname: 'Voice Guide'\n---\nb").name).toBe("Voice Guide");
     expect(parseReviewSkill("fallback.md", '---\nname: ""\n---\nb').name).toBe("fallback");
   });
+  it("ignores a trailing YAML inline comment on name and when, quote-aware", () => {
+    // A trailing ` # …` is a YAML comment, not part of the scalar: left in, it corrupts the label and turns
+    // `when` into a glob that never matches, silently disabling the rubric.
+    expect(parseReviewSkill("sql.md", '---\nname: SQL Rubric  # the sql one\nwhen: "**/*.sql"  # only sql\n---\nBody.\n')).toEqual({ name: "SQL Rubric", when: "**/*.sql", body: "Body." });
+    // A `#` with no preceding whitespace is part of the value (real YAML), not a comment — must be preserved.
+    expect(parseReviewSkill("cs.md", '---\nname: "C# Rubric"\n---\nb').name).toBe("C# Rubric");
+    expect(parseReviewSkill("z.md", "---\nname: a#b\n---\nb").name).toBe("a#b");
+    // A `#` INSIDE a quoted scalar — even with preceding whitespace — is part of the value, not a comment.
+    expect(parseReviewSkill("h.md", '---\nname: "SQL #1 Rubric"\nwhen: "src/#hot/**"  # trailing note\n---\nb')).toEqual({ name: "SQL #1 Rubric", when: "src/#hot/**", body: "b" });
+    // YAML-escaped double quotes and doubled single quotes are decoded, not treated as the terminator.
+    expect(parseReviewSkill("e.md", '---\nname: "SQL \\"Index\\" Rubric"\n---\nb').name).toBe('SQL "Index" Rubric');
+    expect(parseReviewSkill("o.md", "---\nname: 'Owner''s Rubric'\n---\nb").name).toBe("Owner's Rubric");
+    // An unquoted *-leading glob is not valid standalone YAML; it must still survive as the literal when-glob.
+    expect(parseReviewSkill("g.md", "---\nwhen: **/*.ts\n---\nb").when).toBe("**/*.ts");
+    // A non-string YAML scalar (e.g. a bare number) falls through to the literal text rather than a typed value.
+    expect(parseReviewSkill("n.md", "---\nname: 42\n---\nb").name).toBe("42");
+    // A malformed unterminated quote degrades to stripping the stray leading quote (back-compat, not a crash).
+    expect(parseReviewSkill("u.md", '---\nname: "unterminated\n---\nb').name).toBe("unterminated");
+  });
 });
 
 describe("isReviewSkillEnabled (#review-skills)", () => {

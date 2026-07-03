@@ -5,6 +5,7 @@ import {
   foregroundLaneForJob,
   nextForegroundLane,
   pickBacklogRepo,
+  topBacklogRepoCounts,
 } from "../../src/selfhost/queue-fairness";
 
 function webhookPayload(eventName: string, action?: string): string {
@@ -188,5 +189,92 @@ describe("backlogRepoCandidatesFromJobKeys (#selfhost-backlog-convergence)", () 
   it("clamps a negative age (createdAt in the future) to zero", () => {
     const candidates = backlogRepoCandidatesFromJobKeys([{ jobKey: "agent-regate-pr:owner/repo#1", createdAtMs: 9000 }], 1000);
     expect(candidates).toEqual([{ repo: "owner/repo", oldestPendingAgeMs: 0 }]);
+  });
+});
+
+describe("topBacklogRepoCounts (#selfhost-lane-observability)", () => {
+  it("returns an empty array for no rows", () => {
+    expect(topBacklogRepoCounts([], 10)).toEqual([]);
+  });
+
+  it("skips a row with a null/undefined job_key", () => {
+    expect(topBacklogRepoCounts([{ jobKey: null }, { jobKey: undefined }], 10)).toEqual([]);
+  });
+
+  it("skips a row whose job_key does not carry the agent-regate-pr prefix", () => {
+    expect(topBacklogRepoCounts([{ jobKey: "agent-regate-sweep:owner/repo" }], 10)).toEqual([]);
+  });
+
+  it("skips a row whose job_key has no repo segment after the prefix", () => {
+    expect(topBacklogRepoCounts([{ jobKey: "agent-regate-pr:#7" }], 10)).toEqual([]);
+  });
+
+  it("counts one row for a single repo", () => {
+    expect(topBacklogRepoCounts([{ jobKey: "agent-regate-pr:owner/repo#1" }], 10)).toEqual([{ repo: "owner/repo", count: 1 }]);
+  });
+
+  it("takes the whole remainder as the repo when the job_key has no # suffix", () => {
+    expect(topBacklogRepoCounts([{ jobKey: "agent-regate-pr:owner/repo" }], 10)).toEqual([{ repo: "owner/repo", count: 1 }]);
+  });
+
+  it("aggregates multiple rows for the same repo into one count", () => {
+    const rows = [
+      { jobKey: "agent-regate-pr:owner/repo#1" },
+      { jobKey: "agent-regate-pr:owner/repo#2" },
+      { jobKey: "agent-regate-pr:owner/repo#3" },
+    ];
+    expect(topBacklogRepoCounts(rows, 10)).toEqual([{ repo: "owner/repo", count: 3 }]);
+  });
+
+  it("sorts multiple repos by count DESCENDING", () => {
+    const rows = [
+      { jobKey: "agent-regate-pr:owner/a#1" },
+      { jobKey: "agent-regate-pr:owner/b#1" },
+      { jobKey: "agent-regate-pr:owner/b#2" },
+      { jobKey: "agent-regate-pr:owner/b#3" },
+      { jobKey: "agent-regate-pr:owner/c#1" },
+      { jobKey: "agent-regate-pr:owner/c#2" },
+    ];
+    expect(topBacklogRepoCounts(rows, 10)).toEqual([
+      { repo: "owner/b", count: 3 },
+      { repo: "owner/c", count: 2 },
+      { repo: "owner/a", count: 1 },
+    ]);
+  });
+
+  it("breaks a tied count by repo name ascending, deterministically", () => {
+    const rows = [
+      { jobKey: "agent-regate-pr:owner/z#1" },
+      { jobKey: "agent-regate-pr:owner/a#1" },
+      { jobKey: "agent-regate-pr:owner/m#1" },
+    ];
+    expect(topBacklogRepoCounts(rows, 10)).toEqual([
+      { repo: "owner/a", count: 1 },
+      { repo: "owner/m", count: 1 },
+      { repo: "owner/z", count: 1 },
+    ]);
+  });
+
+  it("truncates to the requested limit, keeping the highest counts", () => {
+    const rows = [
+      { jobKey: "agent-regate-pr:owner/a#1" },
+      { jobKey: "agent-regate-pr:owner/b#1" },
+      { jobKey: "agent-regate-pr:owner/b#2" },
+      { jobKey: "agent-regate-pr:owner/c#1" },
+      { jobKey: "agent-regate-pr:owner/c#2" },
+      { jobKey: "agent-regate-pr:owner/c#3" },
+    ];
+    expect(topBacklogRepoCounts(rows, 2)).toEqual([
+      { repo: "owner/c", count: 3 },
+      { repo: "owner/b", count: 2 },
+    ]);
+  });
+
+  it("returns an empty array for a limit of 0", () => {
+    expect(topBacklogRepoCounts([{ jobKey: "agent-regate-pr:owner/repo#1" }], 0)).toEqual([]);
+  });
+
+  it("returns an empty array for a negative limit (clamped to 0)", () => {
+    expect(topBacklogRepoCounts([{ jobKey: "agent-regate-pr:owner/repo#1" }], -5)).toEqual([]);
   });
 });

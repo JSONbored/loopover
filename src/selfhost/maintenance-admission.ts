@@ -92,6 +92,12 @@ export interface MaintenancePressureSignals {
    *  work too). A high count here means a real, currently-unresolved PR-review backlog exists; generic
    *  maintenance should yield to draining it, same as it already yields to live webhook pressure. */
   backlogConvergencePendingCount: number;
+  /** #selfhost-lane-observability: pending+processing count of `github-webhook` PR open/reopen/synchronize/
+   *  ready-for-review jobs tagged `foreground_lane='fresh'` (queue-fairness.ts) -- the COMPLEMENT of
+   *  backlogConvergencePendingCount within the fairness mechanism's classified lanes, exposed purely for the
+   *  dashboard breakdown (unlike backlogConvergencePendingCount, evaluateMaintenanceAdmission never consults
+   *  this field -- fresh-intake pressure has no maintenance-admission gate of its own). */
+  freshIntakePendingCount: number;
 }
 
 export interface MaintenanceAdmissionConfig {

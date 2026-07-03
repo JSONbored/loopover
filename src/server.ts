@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import packageJson from "../package.json";
 import worker from "./index";
+import { githubRestRateLimitRemainingSamples } from "./github/client";
 import { processJob } from "./queue/processors";
 import {
   createOpenAiCompatibleAi,
@@ -50,12 +51,13 @@ import {
   sqliteBackupAdvisory,
   type ReadinessProbe,
 } from "./selfhost/health";
-import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
+import { gauge, gaugeVector, incr, observe, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { resolvePostgresPoolMax, type SelfHostQueueSnapshot } from "./selfhost/queue-common";
+import type { BacklogRepoCount } from "./selfhost/queue-fairness";
 import type { MaintenancePressureSignals } from "./selfhost/maintenance-admission";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
@@ -134,6 +136,7 @@ interface Backend {
     stats(): Record<string, number> | Promise<Record<string, number>>;
     pressureSignals(): MaintenancePressureSignals | Promise<MaintenancePressureSignals>;
     snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
+    topBacklogRepos(limit: number): BacklogRepoCount[] | Promise<BacklogRepoCount[]>;
   };
   vectorize?: Vectorize;
   shutdown(): Promise<void>;
@@ -651,6 +654,22 @@ async function main(): Promise<void> {
   // -1 (not 0) when unavailable -- a genuine idle host reads 0, so a dashboard can tell "known idle" apart
   // from "no signal on this platform" (see host-pressure.ts).
   gauge("gittensory_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
+  // Backlog-vs-fresh-intake fairness lanes (#selfhost-lane-observability, see queue-fairness.ts): the SAME
+  // `foreground_lane` classification the claim-time fairness mechanism itself consults, so an operator can see
+  // whether a stuck-looking queue is actually a real, unresolved PR-review backlog (high backlog-convergence
+  // pending) or a burst of brand-new webhook traffic (high fresh-intake pending) -- two very different causes
+  // that both otherwise just show up as "live pending is high."
+  gauge("gittensory_queue_backlog_convergence_pending", async () => (await maintenancePressure()).backlogConvergencePendingCount);
+  gauge("gittensory_queue_fresh_intake_pending", async () => (await maintenancePressure()).freshIntakePendingCount);
+  // Top-10 repos by backlog-convergence depth, recomputed fresh every scrape (gaugeVector -- see metrics.ts) so
+  // a repo that drains out of the top-10 stops appearing on its own, with no stale per-repo series lingering.
+  // Bounded to 10 regardless of how many repos a self-host install has registered.
+  gaugeVector("gittensory_queue_backlog_by_repo", async () =>
+    (await backend.queue.topBacklogRepos(10)).map((r) => ({ labels: { repo: r.repo }, value: r.count })),
+  );
+  // A genuine "remaining right now" gauge, by key_scope -- gittensory_github_rest_rate_limit_observations_total
+  // only supports a bucketed rate() over a window, never the actual current value (#selfhost-lane-observability).
+  gaugeVector("gittensory_github_rest_rate_limit_remaining", () => githubRestRateLimitRemainingSamples());
   gauge("gittensory_uptime_seconds", () =>
     Math.floor((Date.now() - startedAt) / 1000),
   );

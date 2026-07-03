@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { gauge, incr, observe, registerMetricMeta, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { gauge, gaugeVector, incr, observe, registerMetricMeta, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 afterEach(() => resetMetrics());
 
@@ -123,6 +123,60 @@ describe("metrics registry (#982)", () => {
     });
     incr("ok_total");
     expect((await renderMetrics())).toContain("ok_total 1");
+  });
+});
+
+describe("gaugeVector (#selfhost-lane-observability)", () => {
+  it("renders one series per labeled sample, sharing one HELP/TYPE block", async () => {
+    registerMetricMeta("v", { help: "Vector gauge.", type: "gauge" });
+    gaugeVector("v", () => [
+      { labels: { repo: "owner/a" }, value: 3 },
+      { labels: { repo: "owner/b" }, value: 5 },
+    ]);
+
+    const out = await renderMetrics();
+    expect(out.match(/^# HELP v /gm)).toHaveLength(1);
+    expect(out.match(/^# TYPE v gauge$/gm)).toHaveLength(1);
+    expect(out).toContain('v{repo="owner/a"} 3');
+    expect(out).toContain('v{repo="owner/b"} 5');
+  });
+
+  it("supports an async sampler", async () => {
+    gaugeVector("async_v", async () => [{ labels: { key_scope: "public" }, value: 42 }]);
+    expect(await renderMetrics()).toContain('async_v{key_scope="public"} 42');
+  });
+
+  it("emits HELP/TYPE with zero series for an empty sample array (no data, not absent)", async () => {
+    registerMetricMeta("empty_v", { help: "Empty vector gauge.", type: "gauge" });
+    gaugeVector("empty_v", () => []);
+
+    const out = await renderMetrics();
+    expect(out).toContain("# HELP empty_v Empty vector gauge.\n# TYPE empty_v gauge\n");
+    expect(out).not.toMatch(/^empty_v\{/m);
+  });
+
+  it("a throwing sampler does not break the scrape", async () => {
+    gaugeVector("bad_v", () => {
+      throw new Error("x");
+    });
+    incr("ok_total");
+    expect(await renderMetrics()).toContain("ok_total 1");
+  });
+
+  it("re-registering the same name replaces the sampler", async () => {
+    gaugeVector("replaced_v", () => [{ labels: { x: "1" }, value: 1 }]);
+    gaugeVector("replaced_v", () => [{ labels: { x: "2" }, value: 2 }]);
+
+    const out = await renderMetrics();
+    expect(out).not.toContain('replaced_v{x="1"}');
+    expect(out).toContain('replaced_v{x="2"} 2');
+  });
+
+  it("resetMetrics clears gauge vectors", async () => {
+    gaugeVector("cleared_v", () => [{ labels: { x: "1" }, value: 1 }]);
+    resetMetrics();
+
+    expect(await renderMetrics()).toBe("\n");
   });
 });
 

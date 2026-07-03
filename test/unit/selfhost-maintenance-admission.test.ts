@@ -19,6 +19,7 @@ const CLEAR_SIGNALS: MaintenancePressureSignals = {
   maintenancePendingCount: 0,
   oldestMaintenancePendingAgeMs: null,
   backlogConvergencePendingCount: 0,
+  freshIntakePendingCount: 0,
   hostLoadAvg1PerCore: null,
 };
 

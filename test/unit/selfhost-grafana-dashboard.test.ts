@@ -9,6 +9,8 @@ type DashboardTarget = {
   legendFormat?: string;
   queryText?: string;
   rawQueryText?: string;
+  format?: string;
+  instant?: boolean;
 };
 
 type DashboardPanel = {
@@ -175,6 +177,29 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_total[5m]))")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_suppressed_total[5m]))")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (mode, result) (rate(gittensory_orb_relay_register_total[5m]))")).toBe(true);
+  });
+
+  it("surfaces the backlog-vs-fresh-intake lane fairness panels (#selfhost-lane-observability)", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+    const titles = dashboard.panels.map((panel) => panel.title);
+
+    expect(titles).toEqual(
+      expect.arrayContaining([
+        "Backlog-vs-Fresh-Intake Lane Fairness (#selfhost-lane-observability)",
+        "Backlog-Convergence Pending",
+        "Fresh-Intake Pending",
+        "GitHub REST Rate Limit Remaining (by scope)",
+        "Foreground Claims by Lane (rate)",
+        "Top Repos by Backlog Depth",
+      ]),
+    );
+    expect(targets.some((target) => target.expr === "gittensory_queue_backlog_convergence_pending")).toBe(true);
+    expect(targets.some((target) => target.expr === "gittensory_queue_fresh_intake_pending")).toBe(true);
+    expect(targets.some((target) => target.expr === "gittensory_github_rest_rate_limit_remaining")).toBe(true);
+    expect(targets.some((target) => target.legendFormat === "{{key_scope}}" && target.expr === "gittensory_github_rest_rate_limit_remaining")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (lane) (rate(gittensory_jobs_claimed_by_lane_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "gittensory_queue_backlog_by_repo" && target.format === "table" && target.instant === true)).toBe(true);
   });
 });
 

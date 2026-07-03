@@ -4,7 +4,11 @@
 // Rendered at GET /metrics. No deps, no cardinality explosion: callers use a small fixed label set.
 type Labels = Record<string, string>;
 type GaugeSample = () => number | Promise<number>;
+type GaugeVectorSample = () => VectorSample[] | Promise<VectorSample[]>;
 type MetricType = "counter" | "gauge" | "histogram";
+
+/** One labeled series in a {@link gaugeVector}'s result. */
+export type VectorSample = { labels: Labels; value: number };
 
 export type MetricMeta = {
   help: string;
@@ -22,6 +26,12 @@ interface HistogramState {
 
 const counters = new Map<string, number>();
 const gauges = new Map<string, GaugeSample>();
+// A gauge whose LABEL SET varies scrape-to-scrape (e.g. the current top-N repos by backlog depth), rather than
+// a fixed set registered once at startup -- see gaugeVector(). Kept as a SEPARATE registry from `gauges`
+// (single-value samplers) rather than widening GaugeSample's return type: every existing gauge() call site
+// returns a plain number, and threading an alternate array-of-labeled-values shape through that same map would
+// force every reader (including renderMetrics' gauges loop) to branch on which shape a given entry holds.
+const gaugeVectors = new Map<string, GaugeVectorSample>();
 const histograms = new Map<string, HistogramState>();
 const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_queue_pending", { help: "Current in-process queue depth.", type: "gauge" }],
@@ -34,6 +44,11 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_queue_oldest_live_pending_age_seconds", { help: "Age in seconds of the oldest live pending job.", type: "gauge" }],
   ["gittensory_queue_oldest_live_runnable_age_seconds", { help: "Age in seconds of the oldest live pending job that is currently due.", type: "gauge" }],
   ["gittensory_queue_oldest_maintenance_pending_age_seconds", { help: "Age in seconds of the oldest maintenance pending job.", type: "gauge" }],
+  ["gittensory_queue_backlog_convergence_pending", { help: "Pending+processing agent-regate-pr jobs tagged foreground_lane=backlog.", type: "gauge" }],
+  ["gittensory_queue_fresh_intake_pending", { help: "Pending+processing github-webhook jobs tagged foreground_lane=fresh.", type: "gauge" }],
+  ["gittensory_queue_backlog_by_repo", { help: "Top-N repos by backlog-convergence pending depth, this scrape.", type: "gauge" }],
+  ["gittensory_jobs_claimed_by_lane_total", { help: "Foreground jobs claimed via the backlog-vs-fresh-intake fairness lane.", type: "counter" }],
+  ["gittensory_github_rest_rate_limit_remaining", { help: "Newest observed GitHub REST rate-limit remaining count, by key scope.", type: "gauge" }],
   ["gittensory_host_load_avg1_per_core", { help: "One-minute host load average normalized by CPU core count.", type: "gauge" }],
   ["gittensory_uptime_seconds", { help: "Self-host process uptime in seconds.", type: "gauge" }],
   ["gittensory_http_requests_total", { help: "HTTP app requests by response status class.", type: "counter" }],
@@ -164,6 +179,17 @@ export function gauge(name: string, sample: GaugeSample): void {
   gauges.set(name, sample);
 }
 
+/** Register a gauge whose complete set of labeled series is recomputed fresh at EVERY scrape (sync or async
+ *  sampler returning an array of `{ labels, value }`) -- for a dynamic, bounded-N breakdown (e.g. the top-10
+ *  repos by backlog depth) where the label VALUES themselves change over time, not just the numbers. Because
+ *  each scrape asks the sampler for the complete current set rather than reading back stale per-label state,
+ *  a repo that drops out of the top-10 simply stops appearing on the next scrape -- no manual
+ *  registration/deregistration bookkeeping, and no risk of a stale label lingering forever. Re-registering
+ *  replaces the sampler, same as gauge(). */
+export function gaugeVector(name: string, sample: GaugeVectorSample): void {
+  gaugeVectors.set(name, sample);
+}
+
 /** Observe a value into a histogram (created on first use). `buckets` must be ascending upper bounds. */
 export function observe(name: string, value: number, labels?: Labels, buckets: number[] = DEFAULT_BUCKETS): void {
   const k = seriesKey(name, labels);
@@ -197,6 +223,20 @@ export async function renderMetrics(): Promise<string> {
       /* a failing sampler must not break the scrape */
     }
   }
+  for (const [name, sample] of gaugeVectors) {
+    try {
+      const values = await sample();
+      // An empty result is a valid scrape (e.g. no backlog-convergence work queued anywhere right now) -- emit
+      // HELP/TYPE with zero series rather than skipping the metric name entirely, so a dashboard panel querying
+      // it sees "no data" (not present) rather than a stale metric name lingering with no TYPE line at all.
+      pushMetricMeta(lines, emittedMeta, name);
+      for (const { labels, value } of values) {
+        lines.push(`${seriesKey(name, labels)} ${value}`);
+      }
+    } catch {
+      /* a failing sampler must not break the scrape */
+    }
+  }
   for (const h of histograms.values()) {
     pushMetricMeta(lines, emittedMeta, h.name);
     for (let i = 0; i < h.buckets.length; i++) {
@@ -214,6 +254,7 @@ export async function renderMetrics(): Promise<string> {
 export function resetMetrics(): void {
   counters.clear();
   gauges.clear();
+  gaugeVectors.clear();
   histograms.clear();
   metricMeta.clear();
   for (const [name, meta] of DEFAULT_METRIC_META) metricMeta.set(name, meta);

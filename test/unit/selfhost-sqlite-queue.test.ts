@@ -1503,6 +1503,116 @@ describe("createSqliteQueue (durable #980)", () => {
       const row = driver.query("SELECT foreground_lane FROM _selfhost_jobs", []).rows[0] as { foreground_lane: string | null };
       expect(row.foreground_lane).toBe("fresh");
     });
+
+    it("increments the lane-claim counter on a successful backlog-lane claim (#selfhost-lane-observability)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      await q.binding.send(backlogJob("owner/repo", 1));
+      await q.drain();
+      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 1');
+      expect(await renderMetrics()).not.toContain('lane="fresh"');
+    });
+
+    it("increments the lane-claim counter on a successful fresh-intake claim (#selfhost-lane-observability)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      // Sequence 0/1/2 prefer "backlog" (default 3:1 ratio) -- pre-populate 3 backlog rows so those claims
+      // actually hit the backlog-scoped branch, THEN sequence 3 prefers "fresh" and the fresh row is pending,
+      // so the scoped fresh claim itself (not the unscoped fallback) is what claims it.
+      await q.binding.send(backlogJob("owner/repo", 1));
+      await q.binding.send(backlogJob("owner/repo", 2));
+      await q.binding.send(backlogJob("owner/repo", 3));
+      await q.binding.send(prWebhook("fresh-1"));
+      await q.drain();
+      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="fresh"} 1');
+      expect(await renderMetrics()).toContain('gittensory_jobs_claimed_by_lane_total{lane="backlog"} 3');
+    });
+
+    it("does NOT increment the lane-claim counter when the preferred lane has nothing pending (falls through unscoped)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      // Sequence 0 prefers "backlog", but only a "fresh" row is pending -- the backlog-scoped claim misses (no
+      // increment) and the row is claimed via the PLAIN UNSCOPED fallback (claimNext()'s own `??`), not via
+      // claimNextForegroundLane's "fresh" branch -- so NEITHER lane value is recorded for this claim.
+      await q.binding.send(prWebhook("fresh-only"));
+      await q.drain();
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+    });
+
+    it("does NOT increment the lane-claim counter when the picked repo's candidate row can't actually be claimed (defensive)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined, { concurrency: 1 });
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, 1000, 0, ?, 'backlog')",
+        [JSON.stringify(backlogJob("owner/repo", 1)), "agent-regate-pr:owner/repo#1"],
+      );
+      await q.drain();
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+    });
+  });
+
+  describe("topBacklogRepos (#selfhost-lane-observability)", () => {
+    const backlogJob = (repo: string, prNumber: number): JobMessage =>
+      ({
+        type: "agent-regate-pr",
+        deliveryId: `backlog-convergence:${repo}#${prNumber}`,
+        repoFullName: repo,
+        prNumber,
+        installationId: 1,
+      }) as unknown as JobMessage;
+
+    it("returns an empty array when no backlog-lane row is pending", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(q.topBacklogRepos(10)).toEqual([]);
+    });
+
+    it("counts pending AND processing backlog-lane rows, grouped by repo, sorted by depth", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const rows: Array<{ repo: string; prNumber: number; status: string }> = [
+        { repo: "owner/a", prNumber: 1, status: "pending" },
+        { repo: "owner/b", prNumber: 1, status: "pending" },
+        { repo: "owner/b", prNumber: 2, status: "processing" },
+        { repo: "owner/b", prNumber: 3, status: "pending" },
+      ];
+      for (const { repo, prNumber, status } of rows) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, ?, 0, 0, 1000, 9, ?, 'backlog')`,
+          [JSON.stringify(backlogJob(repo, prNumber)), status, `agent-regate-pr:${repo}#${prNumber}`],
+        );
+      }
+      expect(q.topBacklogRepos(10)).toEqual([
+        { repo: "owner/b", count: 3 },
+        { repo: "owner/a", count: 1 },
+      ]);
+    });
+
+    it("excludes fresh-lane and unclassified rows, and honors the limit", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, foreground_lane) VALUES (?, 'pending', 0, 0, 1000, 10, 'fresh')",
+        [JSON.stringify(prWebhook("fresh-1"))],
+      );
+      for (const repo of ["owner/a", "owner/b", "owner/c"]) {
+        driver.query(
+          "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'pending', 0, 0, 1000, 9, ?, 'backlog')",
+          [JSON.stringify(backlogJob(repo, 1)), `agent-regate-pr:${repo}#1`],
+        );
+      }
+      expect(q.topBacklogRepos(2)).toHaveLength(2);
+    });
+
+    it("excludes a terminal (dead/cancelled) backlog-lane row", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, foreground_lane) VALUES (?, 'dead', 0, 0, 1000, 9, ?, 'backlog')",
+        [JSON.stringify(backlogJob("owner/repo", 1)), "agent-regate-pr:owner/repo#1"],
+      );
+      expect(q.topBacklogRepos(10)).toEqual([]);
+    });
   });
 
   it("retries then dead-letters after maxRetries", async () => {
@@ -2961,6 +3071,7 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(signals.maintenancePendingCount).toBe(0);
       expect(signals.oldestMaintenancePendingAgeMs).toBeNull();
       expect(signals.backlogConvergencePendingCount).toBe(0);
+      expect(signals.freshIntakePendingCount).toBe(0);
       // Zero foreground rows at all -- SQLite's SUM(CASE...)/MIN(CASE...) return NULL (not 0) over a zero-row
       // aggregate group, exercising the `?? 0` nullish arm on runnable_cnt (see maintenancePressureSignals).
       expect(signals.liveRunnableNowCount).toBe(0);
@@ -2981,6 +3092,22 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.binding.send(prWebhook("fresh-unrelated"));
       const signals = q.pressureSignals();
       expect(signals.backlogConvergencePendingCount).toBe(1);
+    });
+
+    it("pressureSignals() reports the fresh-intake lane pending count (#selfhost-lane-observability)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      await q.binding.send(prWebhook("fresh-1"));
+      // A backlog-convergence row (foreground_lane='backlog') must NOT count toward the fresh-intake signal.
+      await q.binding.send({
+        type: "agent-regate-pr",
+        deliveryId: "backlog-convergence:owner/repo#1",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        installationId: 1,
+      } as unknown as JobMessage);
+      const signals = q.pressureSignals();
+      expect(signals.freshIntakePendingCount).toBe(1);
     });
 
     // #selfhost-queue-liveness: liveRunnableNowCount/oldestLiveRunnableAgeMs must reflect only the SUBSET of

@@ -21,7 +21,9 @@ function normalizeCandidate(candidate) {
   const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
   if (!repoFullName || !Number.isInteger(issueNumber) || issueNumber <= 0 || !title) return null;
   const labels = Array.isArray(candidate.labels)
-    ? candidate.labels.filter((label) => typeof label === "string" && label.trim())
+    ? candidate.labels
+        .filter((label) => typeof label === "string" && label.trim())
+        .map((label) => label.trim())
     : [];
   return {
     owner: typeof candidate.owner === "string" ? candidate.owner : repoFullName.split("/")[0] ?? "",
@@ -63,30 +65,40 @@ function buildRankContext(options = {}) {
   };
 }
 
-/**
- * Rank metadata-only fan-out candidates locally. Never clones source, never uploads metadata, and never writes to
- * GitHub — it only composes deterministic engine signals and returns the sorted list.
- */
-export function rankCandidateIssues(candidates, options = {}) {
+function collectCandidates(candidates) {
+  const input = Array.isArray(candidates) ? candidates : [];
+  let skippedInvalid = 0;
   const normalized = [];
   const seen = new Set();
-  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+  for (const candidate of input) {
     const entry = normalizeCandidate(candidate);
-    if (!entry) continue;
+    if (!entry) {
+      skippedInvalid += 1;
+      continue;
+    }
     const key = `${entry.repoFullName.toLowerCase()}#${entry.issueNumber}`;
     if (seen.has(key)) continue;
     seen.add(key);
     normalized.push(entry);
   }
+  return { normalized, skippedInvalid };
+}
+
+/**
+ * Rank metadata-only fan-out candidates locally. Never clones source, never uploads metadata, and never writes to
+ * GitHub — it only composes deterministic engine signals and returns the sorted list.
+ */
+export function rankCandidateIssues(candidates, options = {}) {
+  const { normalized } = collectCandidates(candidates);
   return rankMetadataOpportunities(normalized, buildRankContext(options));
 }
 
 export function rankCandidateIssuesWithSummary(candidates, options = {}) {
-  const input = Array.isArray(candidates) ? candidates : [];
-  const ranked = rankCandidateIssues(candidates, options);
+  const { normalized, skippedInvalid } = collectCandidates(candidates);
+  const ranked = rankMetadataOpportunities(normalized, buildRankContext(options));
   return {
     issues: ranked,
-    skippedInvalid: Math.max(0, input.length - ranked.length),
+    skippedInvalid,
     usedDefaultGoalSpec: Object.keys(buildGoalSpecsByRepo(options)).length === 0,
     defaultGoalSpec: DEFAULT_MINER_GOAL_SPEC,
   };

@@ -70,14 +70,16 @@ function resolveGoalSpec(repoFullName: string, context: MetadataRankContext): Mi
   return DEFAULT_MINER_GOAL_SPEC;
 }
 
+const STALE_AGE_DAYS = 9999;
+
 function issueAgeDays(issue: MetadataCandidateIssue, nowMs: number): number {
   const stamp =
     (typeof issue.updatedAt === "string" && issue.updatedAt.trim()) ||
     (typeof issue.createdAt === "string" && issue.createdAt.trim()) ||
     "";
-  if (!stamp) return 0;
+  if (!stamp) return STALE_AGE_DAYS;
   const parsed = Date.parse(stamp);
-  if (!Number.isFinite(parsed)) return 0;
+  if (!Number.isFinite(parsed)) return STALE_AGE_DAYS;
   return Math.max(0, Math.floor((nowMs - parsed) / 86_400_000));
 }
 

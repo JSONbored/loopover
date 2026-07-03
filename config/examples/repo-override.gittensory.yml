@@ -1,0 +1,27 @@
+# ============================================================================
+# Self-host PRIVATE per-repo override — GENERIC EXAMPLE, safe to publish
+# ============================================================================
+#
+# Copy this file to `${GITTENSORY_REPO_CONFIG_DIR}/{owner}__{repo}/.gittensory.yml` (or the bare
+# `{repo}/.gittensory.yml` folder, or the flat `{owner}__{repo}.yml` file — see ../README.md) and
+# edit your copy for a SPECIFIC repo. It is deep-merged OVER global.gittensory.yml: any key it
+# doesn't mention is inherited from the global default unchanged.
+#
+# Replace `owner`/`repo` in the destination path with the real values before using this file.
+# ============================================================================
+
+# Overrides ONLY `gate.enabled` for this repo — every other `gate.*` key (e.g. `duplicates`,
+# `linkedIssue`) is inherited from the global default untouched.
+gate:
+  enabled: true
+
+# Array fields REPLACE the global default wholesale, never concatenate with it — this repo's
+# wanted-paths guidance is exactly this list, not global's list plus this one.
+wantedPaths:
+  - src/**
+
+settings:
+  # An explicit `null` clears the global default's contributorOpenPrCap for THIS repo only — e.g.
+  # for a small, high-trust repo where the instance-wide cap doesn't make sense. Omit this key
+  # entirely (rather than setting it to `null`) to just inherit the global cap instead.
+  contributorOpenPrCap: null

@@ -5,18 +5,29 @@
 // into the Workers-safe loader via setLocalManifestReader at boot (server.ts), so this module's fs import never
 // reaches the Cloudflare bundle.
 //
-// Layout (CodeRabbit-style: per-repo override, then a global fallback). For a repo `JSONbored/gittensory` the
-// reader tries, in priority order:
+// Layout (CodeRabbit-style: per-repo override, layered over a global default). For a repo `JSONbored/gittensory`
+// the reader tries, in priority order:
 //   1. `jsonbored__gittensory/.gittensory.yml`  — owner-qualified folder (robust to repo-name collisions across owners)
 //   2. `gittensory/.gittensory.yml`             — bare repo-name folder (the clean, human-readable layout)
 //   3. `jsonbored__gittensory.yml`              — flat owner__repo file (the original #1390 layout; back-compat)
-//   4. `.gittensory.yml`                        — GLOBAL fallback at the dir root: defaults applied to every repo
-//      that has no per-repo file of its own.
-// `.yaml` / `.json` are accepted everywhere `.yml` is. The first existing candidate wins outright (a present
-// per-repo file fully REPLACES the global fallback — "fallback" means "used only when no per-repo file exists",
-// not a deep merge). The slug is lowercased (GitHub repo full-names are case-insensitive; #1390 already lowercased).
+//   4. `.gittensory.yml`                        — GLOBAL default at the dir root, shared by every repo.
+// `.yaml` / `.json` are accepted everywhere `.yml` is. With only ONE of {a per-repo candidate, the global default}
+// present, its raw text is returned unchanged — byte-identical to the original #1390 behavior. With BOTH present,
+// they are DEEP-MERGED (the per-repo file overlaid onto the global default): nested mappings (`gate`, `settings`,
+// `review`, `features`, `contentLane`, and their own nested blocks) merge key by key, arrays replace wholesale
+// (never concatenated), and an explicit YAML/JSON `null` at a key always overrides the global value there — which
+// clears a setting wherever the manifest parser already treats an explicit null as "off"/"clear" (e.g.
+// `settings.contributorOpenPrCap`, `settings.accountAgeThresholdDays`), and is otherwise equivalent to omitting the
+// key. A per-repo key that is simply absent leaves the corresponding global value untouched. If ONE file fails to
+// parse as a YAML/JSON mapping (or is oversized), the merge is skipped and the OTHER file's raw text is used alone
+// — a still-valid sibling's policy is never silently discarded just because its counterpart is broken. If BOTH
+// fail, the per-repo file's raw text is returned (matching the original single-candidate priority), so a doubly
+// broken pair degrades exactly like a single malformed manifest always has. The slug is lowercased (GitHub repo
+// full-names are case-insensitive; #1390 already lowercased).
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import type {
   RepoReviewContext,
   RepoReviewSkill,
@@ -26,7 +37,7 @@ import type {
   RepoReviewContextReader,
 } from "../signals/focus-manifest-loader";
 
-/** The bare config filenames tried inside a per-repo folder and at the dir root (global fallback), in priority order. */
+/** The bare config filenames tried inside a per-repo folder and at the dir root (global default), in priority order. */
 const CONFIG_BASENAMES = [".gittensory.yml", ".gittensory.yaml", ".gittensory.json"] as const;
 const GITHUB_OWNER_SEGMENT = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const GITHUB_REPO_SEGMENT = /^[a-z0-9._-]+$/;
@@ -35,8 +46,8 @@ function isSafeRepoSegment(segment: string): boolean {
   return segment !== "." && segment !== ".." && GITHUB_REPO_SEGMENT.test(segment);
 }
 
-/** Global-fallback candidates (relative to GITTENSORY_REPO_CONFIG_DIR): the dir-root `.gittensory.{yml,yaml,json}`
- *  applied to any repo without its own per-repo file. */
+/** Global-default candidates (relative to GITTENSORY_REPO_CONFIG_DIR): the dir-root `.gittensory.{yml,yaml,json}`,
+ *  deep-merged under any per-repo file (or applied alone, when a repo has no per-repo file of its own). */
 export const GLOBAL_CONFIG_CANDIDATES: string[] = [...CONFIG_BASENAMES];
 
 /** Per-repo private-config candidate paths (relative to GITTENSORY_REPO_CONFIG_DIR), in priority order:
@@ -60,27 +71,89 @@ export function localConfigCandidates(repoFullName: string): string[] {
   ];
 }
 
+/** Read the first candidate that exists, trying each in order; null when none do. A read error (ENOENT or
+ *  otherwise unreadable) is swallowed so the next candidate is tried. */
+async function readFirstExisting(base: string, candidates: string[]): Promise<string | null> {
+  for (const candidate of candidates) {
+    try {
+      return await readFile(resolve(base, candidate), "utf8");
+    } catch {
+      // ENOENT / unreadable → try the next candidate
+    }
+  }
+  return null;
+}
+
+/** Tolerantly parse raw config text into a plain mapping for MERGE PURPOSES ONLY — same 2-line YAML/JSON detection
+ *  `parseFocusManifestContent` (focus-manifest.ts) uses, duplicated locally rather than exported from there so that
+ *  file's public surface stays unchanged for what is otherwise two lines of logic. Returns null — "not mergeable" —
+ *  for empty/oversized text, a parse error, or a parsed value that isn't a plain mapping (null/array/scalar); every
+ *  one of those cases makes the caller fall back to legacy single-candidate behavior instead of attempting a merge. */
+function parseConfigMapping(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > MAX_FOCUS_MANIFEST_BYTES) return null;
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  let parsed: unknown;
+  try {
+    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return parsed as Record<string, unknown>;
+}
+
+/** Recursively overlay `override` onto `base`: a nested mapping merges key by key; an array or any other
+ *  non-mapping override value (including an explicit `null`) REPLACES the base value at that key wholesale — never
+ *  concatenated or blended. A key `override` never mentions leaves `base`'s value at that key completely untouched.
+ *  Exported for direct unit testing; deliberately ignorant of any manifest field name (`gate`, `settings`,
+ *  `wantedPaths`, etc.) so it composes correctly with the whole `.gittensory.yml` schema, present and future, with
+ *  zero repo- or field-specific code. */
+export function mergeConfigOverlay(base: unknown, override: unknown): unknown {
+  if (override === null) return null;
+  if (Array.isArray(override)) return override;
+  if (typeof override !== "object") return override;
+  if (base === null || typeof base !== "object" || Array.isArray(base)) return override;
+  const merged: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+  for (const key of Object.keys(override as Record<string, unknown>)) {
+    merged[key] = mergeConfigOverlay((base as Record<string, unknown>)[key], (override as Record<string, unknown>)[key]);
+  }
+  return merged;
+}
+
+/** Combine a global-default and a per-repo config's raw text, given that BOTH files exist. Both parse as mappings
+ *  → deep-merged (the per-repo file overlaid onto the global default via {@link mergeConfigOverlay}) into one JSON
+ *  document — a lossless round trip for the downstream `parseFocusManifestContent` (it starts with `{`, so that
+ *  parser `JSON.parse`s it) since both inputs are already JSON-safe values. Only one parses → that file's raw text
+ *  alone (best-effort: a broken sibling never discards a still-valid file's policy). Neither parses → the per-repo
+ *  text (matching the original single-candidate-wins priority, so it flows downstream to the same "malformed,
+ *  ignoring" warning a lone broken manifest always got). */
+function combineConfigText(globalText: string, repoText: string): string {
+  const globalRaw = parseConfigMapping(globalText);
+  const repoRaw = parseConfigMapping(repoText);
+  if (globalRaw && repoRaw) return JSON.stringify(mergeConfigOverlay(globalRaw, repoRaw));
+  if (repoRaw) return repoText;
+  if (globalRaw) return globalText;
+  return repoText;
+}
+
 /** Build the container-local manifest reader over GITTENSORY_REPO_CONFIG_DIR, or null when the dir is unset/blank
- *  (⇒ the loader keeps fetching the public `.gittensory.yml`). Each lookup returns the first existing per-repo
- *  candidate's text; failing that, the global-fallback `.gittensory.{yml,yaml,json}` at the dir root; null when
- *  neither exists (⇒ the loader falls through to the public file). An invalid repo full name yields no per-repo
- *  candidates and is NOT served the global fallback (it is never a real webhook repo). A read error on one
- *  candidate is swallowed so the next candidate is tried. */
+ *  (⇒ the loader keeps fetching the public `.gittensory.yml`). Looks up the first existing per-repo candidate and
+ *  the global-default candidate independently: with only one present, its raw text is returned unchanged; with
+ *  both present, they are deep-merged (see the module header) and returned as one JSON document; with neither
+ *  present, null (⇒ the loader falls through to the public file). An invalid repo full name yields no per-repo
+ *  candidates and is NOT served the global default (it is never a real webhook repo). */
 export function makeLocalManifestReader(dir: string | undefined): RepoFocusManifestFetcher | null {
   const trimmed = (dir ?? "").trim();
   if (!trimmed) return null;
   const base = resolve(trimmed);
   return async (repoFullName: string): Promise<string | null> => {
     const perRepo = localConfigCandidates(repoFullName);
-    if (perRepo.length === 0) return null; // invalid repo name → no per-repo file AND no global fallback
-    for (const candidate of [...perRepo, ...GLOBAL_CONFIG_CANDIDATES]) {
-      try {
-        return await readFile(resolve(base, candidate), "utf8");
-      } catch {
-        // ENOENT / unreadable → try the next candidate
-      }
-    }
-    return null;
+    if (perRepo.length === 0) return null; // invalid repo name → no per-repo file AND no global default
+    const [repoText, globalText] = await Promise.all([readFirstExisting(base, perRepo), readFirstExisting(base, GLOBAL_CONFIG_CANDIDATES)]);
+    if (repoText === null) return globalText;
+    if (globalText === null) return repoText;
+    return combineConfigText(globalText, repoText);
   };
 }
 

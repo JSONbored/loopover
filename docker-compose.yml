@@ -61,8 +61,10 @@ services:
       PORT: "8787"
       DATABASE_PATH: /data/gittensory.sqlite
       # Container-private per-repo config (#1390): point at a mounted dir holding {owner}__{repo}/.gittensory.yml
-      # files (and an optional root .gittensory.yml global fallback). Keeps each repo's policy OUT of the public
-      # GitHub repo so contributors can't game the rules. Empty/unmounted ⇒ repos use the public file / defaults.
+      # files layered over an optional root .gittensory.yml global default (a per-repo file overrides only the
+      # keys it sets; anything it doesn't mention is inherited from the global default — see
+      # config/examples/README.md). Keeps each repo's policy OUT of the public GitHub repo so contributors can't
+      # game the rules. Empty/unmounted ⇒ repos use the public file / defaults.
       GITTENSORY_REPO_CONFIG_DIR: "${GITTENSORY_REPO_CONFIG_DIR:-/config}"
       # Claude Code usage telemetry → OTEL collector → Prometheus → Claude usage dashboard. OFF unless you set
       # CLAUDE_CODE_ENABLE_TELEMETRY=1 in .env (requires --profile observability so the otel-collector is up).
@@ -96,7 +98,9 @@ services:
     volumes:
       - gittensory-data:/data
       # Container-private per-repo config dir (read-only). Create ./gittensory-config/{owner}__{repo}/.gittensory.yml
-      # locally (gitignored — never commit real policy). Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
+      # locally, optionally alongside a ./gittensory-config/.gittensory.yml global default that every per-repo file
+      # is deep-merged over (gitignored — never commit real policy; see config/examples/ for generic templates).
+      # Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
       - ./gittensory-config:/config:ro
     depends_on:
       redis:

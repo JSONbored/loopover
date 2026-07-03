@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { GLOBAL_CONFIG_CANDIDATES, isReviewSkillEnabled, localConfigCandidates, makeLocalManifestReader, makeLocalReviewContextReader, parseReviewSkill } from "../../src/selfhost/private-config";
+import { GLOBAL_CONFIG_CANDIDATES, isReviewSkillEnabled, localConfigCandidates, makeLocalManifestReader, makeLocalReviewContextReader, mergeConfigOverlay, parseReviewSkill } from "../../src/selfhost/private-config";
 import { loadRepoReviewContext, setLocalReviewContextReader } from "../../src/signals/focus-manifest-loader";
+import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../src/signals/focus-manifest";
 
 describe("localConfigCandidates (container-private config paths)", () => {
   it("builds owner-folder → repo-folder → flat candidates (lowercased), each in .yml/.yaml/.json order", () => {
@@ -35,6 +36,39 @@ describe("localConfigCandidates (container-private config paths)", () => {
   });
   it("exposes the dir-root global-fallback candidates", () => {
     expect(GLOBAL_CONFIG_CANDIDATES).toEqual([".gittensory.yml", ".gittensory.yaml", ".gittensory.json"]);
+  });
+});
+
+describe("mergeConfigOverlay (generic recursive deep-merge, no manifest-field-specific code)", () => {
+  it("merges nested mappings key by key using generic, non-manifest field names", () => {
+    expect(mergeConfigOverlay({ a: 1, b: { c: 2 } }, { b: { d: 3 } })).toEqual({ a: 1, b: { c: 2, d: 3 } });
+  });
+  it("lets an override scalar replace a base scalar at the same key", () => {
+    expect(mergeConfigOverlay({ a: 1 }, { a: 2 })).toEqual({ a: 2 });
+  });
+  it("lets an override array replace a base array wholesale, never concatenated", () => {
+    expect(mergeConfigOverlay({ a: [1, 2] }, { a: [3] })).toEqual({ a: [3] });
+  });
+  it("lets an explicit override null win over any base value, including an object", () => {
+    expect(mergeConfigOverlay({ a: { nested: true } }, { a: null })).toEqual({ a: null });
+  });
+  it("takes the override value outright when the base value at that key isn't a mergeable mapping", () => {
+    expect(mergeConfigOverlay({ a: "scalar" }, { a: { nested: true } })).toEqual({ a: { nested: true } });
+    expect(mergeConfigOverlay({ a: [1, 2] }, { a: { nested: true } })).toEqual({ a: { nested: true } }); // base is an array, not mergeable
+    expect(mergeConfigOverlay({ a: null }, { a: { nested: true } })).toEqual({ a: { nested: true } });
+  });
+  it("takes the override value outright when the base has no value at that key at all", () => {
+    expect(mergeConfigOverlay({}, { a: { nested: true } })).toEqual({ a: { nested: true } });
+  });
+  it("returns the whole override object unchanged when the top-level base isn't a mergeable mapping", () => {
+    expect(mergeConfigOverlay("not-an-object", { a: 1 })).toEqual({ a: 1 });
+    expect(mergeConfigOverlay(null, { a: 1 })).toEqual({ a: 1 });
+    expect(mergeConfigOverlay([1, 2], { a: 1 })).toEqual({ a: 1 });
+  });
+  it("returns a non-mapping override value unchanged regardless of its type, ignoring base entirely", () => {
+    expect(mergeConfigOverlay({ a: 1 }, "scalar")).toBe("scalar");
+    expect(mergeConfigOverlay({ a: 1 }, 42)).toBe(42);
+    expect(mergeConfigOverlay({ a: 1 }, true)).toBe(true);
   });
 });
 
@@ -76,13 +110,82 @@ describe("makeLocalManifestReader (GITTENSORY_REPO_CONFIG_DIR)", () => {
     expect(await reader!("owner/unconfigured")).toBe("gate:\n  enabled: false\n");
   });
 
-  it("prefers a per-repo file over the global fallback when both exist", async () => {
+  it("deep-merges a per-repo file over the global default: per-repo wins on shared keys, global fills the rest", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
-    writeFileSync(join(dir, ".gittensory.yml"), "gate:\n  enabled: false\n"); // global
+    writeFileSync(join(dir, ".gittensory.yml"), "gate:\n  enabled: false\n  duplicates: block\n"); // global
     mkdirSync(join(dir, "repo"));
-    writeFileSync(join(dir, "repo", ".gittensory.yml"), "gate:\n  enabled: true\n"); // per-repo wins
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "gate:\n  enabled: true\n"); // per-repo overrides only `enabled`
+    const reader = makeLocalManifestReader(dir);
+    const manifest = parseFocusManifestContent(await reader!("owner/repo"));
+    expect(manifest.gate.enabled).toBe(true); // per-repo wins on the shared key
+    expect(manifest.gate.duplicates).toBe("block"); // inherited from global, untouched
+  });
+
+  it("replaces an array wholesale instead of concatenating it with the global default's", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".gittensory.yml"), "wantedPaths:\n  - src/**\n  - test/**\n");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "wantedPaths:\n  - docs/**\n");
+    const reader = makeLocalManifestReader(dir);
+    const manifest = parseFocusManifestContent(await reader!("owner/repo"));
+    expect(manifest.wantedPaths).toEqual(["docs/**"]);
+  });
+
+  it("lets an explicit per-repo null clear a global-configured contributorOpenPrCap", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".gittensory.yml"), "settings:\n  contributorOpenPrCap: 5\n");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "settings:\n  contributorOpenPrCap: null\n");
+    const reader = makeLocalManifestReader(dir);
+    const manifest = parseFocusManifestContent(await reader!("owner/repo"));
+    expect(manifest.settings.contributorOpenPrCap).toBeNull(); // explicit null clears the global 5, not "unset"
+  });
+
+  it("lets an explicit per-repo null clear a global-configured accountAgeThresholdDays", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".gittensory.yml"), "settings:\n  accountAgeThresholdDays: 14\n");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "settings:\n  accountAgeThresholdDays: null\n");
+    const reader = makeLocalManifestReader(dir);
+    const manifest = parseFocusManifestContent(await reader!("owner/repo"));
+    expect(manifest.settings.accountAgeThresholdDays).toBeNull();
+  });
+
+  it("treats a config file over the manifest size cap as unmergeable and falls back to the other file alone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    const oversized = `# ${"x".repeat(MAX_FOCUS_MANIFEST_BYTES + 10)}\ngate:\n  enabled: false\n`;
+    writeFileSync(join(dir, ".gittensory.yml"), oversized); // global, too large to attempt a merge against
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "gate:\n  enabled: true\n");
+    const reader = makeLocalManifestReader(dir);
+    expect(await reader!("owner/repo")).toBe("gate:\n  enabled: true\n"); // oversized global dropped; per-repo raw text unchanged
+  });
+
+  it("falls back to the per-repo file alone when the global default fails to parse", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".gittensory.yml"), "{ not valid json"); // starts with `{` → JSON.parse throws
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "gate:\n  enabled: true\n");
     const reader = makeLocalManifestReader(dir);
     expect(await reader!("owner/repo")).toBe("gate:\n  enabled: true\n");
+  });
+
+  it("falls back to the global default alone when the per-repo file parses but isn't a mapping", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".gittensory.yml"), "gate:\n  enabled: false\n");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "[1, 2, 3]"); // valid JSON, but an array, not a mapping
+    const reader = makeLocalManifestReader(dir);
+    expect(await reader!("owner/repo")).toBe("gate:\n  enabled: false\n");
+  });
+
+  it("returns the per-repo raw text (today's legacy priority) when BOTH files fail to parse as mappings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".gittensory.yml"), "{ also broken");
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".gittensory.yml"), "{ broken json");
+    const reader = makeLocalManifestReader(dir);
+    expect(await reader!("owner/repo")).toBe("{ broken json"); // flows downstream, which warns + ignores it, same as today
   });
 
   it("returns null when neither a per-repo file nor a global fallback exists (⇒ loader uses the public file)", async () => {

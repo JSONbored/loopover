@@ -266,8 +266,9 @@ async function main(): Promise<void> {
   /* v8 ignore next -- importing this entrypoint starts the Node server; pure validation is covered in selfhost-preflight tests. */
   assertSelfHostPreflight(process.env);
   // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
-  // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
-  // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
+  // manifest loader prefers a mounted `{owner}__{repo}.yml`, deep-merged over an optional root `.gittensory.yml`
+  // global default, over the public `.gittensory.yml` (review policy stays private; see
+  // config/examples/README.md). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
   setLocalManifestReader(
     makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR),
   );

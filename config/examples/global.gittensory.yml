@@ -1,0 +1,31 @@
+# ============================================================================
+# Self-host PRIVATE global default — GENERIC EXAMPLE, safe to publish
+# ============================================================================
+#
+# Copy this file to the ROOT of your own GITTENSORY_REPO_CONFIG_DIR mount (e.g.
+# `./gittensory-config/.gittensory.yml` for the default docker-compose.yml mount) and edit your
+# copy — never this one. It applies to every repo that has no per-repo file of its own, and is
+# deep-merged UNDER any per-repo file that does exist (see ../README.md for the precedence chain
+# and merge semantics; see ../../.gittensory.yml.example at the repo root for every supported
+# field — this file uses the exact same schema, just a private location).
+#
+# Every value below is an illustrative placeholder. Replace the login and thresholds with your
+# own before using this file for real; do not commit your edited copy to a public repo.
+# ============================================================================
+
+# Baseline gate policy shared by every repo unless a per-repo file overrides it.
+gate:
+  enabled: true
+  duplicates: block
+  linkedIssue: advisory
+
+# Anti-abuse + presentation defaults shared by every repo.
+settings:
+  # Max PRs a single non-owner/non-admin/non-bot contributor may have open at once, instance-wide
+  # default. A per-repo file can override this per repo, or set it to `null` to disable it there.
+  contributorOpenPrCap: 3
+
+  # GitHub logins exempt from the shared anti-abuse mechanisms above (on top of the standing
+  # owner/admin/automation-bot exemption). Replace with your own maintainer/admin logins.
+  autoCloseExemptLogins:
+    - your-admin-login

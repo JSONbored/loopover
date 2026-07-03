@@ -72,8 +72,12 @@ CMD ["node", "dist/server.mjs"]
 FROM runtime-base AS runtime-prebuilt
 COPY --chown=node:node dist/server.mjs ./dist/server.mjs
 COPY --chown=node:node migrations ./migrations
+# Generic, safe self-host private-config templates (config/examples/, #layered-private-config) — reference only.
+# GITTENSORY_REPO_CONFIG_DIR still points at the operator-mounted /config, so shipping these activates nothing.
+COPY --chown=node:node config/examples ./config/examples
 
 # Default local/operator builds still build the bundle inside Docker, but only the JS bundle reaches runtime.
 FROM runtime-base AS runtime
 COPY --from=build --chown=node:node /app/dist/server.mjs ./dist/server.mjs
 COPY --from=build --chown=node:node /app/migrations ./migrations
+COPY --from=build --chown=node:node /app/config/examples ./config/examples

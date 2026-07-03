@@ -625,6 +625,14 @@ export const RepositorySettingsSchema = z
     closeOwnerAuthors: z.boolean(),
     autoLabelEnabled: z.boolean(),
     typeLabelsEnabled: z.boolean(),
+    typeLabels: z.object({ bug: z.string(), feature: z.string(), priority: z.string() }).optional(),
+    linkedIssueLabelPropagation: z
+      .object({
+        enabled: z.boolean(),
+        mode: z.enum(["exclusive_type_label"]),
+        mappings: z.array(z.object({ issueLabel: z.string(), prLabel: z.string(), removeOtherTypeLabels: z.boolean() })),
+      })
+      .optional(),
     gittensorLabel: z.string(),
     blacklistLabel: z.string().nullable(),
     createMissingLabel: z.boolean(),

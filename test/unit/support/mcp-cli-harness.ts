@@ -244,6 +244,11 @@ export async function startFixtureServer(
       response.end(JSON.stringify(slopRiskFixture(body)));
       return;
     }
+    if (request.url === "/v1/lint/issue-slop" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { title?: string; body?: string };
+      response.end(JSON.stringify(issueSlopFixture(body)));
+      return;
+    }
     if (request.url === "/v1/opportunities/find" && request.method === "POST") {
       const body = (await readJsonRequest(request)) as {
         targets?: Array<{ owner: string; repo: string }>;
@@ -493,5 +498,26 @@ export function slopRiskFixture(input: {
     band: slopRisk <= 0 ? "clean" : slopRisk < 25 ? "low" : slopRisk < 60 ? "elevated" : "high",
     findings,
     rubric: "Fixture slop rubric.",
+  };
+}
+
+export function issueSlopFixture(input: { title?: string; body?: string } = {}) {
+  const bodyText = typeof input.body === "string" ? input.body : "";
+  const emptyBody = !bodyText.trim();
+  const unfilledTemplate = !emptyBody && /##\s*summary/i.test(bodyText) && /-\s*\[?\s*\]?\s*$/m.test(bodyText);
+  const titleOnly = !emptyBody && !unfilledTemplate && input.title && bodyText.trim().toLowerCase() === input.title.trim().toLowerCase();
+  const slopRisk = emptyBody ? 30 : unfilledTemplate ? 40 : titleOnly ? 25 : 0;
+  const findings = emptyBody
+    ? [{ code: "empty_issue_body", title: "Issue has no description", severity: "warning", detail: "This issue was opened with an empty body." }]
+    : unfilledTemplate
+      ? [{ code: "unfilled_issue_template", title: "Issue template left unfilled", severity: "warning", detail: "Fill in the issue template sections with concrete detail." }]
+      : titleOnly
+        ? [{ code: "title_restatement", title: "Issue body only restates the title", severity: "warning", detail: "Add specific detail beyond the title." }]
+        : [];
+  return {
+    slopRisk,
+    band: slopRisk <= 0 ? "clean" : slopRisk < 25 ? "low" : slopRisk < 60 ? "elevated" : "high",
+    findings,
+    rubric: "Fixture issue slop rubric.",
   };
 }

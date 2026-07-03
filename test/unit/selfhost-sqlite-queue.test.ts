@@ -1062,6 +1062,42 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  it("preserves the original created_at across a coalesced re-enqueue of a recurring maintenance job (regression for #selfhost-runtime-drift)", async () => {
+    // A periodic scheduler (e.g. the hourly refresh-registry trigger) re-enqueues the SAME still-pending
+    // maintenance job while it is deferred under sustained pressure. created_at anchors the maintenance
+    // trickle's age clock (maintenance-admission.ts) -- if the coalesced re-enqueue reset it to "now" every
+    // time, a re-enqueue cadence shorter than maxDeferAgeMs would re-arm the clock forever and the job would
+    // never force-admit, no matter how long the underlying need had genuinely been outstanding.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    try {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+
+      await q.binding.send(msg("refresh-registry"), { delaySeconds: 60 });
+      const first = driver.query(
+        "SELECT id, created_at, run_after FROM _selfhost_jobs WHERE payload LIKE '%refresh-registry%'",
+        [],
+      ).rows[0] as { id: number; created_at: number; run_after: number };
+
+      vi.setSystemTime(new Date("2026-06-24T12:30:00.000Z")); // 30m later: next periodic tick, still pending
+      await q.binding.send(msg("refresh-registry"), { delaySeconds: 60 });
+
+      const rows = driver.query("SELECT id, created_at, run_after FROM _selfhost_jobs", []).rows as Array<{
+        id: number;
+        created_at: number;
+        run_after: number;
+      }>;
+      expect(rows).toHaveLength(1); // coalesced into the same row, not a second insert
+      expect(rows[0]?.id).toBe(first.id);
+      expect(rows[0]?.created_at).toBe(first.created_at); // NOT reset to the re-enqueue time
+      expect(rows[0]?.run_after).toBeGreaterThan(first.run_after); // still advances with the new request
+      expect(q.stats()).toMatchObject({ gittensory_jobs_coalesced_total: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not coalesce terminal pull_request events that carry distinct lifecycle side effects", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);
@@ -2236,6 +2272,21 @@ describe("createSqliteQueue (durable #980)", () => {
       );
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
+      expect(q.stats()).toMatchObject({ gittensory_jobs_maintenance_trickle_admitted_total: 1 });
+      expect(await renderMetrics()).toContain(
+        'gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1',
+      );
+    });
+
+    it("does not record a trickle-admitted metric on a normal clear-pressure admission", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+      expect(q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_trickle_admitted_total");
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_trickle_admitted");
     });
 
     it("pressureSignals() reports live/maintenance pending counts and oldest ages", async () => {

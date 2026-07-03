@@ -276,6 +276,19 @@ test("scanDocCommentDrift: requires a github token and a head sha", async () => 
   assert.deepEqual(await scanDocCommentDrift({ repoFullName: "o/r", prNumber: 1, githubToken: "t", files: [{ path: "src/a.ts", patch: DRIFT_PATCH }] }, fileWith(DRIFTED)), []);
 });
 
+test("scanDocCommentDrift: rejects multi-segment repo slugs without fetching", async () => {
+  let called = false;
+  const out = await scanDocCommentDrift(
+    { repoFullName: "o/r/extra", prNumber: 1, headSha: "abc123", githubToken: "ght", files: [{ path: "src/a.ts", patch: DRIFT_PATCH }] },
+    async () => {
+      called = true;
+      return fileWith(DRIFTED)();
+    },
+  );
+  assert.deepEqual(out, []);
+  assert.equal(called, false);
+});
+
 test("scanDocCommentDrift: skips non-source and test files without fetching", async () => {
   let called = false;
   const out = await scanDocCommentDrift(

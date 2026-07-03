@@ -59,7 +59,11 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
 }
 
 function isVendoredFileFrom(parts: NormalizedPath): boolean {
-  return /(^|\/)(vendor|vendored|third_party|third-party|node_modules)\//.test(parts.norm);
+  // bower_components (Bower) and jspm_packages (JSPM) are installed-dependency
+  // directories — the same vendored case as node_modules, not contributor source.
+  return /(^|\/)(vendor|vendored|third_party|third-party|node_modules|bower_components|jspm_packages)\//.test(
+    parts.norm,
+  );
 }
 
 function isLockfileFrom(parts: NormalizedPath): boolean {

@@ -16598,6 +16598,152 @@ describe("queue processors", () => {
       expect(seen.posted).toEqual([]);
       expect(seen.removed).toEqual([]);
     });
+
+    function stubPropagationFetch(
+      prNumber: number,
+      linkedIssueNumber: number,
+      seen: { posted: string[]; removed: string[]; issueFetches: number },
+      linkedIssueResponse: () => Response,
+    ) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes(`/commits/`) && url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 9001 }, { status: 201 });
+        if (url.includes("/check-runs/") && method === "PATCH") return Response.json({ id: 9001 });
+        if (url.endsWith(`/issues/${linkedIssueNumber}`) && method === "GET") {
+          seen.issueFetches += 1;
+          return linkedIssueResponse();
+        }
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "POST") {
+          seen.posted.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[]));
+          return Response.json([]);
+        }
+        if (url.includes(`/issues/${prNumber}/labels/`) && method === "DELETE") {
+          seen.removed.push(decodeURIComponent(url.split(`/issues/${prNumber}/labels/`)[1] ?? ""));
+          return new Response(null, { status: 204 });
+        }
+        if (url.endsWith("/labels") && method === "POST") return Response.json({ name: JSON.parse(String(init?.body ?? "{}")).name }, { status: 201 });
+        if (url.includes(`/issues/${prNumber}/comments`)) return Response.json([]);
+        return new Response("not found", { status: 404 });
+      });
+    }
+
+    it("applies the configured priority label when a linked issue already carries the configured issue label (#priority-linked-issue-gate)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        linkedIssueLabelPropagation: {
+          enabled: true,
+          mode: "exclusive_type_label",
+          mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }],
+        },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+      stubPropagationFetch(220, 1, seen, () => Response.json({ number: 1, state: "open", labels: ["gittensor:priority"] }));
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "priority-propagation-applied",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 220, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha220" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.issueFetches).toBe(1);
+      expect(seen.posted).toEqual(["gittensor:priority"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:feature"]);
+    });
+
+    it("fails open to the normal title-based label when the linked issue's fetch fails (#priority-linked-issue-gate)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        linkedIssueLabelPropagation: {
+          enabled: true,
+          mode: "exclusive_type_label",
+          mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }],
+        },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+      stubPropagationFetch(221, 1, seen, () => new Response("server error", { status: 500 }));
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "priority-propagation-fetch-failed",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 221, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha221" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.issueFetches).toBe(1);
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
+    });
+
+    it("never fetches a linked issue and keeps normal behavior when propagation is left at its default (disabled) (#priority-linked-issue-gate)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        // linkedIssueLabelPropagation intentionally omitted -- defaults to disabled.
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
+      stubPropagationFetch(222, 1, seen, () => Response.json({ number: 1, state: "open", labels: ["gittensor:priority"] }));
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "priority-propagation-disabled-noop",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 222, title: "fix: some bug", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha222" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.issueFetches).toBe(0);
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
+    });
   });
 });
 

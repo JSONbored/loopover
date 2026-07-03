@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   analyzePlanTemplate,
   buildPlanTemplate,
+  createPlanTemplate,
+  managePlanTemplate,
+  planPlanTemplate,
   preparePlanTemplate,
   PLAN_TEMPLATE_BUILDERS,
   type PlanTemplateStage,
@@ -17,7 +20,7 @@ function idsOf(steps: RawPlanStep[]): string[] {
 
 describe("plan-templates", () => {
   it("exposes a builder for every declared stage", () => {
-    expect(STAGES.sort()).toEqual(["analyze", "prepare"]);
+    expect(STAGES.sort()).toEqual(["analyze", "create", "manage", "plan", "prepare"]);
   });
 
   it.each(STAGES)("'%s' template round-trips through the real rawPlanStepSchema", (stage) => {
@@ -48,7 +51,10 @@ describe("plan-templates", () => {
 
   it("is deterministic: same context yields identical output", () => {
     expect(analyzePlanTemplate({ subject: "x" })).toEqual(analyzePlanTemplate({ subject: "x" }));
+    expect(planPlanTemplate({ subject: "x" })).toEqual(planPlanTemplate({ subject: "x" }));
     expect(preparePlanTemplate()).toEqual(preparePlanTemplate());
+    expect(createPlanTemplate({ subject: "x" })).toEqual(createPlanTemplate({ subject: "x" }));
+    expect(managePlanTemplate()).toEqual(managePlanTemplate());
   });
 
   it("weaves the subject into every title as a single clean line", () => {
@@ -83,6 +89,27 @@ describe("plan-templates", () => {
     expect(steps.map((s) => s.id)).toEqual(["branch-create", "coding-agent", "local-test"]);
     expect(steps.find((s) => s.id === "coding-agent")?.dependsOn).toEqual(["branch-create"]);
     expect(steps.find((s) => s.id === "local-test")?.dependsOn).toEqual(["coding-agent"]);
+  });
+
+  it("encodes the real plan ordering: readiness depends on the built DAG", () => {
+    const steps = planPlanTemplate();
+    expect(steps.map((s) => s.id)).toEqual(["packet-validate", "plan-dag-build", "readiness-check"]);
+    expect(steps.find((s) => s.id === "plan-dag-build")?.dependsOn).toEqual(["packet-validate"]);
+    expect(steps.find((s) => s.id === "readiness-check")?.dependsOn).toEqual(["plan-dag-build"]);
+  });
+
+  it("encodes the real create ordering: open PR depends on a pushed branch", () => {
+    const steps = createPlanTemplate();
+    expect(steps.map((s) => s.id)).toEqual(["commit-changes", "push-branch", "open-pull-request"]);
+    expect(steps.find((s) => s.id === "push-branch")?.dependsOn).toEqual(["commit-changes"]);
+    expect(steps.find((s) => s.id === "open-pull-request")?.dependsOn).toEqual(["push-branch"]);
+  });
+
+  it("encodes the real manage ordering: fork sync follows the gate verdict", () => {
+    const steps = managePlanTemplate();
+    expect(steps.map((s) => s.id)).toEqual(["wait-ci", "read-gate-result", "sync-fork"]);
+    expect(steps.find((s) => s.id === "read-gate-result")?.dependsOn).toEqual(["wait-ci"]);
+    expect(steps.find((s) => s.id === "sync-fork")?.dependsOn).toEqual(["read-gate-result"]);
   });
 
   it("rejects an unknown stage with a clear error instead of a generic TypeError", () => {

@@ -110,6 +110,20 @@ describe("classifyContentFiles", () => {
     expect(r.kind).toBe("close");
   });
 
+  it("closes a single supported entry whose status is missing or empty (scope-status guard)", () => {
+    // A content file that arrives with no `status` (or an empty one) is not a trustworthy add/edit: the
+    // `String(entry.file.status || "")` falsy path normalizes it to "" so it fails the added/modified check
+    // and routes to a scope-status close, never a silent review.
+    const missingStatus = classifyContentFiles([{ filename: "content/skills/foo.mdx" }]);
+    expect(missingStatus.kind).toBe("close");
+    if (missingStatus.kind === "close") {
+      expect(missingStatus.category).toBe("skills");
+      expect(missingStatus.reason).toContain("Direct content submissions can only add a new content file");
+    }
+    // An explicitly empty status string takes the same falsy branch.
+    expect(classifyContentFiles([{ filename: "content/skills/foo.mdx", status: "" }]).kind).toBe("close");
+  });
+
   it("exposes the supported categories set", () => {
     expect(SUPPORTED_CONTENT_CATEGORIES.has("skills")).toBe(true);
     expect(SUPPORTED_CONTENT_CATEGORIES.has("not-a-category")).toBe(false);

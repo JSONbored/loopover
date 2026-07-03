@@ -167,4 +167,32 @@ describe("opportunity metadata signals", () => {
     expect(computeMetadataPotential({ labels: ["help wanted", "bug"] })).toBeLessThanOrEqual(1);
     expect(buildMetadataRankInput(base, [base], { nowMs: NOW }).dupRisk).toBe(0);
   });
+
+  it("matches duplicate titles case-insensitively within the same repo slug", () => {
+    expect(
+      computeMetadataDupRisk(
+        { ...base, repoFullName: "Acme/Widgets", title: "Queue Retry Helper" },
+        [{ ...base, repoFullName: "acme/widgets", issueNumber: 11, title: "queue retry helper" }],
+      ),
+    ).toBeGreaterThan(0);
+  });
+
+  it("uses the higher of batch overlap and repo-level competition for dupRisk", () => {
+    const crowded = buildMetadataRankInput(
+      { ...base, title: "queue retry helper for workers" },
+      [base, { ...base, issueNumber: 2, title: "queue retry helper" }],
+      { nowMs: NOW, highRiskDuplicateClusters: 4, openPullRequests: 4 },
+    );
+    const overlapOnly = buildMetadataRankInput(
+      { ...base, title: "queue retry helper for workers" },
+      [base, { ...base, issueNumber: 2, title: "queue retry helper" }],
+      { nowMs: NOW, highRiskDuplicateClusters: 0, openPullRequests: 10 },
+    );
+    expect(crowded.dupRisk).toBe(1);
+    expect(overlapOnly.dupRisk).toBeGreaterThan(0);
+  });
+
+  it("ranks an empty metadata list without error", () => {
+    expect(rankMetadataOpportunities([], { nowMs: NOW })).toEqual([]);
+  });
 });

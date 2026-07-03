@@ -3104,14 +3104,30 @@ export async function countOpenPullRequests(env: Env, fullName: string): Promise
   return Number(row?.count ?? 0);
 }
 
+const INSTALLATION_REPO_LIST_LIMIT = 20_000;
+
 /** List every repo's fullName tracked under one installation (regression fix, #2562): pullRequests/issues have
  *  no installationId column of their own (only repoFullName, a plain string, matched by convention against
  *  repositories.fullName -- this codebase has no Drizzle joins to lean on instead), so scoping a cross-repo
  *  aggregate to one install means resolving its repo set FIRST, mirroring markRepositoriesRemovedFromInstallation
- *  (same file). */
+ *  (same file).
+ *
+ * INSTALLATION_REPO_LIST_LIMIT (gate finding): raised far above any realistic install size so truncation should
+ * never occur in practice, but a silently truncated repo set would understate countOpenItemsForAuthorAcrossRepos
+ * for that installation with no signal anything was dropped -- record an audit event on the rare install where
+ * the limit is still hit, rather than pretending completeness this query can't actually guarantee unbounded. */
 async function listRepoFullNamesForInstallation(env: Env, installationId: number): Promise<string[]> {
   const db = getDb(env.DB);
-  const rows = await db.select({ fullName: repositories.fullName }).from(repositories).where(eq(repositories.installationId, installationId)).limit(20_000);
+  const rows = await db.select({ fullName: repositories.fullName }).from(repositories).where(eq(repositories.installationId, installationId)).limit(INSTALLATION_REPO_LIST_LIMIT);
+  if (rows.length === INSTALLATION_REPO_LIST_LIMIT) {
+    await recordAuditEvent(env, {
+      eventType: "agent.global_open_item_cap.repo_list_truncated",
+      actor: "gittensory",
+      targetKey: `installation:${installationId}`,
+      outcome: "error",
+      detail: `installation has >= ${INSTALLATION_REPO_LIST_LIMIT} repos; the global contributor-cap check may undercount repos not included here`,
+    }).catch(() => undefined);
+  }
   return rows.map((row) => row.fullName);
 }
 

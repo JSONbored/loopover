@@ -70,4 +70,30 @@ describe("countOpenItemsForAuthorAcrossRepos (#2562)", () => {
     expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "farmer99")).toBe(1);
     expect(await countOpenItemsForAuthorAcrossRepos(env, 456, "farmer99")).toBe(2);
   });
+
+  it("audits (never silently drops) when an installation's own repo set hits the list limit (gate finding)", async () => {
+    const env = createTestEnv();
+    const LIMIT = 20_000;
+    const now = new Date().toISOString();
+    const values = Array.from({ length: LIMIT }, (_, i) => `('org/repo-${i}', 'org', 'repo-${i}', 123, '${now}', '${now}')`).join(",");
+    await env.DB.prepare(`INSERT INTO repositories (full_name, owner, name, installation_id, created_at, updated_at) VALUES ${values}`).run();
+    await upsertPullRequestFromGitHub(env, "org/repo-0", { number: 1, title: "a1", state: "open", user: { login: "farmer99" } });
+
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "farmer99")).toBe(1);
+
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+      .bind("agent.global_open_item_cap.repo_list_truncated", "installation:123")
+      .first<{ n: number }>();
+    expect(audit?.n).toBe(1);
+  });
+
+  it("does NOT audit a repo-list truncation when the installation's repo count is well under the limit", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 123);
+
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "farmer99")).toBe(0);
+
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.global_open_item_cap.repo_list_truncated'").first<{ n: number }>();
+    expect(audit?.n ?? 0).toBe(0);
+  });
 });

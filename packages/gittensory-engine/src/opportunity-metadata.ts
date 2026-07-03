@@ -41,6 +41,7 @@ const NEGATIVE_LABELS = Object.freeze([
 ]);
 
 function clamp01(value: number): number {
+  /* v8 ignore next -- Defensive guard for malformed adapter input; scores are always finite in practice. */
   if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
 }
@@ -112,6 +113,7 @@ export function computeMetadataFeasibility(issue: MetadataCandidateIssue, nowMs:
 }
 
 function titlesOverlap(left: string, right: string): boolean {
+  /* v8 ignore next -- Empty titles are filtered before overlap checks run. */
   if (!left || !right) return false;
   if (left === right) return true;
   const shorter = left.length <= right.length ? left : right;

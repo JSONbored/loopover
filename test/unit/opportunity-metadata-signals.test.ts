@@ -6,6 +6,7 @@ import {
   computeMetadataPotential,
   rankMetadataOpportunities,
 } from "../../packages/gittensory-engine/src/opportunity-metadata";
+import { DEFAULT_MINER_GOAL_SPEC } from "../../packages/gittensory-engine/src/miner-goal-spec";
 import { computeOpportunityCompetition } from "../../packages/gittensory-engine/src/opportunity-competition";
 import { computeOpportunityFreshness } from "../../packages/gittensory-engine/src/opportunity-freshness";
 
@@ -200,5 +201,35 @@ describe("opportunity metadata signals", () => {
 
   it("ranks an empty metadata list without error", () => {
     expect(rankMetadataOpportunities([], { nowMs: NOW })).toEqual([]);
+  });
+
+  it("covers remaining label, goal-spec, and overlap branches", () => {
+    expect(computeMetadataPotential({ labels: ["bug"] })).toBeCloseTo(0.55, 5);
+    expect(computeMetadataPotential({ labels: ["documentation"] })).toBeCloseTo(0.8, 5);
+    expect(computeMetadataPotential({ labels: ["good first issue"] })).toBeCloseTo(0.8, 5);
+    expect(computeMetadataFeasibility({ ...base, title: "1234567" }, NOW)).toBeGreaterThan(
+      computeMetadataFeasibility({ ...base, title: "123" }, NOW),
+    );
+    expect(
+      buildMetadataRankInput(base, [base], {
+        nowMs: NOW,
+        goalSpecsByRepo: { "other/repo": DEFAULT_MINER_GOAL_SPEC },
+      }).laneFit,
+    ).toBeGreaterThan(0);
+    expect(
+      computeMetadataDupRisk(
+        { ...base, title: "unique discovery target title" },
+        [{ ...base, issueNumber: 11, title: "   " }],
+      ),
+    ).toBe(0);
+    expect(
+      computeMetadataDupRisk(
+        { ...base, title: "queue retry helper" },
+        [
+          { ...base, issueNumber: 11, title: "queue retry helper" },
+          { ...base, issueNumber: 12, title: "queue retry helper" },
+        ],
+      ),
+    ).toBeGreaterThan(0.5);
   });
 });

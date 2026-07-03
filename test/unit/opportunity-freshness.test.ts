@@ -55,5 +55,17 @@ describe("computeOpportunityFreshness", () => {
         NOW,
       ),
     ).toBeGreaterThan(0.8);
+    expect(
+      computeOpportunityFreshness(
+        [{ state: undefined as unknown as string, updatedAt: "2026-07-03T00:00:00.000Z" }],
+        NOW,
+      ),
+    ).toBe(0);
+    expect(
+      computeOpportunityFreshness(
+        [{ state: "open", updatedAt: "2099-01-01T00:00:00.000Z" }],
+        NOW,
+      ),
+    ).toBe(1);
   });
 });

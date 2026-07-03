@@ -43,6 +43,16 @@ test("exportedSymbols: multi-declarator const/let/var reports every binding; gen
   assert.deepEqual(exportedSymbols("export function foo() {}"), ["foo"]); // single-symbol kinds unchanged
   assert.deepEqual(exportedSymbols("export const { a, b } = obj;"), []); // destructuring skipped (conservative)
   assert.deepEqual(exportedSymbols("const notExported = 1;"), []); // not an export
+  assert.deepEqual(exportedSymbols("export async function* gen() {}"), ["gen"]); // async generator
+  assert.deepEqual(exportedSymbols("export declare function foo(): void;"), ["foo"]); // ambient declaration
+  assert.deepEqual(exportedSymbols("export declare const bar: number;"), ["bar"]);
+});
+
+test("hasPrecedingDocComment: a tool/suppression directive comment is NOT documentation", () => {
+  assert.equal(hasPrecedingDocComment(["// eslint-disable-next-line no-restricted-syntax", "export const x = 1;"], 1), false);
+  assert.equal(hasPrecedingDocComment(["// @ts-expect-error legacy", "export const x = 1;"], 1), false);
+  assert.equal(hasPrecedingDocComment(["// prettier-ignore", "export const x = 1;"], 1), false);
+  assert.equal(hasPrecedingDocComment(["// what this symbol does", "export const x = 1;"], 1), true); // real note still counts
 });
 
 test("scanUndocumentedExport: a multi-declarator export reports EVERY undocumented binding", async () => {

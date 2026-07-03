@@ -21,8 +21,11 @@ const SKIP_RE = /(?:\.d\.ts$|\.min\.|\.test\.|\.spec\.|__tests__\/|(?:^|\/)(?:di
 // so only TOP-LEVEL module exports are considered public surface: an INDENTED `export` (e.g. a member of an
 // unexported `namespace Internal { … }`) is intentionally NOT scanned, since it is not a public module export.
 const EXPORT_DECL_RE =
-  /^export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(function\s*\*?|const|let|var|class|interface|type|enum)\s+/;
+  /^export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(function\s*\*?|const|let|var|class|interface|type|enum)\s+/;
 const IDENT_RE = /^[A-Za-z_$][\w$]*/;
+// A `//` comment whose text starts like one of these is a tool/suppression directive, not symbol documentation.
+const DIRECTIVE_COMMENT_RE =
+  /^(?:eslint-|@ts-|prettier-|biome-|deno-lint-|istanbul\b|c8\b|v8\b|@preserve\b|@license\b|noinspection\b)/;
 
 interface ScanOptions {
   signal?: AbortSignal;
@@ -123,7 +126,9 @@ export function hasPrecedingDocComment(lines: string[], lineIndex: number): bool
   }
   if (i < 0) return false;
   const above = lines[i]!.trim();
-  if (above.startsWith("//")) return true; // a line comment counts as documentation
+  // A `//` line comment counts as documentation UNLESS it is a tool/suppression directive (eslint-disable,
+  // ts-* pragmas, prettier-ignore, istanbul/c8/v8 ignore, …) — those describe tooling, not the symbol.
+  if (above.startsWith("//")) return !DIRECTIVE_COMMENT_RE.test(above.slice(2).trim());
   if (!above.endsWith("*/")) return false; // not a block-comment terminator directly above → undocumented
   // Walk up to the block's opener; only a real JSDoc block (`/**`) is documentation. This also rejects a code line
   // with a trailing comment (`const x = 1; /* c */`) — its opener line starts with code, not `/**`.

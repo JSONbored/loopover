@@ -654,7 +654,7 @@ export const REES_ANALYZERS = [
       network:
         "One GitHub contents fetch per changed entrypoint (at headSha). Requires GitHub token forwarding for private repos.",
       notes:
-        "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not).",
+        "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line (except tool directives like `eslint-disable`) or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not).",
     },
   },
 ] as const satisfies readonly ReesAnalyzerDoc[];

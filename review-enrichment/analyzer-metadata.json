@@ -739,7 +739,7 @@
         "looksAt": "Direct `export const/let/var/function/class/interface/type/enum` declarations added to changed index.* files, checked against the file fetched at headSha.",
         "reports": "File, line, and symbol name of each undocumented added export — never file contents.",
         "network": "One GitHub contents fetch per changed entrypoint (at headSha). Requires GitHub token forwarding for private repos.",
-        "notes": "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not)."
+        "notes": "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line (except tool directives like `eslint-disable`) or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not)."
       }
     }
   ]

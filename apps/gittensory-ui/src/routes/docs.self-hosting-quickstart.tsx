@@ -44,6 +44,15 @@ function SelfHostingQuickstart() {
         code={`cp .env.selfhost.example .env
 # edit .env`}
       />
+      <Callout variant="warn">
+        The webhook secret and static bearer tokens (<code>GITHUB_WEBHOOK_SECRET</code>,{" "}
+        <code>GITTENSORY_API_TOKEN</code>, <code>GITTENSORY_MCP_TOKEN</code>,{" "}
+        <code>INTERNAL_JOB_TOKEN</code>, <code>SELFHOST_SETUP_TOKEN</code>) ship commented out on
+        purpose. Generate a distinct random value for each one (e.g.{" "}
+        <code>openssl rand -hex 32</code>) — never reuse the same string across more than one of
+        them. The app refuses to boot if any of these is left at a known-placeholder or too-short
+        value.
+      </Callout>
       <Callout variant="note">
         <code>.env.selfhost.example</code> already ships a conservative starting config —{" "}
         <code>dry-run</code> mode, a small repo allowlist, unified comments, safety, and grounding,

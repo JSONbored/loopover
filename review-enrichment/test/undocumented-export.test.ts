@@ -70,9 +70,19 @@ test("scanUndocumentedExport: fetches the entrypoint at the head ref with a per-
   assert.match(calledUrl, /\/repos\/octo\/repo\/contents\/src\/dir%20name\/index\.ts\?ref=abc123$/);
 });
 
-test("parseAddedExports: matches an indented (namespace-level) export too", () => {
+test("parseAddedExports: an INDENTED export (e.g. an unexported-namespace member) is not scanned — top-level only", () => {
   const patch = ["@@ -1,0 +1,1 @@", "+  export const nested = 1;"].join("\n");
-  assert.deepEqual(parseAddedExports(patch), [{ symbol: "nested", newLine: 1 }]);
+  assert.deepEqual(parseAddedExports(patch), []); // column-1 anchor: only public module-level exports count
+});
+
+test("scanUndocumentedExport: an export inside an unexported namespace is not reported (not public API)", async () => {
+  const nsPatch = ["@@ -0,0 +1,3 @@", "+namespace Internal {", "+  export const helper = 1;", "+}"].join("\n");
+  const nsHead = ["namespace Internal {", "  export const helper = 1;", "}"].join("\n");
+  const findings = await scanUndocumentedExport(
+    req([{ path: "src/index.ts", status: "modified", patch: nsPatch }]),
+    headFetch(nsHead),
+  );
+  assert.deepEqual(findings, []); // the indented namespace member is not a public export → no false positive
 });
 
 test("scanUndocumentedExport: a non-entrypoint file is skipped (only index.* is scanned)", async () => {

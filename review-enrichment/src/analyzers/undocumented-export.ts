@@ -17,11 +17,11 @@ const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 // excluded: they are not the hand-authored public surface this scan is about.
 const ENTRYPOINT_RE = /(?:^|\/)index\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const SKIP_RE = /(?:\.d\.ts$|\.min\.|\.test\.|\.spec\.|__tests__\/|(?:^|\/)(?:dist|build|vendor)\/)/;
-// A DIRECT exported declaration and its symbol name (matched on the line body, without the diff `+`). Leading
-// whitespace is allowed so an indented top-level export — TS only permits `export` at module scope or inside a
-// `namespace`/`module` block, both public API — is still matched.
+// A DIRECT exported declaration and its symbol name (matched on the line body, without the diff `+`). Anchored at
+// column 1 so only TOP-LEVEL module exports are considered public surface: an INDENTED `export` (e.g. a member of
+// an unexported `namespace Internal { … }`) is intentionally NOT scanned, since it is not a public module export.
 const EXPORT_DECL_RE =
-  /^\s*export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\s*\*?|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/;
+  /^export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\s*\*?|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/;
 
 interface ScanOptions {
   signal?: AbortSignal;

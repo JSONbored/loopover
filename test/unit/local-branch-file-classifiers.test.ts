@@ -117,6 +117,11 @@ describe("isCodeFile", () => {
       "src/config.mts",
       "src/setup.cts",
       "helper_test.ts",
+      // C#/Swift/Groovy source — their test files are already recognized by
+      // isTestPath, so their source must count as code too.
+      "Api/Controllers/UserController.cs",
+      "Sources/App/Router.swift",
+      "src/main/groovy/Pipeline.groovy",
     ]) {
       expect(isCodeFile(path)).toBe(true);
     }
@@ -133,6 +138,9 @@ describe("isCodeFile", () => {
       // module-extension e2e tests must not count as code
       "e2e/checkout.cy.mts",
       "e2e/flow.e2e.mjs",
+      // C#/Swift test files carry a code extension but are tests, not code.
+      "Services/AccountTests.cs",
+      "AppTests/LoginTests.swift",
     ]) {
       expect(isCodeFile(path)).toBe(false);
     }

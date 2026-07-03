@@ -54,14 +54,17 @@ function normalizePattern(pattern: string): {
   const leadingSlash = p.startsWith("/");
   if (leadingSlash) p = p.slice(1);
 
+  // Anchored when explicitly rooted, or when a path separator appears outside a leading `**/`.
+  // Decided from the ORIGINAL pattern (a purely trailing `/` is a directory marker, not an
+  // anchoring separator) and BEFORE the `/**` expansion below — otherwise expanding a bare
+  // directory pattern like `apps/` to `apps/**` would inject a mid-pattern slash and wrongly
+  // anchor it to the repo root, missing nested files a trailing-slash rule should own.
+  const anchored = leadingSlash || (p.replace(/\/$/, "").includes("/") && !p.startsWith("**/"));
+
   // Trailing `/` means "all files under this directory" — expand to `<dir>/**`.
   if (p.endsWith("/")) p += "**";
 
-  // Anchored when explicitly rooted, or when a path separator appears outside a leading `**/`.
-  return {
-    pattern: p,
-    anchored: leadingSlash || (p.includes("/") && !p.startsWith("**/")),
-  };
+  return { pattern: p, anchored };
 }
 
 function compilePattern(pattern: string): { tokens: GlobToken[]; anchored: boolean } {

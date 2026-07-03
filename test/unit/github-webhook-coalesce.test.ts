@@ -40,15 +40,16 @@ describe("githubWebhookCoalesceKey", () => {
         pull_request: { number: 100, head: { sha: "BEEF123" } },
       } as GitHubWebhookPayload),
     ).toBe("github-webhook:pr-refresh:jsonbored/gittensory#100@beef123");
-    for (const action of ["labeled", "unlabeled", "closed"]) {
-      expect(
-        githubWebhookCoalesceKey("pull_request", {
-          action,
-          repository: { full_name: "JSONbored/Gittensory" },
-          pull_request: { number: 100, head: { sha: "BEEF123" } },
-        } as GitHubWebhookPayload),
-      ).toBeNull();
-    }
+    // "closed" is a terminal action -- merge/close has its own non-coalesced handling and must never collapse
+    // with anything else. "labeled"/"unlabeled" now coalesce too (see the dedicated pr-label tests below) --
+    // they are no longer in this "returns null" list.
+    expect(
+      githubWebhookCoalesceKey("pull_request", {
+        action: "closed",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 100, head: { sha: "BEEF123" } },
+      } as GitHubWebhookPayload),
+    ).toBeNull();
   });
 
   it("coalesces a burst of reopened + synchronize + ready_for_review events for the same PR head into one key (regression for #audit-rate-headroom)", () => {
@@ -84,5 +85,151 @@ describe("githubWebhookCoalesceKey", () => {
       } as GitHubWebhookPayload),
     ).toBeNull();
     expect(githubWebhookCoalesceKey("pull_request", { action: "edited" } as GitHubWebhookPayload)).toBeNull();
+  });
+
+  it("coalesces PR label churn (labeled/unlabeled) into one job per PR (#selfhost-backlog-convergence)", () => {
+    for (const action of ["labeled", "unlabeled"]) {
+      expect(
+        githubWebhookCoalesceKey("pull_request", {
+          action,
+          repository: { full_name: "JSONbored/Gittensory" },
+          pull_request: { number: 42, head: { sha: "BEEF123" } },
+        } as GitHubWebhookPayload),
+      ).toBe("github-webhook:pr-label:jsonbored/gittensory#42");
+    }
+    // A burst of add/remove churn on the same PR collapses to the identical key regardless of which label
+    // action fired -- the handler re-syncs generically and doesn't act on the specific label.
+    const burstKeys = ["labeled", "unlabeled", "labeled"].map((action) =>
+      githubWebhookCoalesceKey("pull_request", {
+        action,
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 42 },
+      } as GitHubWebhookPayload),
+    );
+    expect(new Set(burstKeys).size).toBe(1);
+  });
+
+  it("falls back to the top-level number field for a label event missing pull_request.number", () => {
+    expect(
+      githubWebhookCoalesceKey("pull_request", {
+        action: "labeled",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: {},
+        number: 55,
+      } as unknown as GitHubWebhookPayload),
+    ).toBe("github-webhook:pr-label:jsonbored/gittensory#55");
+  });
+
+  it("returns null for a label event with no resolvable PR number", () => {
+    expect(
+      githubWebhookCoalesceKey("pull_request", {
+        action: "labeled",
+        repository: { full_name: "JSONbored/Gittensory" },
+      } as GitHubWebhookPayload),
+    ).toBeNull();
+  });
+
+  it("coalesces review-surface bursts (pull_request_review) into one job per PR+head (#selfhost-backlog-convergence)", () => {
+    for (const action of ["submitted", "edited", "dismissed"]) {
+      expect(
+        githubWebhookCoalesceKey("pull_request_review", {
+          action,
+          repository: { full_name: "JSONbored/Gittensory" },
+          pull_request: { number: 12, head: { sha: "CAFE123" } },
+        } as GitHubWebhookPayload),
+      ).toBe("github-webhook:pr-review:jsonbored/gittensory#12@cafe123");
+    }
+  });
+
+  it("coalesces review-surface bursts (pull_request_review_comment) into one job per PR+head", () => {
+    for (const action of ["created", "edited", "deleted"]) {
+      expect(
+        githubWebhookCoalesceKey("pull_request_review_comment", {
+          action,
+          repository: { full_name: "JSONbored/Gittensory" },
+          pull_request: { number: 12, head: { sha: "CAFE123" } },
+        } as GitHubWebhookPayload),
+      ).toBe("github-webhook:pr-review:jsonbored/gittensory#12@cafe123");
+    }
+  });
+
+  it("coalesces review-surface bursts (pull_request_review_thread) into one job per PR+head", () => {
+    for (const action of ["resolved", "unresolved"]) {
+      expect(
+        githubWebhookCoalesceKey("pull_request_review_thread", {
+          action,
+          repository: { full_name: "JSONbored/Gittensory" },
+          pull_request: { number: 12, head: { sha: "CAFE123" } },
+        } as GitHubWebhookPayload),
+      ).toBe("github-webhook:pr-review:jsonbored/gittensory#12@cafe123");
+    }
+  });
+
+  it("coalesces a mixed burst of review/comment/thread events for the same PR+head into ONE key", () => {
+    const burstKeys = [
+      ["pull_request_review", "submitted"],
+      ["pull_request_review_comment", "created"],
+      ["pull_request_review_thread", "resolved"],
+    ].map(([eventName, action]) =>
+      githubWebhookCoalesceKey(eventName as string, {
+        action,
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 12, head: { sha: "CAFE123" } },
+      } as GitHubWebhookPayload),
+    );
+    expect(new Set(burstKeys).size).toBe(1);
+  });
+
+  it("omits the head sha suffix for a review-surface event with no resolvable head", () => {
+    expect(
+      githubWebhookCoalesceKey("pull_request_review", {
+        action: "submitted",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 12 },
+      } as GitHubWebhookPayload),
+    ).toBe("github-webhook:pr-review:jsonbored/gittensory#12");
+  });
+
+  it("returns null for a review-surface event with no resolvable PR number", () => {
+    expect(
+      githubWebhookCoalesceKey("pull_request_review", {
+        action: "submitted",
+        repository: { full_name: "JSONbored/Gittensory" },
+      } as GitHubWebhookPayload),
+    ).toBeNull();
+  });
+
+  it("returns null for a non-actionable action on a review-surface event type", () => {
+    expect(
+      githubWebhookCoalesceKey("pull_request_review", {
+        action: "requested_changes_dismissed",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 12, head: { sha: "CAFE123" } },
+      } as GitHubWebhookPayload),
+    ).toBeNull();
+    expect(
+      githubWebhookCoalesceKey("pull_request_review_comment", {
+        action: "resolved",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 12, head: { sha: "CAFE123" } },
+      } as GitHubWebhookPayload),
+    ).toBeNull();
+    expect(
+      githubWebhookCoalesceKey("pull_request_review_thread", {
+        action: "created",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 12, head: { sha: "CAFE123" } },
+      } as GitHubWebhookPayload),
+    ).toBeNull();
+  });
+
+  it("returns null for a review-surface event type with no matching entry (e.g. an unrelated event)", () => {
+    expect(
+      githubWebhookCoalesceKey("issue_comment", {
+        action: "created",
+        repository: { full_name: "JSONbored/Gittensory" },
+        pull_request: { number: 12, head: { sha: "CAFE123" } },
+      } as unknown as GitHubWebhookPayload),
+    ).toBeNull();
   });
 });

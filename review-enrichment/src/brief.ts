@@ -266,7 +266,7 @@ export async function buildBrief(
       // #2541: budget exhaustion, not a dependency-health signal -- if this call had claimed the circuit
       // breaker's half-open probe (isAnalyzerCircuitOpen), free it so a later request can still probe rather
       // than leaving the slot claimed forever with no outcome ever recorded.
-      releaseAnalyzerCircuitProbe(name);
+      releaseAnalyzerCircuitProbe(name, req);
       return;
     }
     const timeoutMs = analyzerTimeoutMs(
@@ -289,7 +289,7 @@ export async function buildBrief(
       partial = true;
       analysis.metrics.recordCappedWork(`analyzer_${item.descriptor.cost}`, 1);
       // #2541: same as above -- release a claimed half-open probe without recording an outcome.
-      releaseAnalyzerCircuitProbe(name);
+      releaseAnalyzerCircuitProbe(name, req);
       return;
     }
     try {
@@ -311,7 +311,7 @@ export async function buildBrief(
       // result (its own internal cap, not a dependency failure) -- so the dependency responded. Reset the
       // circuit rather than only resetting on a clean "ok"; a benign internal partial must not itself count
       // toward tripping the breaker.
-      recordAnalyzerCircuitSuccess(name);
+      recordAnalyzerCircuitSuccess(name, req);
       if (resultIsPartial(result) || diagnostics.partialStatus === "partial") {
         const status = statusFromDiagnostics(diagnostics, "degraded");
         const partialReason = publicPartialReason(
@@ -361,7 +361,7 @@ export async function buildBrief(
       // #2541: a THROWN failure (including the analyzer_timeout rejection from runWithTimeout) is the signal
       // the circuit breaker tracks -- the dependency did not respond at all, unlike a non-throwing partial
       // result above.
-      recordAnalyzerCircuitFailure(name);
+      recordAnalyzerCircuitFailure(name, req);
       const status = timeoutStatus(error, diagnostics);
       const partialReason = publicPartialReason(diagnostics.partialReason, "analyzer_error");
       analyzerStatus[name] = status;

@@ -1,10 +1,15 @@
 import { listLatestGitHubRateLimitObservations } from "../db/repositories";
 
 // All managed repos share ONE GitHub App installation → ONE hourly REST bucket. To keep heavy maintenance work
-// from draining the budget real webhook traffic needs, maintenance yields while there is still headroom:
-//   - backfill yields at LOW_REST_RATE_LIMIT_REMAINING;
-//   - the re-gate sweep + its per-PR jobs yield EARLIER, at MAINTENANCE_RESERVED_HEADROOM, reserving the budget
-//     between the two floors for webhooks;
+// from draining the budget real-time contributor-PR-review traffic needs, maintenance yields while there is
+// still headroom:
+//   - webhooks AND current-head agent-regate-pr reconciliation (a trailing coalesced re-review, an over-cap
+//     sibling wake, a linked-issue-change re-review, an outage-repair enqueue -- see
+//     isScheduledRegateSweepJob/#selfhost-queue-liveness) yield at LOW_REST_RATE_LIMIT_REMAINING: this is
+//     LIVE work someone is waiting on, not maintenance, regardless of which one of these triggered it;
+//   - the re-gate SWEEP's own stale-candidate fan-out (deliveryId prefixed "regate-sweep:") yields EARLIER, at
+//     MAINTENANCE_RESERVED_HEADROOM, reserving the budget between the two floors for the live work above —
+//     this is genuinely deferrable periodic maintenance, not a response to anything happening on a PR right now;
 //   - historical/scheduled hydration that isn't needed for any CURRENT PR (e.g. backfilling file lists for old
 //     merged pull requests) yields EARLIEST, at HISTORICAL_BACKFILL_RESERVED_HEADROOM — it is the least urgent
 //     GitHub REST consumer, so it must never be the reason a live review or an open-PR convergence pass stalls.

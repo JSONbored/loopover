@@ -15,9 +15,12 @@ import {
   githubRateLimitRetryDelayMs,
   githubWebhookRateLimitDelayMs,
   isGitHubBudgetBackgroundJob,
+  isScheduledRegateSweepJob,
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceMergeKeyPrefix,
+  jobCoalesceMergedPayload,
   jobCoalesceSupersededKeyPrefix,
   jobPriority,
   matchesGitHubRateLimitAdmissionTarget,
@@ -56,6 +59,7 @@ describe("self-host queue common helpers", () => {
     expect(jobPriority(payload({ type: "recapture-preview" }))).toBe(9);
     expect(jobPriority(payload({ type: "agent-regate-sweep" }))).toBe(8);
     expect(jobPriority(payload({ type: "rag-index-repo" }))).toBe(0);
+    expect(jobPriority(payload({ type: "backlog-convergence-sweep" }))).toBe(0);
     expect(jobPriority("{}")).toBe(0);
     expect(jobPriority("not-json")).toBe(0);
   });
@@ -131,6 +135,30 @@ describe("self-host queue common helpers", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "refresh-installation-health", requestedBy: "schedule" })).toBe(false);
   });
 
+  describe("isScheduledRegateSweepJob", () => {
+    it("returns true only for the scheduled sweep fan-out's own delivery id prefix", () => {
+      expect(isScheduledRegateSweepJob("regate-sweep:JSONbored/gittensory#42")).toBe(true);
+    });
+
+    it("returns false for the outage-repair priority prefix (a live-PR reconciliation, not stale/scheduled)", () => {
+      expect(isScheduledRegateSweepJob("regate-repair:JSONbored/gittensory#42")).toBe(false);
+    });
+
+    it("returns false for a real GitHub webhook delivery id", () => {
+      expect(isScheduledRegateSweepJob("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).toBe(false);
+    });
+
+    it("returns false for the explicit manual-regate operator override prefix", () => {
+      expect(isScheduledRegateSweepJob("manual-regate:JSONbored/gittensory#42")).toBe(false);
+    });
+
+    it("returns false for undefined, null, and empty-string deliveryId", () => {
+      expect(isScheduledRegateSweepJob(undefined)).toBe(false);
+      expect(isScheduledRegateSweepJob(null)).toBe(false);
+      expect(isScheduledRegateSweepJob("")).toBe(false);
+    });
+  });
+
   it("normalizes GitHub rate-limit metric labels without leaking raw admission keys", () => {
     const webhookJob = {
       type: "github-webhook",
@@ -189,13 +217,126 @@ describe("self-host queue common helpers", () => {
       kind: "background",
       admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
     });
-    expect(githubRateLimitAdmissionTargetForJob({ type: "agent-regate-pr", deliveryId: "sweep:owner/repo#1", repoFullName: "owner/repo", prNumber: 1, installationId: 123 })).toEqual({
+    expect(githubRateLimitAdmissionTargetForJob({ type: "agent-regate-pr", deliveryId: "regate-sweep:owner/repo#1", repoFullName: "owner/repo", prNumber: 1, installationId: 123 })).toEqual({
       kind: "background",
       admissionKey: "installation:123",
     });
     expect(githubRateLimitAdmissionTargetForJob({ type: "github-webhook", deliveryId: "d2", eventName: "pull_request", payload: {} })).toEqual({
       kind: "webhook",
       admissionKey: null,
+    });
+  });
+
+  describe("githubRateLimitAdmissionTargetForJob: agent-regate-pr classification (#selfhost-queue-liveness)", () => {
+    it("REGRESSION: manual-regate operator override stays a full admission bypass (null) — unchanged by the fix", () => {
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "agent-regate-pr",
+          deliveryId: "manual-regate:repo#1",
+          repoFullName: "owner/repo",
+          prNumber: 1,
+          installationId: 123,
+        }),
+      ).toBeNull();
+    });
+
+    it("keeps the scheduled sweep fan-out on the conservative background floor — unchanged by the fix", () => {
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "agent-regate-pr",
+          deliveryId: "regate-sweep:repo#1",
+          repoFullName: "owner/repo",
+          prNumber: 1,
+          installationId: 123,
+        }),
+      ).toEqual({
+        kind: "background",
+        admissionKey: "installation:123",
+      });
+    });
+
+    it("FIX: an outage-repair priority candidate now gets webhook-level admission, not the maintenance floor", () => {
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "agent-regate-pr",
+          deliveryId: "regate-repair:repo#1",
+          repoFullName: "owner/repo",
+          prNumber: 1,
+          installationId: 123,
+        }),
+      ).toEqual({
+        kind: "webhook",
+        admissionKey: "installation:123",
+      });
+    });
+
+    it("FIX: a real webhook-originated delivery id (trailing re-review / sibling wake / linked-issue re-review) gets webhook-level admission", () => {
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "agent-regate-pr",
+          deliveryId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          repoFullName: "owner/repo",
+          prNumber: 1,
+          installationId: 123,
+        }),
+      ).toEqual({
+        kind: "webhook",
+        admissionKey: "installation:123",
+      });
+    });
+
+    it("FIX: the webhook-level admissionKey falls back to the public-token key when no installationId resolves", () => {
+      // installationId is a required, non-optional `number` on the agent-regate-pr message shape, so the
+      // only way to reach githubRateLimitAdmissionKeyForJob's null result here (without violating the
+      // type) is a non-finite numeric value -- exactly what Number.isFinite in that helper rejects.
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "agent-regate-pr",
+          deliveryId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          repoFullName: "owner/repo",
+          prNumber: 1,
+          installationId: Number.NaN,
+        }),
+      ).toEqual({
+        kind: "webhook",
+        admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+      });
+    });
+
+    it("leaves github-webhook jobs on their own first branch, not the new agent-regate-pr branch", () => {
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "github-webhook",
+          deliveryId: "d3",
+          eventName: "pull_request",
+          payload: { installation: { id: 123 } },
+        }),
+      ).toEqual({
+        kind: "webhook",
+        admissionKey: "installation:123",
+      });
+    });
+
+    it("leaves other GITHUB_BUDGET_BACKGROUND_TYPES jobs on the background floor -- the new branch is guarded to agent-regate-pr only", () => {
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "rag-index-repo",
+          repoFullName: "owner/repo",
+          requestedBy: "schedule",
+        } as JobMessage),
+      ).toEqual({
+        kind: "background",
+        admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+      });
+      expect(
+        githubRateLimitAdmissionTargetForJob({
+          type: "backfill-registered-repos",
+          requestedBy: "schedule",
+        } as JobMessage),
+      ).toEqual({
+        kind: "background",
+        admissionKey: githubRateLimitAdmissionKeyForPublicToken(),
+      });
     });
   });
 
@@ -409,6 +550,38 @@ describe("self-host queue common helpers", () => {
         ),
       ).toBeNull();
     });
+
+    // The production VPS incident (#selfhost-queue-liveness) specifically involved mixed-freshness
+    // observations for the SAME admission key (not an exact-vs-fallback mismatch, which the tests
+    // above already cover) -- these two pin that newerRateLimitObservation's own same-key comparison
+    // picks the observation with the later observed_at correctly, regardless of array order.
+    it("REGRESSION: an older exact-key exhausted observation is superseded by a newer exact-key healthy observation for the SAME key", () => {
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "webhook",
+          key,
+          [
+            { admission_key: key, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+            { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          ],
+          now,
+        ),
+      ).toBeNull();
+    });
+
+    it("REGRESSION: a newer exact-key exhausted observation supersedes an older exact-key healthy observation for the SAME key", () => {
+      expect(
+        githubRateLimitAdmissionDelayMs(
+          "webhook",
+          key,
+          [
+            { admission_key: key, remaining: 4000, reset_at: "2026-06-24T12:20:00.000Z", observed_at: "2026-06-24T11:59:00.000Z" },
+            { admission_key: key, remaining: 0, reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T12:00:00.000Z" },
+          ],
+          now,
+        ),
+      ).toBe(615_000);
+    });
   });
 
   describe("matchesGitHubRateLimitAdmissionTarget", () => {
@@ -597,6 +770,8 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "agent-regate-pr", repoFullName: "JSONbored/Gittensory" }))).toBeNull();
     expect(jobCoalesceKey(payload({ type: "agent-regate-sweep", requestedBy: "schedule" }))).toBe("agent-regate-sweep:all");
     expect(jobCoalesceKey(payload({ type: "agent-regate-sweep", repoFullName: "JSONbored/Gittensory" }))).toBe("agent-regate-sweep:jsonbored/gittensory");
+    expect(jobCoalesceKey(payload({ type: "backlog-convergence-sweep", requestedBy: "schedule" }))).toBe("backlog-convergence-sweep:all");
+    expect(jobCoalesceKey(payload({ type: "backlog-convergence-sweep", repoFullName: "JSONbored/Gittensory" }))).toBe("backlog-convergence-sweep:jsonbored/gittensory");
     expect(jobCoalesceKey(payload({ type: "recapture-preview", repoFullName: "JSONbored/Gittensory", prNumber: 7, attempt: 2 }))).toBe("recapture-preview:jsonbored/gittensory#7:2");
     expect(jobCoalesceKey(payload({ type: "recapture-preview", repoFullName: "JSONbored/Gittensory", prNumber: 7 }))).toBeNull();
     expect(
@@ -706,7 +881,11 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
     expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
     expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
-    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "webhook", event: { dedupKey: "review_requested:o/r#3:bob" } }))).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    expect(
+      jobCoalesceKey(
+        payload({ type: "notify-evaluate", requestedBy: "webhook", events: [{ dedupKey: "review_requested:o/r#3:bob" }] }),
+      ),
+    ).toBe("notify-evaluate:review_requested:o/r#3:bob");
     // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
     // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.
@@ -714,7 +893,50 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "test" }))).toBeNull();
     expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "test" }))).toBeNull();
     expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
-    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", event: {} }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", events: [] }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", events: [{}] }))).toBeNull();
+  });
+
+  it("batches a notify-evaluate job's coalesce key off the FULL sorted set of dedup keys (#selfhost-maintenance-self-pin)", () => {
+    // Order-independent: the same two events in either order produce the same key, so a redelivery with the
+    // events reordered still coalesces.
+    const forward = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: [{ dedupKey: "review_requested:o/r#3:bob" }, { dedupKey: "issue_watch_match:o/r#9:alice" }],
+      }),
+    );
+    const reversed = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: [{ dedupKey: "issue_watch_match:o/r#9:alice" }, { dedupKey: "review_requested:o/r#3:bob" }],
+      }),
+    );
+    expect(forward).toBe("notify-evaluate:issue_watch_match:o/r#9:alice,review_requested:o/r#3:bob");
+    expect(reversed).toBe(forward);
+    // A batch with even one different event gets a DIFFERENT key -- never silently merges with an unrelated batch.
+    const differentBatch = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: [{ dedupKey: "review_requested:o/r#3:bob" }, { dedupKey: "issue_watch_match:o/r#9:carol" }],
+      }),
+    );
+    expect(differentBatch).not.toBe(forward);
+    // If ANY event in the batch is missing its dedup key, the whole batch is left uncoalesced (null) rather than
+    // key off a partial set that could collide with -- and silently drop the malformed event from -- an
+    // unrelated batch.
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "notify-evaluate",
+          requestedBy: "webhook",
+          events: [{ dedupKey: "review_requested:o/r#3:bob" }, {}],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("coalesces recurring maintenance jobs while preserving their semantic scope", () => {
@@ -842,6 +1064,94 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "ops-alerts", requestedBy: "schedule" }))).toBe(
       "ops-alerts",
     );
+  });
+
+  describe("rag-index-repo incremental merge coalescing (#selfhost-maintenance-self-pin)", () => {
+    const incrementalA = payload({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/Gittensory",
+      paths: ["src/a.ts"],
+    });
+    const incrementalB = payload({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/Gittensory",
+      paths: ["src/b.ts"],
+    });
+    const fullJob = payload({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/Gittensory",
+    });
+
+    it("returns the repo-scoped prefix only for an incoming INCREMENTAL job", () => {
+      expect(jobCoalesceMergeKeyPrefix(incrementalA)).toBe("rag-index-repo:jsonbored/gittensory:");
+      expect(jobCoalesceMergeKeyPrefix(fullJob)).toBeNull(); // a full job supersedes instead — see jobCoalesceSupersededKeyPrefix
+      expect(jobCoalesceMergeKeyPrefix(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+      expect(jobCoalesceMergeKeyPrefix(payload({ type: "rag-index-repo", requestedBy: "webhook" }))).toBeNull(); // no repo
+    });
+
+    it("unions two incremental jobs' paths, deduped and sorted, into the incoming job's shape", () => {
+      const merged = jobCoalesceMergedPayload(incrementalA, incrementalB);
+      expect(merged).not.toBeNull();
+      expect(JSON.parse(merged!)).toEqual({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+      // The merged key coalesces the SAME as a single job enqueued with the union directly.
+      expect(jobCoalesceKey(merged!)).toBe(
+        jobCoalesceKey(
+          payload({
+            type: "rag-index-repo",
+            requestedBy: "webhook",
+            repoFullName: "JSONbored/Gittensory",
+            paths: ["src/a.ts", "src/b.ts"],
+          }),
+        ),
+      );
+    });
+
+    it("dedupes an overlapping path re-merged from both sides", () => {
+      const merged = jobCoalesceMergedPayload(incrementalA, incrementalA);
+      expect(JSON.parse(merged!).paths).toEqual(["src/a.ts"]);
+    });
+
+    it("returns null when either side isn't a path-scoped rag-index-repo message", () => {
+      expect(jobCoalesceMergedPayload(fullJob, incrementalA)).toBeNull(); // existing side has no paths
+      expect(jobCoalesceMergedPayload(incrementalA, fullJob)).toBeNull(); // incoming side has no paths
+      expect(jobCoalesceMergedPayload(payload({ type: "notify-evaluate", requestedBy: "test" }), incrementalA)).toBeNull();
+      expect(jobCoalesceMergedPayload(incrementalA, payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+    });
+
+    it("does not merge past the bounded path cap -- falls back to a separate row instead of unbounded growth", () => {
+      const nearCapExisting = payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: Array.from({ length: 99 }, (_, i) => `src/${i}.ts`),
+      });
+      const twoMorePaths = payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: ["src/extra-1.ts", "src/extra-2.ts"],
+      });
+      // 99 + 2 unique = 101 > the 100 cap → refuse to merge.
+      expect(jobCoalesceMergedPayload(nearCapExisting, twoMorePaths)).toBeNull();
+      // Exactly at the cap (99 + 1 unique = 100) still merges.
+      const oneMorePath = payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: ["src/extra-1.ts"],
+      });
+      const merged = jobCoalesceMergedPayload(nearCapExisting, oneMorePath);
+      expect(merged).not.toBeNull();
+      expect(JSON.parse(merged!).paths).toHaveLength(100);
+    });
   });
 
   it("keys build-contributor-evidence by login/all, and fanned-out batches by their FIRST login (never one shared key) (#1941)", () => {

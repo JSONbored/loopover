@@ -4,6 +4,12 @@
 // Rendered at GET /metrics. No deps, no cardinality explosion: callers use a small fixed label set.
 type Labels = Record<string, string>;
 type GaugeSample = () => number | Promise<number>;
+type MetricType = "counter" | "gauge" | "histogram";
+
+export type MetricMeta = {
+  help: string;
+  type: MetricType;
+};
 
 interface HistogramState {
   name: string;
@@ -17,6 +23,86 @@ interface HistogramState {
 const counters = new Map<string, number>();
 const gauges = new Map<string, GaugeSample>();
 const histograms = new Map<string, HistogramState>();
+const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
+  ["gittensory_queue_pending", { help: "Current in-process queue depth.", type: "gauge" }],
+  ["gittensory_queue_dead", { help: "Current in-process dead queue depth.", type: "gauge" }],
+  ["gittensory_queue_processing", { help: "Jobs currently claimed and mid-flight.", type: "gauge" }],
+  ["gittensory_queue_runnable_now", { help: "Pending jobs, any priority, currently due (run_after<=now).", type: "gauge" }],
+  ["gittensory_queue_live_pending", { help: "Current live-work queue depth.", type: "gauge" }],
+  ["gittensory_queue_live_runnable_now", { help: "Live (foreground) pending jobs currently due (run_after<=now).", type: "gauge" }],
+  ["gittensory_queue_maintenance_pending", { help: "Current maintenance-work queue depth.", type: "gauge" }],
+  ["gittensory_queue_oldest_live_pending_age_seconds", { help: "Age in seconds of the oldest live pending job.", type: "gauge" }],
+  ["gittensory_queue_oldest_live_runnable_age_seconds", { help: "Age in seconds of the oldest live pending job that is currently due.", type: "gauge" }],
+  ["gittensory_queue_oldest_maintenance_pending_age_seconds", { help: "Age in seconds of the oldest maintenance pending job.", type: "gauge" }],
+  ["gittensory_host_load_avg1_per_core", { help: "One-minute host load average normalized by CPU core count.", type: "gauge" }],
+  ["gittensory_uptime_seconds", { help: "Self-host process uptime in seconds.", type: "gauge" }],
+  ["gittensory_http_requests_total", { help: "HTTP app requests by response status class.", type: "counter" }],
+  ["gittensory_http_request_duration_seconds", { help: "HTTP app request duration in seconds.", type: "histogram" }],
+  ["gittensory_webhook_dedup_total", { help: "Webhook deliveries deduplicated before enqueue.", type: "counter" }],
+  ["gittensory_webhook_enqueue_total", { help: "Webhook enqueue outcomes by event and action.", type: "counter" }],
+  ["gittensory_jobs_enqueued_total", { help: "Durable queue jobs enqueued.", type: "counter" }],
+  ["gittensory_jobs_processed_total", { help: "Durable queue jobs processed successfully.", type: "counter" }],
+  ["gittensory_jobs_failed_total", { help: "Durable queue job processing failures.", type: "counter" }],
+  ["gittensory_jobs_dead_total", { help: "Durable queue jobs moved to dead status.", type: "counter" }],
+  ["gittensory_jobs_rate_limited_total", { help: "Durable queue jobs rate-limited before processing.", type: "counter" }],
+  ["gittensory_jobs_rate_limit_deferred_total", { help: "Durable queue jobs deferred by a rate-limit window.", type: "counter" }],
+  ["gittensory_jobs_coalesced_total", { help: "Durable queue jobs coalesced with an existing queued item.", type: "counter" }],
+  ["gittensory_jobs_recovered_total", { help: "Durable queue jobs recovered from stale in-flight state.", type: "counter" }],
+  ["gittensory_jobs_maintenance_admission_deferred_total", { help: "Maintenance jobs deferred by admission control.", type: "counter" }],
+  ["gittensory_jobs_enqueued_persisted_total", { help: "Persisted durable queue jobs enqueued.", type: "counter" }],
+  ["gittensory_jobs_processed_persisted_total", { help: "Persisted durable queue jobs processed successfully.", type: "counter" }],
+  ["gittensory_jobs_failed_persisted_total", { help: "Persisted durable queue job processing failures.", type: "counter" }],
+  ["gittensory_jobs_dead_persisted_total", { help: "Persisted durable queue jobs moved to dead status.", type: "counter" }],
+  ["gittensory_jobs_rate_limited_persisted_total", { help: "Persisted durable queue jobs rate-limited before processing.", type: "counter" }],
+  ["gittensory_jobs_rate_limit_deferred_persisted_total", { help: "Persisted durable queue jobs deferred by a rate-limit window.", type: "counter" }],
+  ["gittensory_jobs_coalesced_persisted_total", { help: "Persisted durable queue jobs coalesced with an existing queued item.", type: "counter" }],
+  ["gittensory_jobs_recovered_persisted_total", { help: "Persisted durable queue jobs recovered from stale in-flight state.", type: "counter" }],
+  ["gittensory_jobs_maintenance_admission_deferred_persisted_total", { help: "Persisted maintenance jobs deferred by admission control.", type: "counter" }],
+  ["gittensory_jobs_rate_limit_admission_deferred_total", { help: "Jobs deferred by rate-limit admission checks.", type: "counter" }],
+  ["gittensory_jobs_rate_limit_budget_deferred_total", { help: "Jobs deferred by rate-limit budget checks.", type: "counter" }],
+  ["gittensory_jobs_rate_limited_by_type_total", { help: "Jobs rate-limited by job type.", type: "counter" }],
+  ["gittensory_jobs_maintenance_admission_deferred_by_reason_total", { help: "Maintenance jobs deferred by reason.", type: "counter" }],
+  ["gittensory_jobs_dead_letter_revived_total", { help: "Dead-letter jobs revived for retry.", type: "counter" }],
+  ["gittensory_jobs_foreground_liveness_released_total", { help: "Foreground-priority jobs force-released from a stale deferral by the liveness sweep.", type: "counter" }],
+  ["gittensory_jobs_foreground_liveness_released_by_reason_total", { help: "Foreground liveness releases by reason (age vs rate_limit_cleared).", type: "counter" }],
+  ["gittensory_dlq_dead_lettered_total", { help: "Messages moved to a dead-letter queue.", type: "counter" }],
+  ["gittensory_dlq_redriven_total", { help: "Dead-letter queue messages redriven into processing.", type: "counter" }],
+  ["gittensory_github_response_cache_total", { help: "GitHub response cache outcomes by response class.", type: "counter" }],
+  ["gittensory_github_graphql_cache_total", { help: "GitHub GraphQL cache outcomes by response class.", type: "counter" }],
+  ["gittensory_github_rest_rate_limit_observations_total", { help: "Observed GitHub REST rate-limit remaining buckets.", type: "counter" }],
+  ["gittensory_github_rest_rate_limit_responses_total", { help: "Observed GitHub REST rate-limit response statuses.", type: "counter" }],
+  ["gittensory_redis_gh_response_cache_total", { help: "Redis-backed GitHub response cache outcomes.", type: "counter" }],
+  ["gittensory_redis_token_cache_total", { help: "Redis-backed GitHub token cache outcomes.", type: "counter" }],
+  ["gittensory_qdrant_queries_total", { help: "Qdrant vector query attempts.", type: "counter" }],
+  ["gittensory_qdrant_upserts_total", { help: "Qdrant vector upserted item count.", type: "counter" }],
+  ["gittensory_qdrant_errors_total", { help: "Qdrant vector operation errors.", type: "counter" }],
+  ["gittensory_orb_events_exported_total", { help: "Orb events exported from the self-host runtime.", type: "counter" }],
+  ["gittensory_orb_export_errors_total", { help: "Orb event export errors.", type: "counter" }],
+  ["gittensory_orb_relay_drains_total", { help: "Orb relay drain outcomes.", type: "counter" }],
+  ["gittensory_orb_webhook_total", { help: "Orb webhook outcomes.", type: "counter" }],
+  ["gittensory_ai_requests_total", { help: "AI provider request outcomes.", type: "counter" }],
+  ["gittensory_ai_cost_usd_total", { help: "Estimated AI provider cost in USD.", type: "counter" }],
+  ["gittensory_ai_input_tokens_total", { help: "AI provider input tokens consumed.", type: "counter" }],
+  ["gittensory_ai_output_tokens_total", { help: "AI provider output tokens produced.", type: "counter" }],
+  ["gittensory_ai_total_tokens_total", { help: "AI provider total tokens observed.", type: "counter" }],
+  ["gittensory_ai_provider_circuit_open_total", { help: "AI provider circuit-open events.", type: "counter" }],
+  ["gittensory_ai_provider_failures_total", { help: "AI provider failures by provider.", type: "counter" }],
+  ["gittensory_ai_review_cache_hit_total", { help: "AI review cache hits.", type: "counter" }],
+  ["gittensory_ai_review_cache_miss_total", { help: "AI review cache misses.", type: "counter" }],
+  ["gittensory_ai_review_cache_write_error_total", { help: "AI review cache write errors.", type: "counter" }],
+  ["gittensory_ai_review_non_cacheable_total", { help: "AI reviews skipped by cacheability rules.", type: "counter" }],
+  ["gittensory_ai_review_force_bypass_total", { help: "AI review cache force-bypass events.", type: "counter" }],
+  ["gittensory_ai_review_inconclusive_total", { help: "AI review inconclusive outcomes.", type: "counter" }],
+  ["gittensory_ai_review_onmerge_clamped_total", { help: "AI review on-merge mode clamp events.", type: "counter" }],
+  ["gittensory_regate_ai_skipped_current_total", { help: "Regate requests skipped because AI state is current.", type: "counter" }],
+  ["gittensory_public_surface_publish_skipped_current_total", { help: "Public surface publishes skipped because state is current.", type: "counter" }],
+  ["gittensory_gate_decisions_total", { help: "Gate decisions by conclusion.", type: "counter" }],
+  ["gittensory_reviews_published_total", { help: "Published review comments.", type: "counter" }],
+  ["gittensory_github_branch_protection_permission_denied_total", { help: "GitHub branch-protection reads denied by permissions.", type: "counter" }],
+  ["gittensory_github_pr_files_fetch_total", { help: "GitHub pull-request file fetch attempts.", type: "counter" }],
+  ["gittensory_pr_state_cache_total", { help: "Pull-request state cache outcomes.", type: "counter" }],
+];
+const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 
 // These public counters are scraped without auth; redact repo labels at the counter call-site.
 const PRIVATE_REPO_LABEL_METRICS = new Set([
@@ -42,6 +128,29 @@ function seriesKey(name: string, labels?: Labels): string {
     .map(([k, v]) => `${k}="${String(v).replace(/"/g, '\\"')}"`)
     .join(",");
   return `${name}{${inner}}`;
+}
+
+function metricNameFromSeriesKey(key: string): string {
+  const labelsStart = key.indexOf("{");
+  return labelsStart === -1 ? key : key.slice(0, labelsStart);
+}
+
+function escapeHelpText(help: string): string {
+  return help.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+}
+
+function pushMetricMeta(lines: string[], emitted: Set<string>, name: string): void {
+  if (emitted.has(name)) return;
+  const meta = metricMeta.get(name);
+  if (!meta) return;
+  lines.push(`# HELP ${name} ${escapeHelpText(meta.help)}`);
+  lines.push(`# TYPE ${name} ${meta.type}`);
+  emitted.add(name);
+}
+
+/** Register Prometheus HELP/TYPE metadata for a metric name. */
+export function registerMetricMeta(name: string, meta: MetricMeta): void {
+  metricMeta.set(name, { help: meta.help, type: meta.type });
 }
 
 /** Increment a monotonic counter (created on first use). */
@@ -74,15 +183,22 @@ export function observe(name: string, value: number, labels?: Labels, buckets: n
 /** Render the registry in Prometheus text exposition format. */
 export async function renderMetrics(): Promise<string> {
   const lines: string[] = [];
-  for (const [k, v] of counters) lines.push(`${k} ${v}`);
+  const emittedMeta = new Set<string>();
+  for (const [k, v] of counters) {
+    pushMetricMeta(lines, emittedMeta, metricNameFromSeriesKey(k));
+    lines.push(`${k} ${v}`);
+  }
   for (const [name, sample] of gauges) {
     try {
-      lines.push(`${name} ${await sample()}`);
+      const value = await sample();
+      pushMetricMeta(lines, emittedMeta, name);
+      lines.push(`${name} ${value}`);
     } catch {
       /* a failing sampler must not break the scrape */
     }
   }
   for (const h of histograms.values()) {
+    pushMetricMeta(lines, emittedMeta, h.name);
     for (let i = 0; i < h.buckets.length; i++) {
       lines.push(`${seriesKey(`${h.name}_bucket`, { ...h.labels, le: String(h.buckets[i]) })} ${h.counts[i]}`);
     }
@@ -94,9 +210,11 @@ export async function renderMetrics(): Promise<string> {
   return `${lines.join("\n")}\n`;
 }
 
-/** Test-only: clear all series. */
+/** Test-only: clear all series and restore built-in metric metadata. */
 export function resetMetrics(): void {
   counters.clear();
   gauges.clear();
   histograms.clear();
+  metricMeta.clear();
+  for (const [name, meta] of DEFAULT_METRIC_META) metricMeta.set(name, meta);
 }

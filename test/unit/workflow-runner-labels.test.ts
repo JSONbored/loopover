@@ -4,16 +4,18 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("workflow runner labels", () => {
-  it("keeps only the build/test job on the gittensory runner pool; non-build jobs run on GitHub-hosted runners", () => {
+  it("runs CI validation on GitHub-hosted runners, not the (CPU-constrained) self-hosted pool (#2825)", () => {
     const workflow = read(".github/workflows/ci.yml");
-    const trustedRunnerExpression =
-      '${{ fromJSON((github.event_name == \'pull_request\' && github.event.pull_request.head.repo.fork == true) && \'["ubuntu-latest"]\' || \'["self-hosted","gittensory"]\') }}';
 
-    // Only validate-code (the npm/build/test job that benefits from the self-hosted VPS's cached toolchain)
-    // stays on the fork-aware trusted-pool expression. changes/security/validate do no build/test work, so
-    // they're unconditionally ubuntu-latest -- fanning them out to self-hosted only competed with
-    // validate-code for the same scarce runner pool (#2501, #2507).
-    expect(workflow.match(new RegExp(escapeRegExp(trustedRunnerExpression), "g")) ?? []).toHaveLength(1);
+    // validate-code previously ran on the fork-aware self-hosted/ubuntu-latest expression to reuse the VPS's
+    // cached toolchain; while the self-hosted review stack is CPU constrained, EVERY job here runs on
+    // ubuntu-latest instead, trusted PRs included (#2825). No runs-on line should still select the
+    // self-hosted pool (explanatory comments mentioning "self-hosted" in prose are fine).
+    const runsOnLines = workflow.match(/^\s*runs-on:.*$/gm) ?? [];
+    expect(runsOnLines.length).toBeGreaterThan(0);
+    for (const line of runsOnLines) expect(line).not.toMatch(/self-hosted|gittensory/);
+    expect(workflow).not.toContain("|| 'self-hosted'");
+    expect(workflow).not.toContain('"fork-ci"');
     expect(workflow).toContain("validate-code:");
     expect(workflow).toContain("needs: [changes, validate-code, security]");
     expect(workflow).not.toContain("\n  lint:\n");
@@ -22,22 +24,22 @@ describe("workflow runner labels", () => {
     expect(workflow).not.toContain("\n  mcp:\n");
     expect(workflow).not.toContain("\n  rees:\n");
     expect(workflow).not.toContain("\n  ui:\n");
-    expect(workflow).not.toContain("|| 'self-hosted'");
-    expect(workflow).not.toContain('"fork-ci"');
 
     const changesJob = workflow.slice(workflow.indexOf("\n  changes:\n"), workflow.indexOf("\n  validate-code:\n"));
     expect(changesJob).toContain("runs-on: ubuntu-latest");
+    const validateCodeJob = workflow.slice(workflow.indexOf("\n  validate-code:\n"), workflow.indexOf("\n  security:\n"));
+    expect(validateCodeJob).toContain("runs-on: ubuntu-latest");
     const securityJob = workflow.slice(workflow.indexOf("\n  security:\n"), workflow.indexOf("\n  validate:\n"));
     expect(securityJob).toContain("runs-on: ubuntu-latest");
     const validateJob = workflow.slice(workflow.indexOf("\n  validate:\n"));
     expect(validateJob).toContain("runs-on: ubuntu-latest");
   });
 
-  it("keeps scheduled audit work on the trusted self-hosted pool", () => {
+  it("runs the scheduled dependency audit on GitHub-hosted runners too (#2825)", () => {
     const workflow = read(".github/workflows/audit.yml");
 
-    expect(workflow).toContain("runs-on: [self-hosted, gittensory]");
-    expect(workflow).not.toContain("|| 'self-hosted'");
+    expect(workflow).toContain("runs-on: ubuntu-latest");
+    expect(workflow).not.toContain("self-hosted");
   });
 
   it("cancels a superseded selfhost.yml run instead of letting it run to completion (#2496)", () => {
@@ -54,7 +56,3 @@ describe("workflow runner labels", () => {
     expect(workflow).not.toMatch(/cancel-in-progress:\s*\$\{\{/);
   });
 });
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

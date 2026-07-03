@@ -10,6 +10,13 @@ export {
   type OpportunityRankInput,
 } from "./opportunity-ranker.js";
 export * from "./governor/rate-limit.js";
+export {
+  GOVERNOR_LEDGER_EVENT_TYPES,
+  normalizeGovernorLedgerEvent,
+  type GovernorLedgerEvent,
+  type GovernorLedgerEventType,
+  type NormalizedGovernorLedgerEvent,
+} from "./governor-ledger.js";
 export * from "./plan-export.js";
 export * from "./plan-templates.js";
 export * from "./portfolio/queue.js";
@@ -38,3 +45,18 @@ export {
   type FreshnessIssue,
 } from "./opportunity-freshness.js";
 export { computeOpportunityCompetition } from "./opportunity-competition.js";
+export {
+  classifyContributorFit,
+  type ContributorFit,
+  type ContributorFitCheck,
+  type ContributorFitProfile,
+} from "./contributor-fit.js";
+export {
+  buildMetadataRankInput,
+  computeMetadataDupRisk,
+  computeMetadataFeasibility,
+  computeMetadataPotential,
+  rankMetadataOpportunities,
+  type MetadataCandidateIssue,
+  type MetadataRankContext,
+} from "./opportunity-metadata.js";

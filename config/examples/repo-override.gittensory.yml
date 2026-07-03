@@ -10,10 +10,16 @@
 # Replace `owner`/`repo` in the destination path with the real values before using this file.
 # ============================================================================
 
-# Overrides ONLY `gate.enabled` for this repo — every other `gate.*` key (e.g. `duplicates`,
-# `linkedIssue`) is inherited from the global default untouched.
+# Overrides ONLY `gate.enabled` and `gate.expectedCiContexts` for this repo — every other `gate.*`
+# key (e.g. `duplicates`, `linkedIssue`) is inherited from the global default untouched.
 gate:
   enabled: true
+  # This repo's own CI job/check names to trust as required when its branch protection is
+  # unreadable (a common self-host case — see ../../.gittensory.yml.example). Each repo's CI
+  # naming differs, so this is a per-repo override rather than a global default.
+  expectedCiContexts:
+    - build
+    - test
 
 # Array fields REPLACE the global default wholesale, never concatenate with it — this repo's
 # wanted-paths guidance is exactly this list, not global's list plus this one.

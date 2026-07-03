@@ -20,6 +20,14 @@ metadata across target repos, and `searchCandidateIssues` does the same from a G
 paths hard-skip repos whose `AI-USAGE.md` or `CONTRIBUTING.md` explicitly bans AI-generated PRs. They perform
 GitHub GET requests only, never clone source, never upload source, and never write to GitHub.
 
+The package also includes a metadata-only ranker: `rankCandidateIssues` composes deterministic engine signals
+(potential, feasibility, lane fit, freshness, dup risk) and returns fan-out candidates sorted by `rankScore`.
+It never clones source and never writes to GitHub.
+
+The package also includes an append-only governor decision ledger: `initGovernorLedger` / `appendGovernorEvent`
+persist structured allow/deny/throttle/kill-switch outcomes in local SQLite for contributor audit. Insert-only —
+no enforcement wiring yet. (#2328)
+
 ## Install
 
 From a local checkout:

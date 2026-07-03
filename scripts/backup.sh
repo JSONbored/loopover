@@ -5,15 +5,46 @@
 # Backups land in the `gittensory-backups` volume at /backups/{postgres,sqlite,qdrant}.
 set -eu
 
+normalize_backup_retain() {
+  retain_value=$1
+  case "$retain_value" in
+    ''|*[!0-9]*)
+      echo "[backup] invalid BACKUP_RETAIN=$retain_value; using 7" >&2
+      printf '%s\n' 7
+      return
+      ;;
+  esac
+
+  while [ "${retain_value#0}" != "$retain_value" ]; do
+    retain_value=${retain_value#0}
+  done
+  if [ -z "$retain_value" ] || [ "$retain_value" = 0 ]; then
+    echo "[backup] BACKUP_RETAIN=0 would remove the current backup; using 1" >&2
+    printf '%s\n' 1
+    return
+  fi
+
+  printf '%s\n' "$retain_value"
+}
+
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-RETAIN=${BACKUP_RETAIN:-7}
+RETAIN=$(normalize_backup_retain "${BACKUP_RETAIN:-7}")
 DB=${DATABASE_PATH:-/data/gittensory.sqlite}
 PG_DB="${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT=${BACKUP_OUT_DIR:-/backups}
 PGPASSFILE_CREATED=""
+MANIFEST_TMP=""
+SQLITE_MANIFEST_FILE=""
+SQLITE_MANIFEST_BYTES=""
+POSTGRES_MANIFEST_FILE=""
+POSTGRES_MANIFEST_BYTES=""
+QDRANT_MANIFEST_FILE=""
 cleanup() {
   if [ -n "$PGPASSFILE_CREATED" ]; then
     rm -f "$PGPASSFILE_CREATED"
+  fi
+  if [ -n "$MANIFEST_TMP" ]; then
+    rm -f "$MANIFEST_TMP"
   fi
 }
 trap cleanup EXIT HUP INT TERM
@@ -47,6 +78,49 @@ url_decode() {
 
 pgpass_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/:/\\:/g'
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+file_bytes() {
+  wc -c < "$1" | tr -d '[:space:]'
+}
+
+json_file_entry() {
+  rel_file=$1
+  bytes=$2
+  printf '{"file":"%s","bytes":%s}' "$(json_escape "$rel_file")" "$bytes"
+}
+
+write_manifest() {
+  sqlite_json=null
+  postgres_json=null
+  qdrant_file_json=null
+
+  if [ -n "$SQLITE_MANIFEST_FILE" ]; then
+    sqlite_json=$(json_file_entry "$SQLITE_MANIFEST_FILE" "$SQLITE_MANIFEST_BYTES")
+  fi
+  if [ -n "$POSTGRES_MANIFEST_FILE" ]; then
+    postgres_json=$(json_file_entry "$POSTGRES_MANIFEST_FILE" "$POSTGRES_MANIFEST_BYTES")
+  fi
+  if [ -n "$QDRANT_MANIFEST_FILE" ]; then
+    qdrant_file_json="\"$(json_escape "$QDRANT_MANIFEST_FILE")\""
+  fi
+
+  MANIFEST_TMP=$(mktemp "$OUT/.manifest.XXXXXX")
+  {
+    printf '{\n'
+    printf '  "ts": "%s",\n' "$(json_escape "$TS")"
+    printf '  "postgres": %s,\n' "$postgres_json"
+    printf '  "sqlite": %s,\n' "$sqlite_json"
+    printf '  "qdrant": {"file": %s},\n' "$qdrant_file_json"
+    printf '  "retain": %s\n' "$RETAIN"
+    printf '}\n'
+  } > "$MANIFEST_TMP"
+  mv "$MANIFEST_TMP" "$OUT/manifest.json"
+  MANIFEST_TMP=""
 }
 
 # Strips the password from a postgres(ql):// URI -- from EITHER the userinfo (user:password@host) or a
@@ -190,8 +264,11 @@ case "$PG_DB" in
       exit 1
     fi
     prepare_pg_env
-    pg_dump -Fc -f "$OUT/postgres/gittensory-$TS.dump" "$PG_SANITIZED_URL"
-    echo "[backup] postgres -> $OUT/postgres/gittensory-$TS.dump"
+    POSTGRES_OUT="$OUT/postgres/gittensory-$TS.dump"
+    pg_dump -Fc -f "$POSTGRES_OUT" "$PG_SANITIZED_URL"
+    POSTGRES_MANIFEST_FILE="postgres/$(basename "$POSTGRES_OUT")"
+    POSTGRES_MANIFEST_BYTES=$(file_bytes "$POSTGRES_OUT")
+    echo "[backup] postgres -> $POSTGRES_OUT"
     ;;
   *)
     if [ -f "$DB" ]; then
@@ -203,6 +280,8 @@ case "$PG_DB" in
         && [ -s "$SQLITE_OUT" ] \
         && [ "$(sqlite3 "$SQLITE_OUT" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ]; then
         gzip -f "$SQLITE_OUT"
+        SQLITE_MANIFEST_FILE="sqlite/$(basename "$SQLITE_OUT").gz"
+        SQLITE_MANIFEST_BYTES=$(file_bytes "$SQLITE_OUT.gz")
         echo "[backup] sqlite -> $SQLITE_OUT.gz"
       else
         rm -f "$SQLITE_OUT"
@@ -221,6 +300,7 @@ if [ -n "${QDRANT_URL:-}" ]; then
   NAME=$(curl -sf -X POST "$QDRANT_URL/snapshots" 2>/dev/null | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
   if [ -n "$NAME" ]; then
     if curl -sf "$QDRANT_URL/snapshots/$NAME" -o "$OUT/qdrant/$NAME" 2>/dev/null; then
+      QDRANT_MANIFEST_FILE="qdrant/$NAME"
       echo "[backup] qdrant -> $OUT/qdrant/$NAME"
     fi
     curl -sf -X DELETE "$QDRANT_URL/snapshots/$NAME" >/dev/null 2>&1 || true
@@ -249,4 +329,5 @@ if [ "$SQLITE_BACKUP_FAILED" = 1 ]; then
   exit 1
 fi
 
+write_manifest
 echo "[backup] complete ($TS); retaining newest $RETAIN per target"

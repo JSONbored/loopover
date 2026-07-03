@@ -1877,6 +1877,7 @@ describe("api routes", () => {
       permissions: { metadata: "read", pull_requests: "read" },
       events: ["issues", "pull_request", "repository"],
       checkedAt: "2026-05-28T00:00:00.000Z",
+      authMode: "local",
     });
 
     const repair = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
@@ -1919,6 +1920,7 @@ describe("api routes", () => {
       permissions: { metadata: "read", pull_requests: "write", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:01:00.000Z",
+      authMode: "local",
     });
     const repairWithChecks = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
     const repairWithChecksBody = (await repairWithChecks.json()) as typeof repairBody;
@@ -2221,6 +2223,7 @@ describe("api routes", () => {
       permissions: { metadata: "read" },
       events: ["pull_request"],
       checkedAt: "2026-05-31T12:00:00.000Z",
+      authMode: "local",
       errorSummary: "victim install needs privileged recovery",
     });
     await recordGitHubRateLimitObservation(ownerEnv, {
@@ -3233,6 +3236,7 @@ describe("api routes", () => {
       permissions: { metadata: "read", pull_requests: "write", issues: "write" },
       events: ["issues", "pull_request", "repository"],
       checkedAt: "2026-05-31T11:00:00.000Z",
+      authMode: "local",
     });
     await upsertInstallationHealth(env, {
       installationId: 456,
@@ -3246,6 +3250,7 @@ describe("api routes", () => {
       permissions: { metadata: "read" },
       events: [],
       checkedAt: "2026-05-31T11:01:00.000Z",
+      authMode: "local",
     });
     const warningDigest = await app.request("/v1/app/digest", { headers: cookieHeaders }, env);
     expect(warningDigest.status).toBe(200);
@@ -4667,6 +4672,7 @@ describe("api routes", () => {
       permissions: { metadata: "read", pull_requests: "read" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-23T00:00:00.000Z",
+      authMode: "local",
     });
     await upsertRepoSyncSegment(env, {
       repoFullName: "entrius/allways-ui",
@@ -6578,6 +6584,7 @@ async function seedSignalData(env: Env): Promise<void> {
     permissions: { metadata: "read", pull_requests: "write", issues: "write" },
     events: ["issues", "pull_request", "repository"],
     checkedAt: freshAt,
+    authMode: "local",
   });
   const snapshot = normalizeRegistryPayload(
     {
@@ -6759,6 +6766,7 @@ async function seedSignalData(env: Env): Promise<void> {
     permissions: { metadata: "read", pull_requests: "write", issues: "write" },
     events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
     checkedAt: freshAt,
+    authMode: "local",
   });
   await upsertIssueFromGitHub(env, "entrius/allways-ui", {
     number: 7,

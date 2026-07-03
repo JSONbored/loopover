@@ -193,7 +193,7 @@ describe("notification queue wiring", () => {
       } as unknown as Queue,
     });
 
-    await processJob(env, { type: "notify-evaluate", requestedBy: "test", event: event() });
+    await processJob(env, { type: "notify-evaluate", requestedBy: "test", events: [event()] });
     const deliverJob = enqueued.find((message) => message.type === "notify-deliver");
     expect(deliverJob?.deliveryId).toBeTruthy();
 
@@ -204,8 +204,58 @@ describe("notification queue wiring", () => {
 
     // A retried evaluate (same event) enqueues no further deliver jobs.
     const before = enqueued.length;
-    await processJob(env, { type: "notify-evaluate", requestedBy: "test", event: event() });
+    await processJob(env, { type: "notify-evaluate", requestedBy: "test", events: [event()] });
     expect(enqueued.length).toBe(before);
+  });
+
+  it("evaluates every event in a batched notify-evaluate job (#selfhost-maintenance-self-pin)", async () => {
+    const enqueued: Array<{ type: string; deliveryId?: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: { type: string; deliveryId?: string }) {
+          enqueued.push(message);
+        },
+      } as unknown as Queue,
+    });
+
+    await processJob(env, {
+      type: "notify-evaluate",
+      requestedBy: "test",
+      events: [
+        event({ recipientLogin: "miner-one", dedupKey: "changes_requested:owner/repo#7:reviewer:t1" }),
+        event({ recipientLogin: "miner-two", dedupKey: "changes_requested:owner/repo#8:reviewer:t2" }),
+      ],
+    });
+
+    const deliverJobs = enqueued.filter((message) => message.type === "notify-deliver");
+    expect(deliverJobs).toHaveLength(2);
+    const deliveredLogins = await Promise.all(
+      deliverJobs.map(async (job) => {
+        await processJob(env, { type: "notify-deliver", requestedBy: "test", deliveryId: job.deliveryId! });
+        return true;
+      }),
+    );
+    expect(deliveredLogins).toEqual([true, true]);
+    expect(await listNotificationDeliveriesForRecipient(env, "miner-one", { unreadOnly: true })).toHaveLength(1);
+    expect(await listNotificationDeliveriesForRecipient(env, "miner-two", { unreadOnly: true })).toHaveLength(1);
+  });
+
+  it("REGRESSION (gate finding): a legacy pre-upgrade payload (singular `event`, no `events` array) is still evaluated instead of throwing", async () => {
+    const enqueued: Array<{ type: string; deliveryId?: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: { type: string; deliveryId?: string }) {
+          enqueued.push(message);
+        },
+      } as unknown as Queue,
+    });
+
+    // A row enqueued before the batched-events deploy still carries the OLD singular `event` field on disk --
+    // cast past the current (events-only) type to simulate a durable payload from before the upgrade.
+    const legacyMessage = { type: "notify-evaluate", requestedBy: "test", event: event() } as unknown as { type: "notify-evaluate"; requestedBy: "test"; events: DetectedNotificationEvent[] };
+
+    await expect(processJob(env, legacyMessage)).resolves.not.toThrow();
+    expect(enqueued.some((message) => message.type === "notify-deliver")).toBe(true);
   });
 });
 

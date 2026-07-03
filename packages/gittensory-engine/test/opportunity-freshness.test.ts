@@ -69,3 +69,12 @@ test("computeOpportunityFreshness falls back from malformed updatedAt to created
   );
   assert.ok(fresh > 0.7);
 });
+
+test("computeOpportunityFreshness handles large open-issue lists without spreading into Math.min", () => {
+  const issues = Array.from({ length: 200_000 }, (_, index) => ({
+    state: "open",
+    updatedAt: index === 0 ? "2026-07-01T00:00:00.000Z" : "2023-01-01T00:00:00.000Z",
+  }));
+  const score = computeOpportunityFreshness(issues, nowMs);
+  assert.ok(score > 0.7);
+});

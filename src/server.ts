@@ -24,6 +24,7 @@ import {
   resolveRequiredCliProviders,
   resolveSubscriptionCliPath,
   shouldMarkAiProviderUnhealthyAtBoot,
+  subscriptionCliEnv,
 } from "./selfhost/ai";
 import {
   cookieValue,
@@ -54,7 +55,7 @@ import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
-import { resolvePostgresPoolMax } from "./selfhost/queue-common";
+import { resolvePostgresPoolMax, type SelfHostQueueSnapshot } from "./selfhost/queue-common";
 import type { MaintenancePressureSignals } from "./selfhost/maintenance-admission";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
@@ -129,8 +130,10 @@ interface Backend {
     stop(): Promise<void>;
     size(): number | Promise<number>;
     deadCount(): number | Promise<number>;
+    processingCount(): number | Promise<number>;
     stats(): Record<string, number> | Promise<Record<string, number>>;
     pressureSignals(): MaintenancePressureSignals | Promise<MaintenancePressureSignals>;
+    snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
   };
   vectorize?: Vectorize;
   shutdown(): Promise<void>;
@@ -581,11 +584,17 @@ async function main(): Promise<void> {
   // unauthenticated auth volume surfaces in /ready instead of silently inside a spawned subprocess mid-review.
   const codexProbe = codexAuthReadinessProbe(process.env, async (env) => {
     const { spawn } = await import("node:child_process");
-    return new Promise((resolve) => {
-      const child = spawn("codex", ["--version"], { env: env as NodeJS.ProcessEnv, stdio: "ignore" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    return new Promise<{ code: number | null }>((resolve) => {
+      const child = spawn("codex", ["--version"], {
+        env: subscriptionCliEnv(env) as NodeJS.ProcessEnv,
+        signal: controller.signal,
+        stdio: "ignore",
+      });
       child.on("close", (code) => resolve({ code }));
       child.on("error", () => resolve({ code: 1 }));
-    });
+    }).finally(() => clearTimeout(timeout));
   });
   if (codexProbe) {
     readinessProbes.push({
@@ -596,6 +605,7 @@ async function main(): Promise<void> {
 
   gauge("gittensory_queue_pending", () => backend.queue.size());
   gauge("gittensory_queue_dead", () => backend.queue.deadCount());
+  gauge("gittensory_queue_processing", () => backend.queue.processingCount());
   const durableJobMetric = async (name: string): Promise<number> =>
     Number((await backend.queue.stats())[name] ?? 0);
   for (const name of [
@@ -627,6 +637,16 @@ async function main(): Promise<void> {
   );
   gauge("gittensory_queue_oldest_maintenance_pending_age_seconds", async () =>
     Math.floor(((await maintenancePressure()).oldestMaintenancePendingAgeMs ?? 0) / 1000),
+  );
+  // #selfhost-queue-liveness: runnable-now is the "is anything actually due right now" signal the incident
+  // this module fixes required manual SQL to answer (processing=0, runnable_now=0 with hundreds pending).
+  // gittensory_queue_runnable_now covers every priority; the live-scoped pair narrows to foreground work
+  // specifically and adds the oldest-RUNNABLE age, distinct from oldest-PENDING age (which a job intentionally
+  // scheduled far out can inflate without indicating anything is stuck).
+  gauge("gittensory_queue_runnable_now", async () => (await backend.queue.snapshot()).totals.due);
+  gauge("gittensory_queue_live_runnable_now", async () => (await maintenancePressure()).liveRunnableNowCount);
+  gauge("gittensory_queue_oldest_live_runnable_age_seconds", async () =>
+    Math.floor(((await maintenancePressure()).oldestLiveRunnableAgeMs ?? 0) / 1000),
   );
   // -1 (not 0) when unavailable -- a genuine idle host reads 0, so a dashboard can tell "known idle" apart
   // from "no signal on this platform" (see host-pressure.ts).

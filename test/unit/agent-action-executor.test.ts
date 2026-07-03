@@ -43,6 +43,7 @@ import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
 import {
   actionParams,
+  clearWritePermissionDenialCooldownForTest,
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
   pendingActionToPlanned,
@@ -53,8 +54,11 @@ import {
 } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
-import { isGlobalAgentFrozen, setGlobalAgentFrozen, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import * as repositoriesModule from "../../src/db/repositories";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
+import { MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
   return {
@@ -89,6 +93,8 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
     }));
+    clearWritePermissionDenialCooldownForTest();
+    resetMetrics();
   });
 
   it("actionParams threads expectedHeadSha for an update_branch action (and omits absent fields)", () => {
@@ -449,6 +455,107 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect((await auditFor(env, "merge"))?.outcome).toBe("denied");
   });
 
+  describe("write-permission denial cooldown (#selfhost-runtime-drift)", () => {
+    async function auditCount(env: Env, actionClass: string): Promise<number> {
+      const row = await env.DB.prepare("select count(*) as c from audit_events where event_type = ?")
+        .bind(`agent.action.${actionClass}`)
+        .first<{ c: number }>();
+      return Number(row?.c ?? 0);
+    }
+
+    it("suppresses a repeated pull_requests:write denial within the cooldown window — still denied, but not re-audited", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 200, installationPermissions: { pull_requests: "read", issues: "write" } });
+
+      const first = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+      expect(first[0]).toMatchObject({ outcome: "denied", detail: "pull_requests: write not granted — maintainer must re-consent" });
+      expect(await auditCount(env, "merge")).toBe(1);
+
+      const second = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+      expect(second[0]?.outcome).toBe("denied");
+      expect(second[0]?.detail).toContain("suppressed repeat");
+      expect(await auditCount(env, "merge")).toBe(1); // no new audit row for the suppressed repeat
+      expect(mergePullRequest).not.toHaveBeenCalled();
+
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_agent_action_permission_denied_total{actionClass="merge"} 2');
+      expect(metrics).toContain('gittensory_agent_action_permission_denied_suppressed_total{actionClass="merge"} 1');
+    });
+
+    it("resumes loud auditing once the cooldown window elapses", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 201, installationPermissions: { pull_requests: "read", issues: "write" } });
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-03T00:00:00Z"));
+      try {
+        await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+        expect(await auditCount(env, "merge")).toBe(1);
+
+        vi.setSystemTime(new Date("2026-07-03T00:14:00Z")); // still inside the 15m cooldown
+        await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+        expect(await auditCount(env, "merge")).toBe(1);
+
+        vi.setSystemTime(new Date("2026-07-03T00:15:01Z")); // cooldown elapsed
+        const afterCooldown = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+        expect(afterCooldown[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
+        expect(await auditCount(env, "merge")).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("scopes the cooldown per installation/repo/action-class — a different action class is not suppressed by another's denial", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 202, installationPermissions: { pull_requests: "read", issues: "write" } });
+
+      await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+      const closeOutcome = await executeAgentMaintenanceActions(env, deniedCtx, [close]);
+
+      expect(closeOutcome[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent"); // loud, not suppressed
+      expect(await auditCount(env, "close")).toBe(1);
+    });
+
+    it("scopes the cooldown per repo — the SAME installation denied on a different repo is not suppressed", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "read" as const, issues: "write" as const };
+      await executeAgentMaintenanceActions(env, ctx({ installationId: 203, repoFullName: "owner/repo-a", installationPermissions: perms }), [merge]);
+      const otherRepo = await executeAgentMaintenanceActions(env, ctx({ installationId: 203, repoFullName: "owner/repo-b", installationPermissions: perms }), [merge]);
+
+      expect(otherRepo[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
+      expect(await auditCount(env, "merge")).toBe(2); // one audit row per repo
+    });
+
+    it("REGRESSION (gate finding): a transient audit-write failure on the FIRST denial does not arm the cooldown — the retry attempts the audit again instead of being silently suppressed", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 204, installationPermissions: { pull_requests: "read", issues: "write" } });
+      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+
+      await expect(executeAgentMaintenanceActions(env, deniedCtx, [merge])).rejects.toThrow("D1 write error");
+      expect(await auditCount(env, "merge")).toBe(0); // the failed write never landed
+
+      auditSpy.mockRestore();
+      const retry = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+
+      // Loud, not suppressed — the cooldown was never armed by the failed first attempt.
+      expect(retry[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
+      expect(await auditCount(env, "merge")).toBe(1);
+    });
+
+    it("REGRESSION (gate finding): scopes the cooldown per PR — a denial on a DIFFERENT PR in the same installation/repo/action-class is not suppressed", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "read" as const, issues: "write" as const };
+
+      const prA = await executeAgentMaintenanceActions(env, ctx({ installationId: 205, pullNumber: 501, installationPermissions: perms }), [merge]);
+      const prB = await executeAgentMaintenanceActions(env, ctx({ installationId: 205, pullNumber: 502, installationPermissions: perms }), [merge]);
+
+      // Both denials are loud — PR B's cooldown key differs from PR A's, so it must never be silently
+      // suppressed by PR A's already-armed cooldown within the same 15m window.
+      expect(prA[0]).toMatchObject({ outcome: "denied", detail: "pull_requests: write not granted — maintainer must re-consent" });
+      expect(prB[0]).toMatchObject({ outcome: "denied", detail: "pull_requests: write not granted — maintainer must re-consent" });
+      expect(await auditCount(env, "merge")).toBe(2); // one audit row per PR, not one shared row
+    });
+  });
+
   it("#label-close-split-brain: a coupled anti-abuse label+close pair (matching closeKind) BOTH complete when the close succeeds", async () => {
     const env = createTestEnv({});
     const coupledClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", closeComment: "closing", closeKind: "contributor_cap" };
@@ -678,6 +785,185 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(outcomes[0]?.outcome).toBe("error");
     expect(refreshInstallationHealthForInstallation).toHaveBeenCalledWith(env, 126);
     expect((await auditFor(env, "close"))?.outcome).toBe("error");
+  });
+});
+
+describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
+      status: "current",
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+    }));
+    // clearAllMocks() resets call history but does NOT drain a queued mockRejectedValueOnce/mockResolvedValueOnce
+    // left over from an earlier test elsewhere in this file (e.g. the installation-health-refresh tests above
+    // queue a one-time closePullRequest rejection) -- re-pin the base implementation explicitly so this describe
+    // block's "the close actually completed" assumption is never at the mercy of file-level test order.
+    vi.mocked(closePullRequest).mockResolvedValue({ state: "closed" });
+  });
+
+  const coupledClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", closeComment: "closing", closeKind: "contributor_cap" };
+  const coupledLabel: PlannedAgentAction = { actionClass: "label", autonomyClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", label: "over-contributor-limit", labelOp: "add", closeKind: "contributor_cap" };
+
+  it("OFF by default: a completed contributor_cap close applies NO mod label when the global moderation config is disabled (the DB default)", async () => {
+    const env = createTestEnv({});
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("applies the default mod:warning label at the 1st lifetime violation once the global config is enabled", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("4 violations -> warning only; the 5th (default threshold) escalates to mod:banned + auto-blacklists the login", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    // Each iteration is a DIFFERENT PR (distinct pullNumber) -- 4 separate enforcement actions, not the same
+    // one replayed 4 times (the idempotency fix above correctly collapses same-target replays to ONE violation).
+    for (let i = 0; i < 4; i++) {
+      vi.clearAllMocks();
+      await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 100 + i }), [coupledClose, coupledLabel]);
+      expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 100 + i, "mod:warning", { createMissingLabel: true });
+      expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 100 + i, "mod:banned", expect.anything());
+    }
+    vi.clearAllMocks();
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 104 }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 104, "mod:banned", { createMissingLabel: true });
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.map((entry) => entry.login)).toContain("farmer99");
+  });
+
+  it("does NOT auto-blacklist when autoBlacklistOnBan is off, even at the ban threshold", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1, autoBlacklistOnBan: false });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.map((entry) => entry.login)).not.toContain("farmer99");
+  });
+
+  it("does not double-add an actor who is already on the global blacklist", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1 });
+    // Two DISTINCT PRs (different pullNumber) -- two genuinely separate violations, not a same-target replay
+    // (which the idempotency fix would correctly no-op before ever reaching the blacklist-membership check).
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 7 }), [coupledClose, coupledLabel]);
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 8 }), [{ ...coupledClose }, { ...coupledLabel }]);
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.filter((entry) => entry.login === "farmer99")).toHaveLength(1);
+  });
+
+  it("per-repo moderationGateMode 'off' force-disables the layer even when the global config is enabled", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationGateMode: "off" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("per-repo moderationGateMode 'enabled' force-enables the layer even when the global config is disabled (the default)", async () => {
+    const env = createTestEnv({});
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationGateMode: "enabled" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("per-repo moderationRules override EXCLUDING contributor_cap means a contributor_cap close on THIS repo does not count as a violation", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationRules: ["blacklist"] } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("REGRESSION (gate-flagged): the escalation count is scoped to the CURRENTLY-effective rule types, not every rule type ever recorded -- an excluded rule's historical violations must not push the count toward the ban threshold", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 2 });
+    // A contributor_cap violation recorded earlier (e.g. from a repo/period where cap DID count).
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, ?, ?, 'completed', 'old', '{}', ?)")
+      .bind(crypto.randomUUID(), MODERATION_VIOLATION_EVENT_TYPE.contributor_cap, "farmer99", "owner/repo#1", new Date().toISOString())
+      .run();
+    // THIS repo only cares about blacklist -- a blacklist close here should count ONLY the blacklist history,
+    // not the pre-existing contributor_cap violation, so the total stays at 1 (< threshold 2) -> warning.
+    const blacklistClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "blacklisted contributor", closeComment: "closing", closeKind: "blacklist" };
+    const blacklistLabel: PlannedAgentAction = { actionClass: "label", autonomyClass: "close", requiresApproval: false, reason: "blacklisted contributor", label: "slop", labelOp: "add", closeKind: "blacklist" };
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationRules: ["blacklist"] } }), [blacklistClose, blacklistLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("per-repo custom label overrides win over the global config's label", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, warningLabel: "global:warn" });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationWarningLabel: "repo:warn" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "repo:warn", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "global:warn", expect.anything());
+  });
+
+  it("no escalation in dry-run mode -- a mutation that didn't really happen must not count as a violation", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", agentDryRun: true }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("no escalation when the close is denied (not completed) -- e.g. the label-close split-brain guard's own denial path", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", installationPermissions: { pull_requests: "read", issues: "write" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("no escalation for a close with no author login (defensive -- should not happen for a real PR/issue)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: undefined }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("no escalation for an UNRELATED heuristic close (not one of the three moderation-tracked rule types)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "gate failed", closeComment: "closing", closeKind: "heuristic" };
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [heuristicClose]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("violationDecayDays (rolling window) excludes an old violation from the ban threshold, unlike the permanent-tally default", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 2, violationDecayDays: 1 });
+    // A violation from 10 days ago -- outside the 1-day decay window -- must NOT count toward the threshold.
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, ?, ?, 'completed', 'old', '{}', ?)")
+      .bind(crypto.randomUUID(), "moderation.violation.contributor_cap", "farmer99", "owner/repo#1", tenDaysAgo)
+      .run();
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    // Only the JUST-recorded violation counts (1 < banThreshold 2) -> warning, not banned.
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("REGRESSION (gate-flagged): a webhook redelivery / queue retry that re-executes the SAME close (same repo+number) does not double-count the violation or escalate past what the single real enforcement action warrants", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 2 });
+    // First pass: this contributor's ONLY violation -> warning (1 < threshold 2).
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+    vi.clearAllMocks();
+    vi.mocked(closePullRequest).mockResolvedValue({ state: "closed" });
+    // A REPLAY of the exact same close (same pullNumber, same repo) -- e.g. GitHub redelivers the webhook, or
+    // the queue job retries after the mutation already succeeded. Must NOT count as a 2nd violation.
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("REGRESSION (gate-flagged): an absurdly large violationDecayDays does not throw on the live close path (clamped before it ever reaches Date arithmetic)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, violationDecayDays: Number.MAX_SAFE_INTEGER });
+    await expect(executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel])).resolves.not.toThrow();
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
   });
 });
 

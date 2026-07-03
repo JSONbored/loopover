@@ -10,8 +10,16 @@ describe("self-host Sentry release wiring", () => {
     expect(releaseWorkflow).toContain(
       'sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist',
     );
+    // `sentry-cli releases set-commits --commit` can silently leave a release with zero associated
+    // commits against a repo connected via the modern GitHub App integration -- a direct PUT to the
+    // release resource with an inline `commits` array is what actually satisfies the later
+    // SENTRY_REQUIRE_COMMITS=true validation (confirmed empirically cutting the first beta release).
+    expect(releaseWorkflow).not.toContain('"$SENTRY_CLI_PACKAGE" releases set-commits');
     expect(releaseWorkflow).toContain(
-      'releases set-commits "$SENTRY_RELEASE" --commit "$SENTRY_REPOSITORY@$SENTRY_COMMIT_SHA" --ignore-missing',
+      "/api/0/organizations/${SENTRY_ORG}/releases/",
+    );
+    expect(releaseWorkflow).toContain(
+      "commits:[{repository: process.env.SENTRY_REPOSITORY, id: process.env.SENTRY_COMMIT_SHA}]",
     );
     expect(releaseWorkflow).toContain('SENTRY_CLI_PACKAGE: "@sentry/cli@3.6.0"');
     expect(releaseWorkflow).toContain('npx -y "$SENTRY_CLI_PACKAGE"');
@@ -26,8 +34,13 @@ describe("self-host Sentry release wiring", () => {
     expect(releaseWorkflow).toContain("VERSION_TAG: ${{ steps.version.outputs.tag }}");
     expect(releaseWorkflow).toContain("type=raw,value=${VERSION_TAG}");
     expect(releaseWorkflow).toContain("tags: ${{ steps.tags.outputs.list }}");
+    // Docker rejects a mixed-case image reference client-side -- `github.repository_owner` preserves
+    // the org's actual casing ("JSONbored"), so the release-notes pull command must lowercase it itself
+    // (docker/metadata-action does this automatically for the real image tags, but this hand-written
+    // notes block doesn't go through it).
+    expect(releaseWorkflow).toContain('REPOSITORY_OWNER_LOWER="${REPOSITORY_OWNER,,}"');
     expect(releaseWorkflow).toContain(
-      "docker pull ghcr.io/${REPOSITORY_OWNER}/gittensory-selfhost:${RELEASE_TAG}",
+      "docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/gittensory-selfhost:${RELEASE_TAG}",
     );
     expect(releaseWorkflow).not.toContain('"selfhost-v*"');
     expect(releaseWorkflow).not.toContain('VERSION="${REF_NAME#selfhost-v}"');

@@ -516,7 +516,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
@@ -824,7 +824,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1578,6 +1578,42 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(noOverride.autoCloseExemptLogins).toEqual(["keep-me"]);
   });
 
+  it("parses + resolves the moderation-rules engine settings from the settings: block, overlaying the DB (#selfhost-mod-engine)", () => {
+    const manifest = parseFocusManifest({ settings: { moderationGateMode: "enabled", moderationRules: ["blacklist", "not-a-rule" as never], moderationWarningLabel: "repo:warn", moderationBannedLabel: "repo:ban" } });
+    expect(manifest.settings.moderationGateMode).toBe("enabled");
+    expect(manifest.settings.moderationRules).toEqual(["blacklist"]); // invalid entry dropped
+    expect(manifest.settings.moderationWarningLabel).toBe("repo:warn");
+    expect(manifest.settings.moderationBannedLabel).toBe("repo:ban");
+    // yml overlays (replaces) the DB-configured values.
+    const eff = resolveEffectiveSettings({ moderationGateMode: "off", moderationRules: ["review_nag"], moderationWarningLabel: "db:warn", moderationBannedLabel: "db:ban" } as unknown as RepositorySettings, manifest);
+    expect(eff.moderationGateMode).toBe("enabled");
+    expect(eff.moderationRules).toEqual(["blacklist"]);
+    expect(eff.moderationWarningLabel).toBe("repo:warn");
+    expect(eff.moderationBannedLabel).toBe("repo:ban");
+    // Omitted in yml ⇒ the DB-configured values survive untouched.
+    const noOverride = resolveEffectiveSettings({ moderationGateMode: "off", moderationWarningLabel: "db:warn" } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(noOverride.moderationGateMode).toBe("off");
+    expect(noOverride.moderationWarningLabel).toBe("db:warn");
+    // An intentional EMPTY moderationRules override (opting every rule out for this repo) still applies --
+    // distinct from an all-invalid block, which is dropped instead (see autoCloseExemptLogins above).
+    const emptyOverride = resolveEffectiveSettings({ moderationRules: ["blacklist"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: [] } }));
+    expect(emptyOverride.moderationRules).toEqual([]);
+    // REGRESSION (gate-flagged): an ALL-INVALID moderationRules block (every entry fails validation, so
+    // normalizeModerationRules ALSO degrades it to an empty array) must NOT be treated as the intentional
+    // empty-list case above -- it is malformed input, not a real opt-out, so the DB-configured value survives.
+    const allInvalidPreserved = resolveEffectiveSettings({ moderationRules: ["blacklist"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: ["not-a-rule", "also-not-a-rule"] as never } }));
+    expect(allInvalidPreserved.moderationRules).toEqual(["blacklist"]);
+    // REGRESSION (gate-flagged): a non-array moderationRules value (e.g. a typo'd bare string) is malformed
+    // the same way -- must not silently disable every rule for this repo either.
+    const nonArrayPreserved = resolveEffectiveSettings({ moderationRules: ["review_nag"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: "blacklist" as never } }));
+    expect(nonArrayPreserved.moderationRules).toEqual(["review_nag"]);
+    // An invalid enum / blank label is dropped with a warning rather than silently coerced.
+    const invalid = parseFocusManifest({ settings: { moderationGateMode: "sometimes" as never, moderationWarningLabel: "   " } });
+    expect(invalid.settings.moderationGateMode).toBeUndefined();
+    expect(invalid.settings.moderationWarningLabel).toBeUndefined();
+    expect(invalid.warnings.some((w) => /settings\.moderationGateMode/.test(w))).toBe(true);
+  });
+
   it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {
     // Omitted key preserves the DB value (already covered above); an explicit `null` must ALSO be able to
     // override a DB-configured cap back to "no cap" — the documented `yml > DB > null` precedence otherwise
@@ -2328,10 +2364,11 @@ describe("gate.claMode / gate.cla CLA / license-compatibility gate config (#2564
   });
 
   it("parses the gate.cla block (consentPhrase + checkRunName), round-trips it, and warns on a non-mapping", () => {
-    const m = parseFocusManifest({ gate: { claMode: "block", cla: { consentPhrase: "I have read and agree to the CLA", checkRunName: "CLA Assistant Lite" } } });
+    const m = parseFocusManifest({ gate: { claMode: "block", cla: { consentPhrase: "I have read and agree to the CLA", checkRunName: "CLA Assistant Lite", checkRunAppSlug: "cla-assistant" } } });
     expect(m.gate.claConsentPhrase).toBe("I have read and agree to the CLA");
     expect(m.gate.claCheckRunName).toBe("CLA Assistant Lite");
-    expect(gateConfigToJson(m.gate)).toMatchObject({ cla: { consentPhrase: "I have read and agree to the CLA", checkRunName: "CLA Assistant Lite" } });
+    expect(m.gate.claCheckRunAppSlug).toBe("cla-assistant");
+    expect(gateConfigToJson(m.gate)).toMatchObject({ cla: { consentPhrase: "I have read and agree to the CLA", checkRunName: "CLA Assistant Lite", checkRunAppSlug: "cla-assistant" } });
 
     const bad = parseFocusManifest({ gate: { cla: "block" as never } });
     expect(bad.gate.claConsentPhrase).toBeNull();
@@ -2358,5 +2395,98 @@ describe("gate.claMode / gate.cla CLA / license-compatibility gate config (#2564
     const eff = resolveEffectiveSettings(db, parseFocusManifest(null));
     expect(eff.claGateMode).toBe("advisory");
     expect(eff.claConsentPhrase).toBe("agree to the CLA");
+  });
+});
+
+describe("gate.expectedCiContexts (#selfhost-ci-verification)", () => {
+  it("parses a clean list, sets present, and preserves order", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["build", "test"] } });
+    expect(m.gate.expectedCiContexts).toEqual(["build", "test"]);
+    expect(m.gate.present).toBe(true);
+  });
+
+  it("trims whitespace from each entry", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["  build  ", "test"] } });
+    expect(m.gate.expectedCiContexts).toEqual(["build", "test"]);
+  });
+
+  it("drops a non-string entry, keeps the valid ones, and warns naming the field", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["build", 42, "test"] as never } });
+    expect(m.gate.expectedCiContexts).toEqual(["build", "test"]);
+    expect(m.warnings.some((w) => w.includes("gate.expectedCiContexts") && /non-string entry/i.test(w))).toBe(true);
+  });
+
+  it("silently drops blank/whitespace-only entries with no warning (matches normalizeStringList's blank-skip branch)", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["build", "", "   "] } });
+    expect(m.gate.expectedCiContexts).toEqual(["build"]);
+    expect(m.warnings).toEqual([]);
+  });
+
+  it("is null when gate.expectedCiContexts is absent, and gate.present is not forced true by an otherwise-empty gate block", () => {
+    const withEmptyGate = parseFocusManifest({ gate: {} });
+    expect(withEmptyGate.gate.expectedCiContexts).toBeNull();
+    expect(withEmptyGate.gate.present).toBe(false);
+
+    const withNoGateKey = parseFocusManifest({});
+    expect(withNoGateKey.gate.expectedCiContexts).toBeNull();
+    expect(withNoGateKey.gate.present).toBe(false);
+  });
+
+  it("is null when gate.expectedCiContexts is explicitly null", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: null } });
+    expect(m.gate.expectedCiContexts).toBeNull();
+    expect(m.gate.present).toBe(false);
+  });
+
+  it("normalizes an entirely blank/invalid list back to null, not an empty array (normalizeOptionalStringList's empty-after-normalization branch)", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["", "   ", 123] as never } });
+    expect(m.gate.expectedCiContexts).toBeNull();
+    // Distinct from the "absent" case: this run DID produce warnings (the non-string 123 entry) even
+    // though the final normalized value collapses to null just like the absent case does.
+    expect(m.warnings.some((w) => w.includes("gate.expectedCiContexts"))).toBe(true);
+  });
+
+  it("warns and drops a non-array value (mirrors normalizeStringList's own non-array warning branch)", () => {
+    const nonArrayString = parseFocusManifest({ gate: { expectedCiContexts: "build" as never } });
+    expect(nonArrayString.gate.expectedCiContexts).toBeNull();
+    expect(nonArrayString.warnings.some((w) => w.includes("gate.expectedCiContexts") && /must be a list/i.test(w))).toBe(true);
+
+    const nonArrayObject = parseFocusManifest({ gate: { expectedCiContexts: { build: true } as never } });
+    expect(nonArrayObject.gate.expectedCiContexts).toBeNull();
+    expect(nonArrayObject.warnings.some((w) => w.includes("gate.expectedCiContexts") && /must be a list/i.test(w))).toBe(true);
+  });
+
+  it("round-trips a set expectedCiContexts through gateConfigToJson and back through parseFocusManifest", () => {
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["build", "lint"] } });
+    const json = gateConfigToJson(m.gate);
+    expect(json).toMatchObject({ expectedCiContexts: ["build", "lint"] });
+    const round = parseFocusManifest({ gate: json });
+    expect(round.gate.expectedCiContexts).toEqual(["build", "lint"]);
+  });
+
+  it("omits the expectedCiContexts key from gateConfigToJson output when unset", () => {
+    const m = parseFocusManifest({ gate: { claMode: "block" } });
+    expect(m.gate.expectedCiContexts).toBeNull();
+    const json = gateConfigToJson(m.gate);
+    expect(json).not.toBeNull();
+    expect("expectedCiContexts" in (json as Record<string, unknown>)).toBe(false);
+  });
+
+  it("overlay wins over the DB value when the manifest sets expectedCiContexts", () => {
+    const db = { expectedCiContexts: ["old"] } as unknown as RepositorySettings;
+    const m = parseFocusManifest({ gate: { expectedCiContexts: ["new"] } });
+    const eff = resolveEffectiveSettings(db, m);
+    expect(eff.expectedCiContexts).toEqual(["new"]);
+  });
+
+  it("lets the DB value pass through when the manifest doesn't configure expectedCiContexts", () => {
+    const db = { expectedCiContexts: ["from-db"] } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest(null));
+    expect(eff.expectedCiContexts).toEqual(["from-db"]);
+  });
+
+  it("is undefined when neither the DB nor the manifest sets expectedCiContexts (no DB column for this field)", () => {
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, parseFocusManifest(null));
+    expect(eff.expectedCiContexts).toBeUndefined();
   });
 });

@@ -21,6 +21,8 @@ import {
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceMergeKeyPrefix,
+  jobCoalesceMergedPayload,
   jobCoalesceSupersededKeyPrefix,
   jobPriority,
   parsePositiveIntEnv,
@@ -124,16 +126,35 @@ async function retryPoolUpdateOrLeaveForReclaim(
 import { hostLoadAvg1PerCore } from "./host-pressure";
 import {
   evaluateMaintenanceAdmission,
+  isMaintenanceAdmissionGrantedUnderPressure,
   isMaintenanceJobType,
   maintenanceAdmissionDeferMs,
   resolveMaintenanceAdmissionConfig,
   type MaintenanceAdmissionConfig,
   type MaintenancePressureSignals,
 } from "./maintenance-admission";
+import {
+  backlogRepoCandidatesFromJobKeys,
+  foregroundLaneForJob,
+  nextForegroundLane,
+  pickBacklogRepo,
+  type ForegroundLane,
+} from "./queue-fairness";
+import {
+  isForegroundDeferralStale,
+  resolveForegroundLivenessConfig,
+  type ForegroundLivenessConfig,
+} from "./foreground-liveness";
 import type { JobMessage } from "../types";
 
 const TABLE = "_selfhost_jobs";
 const STATS_TABLE = "_selfhost_job_stats";
+// Claim-time backlog-vs-fresh-intake fairness state (#selfhost-backlog-convergence, see queue-fairness.ts). A
+// SEPARATE singleton table -- NOT the app DB's `global_agent_controls` -- because this queue backend never
+// touches the app D1/Postgres database (it owns its own storage, same as _selfhost_jobs/_selfhost_job_stats
+// above); reusing global_agent_controls would require a cross-database dependency this queue deliberately has
+// never had.
+const FAIRNESS_TABLE = "_selfhost_queue_fairness";
 const DDL = `
 CREATE TABLE IF NOT EXISTS ${TABLE} (
   id BIGSERIAL PRIMARY KEY,
@@ -149,11 +170,18 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS job_key TEXT;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS is_maintenance INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS foreground_lane TEXT;
 CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after, priority);
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);
+CREATE INDEX IF NOT EXISTS ${TABLE}_lane_claim ON ${TABLE}(status, foreground_lane, run_after);
 CREATE TABLE IF NOT EXISTS ${STATS_TABLE} (
   name TEXT PRIMARY KEY,
   value BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS ${FAIRNESS_TABLE} (
+  id TEXT PRIMARY KEY,
+  claim_sequence BIGINT NOT NULL DEFAULT 0,
+  last_backlog_repo TEXT
 );`;
 
 export interface PgDurableQueue {
@@ -164,6 +192,9 @@ export interface PgDurableQueue {
   drain(): Promise<void>;
   size(): Promise<number>;
   deadCount(): Promise<number>;
+  /** Jobs currently claimed and mid-flight (status='processing') -- distinct from size(), which also
+   *  includes still-pending work. See #selfhost-queue-liveness's own observability additions. */
+  processingCount(): Promise<number>;
   stats(): Promise<Record<string, number>>;
   snapshot(): Promise<SelfHostQueueSnapshot>;
   /** Live-vs-maintenance queue pressure, for the /metrics gauges (see server.ts) -- the SAME signals the
@@ -173,6 +204,11 @@ export interface PgDurableQueue {
    *  running (see start()), and exposed directly so tests and an operator-triggered repair path don't have
    *  to wait for the real interval. Returns the number of jobs revived. */
   reviveDeadLetterJobs(): Promise<number>;
+  /** Foreground-liveness invariant (#selfhost-queue-liveness): pulls back any FOREGROUND-priority pending job
+   *  whose deferral has gone stale (see foreground-liveness.ts) regardless of what deferred it. Called once at
+   *  boot and on a timer while running (see init()/start()), and exposed directly so tests and an
+   *  operator-triggered repair path don't have to wait for the real interval. Returns the number released. */
+  releaseStaleForegroundDeferrals(): Promise<number>;
 }
 
 interface JobRow {
@@ -222,10 +258,15 @@ export function createPgQueue(
   const activeJobIds = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let deadLetterReviveTimer: ReturnType<typeof setInterval> | null = null;
+  let foregroundLivenessTimer: ReturnType<typeof setInterval> | null = null;
   const maintenanceAdmissionConfig: MaintenanceAdmissionConfig = resolveMaintenanceAdmissionConfig();
+  const foregroundLivenessConfig: ForegroundLivenessConfig = resolveForegroundLivenessConfig();
 
   async function init(): Promise<void> {
     await pool.query(DDL);
+    await pool.query(
+      `INSERT INTO ${FAIRNESS_TABLE} (id, claim_sequence) VALUES ('singleton', 0) ON CONFLICT (id) DO NOTHING`,
+    );
     const priorityBackfilled = await backfillJobPriorities();
     if (priorityBackfilled)
       console.log(
@@ -250,6 +291,14 @@ export function createPgQueue(
           count: maintenanceFlagsBackfilled,
         }),
       );
+    const lanesBackfilled = await backfillJobForegroundLanes();
+    if (lanesBackfilled)
+      console.log(
+        JSON.stringify({
+          event: "selfhost_queue_foreground_lanes_backfilled",
+          count: lanesBackfilled,
+        }),
+      );
     const recovered = await recoverProcessingJobs();
     if (recovered) {
       await recordQueueMetric("gittensory_jobs_recovered_total", recovered);
@@ -266,6 +315,10 @@ export function createPgQueue(
           jitter_ms: queueStartupJitterMs(),
         }),
       );
+    // Self-heal on boot (#selfhost-queue-liveness): a deploy/restart inherits whatever run_after values were
+    // already written before it, so a foreground lane over-deferred before the restart must not require manual
+    // intervention to unstick -- releaseStaleForegroundDeferrals logs + records its own metric when it finds work.
+    await releaseStaleForegroundDeferrals();
   }
 
   async function backfillJobPriorities(): Promise<number> {
@@ -316,23 +369,51 @@ export function createPgQueue(
     return changed;
   }
 
+  async function backfillJobForegroundLanes(): Promise<number> {
+    const res = await pool.query(
+      `SELECT id, payload, foreground_lane FROM ${TABLE} WHERE status IN ('pending', 'processing')`,
+    );
+    let changed = 0;
+    for (const row of res.rows as Array<{ id: string; payload: string; foreground_lane: string | null }>) {
+      const type = extractPayloadType(row.payload) ?? "";
+      const lane = foregroundLaneForJob(type, row.payload);
+      if ((row.foreground_lane ?? null) === lane) continue;
+      await pool.query(`UPDATE ${TABLE} SET foreground_lane=$1 WHERE id=$2`, [lane, row.id]);
+      changed += 1;
+    }
+    return changed;
+  }
+
   /** Cheap aggregate reads behind the maintenance-admission policy (and the observability gauges in
-   *  server.ts): how much LIVE (foreground) work is queued and how old the oldest of it is, and the same for
-   *  the MAINTENANCE lane specifically (not "all background" -- targeted jobs like backfill-repo-segment
-   *  don't count, see maintenance-admission.ts). Host load is an independent, optional signal. */
+   *  server.ts): how much LIVE (foreground) work is queued and how old the oldest of it is -- both overall
+   *  (pending+processing) and RUNNABLE right now (pending, due) -- and the same PENDING/oldest pair for the
+   *  MAINTENANCE lane specifically (not "all background" -- targeted jobs like backfill-repo-segment don't
+   *  count, see maintenance-admission.ts). The runnable-now split is the #selfhost-queue-liveness diagnostic:
+   *  distinguishes "queue large but intentionally deferred" from "queue stuck, nothing runnable" without
+   *  manual SQL. Host load is an independent, optional signal. */
   async function maintenancePressureSignals(now: number): Promise<MaintenancePressureSignals> {
     const liveRes = await pool.query(
-      `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=$1`,
-      [FOREGROUND_QUEUE_PRIORITY_FLOOR],
+      `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest,
+              COUNT(*) FILTER (WHERE status='pending' AND run_after<=$2) AS runnable_cnt,
+              MIN(created_at) FILTER (WHERE status='pending' AND run_after<=$2) AS oldest_runnable
+         FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=$1`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
     );
     const maintenanceRes = await pool.query(
       `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest FROM ${TABLE} WHERE status IN ('pending','processing') AND is_maintenance=1`,
     );
-    const live = liveRes.rows[0] as { cnt: string | number; oldest: string | number | null };
+    const live = liveRes.rows[0] as {
+      cnt: string | number;
+      oldest: string | number | null;
+      runnable_cnt: string | number;
+      oldest_runnable: string | number | null;
+    };
     const maintenance = maintenanceRes.rows[0] as { cnt: string | number; oldest: string | number | null };
     return {
       livePendingCount: Number(live.cnt),
       oldestLivePendingAgeMs: live.oldest != null ? now - Number(live.oldest) : null,
+      liveRunnableNowCount: Number(live.runnable_cnt),
+      oldestLiveRunnableAgeMs: live.oldest_runnable != null ? now - Number(live.oldest_runnable) : null,
       maintenancePendingCount: Number(maintenance.cnt),
       oldestMaintenancePendingAgeMs: maintenance.oldest != null ? now - Number(maintenance.oldest) : null,
       hostLoadAvg1PerCore: hostLoadAvg1PerCore(),
@@ -420,6 +501,91 @@ export function createPgQueue(
     }
   }
 
+  /** #selfhost-queue-liveness: re-evaluate rate-limit admission for an already-deferred foreground candidate
+   *  against CURRENT observations, independent of how long ago it was deferred. Returns true when it would be
+   *  admitted right now (no longer blocked); false when still blocked OR the payload is unparseable (best-
+   *  effort -- an unparseable payload is left for the normal dead-letter path, never force-released here). */
+  async function isRateLimitAdmissionNowClear(payload: string): Promise<boolean> {
+    let message: JobMessage;
+    try {
+      message = JSON.parse(payload) as JobMessage;
+    } catch {
+      return false;
+    }
+    return (await rateLimitAdmissionDelayMs(message)) === null;
+  }
+
+  /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
+   *  not currently due) then a per-row conditional UPDATE, mirroring reviveEligibleDeadJobs' shape. Each
+   *  candidate is released on EITHER of two independent conditions: it has genuinely been waiting past the
+   *  age-based trickle ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED
+   *  recovery (#selfhost-queue-liveness VPS incident) -- re-evaluating rateLimitAdmissionDelayMs against
+   *  CURRENT observations right now says it would be admitted immediately. The age floor alone can leave a job
+   *  pinned to a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a
+   *  fresher, healthier observation arrived moments after it was deferred; the condition check recovers it on
+   *  the NEXT sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the
+   *  underlying rate-limit pressure has actually cleared, regardless of job age. Logs + records a metric ONCE
+   *  per sweep (aggregate count), not per row, so a large release batch cannot spam the log. */
+  async function releaseStaleForegroundDeferrals(): Promise<number> {
+    if (!foregroundLivenessConfig.enabled) return 0;
+    const now = Date.now();
+    const res = await pool.query(
+      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
+    );
+    let released = 0;
+    let releasedByAge = 0;
+    let releasedByRateLimitClear = 0;
+    for (const row of res.rows as Array<{ id: string; payload: string; created_at: number | string }>) {
+      const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, Number(row.created_at), now);
+      if (!ageStale && !(await isRateLimitAdmissionNowClear(row.payload))) continue;
+      const update = await pool.query(
+        `UPDATE ${TABLE} SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1`,
+        [now, row.id],
+      );
+      const rowsChanged = update.rowCount ?? 0;
+      released += rowsChanged;
+      if (ageStale) releasedByAge += rowsChanged;
+      else releasedByRateLimitClear += rowsChanged;
+    }
+    if (released) {
+      await recordQueueMetric("gittensory_jobs_foreground_liveness_released_total", released);
+      if (releasedByAge) incr("gittensory_jobs_foreground_liveness_released_by_reason_total", { reason: "age" }, releasedByAge);
+      if (releasedByRateLimitClear) incr("gittensory_jobs_foreground_liveness_released_by_reason_total", { reason: "rate_limit_cleared" }, releasedByRateLimitClear);
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "selfhost_queue_foreground_liveness_released",
+          count: released,
+          released_by_age: releasedByAge,
+          released_by_rate_limit_cleared: releasedByRateLimitClear,
+          max_defer_ms: foregroundLivenessConfig.maxDeferMs,
+        }),
+      );
+      kickAll();
+    }
+    return released;
+  }
+
+  /** Wraps releaseStaleForegroundDeferrals() for the setInterval callback below, mirroring
+   *  reviveDeadLetterJobsSafely's own rationale: an uncaught rejection here would surface as an unhandled
+   *  promise rejection and can terminate the process when SENTRY_DSN is unset. A failed sweep just waits for
+   *  the next interval, same as a failed poll tick waits for the next poll. */
+  async function releaseStaleForegroundDeferralsSafely(): Promise<void> {
+    try {
+      await releaseStaleForegroundDeferrals();
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "selfhost_queue_foreground_liveness_release_crashed",
+          error: errorMessageWithCause(error),
+        }),
+      );
+      captureError(error, { kind: "queue_foreground_liveness_release_crashed" });
+    }
+  }
+
   async function spreadDueJobsOnStartup(): Promise<number> {
     const now = Date.now();
     const res = await pool.query(
@@ -448,6 +614,7 @@ export function createPgQueue(
     const payload = JSON.stringify(message);
     const priority = jobPriority(payload);
     const key = jobCoalesceKey(payload);
+    const lane = foregroundLaneForJob(message.type, payload);
     const runAfter = now + delaySeconds * 1000;
     const absorbedByKey = jobCoalesceAbsorbedByKey(payload);
     if (absorbedByKey) {
@@ -461,6 +628,44 @@ export function createPgQueue(
         await recordQueueMetric("gittensory_jobs_coalesced_total");
         kickOne();
         return;
+      }
+    }
+    // Merge two INCREMENTAL rag-index-repo jobs for the same repo (#selfhost-maintenance-self-pin) into one
+    // pending row's UNION path set instead of piling up as separate maintenance-lane rows -- mirrors
+    // sqlite-queue.ts exactly. `absorbedByKey` shares mergeKeyPrefix's exact guard so it's provably non-null
+    // here (asserted, not defaulted); excluding it is defense-in-depth against a job_key collision, not
+    // load-bearing, though under Postgres's multi-instance concurrency it's a real (if narrow) race guard.
+    const mergeKeyPrefix = jobCoalesceMergeKeyPrefix(payload);
+    if (mergeKeyPrefix) {
+      const mergeCandidate = (
+        await pool.query(
+          `SELECT id, payload, job_key FROM ${TABLE}
+           WHERE status='pending' AND job_key IS NOT NULL AND left(job_key, $1)=$2 AND job_key<>$3
+           ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+          [mergeKeyPrefix.length, mergeKeyPrefix, absorbedByKey as string],
+        )
+      ).rows[0] as { id: string; payload: string; job_key: string } | undefined;
+      if (mergeCandidate) {
+        const mergedPayload = jobCoalesceMergedPayload(mergeCandidate.payload, payload);
+        if (mergedPayload) {
+          const mergedKey = jobCoalesceKey(mergedPayload);
+          // Guarded by status='pending' AND job_key=<the exact row this SELECT saw> so a concurrent claim or a
+          // second instance's own merge into this same row between the SELECT and here loses cleanly (rowCount
+          // 0) instead of silently overwriting whatever the winner just wrote -- multiple self-host instances
+          // can race this exact SELECT-then-UPDATE (gate finding). Falling through (not returning) on a lost
+          // race lets the normal supersede/coalesce/insert path below handle this job instead.
+          const merged = await pool.query(
+            `UPDATE ${TABLE}
+               SET payload=$1, run_after=GREATEST(run_after, $2), created_at=$3, priority=GREATEST(priority, $4), job_key=$5, last_error=NULL
+             WHERE id=$6 AND status='pending' AND job_key=$7`,
+            [mergedPayload, runAfter, now, priority, mergedKey, mergeCandidate.id, mergeCandidate.job_key],
+          );
+          if (merged.rowCount) {
+            await recordQueueMetric("gittensory_jobs_coalesced_total");
+            kickOne();
+            return;
+          }
+        }
       }
     }
     const supersededKeyPrefix = jobCoalesceSupersededKeyPrefix(payload);
@@ -481,9 +686,9 @@ export function createPgQueue(
         // (4h default) can keep re-arming the clock forever, and sustained pressure defers the job indefinitely.
         await pool.query(
           `UPDATE ${TABLE}
-             SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), job_key=$4, last_error=NULL
-           WHERE id=$5`,
-          [payload, runAfter, priority, key, existing.id],
+             SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), job_key=$4, foreground_lane=$5, last_error=NULL
+           WHERE id=$6`,
+          [payload, runAfter, priority, key, lane, existing.id],
         );
         await pool.query(
           `DELETE FROM ${TABLE}
@@ -507,9 +712,9 @@ export function createPgQueue(
         // maintenance trickle clock reflects genuine wait time, not the most recent re-request.
         await pool.query(
           `UPDATE ${TABLE}
-             SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), last_error=NULL
-           WHERE id=$4`,
-          [payload, runAfter, priority, existing.id],
+             SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), foreground_lane=$4, last_error=NULL
+           WHERE id=$5`,
+          [payload, runAfter, priority, lane, existing.id],
         );
         await recordQueueMetric("gittensory_jobs_coalesced_total");
         kickOne();
@@ -517,8 +722,8 @@ export function createPgQueue(
       }
     }
     await pool.query(
-      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance) VALUES ($1,'pending',0,$2,$3,$4,$5,$6)`,
-      [payload, runAfter, now, priority, key, isMaintenanceJobType(message.type) ? 1 : 0],
+      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance, foreground_lane) VALUES ($1,'pending',0,$2,$3,$4,$5,$6,$7)`,
+      [payload, runAfter, now, priority, key, isMaintenanceJobType(message.type) ? 1 : 0, lane],
     );
     await recordQueueMetric("gittensory_jobs_enqueued_total");
     kickOne();
@@ -526,7 +731,7 @@ export function createPgQueue(
 
   async function claimNext(): Promise<JobRow | null> {
     const now = Date.now();
-    const foreground = await claimNextWhere(now, "priority >= $2");
+    const foreground = (await claimNextForegroundLane(now)) ?? (await claimNextWhere(now, "priority >= $2"));
     if (foreground) return foreground;
     if (activeBackground >= backgroundConcurrency) return null;
     activeBackground++;
@@ -549,23 +754,67 @@ export function createPgQueue(
     return { ...background, backgroundSlotReserved: true };
   }
 
+  /** Claim-time backlog-vs-fresh-intake fairness (#selfhost-backlog-convergence, see queue-fairness.ts). Tries
+   *  ONE lane-scoped claim before falling back to the plain unscoped foreground claim (claimNext() falls back to
+   *  claimNextWhere(now, "priority >= $2") when this returns null) -- a null here just means "no work to prefer
+   *  this cycle," never "no foreground work at all." The fairness singleton's claim_sequence always advances
+   *  (best-effort, hit or miss) so the ratio cycle keeps progressing even through empty cycles. Sequence
+   *  allocation is a single atomic UPDATE ... RETURNING (not a separate SELECT-then-UPDATE): this backend is
+   *  the multi-instance one (multiple app instances can share one Postgres, see the file header), so two
+   *  concurrent callers reading the same pre-increment value would both compute the SAME lane and defeat the
+   *  bounded-ratio guarantee -- the row's own lock serializes concurrent allocations instead. */
+  async function claimNextForegroundLane(now: number): Promise<JobRow | null> {
+    const fairnessRes = await pool.query(
+      `UPDATE ${FAIRNESS_TABLE} SET claim_sequence=claim_sequence+1 WHERE id='singleton' RETURNING claim_sequence, last_backlog_repo`,
+    );
+    const fairness = fairnessRes.rows[0] as { claim_sequence: number | string; last_backlog_repo: string | null } | undefined;
+    const sequence = fairness ? Number(fairness.claim_sequence) : 0;
+    const lane: ForegroundLane = nextForegroundLane(sequence);
+    if (lane === "fresh") {
+      return claimNextWhere(now, "priority >= $2", { sql: "foreground_lane='fresh'", params: [] });
+    }
+    const backlogRes = await pool.query(
+      `SELECT job_key, created_at FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND foreground_lane='backlog'`,
+      [now],
+    );
+    const candidates = backlogRepoCandidatesFromJobKeys(
+      (backlogRes.rows as Array<{ job_key: string | null; created_at: number | string }>).map((row) => ({
+        jobKey: row.job_key,
+        createdAtMs: Number(row.created_at),
+      })),
+      now,
+    );
+    const repo = pickBacklogRepo(candidates, fairness?.last_backlog_repo ?? null);
+    if (!repo) return null;
+    const row = await claimNextWhere(now, "priority >= $2", {
+      sql: "foreground_lane='backlog' AND job_key LIKE $3",
+      params: [`agent-regate-pr:${repo}#%`],
+    });
+    if (row) {
+      await pool.query(`UPDATE ${FAIRNESS_TABLE} SET last_backlog_repo=$1 WHERE id='singleton'`, [repo]);
+    }
+    return row;
+  }
+
   async function claimNextWhere(
     now: number,
     priorityPredicate: string,
+    extra?: { sql: string; params: readonly unknown[] },
   ): Promise<JobRow | null> {
+    const extraSql = extra ? ` AND ${extra.sql}` : "";
     // Atomic, multi-instance-safe: lock + claim one due job, skipping rows another instance already locked.
     const res = await pool.query(
       `UPDATE ${TABLE} SET status='processing', run_after=$1
        WHERE id = (
          SELECT id
            FROM ${TABLE}
-          WHERE status='pending' AND run_after<=$1 AND ${priorityPredicate}
+          WHERE status='pending' AND run_after<=$1 AND ${priorityPredicate}${extraSql}
           ORDER BY priority DESC, run_after, id
           FOR UPDATE SKIP LOCKED
           LIMIT 1
        )
        RETURNING id, payload, attempts, job_key, priority, created_at`,
-      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
+      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR, ...(extra?.params ?? [])],
     );
     return (res.rows[0] as JobRow | undefined) ?? null;
   }
@@ -726,6 +975,16 @@ export function createPgQueue(
               pending_ms: Date.now() - Number(job.created_at),
             }),
           );
+        }
+        // Broader force-admitted-under-pressure signal (#selfhost-maintenance-self-pin): covers trickle_max_defer_age
+        // above PLUS maintenance_pending_high_drain (the new scoped drain escape this PR adds) under one counter,
+        // so an operator can trend "how often does pressure admission get overridden at all" without needing to
+        // sum multiple per-reason metrics.
+        if (isMaintenanceAdmissionGrantedUnderPressure(decision.reason)) {
+          incr("gittensory_jobs_maintenance_admission_granted_under_pressure_total", {
+            reason: decision.reason,
+            job_type: message.type,
+          });
         }
       }
       try {
@@ -959,11 +1218,18 @@ export function createPgQueue(
       // recreate the retry storm this feature exists to bound. The interval itself is the cooldown between
       // auto-retry rounds for any one job.
       deadLetterReviveTimer = setInterval(() => void reviveDeadLetterJobsSafely(), queueDeadLetterReviveIntervalMs());
+      // Foreground-liveness sweep (#selfhost-queue-liveness): also a separate, slow interval -- see
+      // foreground-liveness.ts for why a per-tick check would busy-loop under sustained rate-limit pressure.
+      foregroundLivenessTimer = setInterval(
+        () => void releaseStaleForegroundDeferralsSafely(),
+        foregroundLivenessConfig.checkIntervalMs,
+      );
     },
     async stop() {
       running = false;
       if (timer) clearTimeout(timer);
       if (deadLetterReviveTimer) clearInterval(deadLetterReviveTimer);
+      if (foregroundLivenessTimer) clearInterval(foregroundLivenessTimer);
       while (active > 0) await new Promise((r) => setTimeout(r, 10));
     },
     async drain() {
@@ -988,11 +1254,21 @@ export function createPgQueue(
         ).rows[0].c,
       );
     },
+    async processingCount() {
+      return Number(
+        (
+          await pool.query(
+            `SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='processing'`,
+          )
+        ).rows[0].c,
+      );
+    },
     async stats() {
       return readQueueStats();
     },
     snapshot: binding.snapshot,
     reviveDeadLetterJobs,
+    releaseStaleForegroundDeferrals,
     pressureSignals() {
       return maintenancePressureSignals(Date.now());
     },

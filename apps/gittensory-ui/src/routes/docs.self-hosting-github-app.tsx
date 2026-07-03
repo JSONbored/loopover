@@ -70,10 +70,12 @@ function SelfHostingGithubApp() {
         code={`PUBLIC_API_ORIGIN=https://reviews.example.com  # exact public URL, embedded in the manifest
 SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a freshly-booted instance`}
       />
-      <CodeBlock
-        lang="bash"
-        code={`open "https://reviews.example.com/setup?token=<SELFHOST_SETUP_TOKEN>"`}
-      />
+      <CodeBlock lang="bash" code={`open "https://reviews.example.com/setup"`} />
+      <p>
+        Enter <code>SELFHOST_SETUP_TOKEN</code> in the browser form. For scripted setup checks, send
+        the token in an <code>x-setup-token</code> header or <code>Authorization: Bearer</code>
+        header instead; never place the setup token in the URL.
+      </p>
       <Callout variant="note">
         Manual App creation (below) is still fully supported — for an air-gapped instance, a
         stricter change-review process, or simply a preference for reviewing every permission by

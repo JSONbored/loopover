@@ -69,6 +69,8 @@ export type GitHubTimeoutFetchInit = RequestInit & {
    *  can fall back without spending a REST request. Lets a budget-gate suppress fresh reads while still serving
    *  free cache hits under pressure. */
   githubSkipNetworkWhen?: () => boolean | Promise<boolean>;
+  /** Force this request to hit GitHub instead of the persistent response cache; use for freshness/security reads. */
+  githubBypassResponseCache?: boolean;
 };
 export type GitHubRateLimitAdmissionKey = string;
 export type LocalGitHubRestRateLimitObservation = {
@@ -499,7 +501,7 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: GitHubTimeou
   const url = requestUrl(input);
   const headers = requestHeaders(input, init);
   const conditional = hasConditionalRequestHeader(headers);
-  const cls = method === "GET" && !conditional ? githubCacheClassForUrl(url) : null;
+  const cls = method === "GET" && !conditional && !init?.githubBypassResponseCache ? githubCacheClassForUrl(url) : null;
   if (method === "GET" && !conditional && cls === null && isVolatileSingleFlightEligibleGithubUrl(url, headers)) {
     return fetchWithVolatileSingleFlight(input, init, volatileSingleFlightScope(url, headers));
   }

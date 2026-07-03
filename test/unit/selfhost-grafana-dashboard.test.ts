@@ -146,6 +146,36 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(alerts).toContain("alert: GittensoryBackupStale");
     expect(alerts).toContain('time() - gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} > 93600');
   });
+
+  it("surfaces self-host runtime-drift signal panels, every counter query fleet-aggregated", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+    const titles = dashboard.panels.map((panel) => panel.title);
+
+    expect(titles).toEqual(
+      expect.arrayContaining([
+        "Self-Host Runtime Drift Signals",
+        "Maintenance Trickle-Admitted (stuck under sustained pressure)",
+        "Orb Relay Registration Failures (total)",
+        "Installation Health: Broker Probe Failures (total)",
+        "Agent Permission-Denied Actions (total)",
+        "Agent Permission-Denied Actions by Class (denied vs suppressed-repeat rate)",
+        "Orb Relay Registration Attempts by Mode/Result (rate)",
+      ]),
+    );
+    // Every stat-panel counter is sum()-wrapped, matching its siblings -- a multi-instance self-host scrape
+    // must render one fleet-level value per stat, not one value per target (gate finding, #chore-runtime-drift).
+    expect(targets.some((target) => target.expr === "sum(gittensory_jobs_maintenance_trickle_admitted_persisted_total) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(gittensory_orb_relay_register_total{result="failed"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum(gittensory_installation_health_broker_probe_total{result="failed"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === "sum(gittensory_agent_action_permission_denied_total) or vector(0)")).toBe(true);
+    // Grouped (sum-by) queries must NOT have "or vector(0)": Prometheus's `or` unions result sets, and
+    // vector(0) is a single unlabeled series that can't match the actionClass/mode,result label set --
+    // that renders a bogus extra unlabeled zero-series alongside the real labeled series (gate finding).
+    expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_suppressed_total[5m]))")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (mode, result) (rate(gittensory_orb_relay_register_total[5m]))")).toBe(true);
+  });
 });
 
 describe("maintainer Reviews & PRs Grafana dashboard", () => {

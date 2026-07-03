@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   evaluateMaintenanceAdmission,
+  isMaintenanceAdmissionGrantedUnderPressure,
   isMaintenanceJobType,
   maintenanceAdmissionDeferMs,
   MAINTENANCE_JOB_TYPES,
   resolveMaintenanceAdmissionConfig,
   type MaintenanceAdmissionConfig,
+  type MaintenanceAdmissionReason,
   type MaintenancePressureSignals,
 } from "../../src/selfhost/maintenance-admission";
 
 const CLEAR_SIGNALS: MaintenancePressureSignals = {
   livePendingCount: 0,
   oldestLivePendingAgeMs: null,
+  liveRunnableNowCount: 0,
+  oldestLiveRunnableAgeMs: null,
   maintenancePendingCount: 0,
   oldestMaintenancePendingAgeMs: null,
   hostLoadAvg1PerCore: null,
@@ -25,6 +29,7 @@ const CONFIG: MaintenanceAdmissionConfig = {
   maxHostLoadAvg1PerCore: 1.5,
   deferMs: 180_000,
   maxDeferAgeMs: 4 * 60 * 60_000,
+  maintenanceDrainAgeMs: 600_000,
 };
 
 describe("isMaintenanceJobType", () => {
@@ -121,6 +126,73 @@ describe("evaluateMaintenanceAdmission", () => {
     expect(decision).toEqual({ admit: false, reason: "maintenance_pending_high" });
   });
 
+  it("admits when maintenance pending count is AT (not over) the threshold", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, maintenancePendingCount: 15 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision).toEqual({ admit: true, reason: "pressure_clear" });
+  });
+
+  // Regression (#selfhost-maintenance-self-pin): before the drain escape, a lane backed up past threshold denied
+  // EVERY job -- old or new -- until each individually reached the full maxDeferAgeMs (hours later), so the
+  // aggregate count never got a chance to fall back under the threshold in the meantime: deferred because high,
+  // stuck high because deferred. The drain escape lets the OLDEST jobs in that same backlog through well before
+  // the 4h backstop, so the count can actually shrink.
+  it("drain-admits a maintenance job under a large backlog once it has waited past the drain age", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, maintenancePendingCount: 68 },
+      CONFIG,
+      now - CONFIG.maintenanceDrainAgeMs,
+      now,
+    );
+    expect(decision).toEqual({ admit: true, reason: "maintenance_pending_high_drain" });
+  });
+
+  it("does not drain-admit a maintenance job that hasn't waited long enough yet", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, maintenancePendingCount: 68 },
+      CONFIG,
+      now - (CONFIG.maintenanceDrainAgeMs - 1),
+      now,
+    );
+    expect(decision).toEqual({ admit: false, reason: "maintenance_pending_high" });
+  });
+
+  it("regression: a large backlog still lets a fresh job wait while an old job in the SAME backlog drains", () => {
+    // Same maintenancePendingCount (the aggregate never moves within a single evaluation) -- only the
+    // individual job's own age differs, proving the escape is per-job, not a relaxation of the lane threshold.
+    const signals: MaintenancePressureSignals = { ...CLEAR_SIGNALS, maintenancePendingCount: 68 };
+    const oldJob = evaluateMaintenanceAdmission(signals, CONFIG, now - CONFIG.maintenanceDrainAgeMs, now);
+    const freshJob = evaluateMaintenanceAdmission(signals, CONFIG, now - 1_000, now);
+    expect(oldJob).toEqual({ admit: true, reason: "maintenance_pending_high_drain" });
+    expect(freshJob).toEqual({ admit: false, reason: "maintenance_pending_high" });
+  });
+
+  it("does not drain-admit when host load is ALSO high -- host_load_high wins over the drain escape", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, maintenancePendingCount: 68, hostLoadAvg1PerCore: 99 },
+      CONFIG,
+      now - CONFIG.maintenanceDrainAgeMs,
+      now,
+    );
+    expect(decision).toEqual({ admit: false, reason: "host_load_high" });
+  });
+
+  it("still reports maintenance_pending_high (not host_load_high) before drain age, even if host load is also high", () => {
+    // Host load is only consulted INSIDE the drain-eligible branch, so a job that hasn't reached drain age yet
+    // keeps the original (pre-drain-escape) denial reason regardless of host load.
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, maintenancePendingCount: 68, hostLoadAvg1PerCore: 99 },
+      CONFIG,
+      now - (CONFIG.maintenanceDrainAgeMs - 1),
+      now,
+    );
+    expect(decision).toEqual({ admit: false, reason: "maintenance_pending_high" });
+  });
+
   it("defers when host load per core exceeds the threshold", () => {
     const decision = evaluateMaintenanceAdmission(
       { ...CLEAR_SIGNALS, hostLoadAvg1PerCore: 1.51 },
@@ -139,6 +211,26 @@ describe("evaluateMaintenanceAdmission", () => {
       now,
     );
     expect(decision.admit).toBe(true);
+  });
+
+  it("admits when host load is AT (not over) the threshold", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, hostLoadAvg1PerCore: 1.5 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision).toEqual({ admit: true, reason: "pressure_clear" });
+  });
+
+  it("admits when the oldest live job's age is AT (not over) the threshold", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: 120_000 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision).toEqual({ admit: true, reason: "pressure_clear" });
   });
 
   it("force-admits via trickle once pending since exceeds the max defer age, even under pressure", () => {
@@ -170,6 +262,31 @@ describe("evaluateMaintenanceAdmission", () => {
     );
     expect(decision.reason).toBe("live_pending_high");
   });
+
+  it("checks the oldest-live-job age before maintenance-lane pressure (priority order)", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, oldestLivePendingAgeMs: 120_001, maintenancePendingCount: 16 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision.reason).toBe("live_job_age_high");
+  });
+});
+
+describe("isMaintenanceAdmissionGrantedUnderPressure", () => {
+  it.each([
+    ["disabled", false],
+    ["pressure_clear", false],
+    ["live_pending_high", false],
+    ["live_job_age_high", false],
+    ["maintenance_pending_high", false],
+    ["host_load_high", false],
+    ["trickle_max_defer_age", true],
+    ["maintenance_pending_high_drain", true],
+  ] satisfies Array<[MaintenanceAdmissionReason, boolean]>)("reports %s as granted-under-pressure=%s", (reason, expected) => {
+    expect(isMaintenanceAdmissionGrantedUnderPressure(reason)).toBe(expected);
+  });
 });
 
 describe("maintenanceAdmissionDeferMs", () => {
@@ -200,6 +317,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
     "MAINTENANCE_ADMISSION_DEFER_MS",
     "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
+    "MAINTENANCE_ADMISSION_DRAIN_AGE_MS",
   ] as const;
   const saved: Record<string, string | undefined> = {};
 
@@ -226,6 +344,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
       maxHostLoadAvg1PerCore: 1.5,
       deferMs: 180_000,
       maxDeferAgeMs: 4 * 60 * 60_000,
+      maintenanceDrainAgeMs: 600_000,
     });
   });
 
@@ -236,6 +355,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     process.env.MAINTENANCE_ADMISSION_MAX_HOST_LOAD = "2.25";
     process.env.MAINTENANCE_ADMISSION_DEFER_MS = "5000";
     process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "3600000";
+    process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000";
     const config = resolveMaintenanceAdmissionConfig();
     expect(config.maxLivePendingCount).toBe(10);
     expect(config.maxLiveJobAgeMs).toBe(60_000);
@@ -243,6 +363,19 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     expect(config.maxHostLoadAvg1PerCore).toBe(2.25);
     expect(config.deferMs).toBe(5_000);
     expect(config.maxDeferAgeMs).toBe(3_600_000);
+    expect(config.maintenanceDrainAgeMs).toBe(60_000);
+  });
+
+  it("clamps a drain age above the max defer age down to the max defer age", () => {
+    process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "3600000"; // 1h
+    process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "7200000"; // 2h -- would otherwise never fire
+    expect(resolveMaintenanceAdmissionConfig().maintenanceDrainAgeMs).toBe(3_600_000);
+  });
+
+  it("does not clamp a drain age already below the max defer age", () => {
+    process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "3600000"; // 1h
+    process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000"; // 1min
+    expect(resolveMaintenanceAdmissionConfig().maintenanceDrainAgeMs).toBe(60_000);
   });
 
   it.each(["0", "false", "off", "no"])("treats MAINTENANCE_ADMISSION_ENABLED=%s as disabled", (value) => {

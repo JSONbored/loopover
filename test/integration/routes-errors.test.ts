@@ -285,6 +285,38 @@ describe("api route guards and error branches", () => {
     await expect(victimRun.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
   });
 
+  it("blocks the shared MCP token from reading another contributor's private data unless the read allowlist is unscoped (#2455 HTTP parity)", async () => {
+    const app = createApp();
+
+    // Scoped (non-wildcard) read allowlist: GITTENSORY_MCP_TOKEN is a shared, end-user-obtainable CLI credential,
+    // so it must NOT read an arbitrary contributor's private decision pack over HTTP — mirroring the MCP tool
+    // surface's guard for the identical data (GittensoryMcp.requireContributorAccess, #2455).
+    const scopedEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "owner/private-repo" });
+    await seedVictimDecisionPack(scopedEnv);
+    const mcpHeaders = { authorization: `Bearer ${scopedEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" };
+
+    const scopedDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: mcpHeaders }, scopedEnv);
+    expect(scopedDecisionPack.status).toBe(403);
+    await expect(scopedDecisionPack.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const scopedProfile = await app.request("/v1/contributors/victim/profile", { headers: mcpHeaders }, scopedEnv);
+    expect(scopedProfile.status).toBe(403);
+    await expect(scopedProfile.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    // The operator-only API token stays trusted for cross-contributor reads by design.
+    const operatorDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: apiHeaders(scopedEnv) }, scopedEnv);
+    expect(operatorDecisionPack.status).toBe(200);
+    await expect(operatorDecisionPack.json()).resolves.toMatchObject({ login: "victim", summary: "private advisory summary" });
+
+    // Explicit MCP_READ_REPO_ALLOWLIST=* opt-in unlocks the shared token (the same escape hatch as the MCP surface).
+    const wildcardEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "*" });
+    await seedVictimDecisionPack(wildcardEnv);
+    const wildcardHeaders = { authorization: `Bearer ${wildcardEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" };
+    const wildcardDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: wildcardHeaders }, wildcardEnv);
+    expect(wildcardDecisionPack.status).toBe(200);
+    await expect(wildcardDecisionPack.json()).resolves.toMatchObject({ login: "victim", summary: "private advisory summary" });
+  });
+
   it("keeps OAuth setup, CORS, and rate limits explicit", async () => {
     const app = createApp();
     const env = createTestEnv();
@@ -1036,6 +1068,38 @@ async function seedRegisteredInstalledRepo(env: Env, installationId: number, own
   await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?")
     .bind(`${owner}/${name}`)
     .run();
+}
+
+async function seedVictimDecisionPack(env: Env): Promise<void> {
+  await persistSignalSnapshot(env, {
+    id: "victim-decision-pack",
+    signalType: "contributor-decision-pack",
+    targetKey: "victim",
+    payload: {
+      status: "ready",
+      source: "computed",
+      login: "victim",
+      generatedAt: "2026-05-29T00:00:00.000Z",
+      stale: false,
+      freshness: "fresh",
+      rebuildEnqueued: false,
+      scoringModelSnapshotId: "scoring-1",
+      profile: {},
+      outcomeHistory: {},
+      roleContexts: [],
+      repoDecisions: [{ repoFullName: "owner/private-repo", recommendation: "avoid", scoreBlockers: ["private score blocker"] }],
+      topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "owner/private-repo", priorityScore: 50, rationale: "private next action" }],
+      cleanupFirst: [],
+      pursueRepos: [],
+      avoidRepos: [{ repoFullName: "owner/private-repo", recommendation: "avoid" }],
+      maintainerLaneRepos: [],
+      scoreBlockers: ["private score blocker"],
+      dataQuality: { signalFidelity: { status: "ready" } },
+      summary: "private advisory summary",
+      nextActions: ["sensitive next action"],
+    } as never,
+    generatedAt: "2026-05-29T00:00:00.000Z",
+  });
 }
 
 function apiHeaders(env: Env): Record<string, string> {

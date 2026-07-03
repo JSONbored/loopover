@@ -1,9 +1,66 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { gauge, incr, observe, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { gauge, incr, observe, registerMetricMeta, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 afterEach(() => resetMetrics());
 
 describe("metrics registry (#982)", () => {
+  it("renders unregistered counters exactly as bare samples", async () => {
+    incr("plain_total");
+
+    expect(await renderMetrics()).toBe("plain_total 1\n");
+  });
+
+  it("prepends registered HELP and TYPE metadata once per metric name", async () => {
+    registerMetricMeta("labeled_total", {
+      help: "Total labeled samples from C:\\temp\nwith escaped help.",
+      type: "counter",
+    });
+    incr("labeled_total", { result: "ok" });
+    incr("labeled_total", { result: "error" });
+
+    const out = await renderMetrics();
+    expect(out.match(/^# HELP labeled_total /gm)).toHaveLength(1);
+    expect(out).toContain("# HELP labeled_total Total labeled samples from C:\\\\temp\\nwith escaped help.");
+    expect(out.match(/^# TYPE labeled_total counter$/gm)).toHaveLength(1);
+    expect(out).toContain('labeled_total{result="ok"} 1');
+    expect(out).toContain('labeled_total{result="error"} 1');
+  });
+
+  it("renders registered gauge metadata after a successful sample", async () => {
+    registerMetricMeta("g", { help: "Current gauge value.", type: "gauge" });
+    gauge("g", () => 7);
+
+    expect(await renderMetrics()).toBe("# HELP g Current gauge value.\n# TYPE g gauge\ng 7\n");
+  });
+
+  it("renders registered histogram metadata before bucket series", async () => {
+    registerMetricMeta("request_seconds", { help: "Request duration.", type: "histogram" });
+    observe("request_seconds", 0.2, undefined, [0.1, 0.5]);
+
+    const out = await renderMetrics();
+    expect(out.startsWith("# HELP request_seconds Request duration.\n# TYPE request_seconds histogram\n")).toBe(true);
+    expect(out).toContain('request_seconds_bucket{le="0.1"} 0');
+    expect(out).toContain('request_seconds_bucket{le="0.5"} 1');
+  });
+
+  it("resetMetrics clears registered metadata", async () => {
+    registerMetricMeta("cleared_total", { help: "Cleared counter.", type: "counter" });
+    incr("cleared_total");
+    resetMetrics();
+
+    incr("cleared_total");
+    expect(await renderMetrics()).toBe("cleared_total 1\n");
+  });
+
+  it("resetMetrics preserves seeded metadata for built-in metrics", async () => {
+    resetMetrics();
+    incr("gittensory_jobs_processed_total");
+
+    expect(await renderMetrics()).toBe(
+      "# HELP gittensory_jobs_processed_total Durable queue jobs processed successfully.\n# TYPE gittensory_jobs_processed_total counter\ngittensory_jobs_processed_total 1\n",
+    );
+  });
+
   it("counters accumulate and render", async () => {
     incr("c_total");
     incr("c_total", undefined, 2);

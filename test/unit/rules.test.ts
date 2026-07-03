@@ -745,6 +745,47 @@ describe("advisory rules", () => {
     expect(annotations.some((entry) => entry.title === "Missing test evidence")).toBe(false);
   });
 
+  it("does not flag Missing test evidence for a docs-/config-/manifest-only PR (#2722 class)", () => {
+    // annotatableFiles is gated by isCodePath, which admits docs/config/data (.md/.yaml/.yml/.json/.toml). Using
+    // `!isTestPath` as "code" wrongly flagged those files "Missing test evidence"; isCodeFile counts only genuine
+    // source, so a README/CI-config/manifest-only PR (nothing to cover) is no longer annotated.
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName, number: 21, title: "Update docs and CI config", state: "open",
+      authorLogin: "contributor", authorAssociation: "NONE", labels: [], linkedIssues: [],
+    });
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 21, path: "README.md", additions: 12, deletions: 0, changes: 12, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 21, path: ".github/workflows/ci.yml", additions: 8, deletions: 0, changes: 8, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 21, path: "package.json", additions: 3, deletions: 0, changes: 3, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName, generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 21 }, "standard");
+
+    expect(annotations.some((entry) => entry.title === "Missing test evidence")).toBe(false);
+  });
+
+  it("still flags Missing test evidence for a genuine source change shipped without a test (control)", () => {
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName, number: 22, title: "Add a util without tests", state: "open",
+      authorLogin: "contributor", authorAssociation: "NONE", labels: [], linkedIssues: [],
+    });
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 22, path: "src/util/math.ts", additions: 15, deletions: 0, changes: 15, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName, generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 22 }, "standard");
+
+    expect(annotations.some((entry) => entry.title === "Missing test evidence" && entry.path === "src/util/math.ts")).toBe(true);
+  });
+
   it("buildCheckRunAnnotations uses notice level for medium-risk collisions and critical public finding text", () => {
     const advisory = {
       ...buildPullRequestAdvisory(repo, null),

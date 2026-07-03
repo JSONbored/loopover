@@ -123,6 +123,18 @@ export function isGitHubBudgetBackgroundJob(message: JobMessage): boolean {
   return GITHUB_BUDGET_BACKGROUND_TYPES.has(message.type);
 }
 
+// The scheduled sweep's own per-PR fan-out (sweepRepoRegate, #audit-sweep-fanout) tags its synthetic delivery
+// id with this prefix -- the ONLY agent-regate-pr trigger that is genuinely stale/scheduled maintenance, not a
+// response to something happening on the PR right now. EVERY other agent-regate-pr producer (a trailing
+// coalesced re-review, an over-cap sibling wake, a linked-issue-change re-review, a reconciliation-repair
+// enqueue) carries the REAL webhook/event delivery id that caused it -- current-HEAD contributor-PR-review
+// work, not background maintenance (#selfhost-queue-liveness, VPS incident: agent-regate-pr jobs were treated
+// as background admission and parked behind a conservative maintenance floor even though they were reconciling
+// a live contributor PR someone was waiting on).
+export function isScheduledRegateSweepJob(deliveryId: string | null | undefined): boolean {
+  return typeof deliveryId === "string" && deliveryId.startsWith("regate-sweep:");
+}
+
 export function buildSelfHostQueueSnapshot(
   rows: Iterable<{ payload?: unknown; status?: unknown; run_after?: unknown; runAfter?: unknown }>,
   nowMs = Date.now(),
@@ -376,6 +388,18 @@ export function githubRateLimitAdmissionTargetForJob(
     return {
       kind: "webhook",
       admissionKey: githubRateLimitAdmissionKeyForJob(message),
+    };
+  }
+  // Current-head contributor-PR-review reconciliation (#selfhost-queue-liveness): every agent-regate-pr EXCEPT
+  // the scheduled sweep's own fan-out (isGitHubBudgetBackgroundJob already fully exempts the manual-regate
+  // operator override above that check) is a response to something happening on the PR right now, so it gets
+  // the SAME floor as a fresh webhook -- never the conservative maintenance floor a stale/scheduled sweep
+  // reserves. Checked BEFORE isGitHubBudgetBackgroundJob (which would otherwise classify it "background") so
+  // this branch wins for every non-sweep, non-manual agent-regate-pr job.
+  if (message.type === "agent-regate-pr" && isGitHubBudgetBackgroundJob(message) && !isScheduledRegateSweepJob(message.deliveryId)) {
+    return {
+      kind: "webhook",
+      admissionKey: githubRateLimitAdmissionKeyForJob(message) ?? githubRateLimitAdmissionKeyForPublicToken(),
     };
   }
   if (!isGitHubBudgetBackgroundJob(message)) return null;
@@ -653,7 +677,7 @@ type CoalesceMessage = {
   runId?: unknown;
   deliveryId?: unknown;
   draftId?: unknown;
-  event?: { dedupKey?: unknown } | null;
+  events?: Array<{ dedupKey?: unknown } | null | undefined> | null;
   logins?: unknown;
   payload?: GitHubWebhookPayload | null;
 };
@@ -690,6 +714,42 @@ export function jobCoalesceAbsorbedByKey(payload: string): string | null {
   return ragIndexFullKey(repo);
 }
 
+// Mirrors processors.ts's per-PR RAG_REINDEX_MAX_PATHS cap: bounds how large a MERGED incremental job's path
+// set can grow across repeated merges while pending under pressure (#selfhost-maintenance-self-pin), so a
+// backed-up repo with many small merges can't accumulate one ever-growing row instead of separate ones.
+const RAG_INDEX_MERGE_MAX_PATHS = 100;
+
+/** Repo-scoped key PREFIX matching any OTHER pending incremental (path-scoped) rag-index-repo job for the same
+ *  repo -- distinct from `jobCoalesceAbsorbedByKey` (which targets an existing FULL job's exact key). Only
+ *  non-null for an incoming INCREMENTAL job; a full-repo job is handled by `jobCoalesceSupersededKeyPrefix`
+ *  instead. Used together with `jobCoalesceMergedPayload` at enqueue time so several merge-triggered incremental
+ *  jobs for the same repo, arriving while one is still pending, union their paths into a single row instead of
+ *  piling up as separate maintenance-lane entries. */
+export function jobCoalesceMergeKeyPrefix(payload: string): string | null {
+  const message = parseCoalesceMessage(payload);
+  if (message?.type !== "rag-index-repo") return null;
+  const repo = normalizedRepo(message.repoFullName);
+  if (!repo || !normalizedPathScope(message.paths)) return null;
+  return ragIndexRepoKeyPrefix(repo);
+}
+
+/** Union the incoming incremental rag-index-repo job's paths into an already-pending incremental job's paths
+ *  (deduped + sorted, for a stable coalesce key). Returns null when either side isn't a path-scoped rag-index-repo
+ *  message, or when the merged set would exceed RAG_INDEX_MERGE_MAX_PATHS -- the caller then falls through to a
+ *  separate row instead of merging, rather than let one row's path list grow unbounded. */
+export function jobCoalesceMergedPayload(existingPayload: string, incomingPayload: string): string | null {
+  const existing = parseCoalesceMessage(existingPayload);
+  const incoming = parseCoalesceMessage(incomingPayload);
+  if (existing?.type !== "rag-index-repo" || incoming?.type !== "rag-index-repo") return null;
+  const isStringPath = (entry: unknown): entry is string => typeof entry === "string" && entry.trim().length > 0;
+  const existingPaths = Array.isArray(existing.paths) ? existing.paths.filter(isStringPath) : [];
+  const incomingPaths = Array.isArray(incoming.paths) ? incoming.paths.filter(isStringPath) : [];
+  if (existingPaths.length === 0 || incomingPaths.length === 0) return null;
+  const merged = [...new Set([...existingPaths, ...incomingPaths])].sort();
+  if (merged.length > RAG_INDEX_MERGE_MAX_PATHS) return null;
+  return JSON.stringify({ ...incoming, paths: merged });
+}
+
 export function jobCoalesceKey(payload: string): string | null {
   try {
     const message = parseCoalesceMessage(payload);
@@ -703,6 +763,10 @@ export function jobCoalesceKey(payload: string): string | null {
     if (type === "agent-regate-sweep") {
       const repo = normalizedRepo(message.repoFullName);
       return `agent-regate-sweep:${repo ?? "all"}`;
+    }
+    if (type === "backlog-convergence-sweep") {
+      const repo = normalizedRepo(message.repoFullName);
+      return `backlog-convergence-sweep:${repo ?? "all"}`;
     }
     if (type === "recapture-preview") {
       const repo = normalizedRepo(message.repoFullName);
@@ -805,8 +869,16 @@ export function jobCoalesceKey(payload: string): string | null {
         return deliveryId ? keyOf(type, deliveryId) : null;
       }
       case "notify-evaluate": {
-        const dedupKey = normalizedId(message.event?.dedupKey);
-        return dedupKey ? keyOf(type, dedupKey) : null;
+        // A batched job carries every event from one webhook delivery (#selfhost-maintenance-self-pin) --
+        // coalescing keys off the FULL sorted set of dedup keys, so a redelivery of the identical batch still
+        // coalesces (same events -> same key) while any batch with even one different event gets its own key.
+        // If ANY event is missing its dedup key (a malformed payload), the whole batch is left uncoalesced
+        // (null) rather than keying off a partial set that could collide with an unrelated batch and silently
+        // drop the malformed event's work -- same rule as the other event-id-keyed types above.
+        if (!Array.isArray(message.events) || message.events.length === 0) return null;
+        const dedupKeys = message.events.map((event) => normalizedId(event?.dedupKey));
+        if (dedupKeys.some((dedupKey) => dedupKey === null)) return null;
+        return keyOf(type, [...(dedupKeys as string[])].sort().join(","));
       }
       case "submit-draft": {
         const draftId = normalizedId(message.draftId);

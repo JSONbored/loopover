@@ -139,7 +139,20 @@ jobs:
           test -n "$SENTRY_PROJECT"
           if [ -z "${SENTRY_URL:-}" ]; then unset SENTRY_URL; fi
           npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE"
-          npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --commit "$SENTRY_REPOSITORY@$SENTRY_COMMIT_SHA" --ignore-missing
+          # `sentry-cli releases set-commits --commit` (even without --ignore-missing) can silently leave
+          # the release with ZERO associated commits against a repo connected via the modern GitHub App
+          # integration -- confirmed empirically cutting the first orb-v0.1.0-beta.1 release: the CLI
+          # printed a success table but `GET .../releases/<v>/commits/` stayed `[]`. A direct PUT to the
+          # release resource with an inline `commits` array resolves the same repo/commit against the
+          # SAME integration correctly and immediately, so use that instead of relying on the CLI here --
+          # it's what the later "Validate Sentry release" step's `SENTRY_REQUIRE_COMMITS=true` actually
+          # depends on being correct.
+          curl -sf -X PUT \
+            -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${SENTRY_URL:-https://sentry.io}/api/0/organizations/${SENTRY_ORG}/releases/$(node -e "process.stdout.write(encodeURIComponent(process.env.SENTRY_RELEASE))")/" \
+            -d "$(node -e "process.stdout.write(JSON.stringify({commits:[{repository: process.env.SENTRY_REPOSITORY, id: process.env.SENTRY_COMMIT_SHA}]}))")" \
+            >/dev/null
           npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist
           node scripts/validate-selfhost-sourcemap.mjs
           npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist
@@ -198,12 +211,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
-          # Matches selfhost.yml's CI build (same Dockerfile, same default GHA cache scope), so a release
-          # can inherit layers selfhost.yml already built and cached for the identical commit -- without
-          # this, every release rebuilt runtime-base from scratch under QEMU emulation for arm64, the most
-          # expensive leg (#2502).
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # #2502 originally shared selfhost.yml's default (unscoped) GHA cache bucket here for speed --
+          # reverted once a security scan correctly flagged it: that bucket is written to by regular CI on
+          # every push/PR to this repo, so a publish/release path reading from it is a cache-poisoning
+          # vector into an officially published, public image. `scope=release-orb` fixes this properly
+          # instead of just going cold forever: it's a completely separate GHA cache namespace that ONLY
+          # this workflow (tag pushes on `main` / `workflow_dispatch`, both already gated by "Verify release
+          # commit is on main" + the `release` environment) ever reads from or writes to -- selfhost.yml's
+          # CI never touches it. The first release still builds cold; every release after that (rc.2, a
+          # later stable, a patch) reuses the arm64/QEMU-emulated apt-get/npm-install layers from the PRIOR
+          # release build in this same isolated scope, with zero exposure to anything a regular CI run ever
+          # produced.
+          cache-from: type=gha,scope=release-orb
+          cache-to: type=gha,mode=max,scope=release-orb
 
       - name: Finalize Sentry release
         if: steps.sentry.outputs.enabled == 'true'
@@ -244,11 +264,17 @@ jobs:
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           set -euo pipefail
+          # GHCR (like every Docker registry) rejects a mixed-case repository path client-side --
+          # `docker pull ghcr.io/JSONbored/...` fails with "must be lowercase" before it even reaches the
+          # registry. `github.repository_owner` preserves the org's actual casing ("JSONbored"), so the
+          # notes must lowercase it themselves -- docker/metadata-action (used for the actual image tags
+          # above) does this automatically, but this hand-written notes block doesn't go through it.
+          REPOSITORY_OWNER_LOWER="${REPOSITORY_OWNER,,}"
           NOTES="$(cat <<EOF
           Gittensory Orb container image:
 
           \`\`\`bash
-          docker pull ghcr.io/${REPOSITORY_OWNER}/gittensory-selfhost:${RELEASE_TAG}
+          docker pull ghcr.io/${REPOSITORY_OWNER_LOWER}/gittensory-selfhost:${RELEASE_TAG}
           \`\`\`
 
           Multi-arch (linux/amd64 + linux/arm64). See https://gittensory.aethereal.dev/docs/maintainer-self-hosting for setup.
@@ -263,6 +289,12 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then
             PRERELEASE_ARGS=(--prerelease --latest=false)
           fi
+          # `--generate-notes` appends GitHub's auto-generated "what's changed" body (every commit/PR
+          # description since the last release) on top of `$NOTES` -- confirmed by hitting GitHub's
+          # 125000-char release-body limit cutting the very first release here, where a single
+          # squash-merged PR's body alone was large. `$NOTES` (the pull command + version metadata) is
+          # what operators actually need; drop `--generate-notes` so an unusually large commit/PR history
+          # can never fail release creation outright.
           if gh release view "$REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "gittensory-orb ${RELEASE_TAG}" \
@@ -273,6 +305,5 @@ jobs:
               --verify-tag \
               --title "gittensory-orb ${RELEASE_TAG}" \
               "${PRERELEASE_ARGS[@]}" \
-              --notes "$NOTES" \
-              --generate-notes
+              --notes "$NOTES"
           fi

@@ -302,6 +302,30 @@ describe("per-provider circuit breaker (#2540 — skip fast during a sustained o
     await expect(route.run("codex", { prompt: "x" })).resolves.toEqual({ response: "ok" });
   });
 
+  it("REGRESSION: expected chat-only embedding fallbacks do not open a healthy review provider's circuit", async () => {
+    const chatOnlyCalls = vi.fn(async (_model: string, options: { text?: string[]; prompt?: string }) => {
+      if (options.text) throw new Error("claude_code_no_embed");
+      return { response: "review ok" };
+    });
+    const embedCalls = vi.fn(async () => ({ data: [[0.1, 0.2]] }));
+    const route = routeProviders([
+      { name: "claude-code", ai: { run: chatOnlyCalls } },
+      { name: "ollama", ai: { run: embedCalls } },
+    ]);
+
+    for (let i = 0; i < 3; i += 1) {
+      await expect(route.run("@cf/baai/bge-m3", { text: ["rag query"] })).resolves.toEqual({ data: [[0.1, 0.2]] });
+    }
+
+    expect(chatOnlyCalls).toHaveBeenCalledTimes(3);
+    expect(embedCalls).toHaveBeenCalledTimes(3);
+    await expect(route.run("claude-code", { prompt: "review this" })).resolves.toEqual({ response: "review ok" });
+    expect(chatOnlyCalls).toHaveBeenCalledTimes(4);
+    const metrics = await renderMetrics();
+    expect(metrics).not.toContain('gittensory_ai_provider_failures_total{provider="claude-code"}');
+    expect(metrics).not.toContain('gittensory_ai_provider_circuit_open_total{provider="claude-code"}');
+  });
+
   it("does not affect isAiProviderHealthy / aiConsecutiveFailures — independent whole-chain streak", async () => {
     const flaky = { name: "flaky-provider-3", ai: { run: async () => { throw new Error("down"); } } };
     for (let i = 0; i < 3; i += 1) {

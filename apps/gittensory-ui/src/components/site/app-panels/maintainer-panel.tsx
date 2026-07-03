@@ -62,6 +62,9 @@ type MaintainerDashboard = {
     missingPermissions: string[];
     missingEvents: string[];
     checkedAt: string;
+    // Brokered self-hosts (Orb token broker mode) can't introspect permissions/events today, so
+    // missingPermissions/missingEvents are always [] there — that means "unchecked", not "all granted".
+    authMode?: "local" | "broker";
   }>;
   reviewability: Array<{
     pr: string;
@@ -248,16 +251,27 @@ function MaintainerDashboardView() {
                       </StatusPill>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-token-2xs">
-                      <StatusPill
-                        status={installation.missingPermissions.length === 0 ? "ready" : "blocked"}
-                      >
-                        perms {installation.missingPermissions.length === 0 ? "ok" : "missing"}
-                      </StatusPill>
-                      <StatusPill
-                        status={installation.missingEvents.length === 0 ? "ready" : "warn"}
-                      >
-                        webhook {installation.missingEvents.length === 0 ? "ok" : "lagging"}
-                      </StatusPill>
+                      {installation.authMode === "broker" ? (
+                        <>
+                          <StatusPill status="info">perms n/a (broker)</StatusPill>
+                          <StatusPill status="info">webhook n/a (broker)</StatusPill>
+                        </>
+                      ) : (
+                        <>
+                          <StatusPill
+                            status={
+                              installation.missingPermissions.length === 0 ? "ready" : "blocked"
+                            }
+                          >
+                            perms {installation.missingPermissions.length === 0 ? "ok" : "missing"}
+                          </StatusPill>
+                          <StatusPill
+                            status={installation.missingEvents.length === 0 ? "ready" : "warn"}
+                          >
+                            webhook {installation.missingEvents.length === 0 ? "ok" : "lagging"}
+                          </StatusPill>
+                        </>
+                      )}
                       <span className="font-mono text-muted-foreground">
                         last event {new Date(installation.checkedAt).toUTCString().slice(5, 22)}
                       </span>

@@ -3,6 +3,7 @@ import {
   analyzePlanTemplate,
   buildPlanTemplate,
   createPlanTemplate,
+  discoverPlanTemplate,
   managePlanTemplate,
   planPlanTemplate,
   preparePlanTemplate,
@@ -20,7 +21,7 @@ function idsOf(steps: RawPlanStep[]): string[] {
 
 describe("plan-templates", () => {
   it("exposes a builder for every declared stage", () => {
-    expect(STAGES.sort()).toEqual(["analyze", "create", "manage", "plan", "prepare"]);
+    expect(STAGES.sort()).toEqual(["analyze", "create", "discover", "manage", "plan", "prepare"]);
   });
 
   it.each(STAGES)("'%s' template round-trips through the real rawPlanStepSchema", (stage) => {
@@ -50,6 +51,7 @@ describe("plan-templates", () => {
   });
 
   it("is deterministic: same context yields identical output", () => {
+    expect(discoverPlanTemplate({ subject: "x" })).toEqual(discoverPlanTemplate({ subject: "x" }));
     expect(analyzePlanTemplate({ subject: "x" })).toEqual(analyzePlanTemplate({ subject: "x" }));
     expect(planPlanTemplate({ subject: "x" })).toEqual(planPlanTemplate({ subject: "x" }));
     expect(preparePlanTemplate()).toEqual(preparePlanTemplate());
@@ -76,6 +78,13 @@ describe("plan-templates", () => {
       expect(() => rawPlanStepSchema.parse(step)).not.toThrow();
       expect(step.title.length).toBeLessThanOrEqual(300);
     }
+  });
+
+  it("encodes the real discover ordering: lane-fit and pre-start depend on prior discovery steps", () => {
+    const steps = discoverPlanTemplate();
+    expect(steps.map((s) => s.id)).toEqual(["opportunity-rank", "lane-fit-check", "pre-start-check"]);
+    expect(steps.find((s) => s.id === "lane-fit-check")?.dependsOn).toEqual(["opportunity-rank"]);
+    expect(steps.find((s) => s.id === "pre-start-check")?.dependsOn).toEqual(["lane-fit-check"]);
   });
 
   it("encodes the real analyze ordering: prompt-packet depends on both feasibility and retrieval", () => {

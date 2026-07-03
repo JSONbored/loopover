@@ -47,6 +47,7 @@ export type SafetyReviewInput = {
   title: string;
   body?: string | null | undefined;
   diff: string;
+  changedFiles?: ReadonlyArray<{ path: string }> | null | undefined;
 };
 
 /**
@@ -60,6 +61,7 @@ export function defangReviewInput(input: SafetyReviewInput): {
   title: string;
   body: string | null | undefined;
   diff: string;
+  changedFiles?: ReadonlyArray<{ path: string }> | null | undefined;
 } {
   const title = safeReviewTitle({
     title: input.title,
@@ -71,7 +73,11 @@ export function defangReviewInput(input: SafetyReviewInput): {
       ? input.body
       : neutralizePromptInjection(input.body).text;
   const diff = neutralizePromptInjection(input.diff).text;
-  return { title, body, diff };
+  const changedFiles = input.changedFiles?.map((file) => ({
+    ...file,
+    path: neutralizePromptInjection(file.path).text,
+  }));
+  return { title, body, diff, changedFiles };
 }
 
 /**

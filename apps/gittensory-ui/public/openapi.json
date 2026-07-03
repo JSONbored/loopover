@@ -8970,6 +8970,31 @@
           "typeLabelsEnabled": {
             "type": "boolean"
           },
+          "moderationGateMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
+            ]
+          },
+          "moderationRules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "contributor_cap",
+                "blacklist",
+                "review_nag"
+              ]
+            }
+          },
+          "moderationWarningLabel": {
+            "type": "string"
+          },
+          "moderationBannedLabel": {
+            "type": "string"
+          },
           "typeLabels": {
             "type": "object",
             "properties": {
@@ -9029,6 +9054,16 @@
               "mode",
               "mappings"
             ]
+          },
+          "claCheckRunAppSlug": {
+            "type": "string",
+            "nullable": true
+          },
+          "expectedCiContexts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -9444,6 +9479,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "authMode": {
+            "type": "string",
+            "enum": [
+              "local",
+              "broker"
+            ]
           }
         },
         "required": [
@@ -9456,7 +9498,8 @@
           "missingEvents",
           "permissions",
           "events",
-          "checkedAt"
+          "checkedAt",
+          "authMode"
         ]
       },
       "RepoSettingsPreview": {

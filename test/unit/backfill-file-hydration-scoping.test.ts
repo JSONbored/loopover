@@ -213,6 +213,113 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
     expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 32)).toMatchObject({ headSha: "head-2" });
   });
 
+  it("does not stamp a new head-SHA file snapshot when the changed-head file fetch fails", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 33,
+      title: "Open PR, new push with transient file failure",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "head-2" },
+      labels: [],
+      body: "",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 33,
+      path: "src/old.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: { filename: "src/old.ts" },
+    });
+    await upsertPullRequestDetailSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 33,
+      status: "complete",
+      headSha: "head-1",
+      filesSyncedAt: "2026-05-20T00:00:00.000Z",
+    });
+    let failFiles = true;
+    const urls = stubFetchTracking((url) => {
+      if (url.includes("/pulls/33/files")) {
+        return failFiles ? new Response("transient REST failure", { status: 503 }) : Response.json([{ filename: "src/new.ts", status: "added", additions: 5, deletions: 0, changes: 5 }]);
+      }
+      if (url.includes("/graphql")) return new Response("transient GraphQL failure", { status: 503 });
+      return Response.json([]);
+    });
+
+    const failed = await refreshPullRequestDetails(env, "JSONbored/gittensory", 33);
+
+    expect(failed).toMatchObject({ status: "partial", warnings: [expect.stringContaining("File sync failed for #33")] });
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 33)).toEqual([expect.objectContaining({ path: "src/old.ts" })]);
+    expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 33)).toMatchObject({
+      headSha: "head-1",
+      filesSyncedAt: "2026-05-20T00:00:00.000Z",
+    });
+
+    failFiles = false;
+    urls.length = 0;
+    const retried = await refreshPullRequestDetails(env, "JSONbored/gittensory", 33);
+
+    expect(retried).toMatchObject({ status: "complete", warnings: [] });
+    expect(urls.some((url) => url.includes("/pulls/33/files"))).toBe(true);
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 33)).toEqual([expect.objectContaining({ path: "src/new.ts" })]);
+    expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 33)).toMatchObject({ headSha: "head-2" });
+  });
+
+  it("a failed file sync never regresses a marker a concurrent successful sync already advanced past it (gate review finding)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 34,
+      title: "Open PR, racing concurrent refresh",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "head-2" },
+      labels: [],
+      body: "",
+    });
+    // This call's own initial state read (TOCTOU snapshot): stale head-1.
+    await upsertPullRequestDetailSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 34,
+      status: "complete",
+      headSha: "head-1",
+      filesSyncedAt: "2026-05-20T00:00:00.000Z",
+    });
+    stubFetchTracking((url) => {
+      if (url.includes("/pulls/34/files")) {
+        // Simulate a DIFFERENT concurrent call successfully syncing to an even newer head and persisting
+        // its own (correct, newer) marker BETWEEN this call's initial state read and this call's own
+        // failed-fetch persist below -- the exact interleaving the gate review flagged.
+        void upsertPullRequestDetailSyncState(env, {
+          repoFullName: "JSONbored/gittensory",
+          pullNumber: 34,
+          status: "complete",
+          headSha: "head-3",
+          filesSyncedAt: "2026-05-25T00:00:00.000Z",
+        });
+        return new Response("transient REST failure", { status: 503 });
+      }
+      if (url.includes("/graphql")) return new Response("transient GraphQL failure", { status: 503 });
+      return Response.json([]);
+    });
+
+    const failed = await refreshPullRequestDetails(env, "JSONbored/gittensory", 34);
+
+    expect(failed).toMatchObject({ status: "partial", warnings: [expect.stringContaining("File sync failed for #34")] });
+    // The failed call must not stomp the concurrently-written newer marker back to its own stale head-1
+    // snapshot -- it must leave the column untouched (undefined-omit), so the concurrent success's head-3
+    // marker survives.
+    expect(await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 34)).toMatchObject({
+      headSha: "head-3",
+      filesSyncedAt: "2026-05-25T00:00:00.000Z",
+    });
+  });
+
   it("defers historical merged-PR file hydration when the REST budget is below the historical-backfill floor, while cheap metadata still syncs", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getInstallationHealth,
   listCheckSummaries,
   listContributorRepoStats,
   listIssues,
@@ -17,6 +18,7 @@ import {
   persistRepoGithubTotalsSnapshot,
   recordGitHubRateLimitObservation,
   upsertInstallation,
+  upsertInstallationHealth,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
   upsertPullRequestFile,
@@ -35,12 +37,14 @@ import {
   enrichInstallationHealth,
   fetchAndStorePullRequestFilesForReview,
   fetchLinkedIssueFacts,
+  fetchLiveBaseBranchAdvancedAt,
   fetchLiveCiAggregate,
   fetchLiveReviewThreadBlockers,
   fetchNamedCheckRunConclusion,
   fetchRequiredStatusContexts,
   isOwnReviewThreadAuthor,
   isRateLimitedGitHubFailure,
+  mergeRequiredCiContexts,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -62,6 +66,34 @@ describe("GitHub backfill", () => {
     vi.useRealTimers();
     clearGitHubResponseCacheForTest();
     vi.unstubAllGlobals();
+  });
+
+  it("fetches the fresh base branch tip timestamp without replaying the commit response cache", async () => {
+    const env = createTestEnv();
+    const cacheGet = vi.fn(async () => ({
+      status: 200,
+      body: JSON.stringify({ commit: { committer: { date: "2024-01-01T00:00:00Z" } } }),
+      contentType: "application/json",
+    }));
+    const cacheSet = vi.fn(async () => undefined);
+    setGitHubResponseCache({ get: cacheGet, set: cacheSet });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      getFetches += 1;
+      expect(String(input)).toBe("https://api.github.com/repos/JSONbored/gittensory/commits/main");
+      return Response.json({ commit: { committer: { date: "2026-07-02T23:32:36.181Z" } } });
+    });
+
+    await expect(
+      fetchLiveBaseBranchAdvancedAt(env, "JSONbored/gittensory", "main", "tok", githubRateLimitAdmissionKeyForInstallation(123)),
+    ).resolves.toBe("2026-07-02T23:32:36.181Z");
+
+    expect(getFetches).toBe(1);
+    expect(cacheGet).not.toHaveBeenCalled();
+    expect(cacheSet).not.toHaveBeenCalled();
+    // The bypass contract is neither READ nor WRITE: a live-freshness read must not land in the
+    // persistent rate-limit-observation state either (#2762 gate finding).
+    expect(await listLatestGitHubRateLimitObservations(env)).toEqual([]);
   });
 
   it("stores bounded repo metadata, labels, issues, PR details, recent merges, and contributor stats", async () => {
@@ -429,6 +461,188 @@ describe("GitHub backfill", () => {
     });
     const refreshed = await refreshInstallationHealth(env);
     expect(refreshed.installations).toEqual(expect.arrayContaining([expect.objectContaining({ installationId: 124, status: "healthy" })]));
+    // The persisted authMode round-trips as "local" through the repository read path (getInstallationHealth),
+    // not just the in-memory refresh result — the same mapper the broker-mode test below exercises for "broker".
+    expect(await getInstallationHealth(env, 124)).toMatchObject({ authMode: "local" });
+  });
+
+  describe("installation health — Orb broker mode (#selfhost-runtime-drift)", () => {
+    it("reports healthy with authMode 'broker' and no fabricated missing permissions when the token broker mints successfully", async () => {
+      const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" }); // broker mode — no GITHUB_APP_PRIVATE_KEY
+      await upsertInstallation(env, {
+        installation: {
+          id: 900,
+          account: { login: "brokered-owner", id: 9, type: "User" },
+          repository_selection: "selected",
+        },
+      });
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        calls.push(url);
+        if (url.endsWith("/v1/orb/token")) return Response.json({ token: "ghs_brokered", installationId: 900 });
+        return new Response("not found", { status: 404 });
+      });
+
+      const result = await refreshInstallationHealth(env);
+
+      expect(result.installations[0]).toMatchObject({
+        status: "healthy",
+        authMode: "broker",
+        missingPermissions: [],
+        missingEvents: [],
+        errorSummary: undefined,
+      });
+      // Never takes the local App-JWT path (which would 404 here and throw "credentials not configured").
+      expect(calls.some((url) => url.includes("/app/installations/"))).toBe(false);
+      expect(await renderMetrics()).toContain('gittensory_installation_health_broker_probe_total{result="ok"} 1');
+      // The persisted authMode round-trips as "broker" through the repository read path (getInstallationHealth),
+      // not just the in-memory refresh result — mirrors the "local" round-trip check above.
+      expect(await getInstallationHealth(env, 900)).toMatchObject({ authMode: "broker" });
+    });
+
+    it("REGRESSION (gate finding): never reports healthy when the broker mints a token for a DIFFERENT installation than the one being refreshed", async () => {
+      const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+      // Two local rows exist (e.g. a stale row left over from a prior re-registration), but a brokered
+      // self-host is bound to exactly ONE real installation — the broker always mints for that ONE install
+      // regardless of which local row's refresh triggered the call.
+      await upsertInstallation(env, {
+        installation: { id: 910, account: { login: "brokered-owner", id: 9, type: "User" }, repository_selection: "selected" },
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/orb/token")) return Response.json({ token: "ghs_brokered", installationId: 999 }); // NOT 910
+        return new Response("not found", { status: 404 });
+      });
+
+      const result = await refreshInstallationHealth(env);
+
+      expect(result.installations[0]?.status).toBe("needs_attention");
+      expect(result.installations[0]?.authMode).toBe("broker");
+      expect(result.installations[0]?.errorSummary).toMatch(/910/);
+      expect(await renderMetrics()).toContain('gittensory_installation_health_broker_probe_total{result="mismatched_installation"} 1');
+    });
+
+    it("REGRESSION (gate finding): a broker-mode refresh preserves the previously-persisted missingPermissions/missingEvents instead of fabricating a clean []", async () => {
+      const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+      await upsertInstallation(env, {
+        installation: { id: 911, account: { login: "brokered-owner", id: 9, type: "User" }, repository_selection: "selected" },
+      });
+      // A prior refresh (e.g. before this install switched into broker mode, or an earlier probe) left a
+      // REAL, non-empty missing-permissions/events record — that's genuine last-known information, not a
+      // fabricated broker-mode guess, so a later broker-mode refresh must not silently erase it back to [].
+      await upsertInstallationHealth(env, {
+        installationId: 911,
+        accountLogin: "brokered-owner",
+        repositorySelection: "selected",
+        installedReposCount: 1,
+        registeredInstalledCount: 1,
+        status: "needs_attention",
+        missingPermissions: ["pull_requests"],
+        missingEvents: ["issues"],
+        permissions: {},
+        events: [],
+        checkedAt: "2026-07-01T00:00:00.000Z",
+        authMode: "local",
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/orb/token")) return Response.json({ token: "ghs_brokered", installationId: 911 });
+        return new Response("not found", { status: 404 });
+      });
+
+      const result = await refreshInstallationHealth(env);
+
+      expect(result.installations[0]).toMatchObject({
+        authMode: "broker",
+        missingPermissions: ["pull_requests"],
+        missingEvents: ["issues"],
+      });
+    });
+
+    it("reports needs_attention with a broker-specific errorSummary (not the local App-key message) when the token broker fails to mint", async () => {
+      const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+      await upsertInstallation(env, {
+        installation: { id: 901, account: { login: "brokered-owner", id: 9, type: "User" }, repository_selection: "selected" },
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/orb/token")) return new Response("broker down", { status: 500 });
+        return new Response("not found", { status: 404 });
+      });
+
+      const result = await refreshInstallationHealth(env);
+
+      expect(result.installations[0]?.status).toBe("needs_attention");
+      expect(result.installations[0]?.authMode).toBe("broker");
+      expect(result.installations[0]?.errorSummary).toMatch(/token/i);
+      expect(result.installations[0]?.errorSummary).not.toMatch(/GitHub App credentials are not configured/);
+      expect(await renderMetrics()).toContain('gittensory_installation_health_broker_probe_total{result="failed"} 1');
+    });
+
+    it("enrichInstallationHealth's broker branch reports introspection-unavailable remediation, not fabricated grants or gaps", () => {
+      const healthy = enrichInstallationHealth({
+        installationId: 902,
+        accountLogin: "brokered-owner",
+        repositorySelection: "selected",
+        installedReposCount: 1,
+        registeredInstalledCount: 1,
+        status: "healthy",
+        missingPermissions: [],
+        missingEvents: [],
+        permissions: {},
+        events: [],
+        checkedAt: "2026-07-03T00:00:00.000Z",
+        authMode: "broker",
+      });
+      // ok is false even on a HEALTHY broker: the broker minting tokens proves reachability, never that any
+      // specific permission/event is actually granted -- there is no introspection API to confirm that today.
+      expect(healthy.permissionRemediation).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ permission: "pull_requests", currentAccess: "unavailable_in_broker_mode", ok: false }),
+        ]),
+      );
+      expect(healthy.eventRemediation).toEqual(
+        expect.arrayContaining([expect.objectContaining({ event: "issues", ok: false })]),
+      );
+      expect(healthy.repairSteps.join(" ")).toMatch(/token broker is reachable/i);
+
+      const degraded = enrichInstallationHealth({
+        installationId: 903,
+        accountLogin: "brokered-owner",
+        repositorySelection: "selected",
+        installedReposCount: 1,
+        registeredInstalledCount: 1,
+        status: "needs_attention",
+        missingPermissions: [],
+        missingEvents: [],
+        permissions: {},
+        events: [],
+        checkedAt: "2026-07-03T00:00:00.000Z",
+        errorSummary: "Token broker did not mint an installation token: 500.",
+        authMode: "broker",
+      });
+      expect(degraded.permissionRemediation.every((entry) => entry.ok === false)).toBe(true);
+      expect(degraded.repairSteps.join(" ")).toContain("Token broker did not mint an installation token: 500.");
+
+      // No errorSummary at all (e.g. the broker call itself never completed) — repairSteps still reads as a
+      // plain sentence instead of dangling on a missing colon-suffix.
+      const degradedNoSummary = enrichInstallationHealth({
+        installationId: 904,
+        accountLogin: "brokered-owner",
+        repositorySelection: "selected",
+        installedReposCount: 1,
+        registeredInstalledCount: 1,
+        status: "needs_attention",
+        missingPermissions: [],
+        missingEvents: [],
+        permissions: {},
+        events: [],
+        checkedAt: "2026-07-03T00:00:00.000Z",
+        authMode: "broker",
+      });
+      expect(degradedNoSummary.repairSteps.join(" ")).toContain("The token broker is unreachable or failing to mint installation tokens.");
+    });
   });
 
   it("normalizes stale automatic installation repository event health", () => {
@@ -444,6 +658,7 @@ describe("GitHub backfill", () => {
       permissions: { metadata: "read", pull_requests: "write", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository"],
       checkedAt: "2026-06-05T00:00:00.000Z",
+      authMode: "local",
     });
 
     expect(health).toMatchObject({
@@ -466,6 +681,7 @@ describe("GitHub backfill", () => {
       permissions: { metadata: "read", pull_requests: "read", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository"],
       checkedAt: "2026-06-05T00:00:00.000Z",
+      authMode: "local",
     });
 
     expect(health.requiredPermissions).toMatchObject({ pull_requests: "write" }); // not the baseline read
@@ -487,6 +703,7 @@ describe("GitHub backfill", () => {
       permissions: { metadata: "read", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository"],
       checkedAt: "2026-06-05T00:00:00.000Z",
+      authMode: "local",
     });
 
     expect(health.requiredPermissions).toMatchObject({ pull_requests: "read" });
@@ -606,6 +823,7 @@ describe("GitHub backfill", () => {
       permissions: { metadata: "read", pull_requests: "read", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:00:00.000Z",
+      authMode: "local",
     });
 
     expect(repair.repairSteps).toEqual(["No repair needed."]);
@@ -637,6 +855,7 @@ describe("GitHub backfill", () => {
       permissions: { metadata: "read", pull_requests: "read", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:00:00.000Z",
+      authMode: "local",
     });
 
     expect(repair.requiredPermissions.pull_requests).toBe("write");
@@ -673,6 +892,7 @@ describe("GitHub backfill", () => {
       permissions: { metadata: "read", pull_requests: "read", issues: "read" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:00:00.000Z",
+      authMode: "local",
     });
 
     expect(repair.modeImpacts).toEqual(
@@ -4305,6 +4525,74 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "ci/overflow" })]);
     });
 
+    describe("expectedCiContexts fallback (#selfhost-ci-verification)", () => {
+      it("passes with no completeness warning when branch protection is unreadable but an expected context settles clean", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success" }] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, ["build"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        // The key regression: an expectedCiContexts fallback (used when branch protection can't be read)
+        // resolves to enforce-required mode, so a clean settle is "passed" with NO completeness warning —
+        // unlike the fold-all path, which would warn (#2137).
+        expect(aggregate.ciState).toBe("passed");
+        expect(aggregate.ciCompletenessWarning).toBeNull();
+      });
+
+      it("stays pending when branch protection is unreadable and the expected context never appears on the commit", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, ["build"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        expect(aggregate.ciState).toBe("pending");
+      });
+
+      it("fails when branch protection is unreadable and the expected context completes red", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "failure" }] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, ["build"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        expect(aggregate.ciState).toBe("failed");
+        expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "build" })]);
+      });
+
+      it("does not regress the no-config case: no branch protection and no expected contexts still fold-all warns on pass", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, undefined);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        expect(aggregate.ciState).toBe("passed");
+        expect(aggregate.ciCompletenessWarning).toMatch(/branch-protection required checks/i);
+      });
+    });
   });
 
   describe("fetchLiveReviewThreadBlockers", () => {
@@ -4989,6 +5277,61 @@ describe("GitHub backfill", () => {
     });
   });
 
+  describe("mergeRequiredCiContexts", () => {
+    it("unions branch-protection contexts with expectedCiContexts when both have entries", () => {
+      const merged = mergeRequiredCiContexts(new Set(["build"]), ["test", "lint"]);
+      expect([...(merged as Set<string>)].sort()).toEqual(["build", "lint", "test"]);
+    });
+
+    it("returns branch-protection contexts unchanged when expectedCiContexts is undefined", () => {
+      const merged = mergeRequiredCiContexts(new Set(["build", "test"]), undefined);
+      expect(merged).toBeInstanceOf(Set);
+      expect([...(merged as Set<string>)].sort()).toEqual(["build", "test"]);
+    });
+
+    it("returns branch-protection contexts unchanged when expectedCiContexts is an empty array", () => {
+      const merged = mergeRequiredCiContexts(new Set(["build", "test"]), []);
+      expect([...(merged as Set<string>)].sort()).toEqual(["build", "test"]);
+    });
+
+    it("returns branch-protection contexts unchanged when expectedCiContexts is null", () => {
+      const merged = mergeRequiredCiContexts(new Set(["build", "test"]), null);
+      expect([...(merged as Set<string>)].sort()).toEqual(["build", "test"]);
+    });
+
+    it("returns just the expected set when branch protection is null and expectedCiContexts has entries", () => {
+      const merged = mergeRequiredCiContexts(null, ["build"]);
+      expect([...(merged as Set<string>)]).toEqual(["build"]);
+    });
+
+    it("returns null when branch protection is null and expectedCiContexts is undefined", () => {
+      expect(mergeRequiredCiContexts(null, undefined)).toBeNull();
+    });
+
+    it("returns null when branch protection is null and expectedCiContexts is null", () => {
+      expect(mergeRequiredCiContexts(null, null)).toBeNull();
+    });
+
+    it("returns null when branch protection is null and expectedCiContexts is an empty array", () => {
+      expect(mergeRequiredCiContexts(null, [])).toBeNull();
+    });
+
+    it("returns just the expected set when branch protection is an empty (non-null) Set and expectedCiContexts has entries", () => {
+      const merged = mergeRequiredCiContexts(new Set(), ["build"]);
+      expect([...(merged as Set<string>)]).toEqual(["build"]);
+    });
+
+    it("drops blank/whitespace-only expectedCiContexts entries while keeping real entries", () => {
+      const merged = mergeRequiredCiContexts(null, ["  ", "", "build"]);
+      expect([...(merged as Set<string>)]).toEqual(["build"]);
+    });
+
+    it("trims leading/trailing whitespace from expectedCiContexts entries in the result", () => {
+      const merged = mergeRequiredCiContexts(null, [" build "]);
+      expect([...(merged as Set<string>)]).toEqual(["build"]);
+    });
+  });
+
   describe("fetchRequiredStatusContexts", () => {
     it("returns null without fetching when baseRef is missing", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
@@ -5089,7 +5432,7 @@ describe("GitHub backfill", () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       const fetchSpy = vi.fn();
       vi.stubGlobal("fetch", fetchSpy);
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", null, "CLA Assistant Lite", "public-token")).toBeUndefined();
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", null, "CLA Assistant Lite", "cla-assistant", "public-token")).toBeUndefined();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -5097,21 +5440,54 @@ describe("GitHub backfill", () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         expect(input.toString()).toContain("/commits/sha1/check-runs");
-        return Response.json({ total_count: 1, check_runs: [{ id: 1, name: "cla assistant lite", status: "completed", conclusion: "SUCCESS" }] });
+        return Response.json({ total_count: 1, check_runs: [{ id: 1, name: "cla assistant lite", status: "completed", conclusion: "SUCCESS", app: { slug: "cla-assistant" } }] });
       });
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "public-token")).toBe("success");
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBe("success");
+    });
+
+    it("REGRESSION (gate finding): returns null (deterministic missing), not undefined (transient), without fetching when no trusted app slug is configured — a check-run-only config with no slug must still BLOCK, not silently hold forever", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", null, "public-token")).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("ignores a completed same-name check-run from an untrusted app slug", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () =>
+        Response.json({
+          total_count: 1,
+          check_runs: [{ id: 1, name: "CLA Assistant Lite", status: "completed", conclusion: "success", app: { slug: "github-actions" } }],
+        }),
+      );
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBeNull();
+    });
+
+    it("uses the trusted producer when spoofed and trusted same-name runs both exist", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () =>
+        Response.json({
+          total_count: 2,
+          check_runs: [
+            { id: 1, name: "CLA Assistant Lite", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+            { id: 2, name: "CLA Assistant Lite", status: "completed", conclusion: "failure", app: { slug: "cla-assistant" } },
+          ],
+        }),
+      );
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBe("failure");
     });
 
     it("returns null (resolved: not found) when the head SHA has no check-run with that name", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
-      vi.stubGlobal("fetch", async () => Response.json({ total_count: 1, check_runs: [{ id: 1, name: "Some Other Check", status: "completed", conclusion: "success" }] }));
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "public-token")).toBeNull();
+      vi.stubGlobal("fetch", async () => Response.json({ total_count: 1, check_runs: [{ id: 1, name: "Some Other Check", status: "completed", conclusion: "success", app: { slug: "cla-assistant" } }] }));
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBeNull();
     });
 
     it("returns null (resolved: not found) when the response omits check_runs entirely (nullish fallback)", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async () => Response.json({ total_count: 0 }));
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "public-token")).toBeNull();
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBeNull();
     });
 
     // #2564 gate-review finding: a matching check-run that has NOT finished yet must resolve to undefined
@@ -5120,20 +5496,20 @@ describe("GitHub backfill", () => {
     // actually finished running.
     it("returns undefined (unresolved) for a matching but still-in-progress check-run (status !== completed, conclusion: null)", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
-      vi.stubGlobal("fetch", async () => Response.json({ total_count: 1, check_runs: [{ id: 1, name: "CLA Assistant Lite", status: "in_progress", conclusion: null }] }));
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "public-token")).toBeUndefined();
+      vi.stubGlobal("fetch", async () => Response.json({ total_count: 1, check_runs: [{ id: 1, name: "CLA Assistant Lite", status: "in_progress", conclusion: null, app: { slug: "cla-assistant" } }] }));
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBeUndefined();
     });
 
     it("returns an empty string for a matching, COMPLETED check-run with an unexpected empty conclusion (genuine edge case, not the in-progress case)", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
-      vi.stubGlobal("fetch", async () => Response.json({ total_count: 1, check_runs: [{ id: 1, name: "CLA Assistant Lite", status: "completed", conclusion: null }] }));
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "public-token")).toBe("");
+      vi.stubGlobal("fetch", async () => Response.json({ total_count: 1, check_runs: [{ id: 1, name: "CLA Assistant Lite", status: "completed", conclusion: null, app: { slug: "cla-assistant" } }] }));
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBe("");
     });
 
     it("returns undefined (not evaluated) when the fetch fails, never a false 'missing'", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
-      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "public-token")).toBeUndefined();
+      expect(await fetchNamedCheckRunConclusion(env, "JSONbored/gittensory", "sha1", "CLA Assistant Lite", "cla-assistant", "public-token")).toBeUndefined();
     });
   });
 

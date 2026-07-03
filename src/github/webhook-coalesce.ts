@@ -11,6 +11,28 @@ const COALESCABLE_PULL_REQUEST_ACTIONS = new Set([
   "ready_for_review",
 ]);
 
+// #selfhost-backlog-convergence: label churn on a PR (repeated add/remove) does NOT trigger the public-surface
+// re-review pipeline at all -- shouldProcessPullRequestPublicSurface (processors.ts) only reacts to
+// PR_PUBLIC_SURFACE_ACTIONS, which excludes "labeled"/"unlabeled" -- the handler just re-syncs the PR row
+// (upsertPullRequestFromGitHub), identical work regardless of which specific label changed. A burst of label
+// events for the same PR is pure duplicate overhead; safe to coalesce to one job (unlike issue-side
+// labeled/unlabeled on a linked ISSUE, which has its OWN dedicated trailing-re-review coalescer in
+// processors.ts specifically because an add-then-remove sequence there carries a genuinely different state).
+const COALESCABLE_PULL_REQUEST_LABEL_ACTIONS = new Set(["labeled", "unlabeled"]);
+
+// #selfhost-backlog-convergence: mirrors shouldProcessPullRequestPublicSurface's (processors.ts) own action
+// allowlist per event -- these three event types are the ones that trigger a full re-review pipeline run for a
+// PR (readiness/review/publish), so a burst of review activity on the same head (e.g. several reviewers
+// submitting close together, or one reviewer leaving many inline comments) fans out one FULL re-review per
+// delivery today. The re-review pipeline always re-fetches live review/comment state from GitHub rather than
+// acting on the specific webhook payload's content, so collapsing a burst into one job loses nothing -- exactly
+// the same safety property the existing pull_request coalescing above already relies on.
+const REVIEW_SURFACE_ACTIONS_BY_EVENT: Record<string, ReadonlySet<string>> = {
+  pull_request_review: new Set(["submitted", "edited", "dismissed"]),
+  pull_request_review_comment: new Set(["created", "edited", "deleted"]),
+  pull_request_review_thread: new Set(["resolved", "unresolved"]),
+};
+
 export function githubWebhookCoalesceKey(
   eventName: string,
   payload: GitHubWebhookPayload,
@@ -43,6 +65,20 @@ export function githubWebhookCoalesceKey(
     const headSha = normalizedSha(payload.pull_request?.head?.sha);
     return pr !== null
       ? `github-webhook:pr-refresh:${repo}#${pr}${headSha ? `@${headSha}` : ""}`
+      : null;
+  }
+  if (eventName === "pull_request" && COALESCABLE_PULL_REQUEST_LABEL_ACTIONS.has(action)) {
+    const pr =
+      normalizedNumber(payload.pull_request?.number) ??
+      normalizedNumber((payload as { number?: unknown }).number);
+    return pr !== null ? `github-webhook:pr-label:${repo}#${pr}` : null;
+  }
+  const reviewSurfaceActions = REVIEW_SURFACE_ACTIONS_BY_EVENT[eventName];
+  if (reviewSurfaceActions?.has(action)) {
+    const pr = normalizedNumber(payload.pull_request?.number);
+    const headSha = normalizedSha(payload.pull_request?.head?.sha);
+    return pr !== null
+      ? `github-webhook:pr-review:${repo}#${pr}${headSha ? `@${headSha}` : ""}`
       : null;
   }
   return null;

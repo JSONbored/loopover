@@ -42,6 +42,13 @@ require_cmd() {
 
 require_cmd docker
 require_cmd curl
+require_cmd od
+
+if [ -n "${SELFHOST_SMOKE_SETUP_TOKEN:-}" ]; then
+  SETUP_TOKEN="$SELFHOST_SMOKE_SETUP_TOKEN"
+else
+  SETUP_TOKEN="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+fi
 
 cleanup() {
   docker rm -f "$APP_NAME" "$REDIS_NAME" >/dev/null 2>&1 || true
@@ -95,9 +102,9 @@ if [ -n "${SELFHOST_SMOKE_EXTRA_VOLUMES:-}" ]; then
   done <<<"$SELFHOST_SMOKE_EXTRA_VOLUMES"
 fi
 
-docker run -d --name "$APP_NAME" --network "$NETWORK_NAME" -p "${PORT}:8787" \
+docker run -d --name "$APP_NAME" --network "$NETWORK_NAME" -p "127.0.0.1:${PORT}:8787" \
   -e "REDIS_URL=redis://${REDIS_NAME}:6379" \
-  -e "SELFHOST_SETUP_TOKEN=${SELFHOST_SMOKE_SETUP_TOKEN:-selfhost-smoke-setup-token}" \
+  -e "SELFHOST_SETUP_TOKEN=${SETUP_TOKEN}" \
   -e "PUBLIC_API_ORIGIN=${SELFHOST_SMOKE_PUBLIC_API_ORIGIN:-https://selfhost-smoke.example}" \
   "${EXTRA_ENV_ARGS[@]}" \
   "${EXTRA_VOLUME_ARGS[@]}" \

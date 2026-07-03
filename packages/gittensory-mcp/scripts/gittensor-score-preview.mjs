@@ -7,13 +7,19 @@ function isTestFile(file) {
     /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
     /(^|\/)src\/test\//i.test(file) ||
     /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
+    /(^|\/)test_[^/]*\.py$/i.test(file) || // pytest's default `test_*.py` prefix (the suffix rule above only catches `*_test.py`)
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
+    /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
+    /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
+    // JVM/.NET/Swift PascalCase test-class suffix (case-sensitive, matching the
+    // signal classifiers) so C#/Swift/Groovy tests aren't counted as source.
+    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy)$/.test(file) ||
+    /(^|\/)__snapshots__\//i.test(file)
   );
 }
 
 function isCodeFile(file) {
-  return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy)$/i.test(file) && !isTestFile(file);
 }
 
 function lineCount(file) {

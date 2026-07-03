@@ -168,9 +168,27 @@ gate:
     # review.pre_merge_checks' descriptionContains. String or null. Default: null (not configured).
     consentPhrase: "I have read and agree to the CLA"
     # Name of a separate CLA-bot check-run this repo also runs (e.g. a CLA Assistant GitHub Action). A
-    # success/neutral conclusion for a check-run with this exact name also satisfies consent. Either
-    # method configured is enough; both may be set. String or null. Default: null (not configured).
+    # success/neutral conclusion for a check-run with this exact name also satisfies consent only when the
+    # run was produced by checkRunAppSlug. Either method configured is enough; both may be set. String or
+    # null. Default: null (not configured).
     checkRunName: null
+    # Trusted GitHub App slug that must have produced checkRunName. Required for check-run detection so a
+    # contributor-controlled same-name check-run cannot satisfy a blocking CLA/legal gate. String or null.
+    # Default: null (not configured).
+    checkRunAppSlug: null
+
+  # CI check/status context names to treat as REQUIRED when GitHub branch protection returns no
+  # readable required-status-checks (unconfigured, or a 403 from a token lacking
+  # administration:read — common for GitHub App installations, especially self-host). Merged with
+  # any branch-protection required contexts when both are readable; used ALONE when branch
+  # protection is null/empty. A context listed here that never appears on the commit stays
+  # pending; a completed red check for a listed context fails the gate; every listed context
+  # settled clean resolves to a verified "passed" (no completeness warning). List of strings, or
+  # omit. Default: not configured (keeps today's fold-all fail-closed behavior when branch
+  # protection is also unreadable). Config-as-code only — no DB column or dashboard toggle.
+  expectedCiContexts:
+    - build
+    - test
 
   # Composite merge-readiness gate (no min score).
   # off | advisory | block. Default: off.

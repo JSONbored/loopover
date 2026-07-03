@@ -332,7 +332,7 @@ function skipReasonForAnalyzer(
   // missing head SHA, no dependency manifest, etc.), leaking the claim forever with no outcome ever recorded.
   // An EXPLICIT request (req.analyzers) does not bypass this -- the circuit is about the dependency being
   // down right now, which an explicit request can't fix.
-  if (isAnalyzerCircuitOpen(descriptor.name)) return "circuit_open";
+  if (isAnalyzerCircuitOpen(descriptor.name, req)) return "circuit_open";
 
   return null;
 }

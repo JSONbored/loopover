@@ -6,6 +6,7 @@ import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../se
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig, VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES } from "../review/linked-issue-label-propagation";
+import { normalizeModerationLabel, normalizeModerationRules } from "../settings/moderation-rules";
 import { hasUnsafeWildcardCount } from "./change-guardrail";
 import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
@@ -93,6 +94,14 @@ export type FocusManifestGateConfig = {
   /** `gate.cla.checkRunName` (#2564): the CLA-bot check-run name to trust. null (unset) ⇒ check-run
    *  detection is not configured. */
   claCheckRunName: string | null;
+  /** `gate.cla.checkRunAppSlug`: the trusted GitHub App slug that must produce `checkRunName`. null (unset) ⇒
+   *  check-run detection remains unresolved rather than trusting a spoofable name-only match. */
+  claCheckRunAppSlug: string | null;
+  /** `gate.expectedCiContexts` (#selfhost-ci-verification): CI check/status context names to treat as
+   *  required when GitHub branch-protection required-status-checks are unreadable or unconfigured. null
+   *  (unset) ⇒ no generic fallback configured — the live-CI aggregate keeps today's fold-all behavior
+   *  when branch protection is also unreadable. See {@link RepositorySettings.expectedCiContexts}. */
+  expectedCiContexts: ReadonlyArray<string> | null;
 };
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
@@ -192,6 +201,10 @@ export type FocusManifestSettings = Partial<
     | "commandRateLimitMaxPerWindow"
     | "commandRateLimitAiMaxPerWindow"
     | "commandRateLimitWindowHours"
+    | "moderationGateMode"
+    | "moderationRules"
+    | "moderationWarningLabel"
+    | "moderationBannedLabel"
   >
 > & {
   // `typeLabels`/`linkedIssueLabelPropagation` are declared PARTIAL here (not via the `Pick<RepositorySettings,
@@ -374,6 +387,8 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   claMode: null,
   claConsentPhrase: null,
   claCheckRunName: null,
+  claCheckRunAppSlug: null,
+  expectedCiContexts: null,
 };
 
 const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
@@ -472,6 +487,15 @@ function normalizeStringList(value: JsonValue | undefined, field: string, warnin
     }
   }
   return result;
+}
+
+/** Like {@link normalizeStringList}, but returns `null` (not `[]`) when unset or when nothing survives
+ *  validation — the convention every OTHER `FocusManifestGateConfig` field uses for "not configured", so
+ *  the resolver's `!== null` overlay checks work uniformly. */
+function normalizeOptionalStringList(value: JsonValue | undefined, field: string, warnings: string[]): ReadonlyArray<string> | null {
+  if (value === undefined || value === null) return null;
+  const list = normalizeStringList(value, field, warnings);
+  return list.length > 0 ? list : null;
 }
 
 function normalizeEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], fallback: T, warnings: string[]): T {
@@ -652,6 +676,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     claMode: normalizeOptionalGateMode(record.claMode, "gate.claMode", warnings),
     claConsentPhrase: parsePublicSafeText(claRecord?.consentPhrase, "gate.cla.consentPhrase", warnings),
     claCheckRunName: parsePublicSafeText(claRecord?.checkRunName, "gate.cla.checkRunName", warnings),
+    claCheckRunAppSlug: parsePublicSafeText(claRecord?.checkRunAppSlug, "gate.cla.checkRunAppSlug", warnings),
+    expectedCiContexts: normalizeOptionalStringList(record.expectedCiContexts, "gate.expectedCiContexts", warnings),
   };
   // #2266: the flag is parsed, clamped, and threaded end-to-end, but the gate evaluator never reads it — a
   // maintainer who sets it to true believing it softens a blocker for newcomers gets no such effect. Surface
@@ -690,7 +716,9 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.requireFreshRebaseWindowMinutes !== null ||
     gate.claMode !== null ||
     gate.claConsentPhrase !== null ||
-    gate.claCheckRunName !== null;
+    gate.claCheckRunName !== null ||
+    gate.claCheckRunAppSlug !== null ||
+    gate.expectedCiContexts !== null;
   return gate;
 }
 
@@ -755,12 +783,14 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.premergeContentRecheck !== null) out.premergeContentRecheck = gate.premergeContentRecheck;
   if (gate.requireFreshRebaseWindowMinutes !== null) out.requireFreshRebaseWindow = gate.requireFreshRebaseWindowMinutes;
   if (gate.claMode !== null) out.claMode = gate.claMode;
-  if (gate.claConsentPhrase !== null || gate.claCheckRunName !== null) {
+  if (gate.claConsentPhrase !== null || gate.claCheckRunName !== null || gate.claCheckRunAppSlug !== null) {
     const cla: Record<string, JsonValue> = {};
     if (gate.claConsentPhrase !== null) cla.consentPhrase = gate.claConsentPhrase;
     if (gate.claCheckRunName !== null) cla.checkRunName = gate.claCheckRunName;
+    if (gate.claCheckRunAppSlug !== null) cla.checkRunAppSlug = gate.claCheckRunAppSlug;
     out.cla = cla;
   }
+  if (gate.expectedCiContexts !== null) out.expectedCiContexts = gate.expectedCiContexts as JsonValue;
   return out;
 }
 
@@ -1130,6 +1160,26 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (commandRateLimitAiMaxPerWindow !== null) out.commandRateLimitAiMaxPerWindow = commandRateLimitAiMaxPerWindow;
   const commandRateLimitWindowHours = normalizeOptionalPositiveInteger(r.commandRateLimitWindowHours, "settings.commandRateLimitWindowHours", warnings);
   if (commandRateLimitWindowHours !== null) out.commandRateLimitWindowHours = commandRateLimitWindowHours;
+  // Moderation-rules engine (#selfhost-mod-engine): per-repo override of the global moderation config.
+  const moderationGateMode = normalizeOptionalEnum(r.moderationGateMode, "settings.moderationGateMode", ["inherit", "off", "enabled"] as const, warnings);
+  if (moderationGateMode !== null) out.moderationGateMode = moderationGateMode;
+  // #gate-flagged: normalizeModerationRules returns an EMPTY rules array for two semantically different
+  // inputs -- a genuinely empty yml list (`moderationRules: []`, an intentional "opt every rule out for this
+  // repo") and a MALFORMED one (a non-array, or an array where every entry fails validation) that degrades to
+  // empty as its safe fallback. Applying the malformed case as an override would silently disable every rule
+  // for this repo instead of leaving the DB-configured value intact, so the two must be told apart by the RAW
+  // input's own shape -- not just the normalized result -- before assigning. A PARTIAL list (some valid, some
+  // invalid entries) still applies the surviving valid subset, mirroring autoCloseExemptLogins' behavior.
+  if (r.moderationRules !== undefined) {
+    const { rules, warnings: moderationRuleWarnings } = normalizeModerationRules(r.moderationRules);
+    warnings.push(...moderationRuleWarnings);
+    const intentionalEmptyList = Array.isArray(r.moderationRules) && r.moderationRules.length === 0;
+    if (rules.length > 0 || intentionalEmptyList) out.moderationRules = rules;
+  }
+  const moderationWarningLabel = normalizeModerationLabel(r.moderationWarningLabel);
+  if (moderationWarningLabel !== undefined) out.moderationWarningLabel = moderationWarningLabel;
+  const moderationBannedLabel = normalizeModerationLabel(r.moderationBannedLabel);
+  if (moderationBannedLabel !== undefined) out.moderationBannedLabel = moderationBannedLabel;
   return out;
 }
 
@@ -1523,6 +1573,8 @@ export function resolveEffectiveSettings(
   if (gate.claMode !== null) effective.claGateMode = gate.claMode;
   if (gate.claConsentPhrase !== null) effective.claConsentPhrase = gate.claConsentPhrase;
   if (gate.claCheckRunName !== null) effective.claCheckRunName = gate.claCheckRunName;
+  if (gate.claCheckRunAppSlug !== null) effective.claCheckRunAppSlug = gate.claCheckRunAppSlug;
+  if (gate.expectedCiContexts !== null) effective.expectedCiContexts = gate.expectedCiContexts;
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
   if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {

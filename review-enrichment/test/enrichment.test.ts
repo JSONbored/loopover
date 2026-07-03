@@ -1914,7 +1914,8 @@ test("renderBrief: renders the EOL block", () => {
   assert.match(r.promptSection, /End-of-life runtimes/);
   assert.match(
     r.promptSection,
-    /pins nodejs 18 — \*\*END-OF-LIFE\*\* \(EOL 2023-06-01\)/,
+    // product + version are now carried in a code span (safeCodeSpan), escaped like the actionPin sibling.
+    /pins `nodejs 18` — \*\*END-OF-LIFE\*\* \(EOL 2023-06-01\)/,
   );
 });
 

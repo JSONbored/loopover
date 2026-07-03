@@ -340,6 +340,44 @@ describe("durable PR-state cache (#2537)", () => {
       });
     });
 
+    it("REGRESSION: clears filesSyncedAt when a PR-state-only write advances headSha", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "owner/repo",
+        pullNumber: 65,
+        status: "complete",
+        headSha: "old-benign-head",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+
+      await primeDurablePrStateCache(env, "owner/repo", 65, { mergeable_state: "clean", state: "open", head: { sha: "new-unreviewed-head" } });
+
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 65)).toMatchObject({
+        prMergeableState: "clean",
+        prState: "open",
+        headSha: "new-unreviewed-head",
+        filesSyncedAt: null,
+      });
+    });
+
+    it("keeps filesSyncedAt when a PR-state-only write repeats the files-cache headSha", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestDetailSyncState(env, {
+        repoFullName: "owner/repo",
+        pullNumber: 66,
+        status: "complete",
+        headSha: "already-synced-head",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+
+      await primeDurablePrStateCache(env, "owner/repo", 66, { mergeable_state: "clean", state: "open", head: { sha: "already-synced-head" } });
+
+      expect(await getPullRequestDetailSyncState(env, "owner/repo", 66)).toMatchObject({
+        headSha: "already-synced-head",
+        filesSyncedAt: "2026-05-20T00:00:00.000Z",
+      });
+    });
+
     it("primes the cache so a subsequent cachedFetchLivePullRequestMergeState reads the primed value without a network call", async () => {
       const env = createTestEnv();
       let fetchCount = 0;

@@ -694,6 +694,7 @@ export function resetAiProviderHealthForTest(): void {
 const AI_PROVIDER_FAILURE_THRESHOLD = 3;
 const AI_PROVIDER_COOLDOWN_MS = 60_000;
 const aiProviderCircuits = new Map<string, { failures: number; cooldownUntil: number }>();
+const EXPECTED_EMBEDDING_ROUTING_ERRORS = new Set(["claude_code_no_embed", "codex_no_embed"]);
 
 /** Test-only reset so circuit state from one test can't leak into the next (module-level map). */
 export function resetAiProviderCircuitBreakerForTest(): void {
@@ -770,6 +771,10 @@ function requestKind(options: AiRunOptions): "embedding" | "review" {
   return Array.isArray(options.text) ? "embedding" : "review";
 }
 
+function isExpectedEmbeddingRoutingError(options: AiRunOptions, error: unknown): boolean {
+  return requestKind(options) === "embedding" && EXPECTED_EMBEDDING_ROUTING_ERRORS.has(errorMessage(error));
+}
+
 async function runProviderWithOtel(
   provider: { name: string; ai: SelfHostAi },
   model: string,
@@ -791,6 +796,7 @@ async function runProviderWithOtel(
     aiProviderCircuits.delete(provider.name);
     return result;
   } catch (error) {
+    if (isExpectedEmbeddingRoutingError(options, error)) throw error;
     incr("gittensory_ai_provider_failures_total", { provider: provider.name });
     // Re-read the map here rather than reusing the `circuit` captured above: that read happened BEFORE the
     // `await` on the real provider call, so under concurrent same-provider calls it can be stale by the time

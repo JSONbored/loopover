@@ -51,6 +51,22 @@ describe("sync data quality", () => {
     });
   });
 
+  it("counts a segment-only repo once in degradedRepos instead of double-counting it as missing", () => {
+    // A repo with segment rows but no sync-state row appears in the state+segment
+    // union, so it already surfaces as an unknown-status quality. It must not also
+    // inflate missingRepoCount, or degradedRepos would exceed repoCount.
+    const fidelity = buildSignalFidelity(1, [], [segment({ repoFullName: "owner/only-segment", segment: "open_issues", status: "complete" })]);
+
+    expect(fidelity).toMatchObject({
+      status: "degraded",
+      repoCount: 1,
+      completeRepos: 0,
+      degradedRepos: 1,
+      partialRepos: ["owner/only-segment"],
+    });
+    expect(fidelity.degradedRepos).toBeLessThanOrEqual(fidelity.repoCount);
+  });
+
   it("marks missing repo sync state as unknown at repo level", () => {
     expect(buildRepoDataQuality("owner/missing", null, [])).toMatchObject({
       status: "unknown",

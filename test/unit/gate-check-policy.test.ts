@@ -261,10 +261,11 @@ describe("CLA / license-compatibility gate (#2564)", () => {
   });
 
   it("resolveEffectiveSettings maps gate.claMode / gate.cla.{consentPhrase,checkRunName} onto the effective settings", () => {
-    const eff = resolveEffectiveSettings(settings({}), parseFocusManifest({ gate: { claMode: "block", cla: { consentPhrase: "I agree to the CLA", checkRunName: "CLA Assistant Lite" } } }));
+    const eff = resolveEffectiveSettings(settings({}), parseFocusManifest({ gate: { claMode: "block", cla: { consentPhrase: "I agree to the CLA", checkRunName: "CLA Assistant Lite", checkRunAppSlug: "cla-assistant" } } }));
     expect(eff.claGateMode).toBe("block");
     expect(eff.claConsentPhrase).toBe("I agree to the CLA");
     expect(eff.claCheckRunName).toBe("CLA Assistant Lite");
+    expect(eff.claCheckRunAppSlug).toBe("cla-assistant");
   });
 
   it("resolveEffectiveSettings leaves claGateMode unset when the manifest has no gate.claMode (byte-identical default)", () => {
@@ -272,6 +273,7 @@ describe("CLA / license-compatibility gate (#2564)", () => {
     expect(eff.claGateMode).toBeUndefined();
     expect(eff.claConsentPhrase).toBeUndefined();
     expect(eff.claCheckRunName).toBeUndefined();
+    expect(eff.claCheckRunAppSlug).toBeUndefined();
   });
 
   it("end-to-end: a manifest gate.claMode: block + consentPhrase blocks a PR missing CLA consent (acceptance criterion)", () => {

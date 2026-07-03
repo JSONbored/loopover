@@ -25,9 +25,16 @@ export type JobMessage =
       attempt: number;
     }
   | {
-      // One bounded re-gate unit fanned out by the scheduled sweep (#audit-sweep-fanout): re-review + stamp a
-      // single PR. Each candidate becomes its own individually-retryable, rate-limited queue message so the heavy
-      // re-review work interleaves with other jobs instead of monopolizing the consumer for all 25 at once.
+      // One bounded re-gate unit: re-review + stamp a single PR. Each candidate becomes its own individually-
+      // retryable, rate-limited queue message so the heavy re-review work interleaves with other jobs instead
+      // of monopolizing the consumer. Producers: the scheduled sweep's stale-candidate fan-out
+      // (#audit-sweep-fanout, deliveryId prefixed "regate-sweep:" — genuinely deferrable maintenance) and the
+      // sweep's own outage-repair fan-out (deliveryId prefixed "regate-repair:" — a PR missing a current-head
+      // Gate check or public-surface publish); a trailing coalesced re-review after a webhook burst; an
+      // over-cap sibling wake; a linked-issue-change re-review. EXCEPT for the "regate-sweep:" prefix, every
+      // producer carries the real webhook/event deliveryId that caused it — current-HEAD contributor-PR-review
+      // work, never background maintenance (isScheduledRegateSweepJob / githubRateLimitAdmissionTargetForJob in
+      // ../selfhost/queue-common.ts, #selfhost-queue-liveness).
       type: "agent-regate-pr";
       deliveryId: string;
       repoFullName: string;
@@ -160,9 +167,13 @@ export type JobMessage =
       runId: string;
     }
   | {
+      // Batched (#selfhost-maintenance-self-pin): every notification event detected from ONE webhook delivery
+      // (a review event plus any issue-watch matches) rides in a single job, instead of one job per event --
+      // that was flooding the maintenance lane with a job per watcher on a popular newly-opened issue. Always
+      // non-empty at enqueue time (see processors.ts); the processor evaluates every event in the batch.
       type: "notify-evaluate";
       requestedBy: "webhook" | "test";
-      event: DetectedNotificationEvent;
+      events: DetectedNotificationEvent[];
     }
   | {
       type: "notify-deliver";
@@ -213,6 +224,17 @@ export type JobMessage =
       // Enqueued by the cron every sweep cycle (≈2 min) ONLY when ORB_BROKER_ENABLED is set.
       type: "retry-orb-relay";
       requestedBy: "schedule" | "test";
+    }
+  | {
+      // Self-host backlog-convergence sweep (#selfhost-backlog-convergence): finds open PRs whose public review
+      // surface was never published for their current head (a blind spot the periodic re-gate sweep's dispatch-
+      // time stamping can miss — see selfhost/backlog-convergence.ts) and fans out one `agent-regate-pr` job per
+      // candidate. No `repoFullName` = fan-out: enqueue one per convergence-eligible repo, mirroring
+      // "agent-regate-sweep". With `repoFullName` = sweep that one repo's stale-surface open PRs.
+      type: "backlog-convergence-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
+      installationId?: number;
     };
 
 export type GitHubWebhookPayload = {
@@ -568,7 +590,7 @@ export type RepositorySettings = {
    *  only — no DB column or dashboard toggle; set via `.gittensory.yml gate.lockfileIntegrity`. */
   lockfileIntegrityGateMode?: GateRuleMode | undefined;
   /** CLA / license-compatibility gate (#2564). `off` (default/absent) = no CLA check at all; `advisory`/`block` =
-   *  evaluate the configured detection method(s) (`claConsentPhrase` and/or `claCheckRunName`) and raise a
+   *  evaluate the configured detection method(s) (`claConsentPhrase` and/or `claCheckRunName` + `claCheckRunAppSlug`) and raise a
    *  `cla_consent_missing` finding when neither confirms consent — `block` also hard-blocks the gate. Config-as-code
    *  only (no DB column, mirrors sizeGateMode) — set via `.gittensory.yml gate.claMode`. */
   claGateMode?: GateRuleMode | undefined;
@@ -577,10 +599,22 @@ export type RepositorySettings = {
    *  configured. Config-as-code only, alongside {@link claGateMode}. */
   claConsentPhrase?: string | null | undefined;
   /** `gate.cla.checkRunName`: the name of a separate CLA-bot check-run this repo also runs (e.g. "CLA Assistant
-   *  Lite"). A `success`/`neutral` conclusion for a check-run with this exact name (case-insensitive) also
-   *  satisfies consent. `null`/absent ⇒ check-run detection is not configured. Config-as-code only, alongside
-   *  {@link claGateMode}. */
+   *  Lite"). A `success`/`neutral` conclusion for a check-run with this exact name (case-insensitive), produced
+   *  by `claCheckRunAppSlug`, also satisfies consent. `null`/absent ⇒ check-run detection is not configured.
+   *  Config-as-code only, alongside {@link claGateMode}. */
   claCheckRunName?: string | null | undefined;
+  /** `gate.cla.checkRunAppSlug`: the trusted GitHub App slug that must have produced `claCheckRunName`. Required
+   *  for check-run detection so contributor-controlled same-name runs cannot satisfy a blocking CLA gate. */
+  claCheckRunAppSlug?: string | null | undefined;
+  /** `gate.expectedCiContexts` (#selfhost-ci-verification): maintainer-declared CI check/status context names to
+   *  treat as required when GitHub branch protection returns no readable required-status-checks (unconfigured,
+   *  or a 403 from a token lacking `administration:read` — common for GitHub App installations). Merged with any
+   *  branch-protection required contexts when both exist; used ALONE when branch protection is null/empty; a
+   *  repo with neither configured keeps the existing fold-all fail-closed behavior. A context missing from the
+   *  commit ⇒ pending; a completed red check for a listed context ⇒ failed; every listed context settled clean
+   *  ⇒ verified passed (no `ciCompletenessWarning`). Config-as-code only — no DB column; set via
+   *  `.gittensory.yml gate.expectedCiContexts`. */
+  expectedCiContexts?: ReadonlyArray<string> | null | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
    *  preview exactly what it would do before the maintainer flips to real enforcement. Default off. */
@@ -825,6 +859,21 @@ export type RepositorySettings = {
   /** Per-repo dry-run/shadow mode (#776): when true, the action layer records what it WOULD do without
    *  performing any GitHub mutation. Default false. */
   agentDryRun?: boolean | undefined;
+  /** Moderation-rules engine (#selfhost-mod-engine): whether the whole layer runs on THIS repo. `"inherit"`
+   *  (the DB default) defers to `global_moderation_config.enabled`; `"off"`/`"enabled"` force this repo
+   *  regardless of the global default. Always populated by the DB layer; optional so existing settings
+   *  fixtures/callers need not be touched. */
+  moderationGateMode?: "inherit" | "off" | "enabled" | undefined;
+  /** Moderation-rules engine: a per-repo override of WHICH of the three existing anti-abuse mechanisms
+   *  (contributor cap, blacklist, review-nag) feed a contributor's shared, cross-repo violation tally.
+   *  `undefined`/absent ⇒ inherit the global rule set (`resolveEffectiveModerationRules`'s default shape). */
+  moderationRules?: ("contributor_cap" | "blacklist" | "review_nag")[] | undefined;
+  /** Moderation-rules engine: per-repo override of the label applied at >=1 lifetime violation. `undefined` ⇒
+   *  the global config's `warningLabel` (itself defaulting to `"mod:warning"`). */
+  moderationWarningLabel?: string | undefined;
+  /** Moderation-rules engine: per-repo override of the label applied at >= the ban threshold. `undefined` ⇒
+   *  the global config's `bannedLabel` (itself defaulting to `"mod:banned"`). */
+  moderationBannedLabel?: string | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };
@@ -1428,6 +1477,11 @@ export type InstallationHealthRecord = {
   events: string[];
   checkedAt: string;
   errorSummary?: string | null | undefined;
+  // "broker" = a brokered self-host (ORB_ENROLLMENT_SECRET set, no local GitHub App private key by design).
+  // Permission/event introspection is not available through the token broker today, so missingPermissions /
+  // missingEvents are always [] in broker mode -- an EMPTY array there means "unchecked", not "all satisfied"
+  // the way it does for "local" mode. Consumers must branch on authMode, not infer it from empty arrays alone.
+  authMode: "local" | "broker";
 };
 
 export type ScoringModelSnapshotRecord = {

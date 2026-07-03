@@ -34,6 +34,7 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
       rees: ${{ steps.filter.outputs.rees }}
+      observability: ${{ steps.filter.outputs.observability }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -58,6 +59,9 @@ jobs:
               - '.github/workflows/**'
               - 'wrangler.jsonc'
               - 'worker-configuration.d.ts'
+            observability:
+              - 'grafana/dashboards/**'
+              - 'prometheus/rules/**'
             # The UI's own app/extension code -- triggers the FULL toolchain (lint/typecheck/test/build).
             # A dependency bump (package.json/package-lock.json) stays here too since it can break the UI
             # build or types in ways only that full toolchain would catch.
@@ -115,15 +119,14 @@ jobs:
               - 'review-enrichment/**'
               - '.github/workflows/ci.yml'
 
-  # Path-aware validation. Keep this as one self-hosted job so a PR uses one
-  # runner slot and one dependency install instead of fanning out into several
-  # competing installs on the same VPS. Fork PRs still run on GitHub-hosted
-  # runners because their code is untrusted.
+  # Path-aware validation. Keep this as one job so a PR uses one dependency
+  # install and one coverage upload. Run on GitHub-hosted runners while the
+  # self-hosted review stack is CPU constrained.
   validate-code:
     name: validate-code
     needs: changes
-    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.ui == 'true' }}
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && '["ubuntu-latest"]' || '["self-hosted","gittensory"]') }}
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
@@ -142,14 +145,10 @@ jobs:
       # actions/checkout wipes node_modules (git clean -ffdx) on every run regardless of the self-hosted
       # runner's own persistence, and npm ci always deletes+reinstalls node_modules by design -- so
       # neither the runner nor npm ci gives node_modules any real cross-run reuse on its own. This
-      # explicit restore/save pair (via GitHub's own cache service, not the wiped local disk) fills that
-      # gap: an exact manifest+lockfile match skips npm ci entirely. Keyed separately per fork/trusted
-      # (see the runs-on expression above) because self-hosted's Docker image and GitHub's ubuntu-latest
-      # image are not guaranteed binary-compatible for native modules (sharp, workerd, fsevents, ...) --
-      # crossing them could load an incompatible native binary. Fork PRs get read-only cache tokens (a
-      # documented actions/cache behavior), so a "fork"-keyed entry can never actually be written; that's
-      # fine, it just means fork PRs keep doing a full npm ci exactly as before -- no regression, no risk
-      # on the highest-stakes (no-retry) population.
+      # explicit restore/save pair (via GitHub's own cache service, not local disk) fills that gap: an
+      # exact manifest+lockfile match skips npm ci entirely. Keep fork/trusted keys separate even though
+      # both run on ubuntu-latest: fork PRs get read-only cache tokens, so a fork-keyed entry can never
+      # actually be written; trusted PRs keep their reusable cache without crossing trust boundaries.
       - name: Restore node_modules cache
         id: node-modules-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -204,6 +203,9 @@ jobs:
       - name: cf-typegen drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run cf-typegen:check
+      - name: Validate observability configs
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.observability == 'true' }}
+        run: npm run selfhost:validate-observability
       - name: Typecheck
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run typecheck
@@ -220,11 +222,8 @@ jobs:
           # above) didn't change. mcp-output-schemas.test.ts is never in the exclude list -- see that filter's
           # comment for why it can't be safely narrowed.
           SKIP_MCP_CLI_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliHarness != 'true' }}
-        # Pinned to the self-hosted runner's actual Docker CPU quota (4), not "100%": Node's os.cpus()
-        # reports the HOST's full core count inside the container, ignoring the cgroup CPU limit, so
-        # --maxWorkers=100% oversubscribed the worker pool far past what the runner can actually execute
-        # in parallel, causing thrashing. A GitHub-hosted fork-PR runner has no such limit, but the
-        # standard 4-core GitHub runner makes 4 the right number there too.
+        # Pinned to the standard GitHub-hosted runner's effective CPU budget; keeping this explicit avoids
+        # accidental worker-pool thrash if os.cpus() reports a larger host in a future runner image.
         run: |
           EXCLUDE_ARGS=()
           if [ "$SKIP_MCP_CLI_HARNESS" = "true" ]; then

@@ -70,11 +70,30 @@ describe step ordering via `dependsOn` but never actuate anything.
 `opportunityCompetitionFactor` in `src/signals/reward-risk.ts`, producing a `[0, 1]` signal suitable for the ranker's
 `dupRisk` input.
 
+## Metadata opportunity signals
+
+`opportunity-metadata.ts` turns fan-out issue metadata into the five normalized ranker inputs:
+
+- `computeMetadataPotential` — label-based upside estimate
+- `computeMetadataFeasibility` — comment load + issue age + title quality
+- `computeMetadataDupRisk` — same-repo title overlap inside a candidate batch
+- `buildMetadataRankInput` — composes freshness, competition, lane fit, and the metadata heuristics
+- `rankMetadataOpportunities` — sorts candidates with `rankOpportunities`
+
+`computeOpportunityFreshness` and `computeOpportunityCompetition` mirror the hosted reward-risk helpers with pure,
+injected-clock semantics for local miners.
+
 ## AI Policy Map
 
 `scanAiPolicyText` and `resolveAiPolicyVerdict` provide the deterministic policy gate used by miner discovery.
 They only deny on small, explicit AI-contribution ban phrases in `AI-USAGE.md` or `CONTRIBUTING.md`; ambiguous,
 missing, or empty policy text stays allowed so discovery does not invent a ban.
+
+## Governor ledger
+
+`normalizeGovernorLedgerEvent` validates append-only governor decision rows before the local miner persists them.
+The vocabulary is fixed (`allowed`, `denied`, `throttled`, `kill_switch`) and unknown event types fail closed. This
+module defines the storage contract only — it does not wire into live governor enforcement yet. (#2328)
 
 ## MinerGoalSpec
 

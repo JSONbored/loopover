@@ -237,6 +237,7 @@ describe("data spine repositories", () => {
       permissions: { checks: "write" },
       events: ["issues", "pull_request", "repository"],
       checkedAt: "2026-05-23T00:00:00.000Z",
+      authMode: "local",
     });
     expect(await getInstallationHealth(env, 123)).toMatchObject({ status: "healthy" });
     expect(await listInstallationHealth(env)).toHaveLength(1);
@@ -417,6 +418,7 @@ describe("data spine repositories", () => {
       permissions: {},
       events: [],
       checkedAt: "2026-05-23T00:00:00.000Z",
+      authMode: "local",
     });
     await env.DB.prepare("update installation_health set status = ? where installation_id = ?").bind("weird", 999).run();
     expect(await getInstallationHealth(env, 999)).toMatchObject({ status: "needs_attention" });

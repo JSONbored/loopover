@@ -169,8 +169,23 @@ export function buildDualReviewNotes(args: {
   const { main: assessment, nits: aiNitLines } = splitAiReviewNits(
     args.aiReview?.notes?.trim() ?? "",
   );
-  const consensusBlocker = args.consensusDefect
+  // The consensus defect is a REAL blocker only when the gate itself promoted it (aiReviewGateMode: "block" —
+  // see src/rules/advisory.ts). When aiReviewGateMode is off/advisory (the default), `ai_consensus_defect` is
+  // still unconditionally added to advisory.findings (so it's always recoverable here), but the gate
+  // conclusion stays "success" and the PR still merges — labeling it a "Blocker" then is actively misleading
+  // (a green, auto-merging check-run next to a "1 blocker" chip). Fold it into the non-blocking Nits instead,
+  // clearly framed as advisory-only, so the comment never claims a merge is blocked when it will not be.
+  // (#2592 — the gate's own block/advisory decision is unchanged; this only fixes how the comment labels it.)
+  const consensusIsGateBlocking = (args.gateBlockers ?? []).some(
+    (finding) => finding.code === "ai_consensus_defect",
+  );
+  const consensusBlocker = args.consensusDefect && consensusIsGateBlocking
     ? [formatConsensusDefectBlocker(args.consensusDefect)]
+    : [];
+  const consensusAdvisoryNits = args.consensusDefect && !consensusIsGateBlocking
+    ? [publicSafeNit(`${formatConsensusDefectBlocker(args.consensusDefect)} (advisory only — not configured to block merge)`)].filter(
+        (line): line is string => line !== null,
+      )
     : [];
   // FIX D1: fold the gate's own hard blockers into the reviewer blockers (so a non-AI gate failure populates
   // "Why this is blocked"). Exclude `ai_consensus_defect` (already surfaced via consensusDefect → appears once)
@@ -198,8 +213,9 @@ export function buildDualReviewNotes(args: {
   const aiNits = aiNitLines
     .map((line) => publicSafeNit(line))
     .filter((line): line is string => line !== null);
-  const nits = [...aiNits, ...gateNits];
-  if (!assessment && blockers.length === 0) return [];
+  // The advisory-only consensus defect leads the list (it's the most severe item even though non-blocking).
+  const nits = [...consensusAdvisoryNits, ...aiNits, ...gateNits];
+  if (!assessment && blockers.length === 0 && nits.length === 0) return [];
   const notes: ReviewNotes = {
     assessment,
     suggestions: [],

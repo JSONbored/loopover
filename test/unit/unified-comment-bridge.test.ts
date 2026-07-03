@@ -97,6 +97,8 @@ describe("buildDualReviewNotes", () => {
     const reviews = buildDualReviewNotes({
       aiReview: { notes: "The refactor looks correct." },
       consensusDefect: { title: "Off-by-one", detail: "Loop bound is wrong." },
+      // Present in gateBlockers ⇒ aiReviewGateMode: "block" actually promoted it — a REAL blocker (#2592).
+      gateBlockers: [{ code: "ai_consensus_defect", severity: "critical", title: "Off-by-one", detail: "Loop bound is wrong." }],
       warnings: [{ code: "w1", severity: "warning", title: "Missing test", detail: "...", action: "Add a test." }],
       recommendation: "close",
       verdict: "close",
@@ -114,6 +116,7 @@ describe("buildDualReviewNotes", () => {
   it("omits the ': detail' and ' — action' suffixes when the defect has no detail and the warning has no action", () => {
     const reviews = buildDualReviewNotes({
       consensusDefect: { title: "Null deref", detail: "" },
+      gateBlockers: [{ code: "ai_consensus_defect", severity: "critical", title: "Null deref", detail: "" }],
       warnings: [{ code: "w1", severity: "warning", title: "No test", detail: "..." }], // no `action`
       recommendation: "close",
       verdict: "close",
@@ -128,10 +131,59 @@ describe("buildDualReviewNotes", () => {
         title: "AI reviewers agree on a likely critical defect: src/types.ts:111 leaves `Finding` unclosed",
         detail: "src/types.ts:111 leaves `Finding` unclosed",
       },
+      gateBlockers: [
+        {
+          code: "ai_consensus_defect",
+          severity: "critical",
+          title: "AI reviewers agree on a likely critical defect: src/types.ts:111 leaves `Finding` unclosed",
+          detail: "src/types.ts:111 leaves `Finding` unclosed",
+        },
+      ],
       recommendation: "close",
       verdict: "close",
     });
     expect(reviews[0]?.notes?.blockers).toEqual(["src/types.ts:111 leaves `Finding` unclosed"]);
+  });
+
+  // #2592: aiReviewGateMode defaults to advisory, so a consensus defect DOES NOT reach gate.blockers by
+  // default even though it is unconditionally added to advisory.findings (see queue/processors.ts). The
+  // comment must not then label it a "Blocker" — that claims a merge is blocked when it will not be.
+  describe("consensus defect NOT promoted by the gate (aiReviewGateMode off/advisory — #2592)", () => {
+    it("routes the defect into Nits, clearly labeled advisory-only, instead of Blockers", () => {
+      const reviews = buildDualReviewNotes({
+        aiReview: { notes: "Looks mostly fine." },
+        consensusDefect: { title: "Off-by-one", detail: "Loop bound is wrong." },
+        // No gateBlockers containing ai_consensus_defect ⇒ the gate did NOT promote it (advisory mode).
+        recommendation: "merge",
+        verdict: "merge",
+      });
+      expect(reviews[0]?.notes?.blockers).toEqual([]);
+      expect(reviews[0]?.notes?.nits).toEqual(["Off-by-one: Loop bound is wrong. (advisory only — not configured to block merge)"]);
+    });
+
+    it("still surfaces the note when the defect is the ONLY reviewer-side content (no assessment, no blockers)", () => {
+      // Regression guard: before #2592 the early-return only checked `blockers.length === 0`, so an
+      // advisory-only defect with no aiReview.notes and no gate blockers would silently vanish entirely.
+      const reviews = buildDualReviewNotes({
+        consensusDefect: { title: "Null deref", detail: "src/foo.ts:12" },
+        recommendation: "merge",
+        verdict: "merge",
+      });
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0]?.notes?.blockers).toEqual([]);
+      expect(reviews[0]?.notes?.nits).toEqual(["Null deref: src/foo.ts:12 (advisory only — not configured to block merge)"]);
+    });
+
+    it("a gateBlockers list present but NOT containing ai_consensus_defect still treats the defect as advisory-only", () => {
+      const reviews = buildDualReviewNotes({
+        consensusDefect: { title: "Off-by-one", detail: "Loop bound is wrong." },
+        gateBlockers: [{ code: "missing_linked_issue", severity: "critical", title: "No linked issue", detail: "..." }],
+        recommendation: "merge",
+        verdict: "merge",
+      });
+      expect(reviews[0]?.notes?.blockers).toEqual(["No linked issue"]); // the real (non-AI) gate blocker still blocks
+      expect(reviews[0]?.notes?.nits).toEqual(["Off-by-one: Loop bound is wrong. (advisory only — not configured to block merge)"]);
+    });
   });
 
   it("demotes self-host environmental/process warnings out of the nits, keeping real code nits (#review-accuracy)", () => {

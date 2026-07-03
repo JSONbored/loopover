@@ -41,6 +41,7 @@ const CLI_COMMAND_SPEC = {
   preflight: [],
   "lint-pr-text": [],
   "slop-risk": [],
+  "issue-slop": [],
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear"],
   agent: ["plan", "status", "explain", "packet"],
@@ -1406,6 +1407,7 @@ async function runCli(args) {
   if (command === "init-client") return initClient(options);
   if (command === "lint-pr-text") return lintPrTextCli(args.slice(1));
   if (command === "slop-risk") return slopRiskCli(args.slice(1));
+  if (command === "issue-slop") return issueSlopCli(args.slice(1));
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
@@ -1539,6 +1541,40 @@ async function slopRiskCli(args) {
     return;
   }
   process.stdout.write(`Slop risk: ${payload.slopRisk} (${payload.band})\n`);
+  for (const finding of payload.findings ?? []) process.stdout.write(`- ${finding.title}: ${finding.detail}\n`);
+}
+
+function printIssueSlopHelp() {
+  process.stdout.write(
+    [
+      "Usage: gittensory-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]",
+      "",
+      "Assess deterministic issue slop risk from an issue title and body alone.",
+      "Mirrors the gittensory_check_issue_slop MCP tool and POST /v1/lint/issue-slop. Advisory only; no source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+async function issueSlopCli(args) {
+  if (!args.length || args[0] === "--help" || args[0] === "help") return printIssueSlopHelp();
+  const options = parseOptions(args);
+  let body = normalizeOptionalStringOption(options.body);
+  if (options.bodyFile) {
+    if (!existsSync(options.bodyFile)) throw new Error(`Body file not found: ${options.bodyFile}`);
+    body = readFileSync(options.bodyFile, "utf8");
+  }
+  const title = normalizeOptionalStringOption(options.title);
+  const payload = await apiPost("/v1/lint/issue-slop", {
+    ...(title !== undefined ? { title } : {}),
+    ...(body !== undefined ? { body } : {}),
+  });
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`Issue slop risk: ${payload.slopRisk} (${payload.band})\n`);
   for (const finding of payload.findings ?? []) process.stdout.write(`- ${finding.title}: ${finding.detail}\n`);
 }
 
@@ -1930,6 +1966,7 @@ function printHelp() {
   gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
   gittensory-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
+  gittensory-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
   gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
   gittensory-mcp agent status <run-id> [--json]
   gittensory-mcp agent explain <run-id> [--json]
@@ -2774,6 +2811,13 @@ function parsePositiveIntegerOption(value, flagName) {
   const parsed = optionalInteger(value);
   if (parsed === undefined || parsed <= 0) throw new Error(`Pass ${flagName} as a positive integer.`);
   return parsed;
+}
+
+function normalizeOptionalStringOption(value) {
+  if (value === undefined) return undefined;
+  if (value === true) return "";
+  if (typeof value === "string") return value;
+  throw new Error("Expected a string flag value.");
 }
 
 function optionalNumber(value) {

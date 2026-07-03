@@ -7406,6 +7406,11 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    // The global cap scopes its cross-repo query to THIS installation's own repo set (#2562 gate finding) --
+    // upsertInstallation's own `repositories` payload field is NOT persisted, so each repo must be registered
+    // explicitly against installation 123 or listOpenItemsForAuthorAcrossInstall would see zero repos.
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "JSONbored/repo-a", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-a", { number: 20, title: "Farmer PR on repo-a", state: "open", user: { login: "farmer99" }, head: { sha: "fa20" }, labels: [], body: "x" });
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer PR on repo-b", state: "open", user: { login: "farmer99" }, head: { sha: "fb10" }, labels: [], body: "y" });
     await upsertRepositorySettings(env, {
@@ -7435,6 +7440,10 @@ describe("queue processors", () => {
       if (url.includes("/issues/55/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
       if (url.includes("/issues/55/comments") && method === "POST") { seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? "")); return Response.json({ id: 1 }, { status: 201 }); }
       if (url.includes("/issues/55/comments")) return Response.json([]);
+      // Live-verification of the OTHER install-wide siblings (#2562, gate finding): the global cap
+      // live-confirms every OTHER counted item before trusting it toward the cap.
+      if (url.endsWith("/repos/JSONbored/repo-a/pulls/20")) return Response.json({ number: 20, state: "open" });
+      if (url.endsWith("/repos/JSONbored/repo-b/pulls/10")) return Response.json({ number: 10, state: "open" });
       return Response.json({});
     });
 
@@ -8458,6 +8467,8 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "JSONbored/repo-a", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertIssueFromGitHub(env, "JSONbored/repo-a", { number: 20, title: "Farmer issue on repo-a", state: "open", user: { login: "farmer99" }, labels: [], body: "x" });
     await upsertIssueFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer issue on repo-b", state: "open", user: { login: "farmer99" }, labels: [], body: "y" });
     // No contributorOpenIssueCap set — only the install-wide env cap should catch this.
@@ -8471,6 +8482,11 @@ describe("queue processors", () => {
       if (url.includes("/issues/62/labels") && method === "GET") return Response.json([]);
       if (url.includes("/issues/62/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
       if (url.includes("/issues/62/comments") && method === "POST") { seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? "")); return Response.json({ id: 1 }, { status: 201 }); }
+      // Live-verification of the OTHER install-wide siblings (#2562, gate finding): the global cap
+      // live-confirms every OTHER counted item before trusting it toward the cap. Issues use the same
+      // GET /issues/{n} endpoint the issue-state fetcher reads (open PRs are also reachable there).
+      if (url.endsWith("/repos/JSONbored/repo-a/issues/20")) return Response.json({ number: 20, state: "open" });
+      if (url.endsWith("/repos/JSONbored/repo-b/issues/10")) return Response.json({ number: 10, state: "open" });
       return Response.json({});
     });
 
@@ -8488,7 +8504,7 @@ describe("queue processors", () => {
 
     expect(seen.closed).toBe(true);
     expect(seen.labels).toContain("over-contributor-limit");
-    expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open issues") && c.includes("across every repository it gates"))).toBe(true);
+    expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open pull requests and issues") && c.includes("across every repository it gates"))).toBe(true);
   });
 
   it("install-wide contributor open-item cap (#2562): off by default (env var unset) — an issue author spread across repos is never closed", async () => {
@@ -8500,6 +8516,8 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "JSONbored/repo-a", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertIssueFromGitHub(env, "JSONbored/repo-a", { number: 20, title: "Farmer issue on repo-a", state: "open", user: { login: "farmer99" }, labels: [], body: "x" });
     await upsertIssueFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer issue on repo-b", state: "open", user: { login: "farmer99" }, labels: [], body: "y" });
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/repo-a", autonomy: { close: "auto", label: "auto" } });
@@ -8577,6 +8595,8 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "JSONbored/repo-a", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertIssueFromGitHub(env, "JSONbored/repo-a", { number: 20, title: "Farmer issue on repo-a", state: "open", user: { login: "farmer99" }, labels: [], body: "x" });
     await upsertIssueFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer issue on repo-b", state: "open", user: { login: "farmer99" }, labels: [], body: "y" });
     // autonomy: {} (no acting classes granted) — the plan builds empty, so `planned.length > 0` is false.

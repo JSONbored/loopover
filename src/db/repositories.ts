@@ -3104,26 +3104,91 @@ export async function countOpenPullRequests(env: Env, fullName: string): Promise
   return Number(row?.count ?? 0);
 }
 
-/**
- * Install-wide open-item count for one author (#2562, anti-abuse): SUM of this author's open PRs + open
- * issues across EVERY repo tracked in this install's database -- deliberately NOT scoped by repoFullName,
- * unlike countOpenPullRequests/countOpenIssues above. This is what makes the globalContributorOpenItemCap
- * catch an actor spreading low-volume spam across several gated repos in the same self-hosted install: no
- * single repo's own cap trips, but the aggregate does. Same-database aggregate only -- no cross-instance
- * networking, mirroring the install-scoped singleton shape of global_contributor_blacklist. Case-insensitive
- * login match (mirrors loginMatches/findBlacklistEntry elsewhere in this file).
- */
-export async function countOpenItemsForAuthorAcrossRepos(env: Env, authorLogin: string): Promise<number> {
+export type OpenItemAcrossInstallRow = { repoFullName: string; number: number; kind: "pull_request" | "issue" };
+
+/** Repo full names belonging to ONE installation (#2562 gate finding): `pullRequests`/`issues` carry no
+ *  installation column of their own (only `repoFullName`, matched against `repositories.fullName` by
+ *  convention, no FK) -- so scoping a cross-repo query to one install means resolving its repo set FIRST,
+ *  mirroring the existing installation-scoped filter in markRepositoriesRemovedFromInstallation (same file)
+ *  rather than a SQL join, which this codebase doesn't otherwise use. */
+// #regate-review (gate finding): a fixed LIMIT that's quietly hit degrades the install-wide contributor cap from
+// "every repo in the install is counted" to a silent undercount -- an install (or an author's open items, below)
+// at or beyond the limit could bypass GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP with no signal anything was dropped. These
+// are raised far above any realistic install size / per-author open-item count so truncation should never occur
+// in practice; the audit event below makes it OBSERVABLE (not silent) on the rare install where it still does,
+// rather than pretending completeness the contract promises but the query can't actually guarantee at an
+// unbounded size.
+const INSTALLATION_REPO_LIST_LIMIT = 20_000;
+const AUTHOR_OPEN_ITEM_LIST_LIMIT = 20_000;
+
+async function auditListTruncated(env: Env, eventType: string, targetKey: string, detail: string): Promise<void> {
+  /* v8 ignore next -- defensive: recordAuditEvent is a same-module direct call (not interceptable via
+   * vi.spyOn on the module's exports the way a cross-module import site is), so a genuine write failure here
+   * would require corrupting the shared test D1 handle itself; the truncation detection above must never be
+   * allowed to throw and mask the (already-truncated) result this function's caller still needs to return. */
+  await recordAuditEvent(env, { eventType, outcome: "error", targetKey, detail }).catch(() => undefined);
+}
+
+async function listRepoFullNamesForInstallation(env: Env, installationId: number): Promise<string[]> {
   const db = getDb(env.DB);
-  const [[prRow], [issueRow]] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(pullRequests).where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin))),
-    db.select({ count: sql<number>`count(*)` }).from(issues).where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin))),
-  ]);
-  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
-  const prCount = Number(prRow?.count ?? 0);
-  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
-  const issueCount = Number(issueRow?.count ?? 0);
-  return prCount + issueCount;
+  const rows = await db.select({ fullName: repositories.fullName }).from(repositories).where(eq(repositories.installationId, installationId)).limit(INSTALLATION_REPO_LIST_LIMIT);
+  if (rows.length === INSTALLATION_REPO_LIST_LIMIT)
+    await auditListTruncated(
+      env,
+      "agent.global_open_item_cap.repo_list_truncated",
+      `installation:${installationId}`,
+      `installation has >= ${INSTALLATION_REPO_LIST_LIMIT} repos; the global contributor-cap check may undercount repos not included here`,
+    );
+  return rows.map((row) => row.fullName);
+}
+
+/**
+ * Install-wide open-item ROWS for one author (#2562, anti-abuse): every open PR + open issue by this author
+ * across EVERY repo THIS INSTALLATION gates in the SAME D1 database -- no cross-instance networking. Gate
+ * finding: one D1 database can serve MORE than one installation (the hosted product, or a self-host operator
+ * running more than one App install), so this MUST scope to `installationId`'s own repo set rather than
+ * querying the whole database, or a contributor's activity on a completely unrelated installation's repos
+ * could wrongly count toward -- and close -- a PR/issue here. This is what makes the globalContributorOpenItemCap
+ * catch an actor spreading low-volume spam across several gated repos in the SAME install: no single repo's own
+ * cap trips, but the aggregate does. Returns the actual rows (not just a count) so the caller can live-verify
+ * each one before trusting the aggregate toward an irreversible close -- gate finding: the stored DB cache can
+ * lag GitHub for a repo OTHER than the one the current webhook is for, and an inflated stale count must never
+ * itself trigger a close (mirrors the existing per-repo issue-cap's own sibling live-verification, #2479). The
+ * existing per-repo countOpenPullRequests/countOpenIssues stay scoped to one repo and are unaffected by this
+ * addition. Case-insensitive login match (mirrors loginMatches/findBlacklistEntry elsewhere in this file).
+ */
+export async function listOpenItemsForAuthorAcrossInstall(env: Env, installationId: number, authorLogin: string): Promise<OpenItemAcrossInstallRow[]> {
+  const repoNames = await listRepoFullNamesForInstallation(env, installationId);
+  if (repoNames.length === 0) return [];
+  const db = getDb(env.DB);
+  const prRows = await db
+    .select({ repoFullName: pullRequests.repoFullName, number: pullRequests.number })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin), inArray(pullRequests.repoFullName, repoNames)))
+    .limit(AUTHOR_OPEN_ITEM_LIST_LIMIT);
+  if (prRows.length === AUTHOR_OPEN_ITEM_LIST_LIMIT)
+    await auditListTruncated(
+      env,
+      "agent.global_open_item_cap.author_items_truncated",
+      `${authorLogin}@installation:${installationId}`,
+      `author has >= ${AUTHOR_OPEN_ITEM_LIST_LIMIT} open pull requests across the install; the global contributor-cap check may undercount`,
+    );
+  const issueRows = await db
+    .select({ repoFullName: issues.repoFullName, number: issues.number })
+    .from(issues)
+    .where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin), inArray(issues.repoFullName, repoNames)))
+    .limit(AUTHOR_OPEN_ITEM_LIST_LIMIT);
+  if (issueRows.length === AUTHOR_OPEN_ITEM_LIST_LIMIT)
+    await auditListTruncated(
+      env,
+      "agent.global_open_item_cap.author_items_truncated",
+      `${authorLogin}@installation:${installationId}`,
+      `author has >= ${AUTHOR_OPEN_ITEM_LIST_LIMIT} open issues across the install; the global contributor-cap check may undercount`,
+    );
+  return [
+    ...prRows.map((row) => ({ repoFullName: row.repoFullName, number: row.number, kind: "pull_request" as const })),
+    ...issueRows.map((row) => ({ repoFullName: row.repoFullName, number: row.number, kind: "issue" as const })),
+  ];
 }
 
 // Anti-farming (#anti-gaming-flood): how many PRs this author has SUBMITTED to this repo since `sinceIso` (ANY

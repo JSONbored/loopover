@@ -169,11 +169,13 @@ export type AgentActionPlanInput = {
   // so — unlike the blacklist's private-reason close — they ARE interpolated into the public close comment.
   // `itemKind` selects the close-comment noun ("pull requests" for the PR-path caller, "issues" for the
   // issue-path caller, #2270) — REQUIRED (not defaulted) so a caller can't silently mislabel the other kind.
+  // "pull requests and issues" (#2562) is for the install-wide globalContributorOpenItemCap, whose count sums
+  // BOTH kinds across the install — a single-kind label there would misstate a mixed-kind contributor's count.
   // `scope` (#2562) selects the close-comment's cap description: "repository" (default when absent, back-compat
   // for every existing per-repo caller) says "this repository's configured limit"; "install" says "across every
   // repository this install gates, combined" for the install-wide globalContributorOpenItemCap. Same closeKind
   // ("contributor_cap") and label either way — this is a description-only distinction, not a new disposition.
-  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues"; scope?: "repository" | "install" | undefined } | undefined;
+  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" | "pull requests and issues"; scope?: "repository" | "install" | undefined } | undefined;
   // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.gittensory.yml`.
   // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit").
   contributorCapLabel?: string | undefined;
@@ -315,7 +317,7 @@ function blacklistCloseMessage(): string {
 // (#2562) picks the cap description: "repository" (default, back-compat for every existing per-repo caller) vs.
 // "install" for the install-wide globalContributorOpenItemCap — same message shape, closeKind, and label either
 // way, just an accurate noun phrase for where the count was aggregated.
-function contributorCapCloseMessage(authorLogin: string, openCount: number, cap: number, itemNoun: "pull requests" | "issues", scope?: "repository" | "install" | undefined): string {
+function contributorCapCloseMessage(authorLogin: string, openCount: number, cap: number, itemNoun: "pull requests" | "issues" | "pull requests and issues", scope?: "repository" | "install" | undefined): string {
   const scopeDescription = scope === "install" ? "this install's configured limit (across every repository it gates, combined)" : "this repository's configured limit";
   return `Gittensory closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above ${scopeDescription} of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
 }

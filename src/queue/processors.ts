@@ -1,7 +1,8 @@
 import {
   countOpenIssues,
-  countOpenItemsForAuthorAcrossRepos,
   countOpenPullRequests,
+  listOpenItemsForAuthorAcrossInstall,
+  type OpenItemAcrossInstallRow,
   getAgentCommandAnswer,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -2036,7 +2037,7 @@ async function runAgentMaintenancePlanAndExecute(
   // default) ⇒ this block is a no-op. A below-account-age-threshold author (#2561) gets a TIGHTER effective
   // cap (half, rounded up, minimum 1) — visibility/friction, still never a close on account age by itself
   // (the close, if any, is still tagged/reasoned as the ordinary contributor-cap close).
-  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues"; scope?: "repository" | "install" | undefined } | undefined;
+  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" | "pull requests and issues"; scope?: "repository" | "install" | undefined } | undefined;
   const contributorOpenPrCap =
     isNewAccount && typeof settings.contributorOpenPrCap === "number"
       ? Math.max(1, Math.ceil(settings.contributorOpenPrCap / 2))
@@ -2074,9 +2075,16 @@ async function runAgentMaintenancePlanAndExecute(
   if (contributorCapMatch === undefined && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
     const globalCap = resolveGlobalContributorOpenItemCap(env);
     if (globalCap !== null) {
-      const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, pr.authorLogin);
-      if (installOpenCount > globalCap) {
-        contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: installOpenCount, cap: globalCap, itemKind: "pull requests", scope: "install" };
+      const globalOpenCount = await verifiedGlobalOpenItemCount(env, installationId, pr.authorLogin, {
+        repoFullName,
+        number: pr.number,
+        kind: "pull_request",
+      });
+      if (globalOpenCount > globalCap) {
+        // verifiedGlobalOpenItemCount sums BOTH open PRs and open issues (gate finding) -- reporting this
+        // as "pull requests" when the author's over-cap total may include issues would be a factually wrong
+        // close message. "pull requests and issues" is accurate regardless of the actual split.
+        contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: globalOpenCount, cap: globalCap, itemKind: "pull requests and issues", scope: "install" };
       }
     }
   }
@@ -3932,6 +3940,78 @@ async function loadOpenQueueCounts(
 }
 
 /**
+ * True when one row from listOpenItemsForAuthorAcrossInstall is CONFIRMED still open on GitHub right now
+ * (#2562 gate finding): the stored DB cache can lag GitHub for a repo OTHER than the one this webhook is for
+ * (closed manually, by another automation, or by a webhook this instance hasn't processed yet) -- an inflated
+ * stale count must never itself trigger an irreversible close. Fail SAFE, not fail-open: a row this call
+ * cannot POSITIVELY confirm is still open is excluded from the count (mirrors the existing per-repo issue-cap's
+ * own sibling live-verification, #2479).
+ */
+async function isOpenItemRowStillLiveOpen(
+  env: Env,
+  row: OpenItemAcrossInstallRow,
+  liveToken: string | undefined,
+  admissionKey: GitHubRateLimitAdmissionKey | undefined,
+): Promise<boolean> {
+  if (row.kind === "issue") {
+    const liveState = await fetchLiveIssueState(env, row.repoFullName, row.number, liveToken, admissionKey).catch(() => undefined);
+    return liveState === "open";
+  }
+  const livePr = await fetchLivePullRequest(env, row.repoFullName, row.number, liveToken, admissionKey).catch(() => undefined);
+  return livePr?.state === "open";
+}
+
+// A contributor can have thousands of open rows across a large install (listOpenItemsForAuthorAcrossInstall
+// caps at 20,000 PRs + 20,000 issues) -- an unbounded Promise.all over every one of them would fire that many
+// concurrent GitHub API calls from a single webhook, exhausting the installation's rate limit for every OTHER
+// repo it gates. Bounded worker-pool fan-out, mirroring the same fixed-concurrency shape already used
+// elsewhere in this codebase for GitHub fan-out (e.g. src/github/backfill.ts's mapWithConcurrency).
+const GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY = 10;
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index] as T);
+      }
+    }),
+  );
+  return results;
+}
+
+/**
+ * Install-wide contributor open-item count, LIVE-VERIFIED and INSTALLATION-SCOPED (#2562, gate findings): the
+ * aggregate is scoped to `installationId`'s own repo set (a D1 database can serve MORE than one installation,
+ * so an unscoped aggregate could wrongly count a contributor's activity on a totally unrelated installation's
+ * repos toward a close here), and every OTHER counted item is live-verified before trusting it toward the cap
+ * (mirrors the existing per-repo issue-cap's own sibling live-verification, #2479). `currentItem` (the one THIS
+ * webhook just delivered) is trusted unverified, same as every other cap check in this file.
+ */
+async function verifiedGlobalOpenItemCount(
+  env: Env,
+  installationId: number,
+  authorLogin: string,
+  currentItem: { repoFullName: string; number: number; kind: "pull_request" | "issue" },
+): Promise<number> {
+  const rows = await listOpenItemsForAuthorAcrossInstall(env, installationId, authorLogin);
+  const otherRows = rows.filter(
+    (row) => !(row.repoFullName === currentItem.repoFullName && row.number === currentItem.number && row.kind === currentItem.kind),
+  );
+  const token = await createInstallationToken(env, installationId).catch(() => undefined);
+  const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
+  const confirmedOpen = await mapWithConcurrency(otherRows, GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY, (row) =>
+    isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey),
+  );
+  return confirmedOpen.filter(Boolean).length + 1;
+}
+
+/**
  * Per-contributor open-ISSUE cap (#2270, anti-abuse): the first `eventName === "issues"` actuation branch —
  * issues have no other auto-close path today. Mirrors the PR-path cap in runAgentMaintenancePlanAndExecute:
  * counts the author's currently-open issues on this repo (including this one), ranked by issue NUMBER
@@ -3981,8 +4061,12 @@ async function maybeCloseIssueOverContributorCap(
   // match here closes THIS issue directly (unlike the per-repo cap below, there is no cross-repo sibling set to
   // union/live-verify -- the aggregate count already covers every repo, so a single over-cap read is enough).
   if (globalCap !== null && !isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) {
-    const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, authorLogin);
-    if (installOpenCount > globalCap) {
+    const globalOpenCount = await verifiedGlobalOpenItemCount(env, installationId, authorLogin, {
+      repoFullName,
+      number: issue.number,
+      kind: "issue",
+    });
+    if (globalOpenCount > globalCap) {
       const planned = planAgentMaintenanceActions({
         conclusion: "skipped",
         blockerTitles: [],
@@ -3993,7 +4077,9 @@ async function maybeCloseIssueOverContributorCap(
         authorIsAdmin,
         authorIsAutomationBot,
         ciState: "unverified",
-        contributorCapMatch: { matched: true, authorLogin, openCount: installOpenCount, cap: globalCap, itemKind: "issues", scope: "install" },
+        // verifiedGlobalOpenItemCount sums BOTH open PRs and open issues (gate finding); "pull requests and
+        // issues" is accurate regardless of the actual split, unlike a hardcoded single kind.
+        contributorCapMatch: { matched: true, authorLogin, openCount: globalOpenCount, cap: globalCap, itemKind: "pull requests and issues", scope: "install" },
         contributorCapLabel: settings.contributorCapLabel,
         pr: { labels: [] },
       });

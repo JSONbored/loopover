@@ -17,19 +17,74 @@ const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 // excluded: they are not the hand-authored public surface this scan is about.
 const ENTRYPOINT_RE = /(?:^|\/)index\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const SKIP_RE = /(?:\.d\.ts$|\.min\.|\.test\.|\.spec\.|__tests__\/|(?:^|\/)(?:dist|build|vendor)\/)/;
-// A DIRECT exported declaration and its symbol name (matched on the line body, without the diff `+`). Anchored at
-// column 1 so only TOP-LEVEL module exports are considered public surface: an INDENTED `export` (e.g. a member of
-// an unexported `namespace Internal { … }`) is intentionally NOT scanned, since it is not a public module export.
+// A DIRECT exported declaration and its kind (matched on the line body, without the diff `+`). Anchored at column 1
+// so only TOP-LEVEL module exports are considered public surface: an INDENTED `export` (e.g. a member of an
+// unexported `namespace Internal { … }`) is intentionally NOT scanned, since it is not a public module export.
 const EXPORT_DECL_RE =
-  /^export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\s*\*?|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/;
+  /^export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(function\s*\*?|const|let|var|class|interface|type|enum)\s+/;
+const IDENT_RE = /^[A-Za-z_$][\w$]*/;
 
 interface ScanOptions {
   signal?: AbortSignal;
 }
 
-/** Added export declarations in a unified diff, each with its NEW-file line number. Walks hunk headers to track the
- *  new-file cursor; only `+` lines that declare a direct export are collected (`-`/`\` lines never advance the new
- *  cursor, `+++`/`---` headers are ignored). Pure. */
+/** Split a `const`/`let`/`var` declarator list on TOP-LEVEL commas, tracking ()/{}/[] depth and string literals so a
+ *  comma inside an initializer (`f(1, 2)`, `[1, 2]`) does not split, and stopping at the first top-level `;`. Pure. */
+function splitTopLevelCommas(src: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!;
+    if (quote) {
+      if (ch === quote && src[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "{" || ch === "[") depth += 1;
+    else if (ch === ")" || ch === "}" || ch === "]") depth = Math.max(0, depth - 1);
+    else if (ch === ";" && depth === 0) {
+      parts.push(src.slice(start, i));
+      return parts; // the declarator list ends at the statement terminator
+    } else if (ch === "," && depth === 0) {
+      parts.push(src.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(src.slice(start));
+  return parts;
+}
+
+/** The exported symbol name(s) a line body declares (no diff `+`), or [] if it is not a direct export declaration.
+ *  `function/class/interface/type/enum` declare a single symbol; a `const/let/var` line may declare SEVERAL via a
+ *  comma-separated declarator list (`export const a = 1, b = 2`). A declarator whose binding is not a plain
+ *  identifier (destructuring `{…}`/`[…]`, or an identifier not followed by `=`/`:`/`!`/`?`/end) is skipped
+ *  conservatively, so a comma inside a generic type (`Map<K, V>`) can't fabricate a `V` binding. Pure. */
+export function exportedSymbols(lineBody: string): string[] {
+  const decl = EXPORT_DECL_RE.exec(lineBody);
+  if (!decl) return [];
+  const rest = lineBody.slice(decl[0].length);
+  if (decl[1] !== "const" && decl[1] !== "let" && decl[1] !== "var") {
+    const name = IDENT_RE.exec(rest);
+    return name ? [name[0]] : [];
+  }
+  const symbols: string[] = [];
+  for (const part of splitTopLevelCommas(rest)) {
+    const trimmed = part.trim();
+    if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[")) continue; // destructuring — not enumerable
+    const name = IDENT_RE.exec(trimmed);
+    if (!name) continue;
+    const after = trimmed.slice(name[0].length).trimStart();
+    if (after === "" || /^[=:!?]/.test(after)) symbols.push(name[0]); // a real binding, not e.g. `V>` from a generic
+  }
+  return symbols;
+}
+
+/** Added export declarations in a unified diff, each exported symbol with its NEW-file line number. Walks hunk
+ *  headers to track the new-file cursor; only `+` lines that declare a direct export are collected (`-`/`\` lines
+ *  never advance the new cursor, `+++`/`---` headers are ignored). A multi-declarator line yields one entry per
+ *  binding, all sharing the same line. Pure. */
 export function parseAddedExports(patch: string): Array<{ symbol: string; newLine: number }> {
   const out: Array<{ symbol: string; newLine: number }> = [];
   let newLine = 0;
@@ -41,8 +96,7 @@ export function parseAddedExports(patch: string): Array<{ symbol: string; newLin
     }
     if (raw.startsWith("+")) {
       if (!raw.startsWith("+++")) {
-        const decl = EXPORT_DECL_RE.exec(raw.slice(1));
-        if (decl) out.push({ symbol: decl[1]!, newLine });
+        for (const symbol of exportedSymbols(raw.slice(1))) out.push({ symbol, newLine });
         newLine += 1;
       }
     } else if (!raw.startsWith("-") && !raw.startsWith("\\")) {
@@ -162,7 +216,7 @@ export async function scanUndocumentedExport(
       if (line === undefined) continue;
       // Confirm the export still declares this symbol at that line in the FINAL file (patch/head aligned); a mismatch
       // means the line moved or changed, so fail closed and skip it.
-      if (EXPORT_DECL_RE.exec(line)?.[1] !== symbol) continue;
+      if (!exportedSymbols(line).includes(symbol)) continue;
       if (hasPrecedingDocComment(lines, idx)) continue;
       findings.push({ file: file.path, line: newLine, symbol });
       if (findings.length >= MAX_FINDINGS) return findings;

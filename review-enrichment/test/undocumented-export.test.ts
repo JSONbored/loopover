@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseAddedExports,
+  exportedSymbols,
   hasPrecedingDocComment,
   scanUndocumentedExport,
 } from "../dist/analyzers/undocumented-export.js";
@@ -33,6 +34,25 @@ test("parseAddedExports: collects direct added exports with new-file line number
   // context/deletions keep the new-line cursor aligned; `export { x }` and `export *` are not direct declarations
   const mixed = ["@@ -5,2 +5,3 @@", " const keep = 1;", "-old", "+export type Added = string;", "+export { Added };", "+export * from './x';"].join("\n");
   assert.deepEqual(parseAddedExports(mixed), [{ symbol: "Added", newLine: 6 }]);
+});
+
+test("exportedSymbols: multi-declarator const/let/var reports every binding; generics don't fabricate names", () => {
+  assert.deepEqual(exportedSymbols("export const a = 1, b = 2;"), ["a", "b"]);
+  assert.deepEqual(exportedSymbols("export let x = f(1, 2), y = 3;"), ["x", "y"]); // comma inside a call doesn't split
+  assert.deepEqual(exportedSymbols("export const m: Map<K, V> = new Map(), n = 2;"), ["m", "n"]); // no fabricated `V`
+  assert.deepEqual(exportedSymbols("export function foo() {}"), ["foo"]); // single-symbol kinds unchanged
+  assert.deepEqual(exportedSymbols("export const { a, b } = obj;"), []); // destructuring skipped (conservative)
+  assert.deepEqual(exportedSymbols("const notExported = 1;"), []); // not an export
+});
+
+test("scanUndocumentedExport: a multi-declarator export reports EVERY undocumented binding", async () => {
+  const patch = ["@@ -0,0 +1,1 @@", "+export const alpha = 1, beta = 2;"].join("\n");
+  const head = "export const alpha = 1, beta = 2;";
+  const findings = await scanUndocumentedExport(req([{ path: "src/index.ts", status: "modified", patch }]), headFetch(head));
+  assert.deepEqual(findings, [
+    { file: "src/index.ts", line: 1, symbol: "alpha" },
+    { file: "src/index.ts", line: 1, symbol: "beta" },
+  ]);
 });
 
 test("hasPrecedingDocComment: a `//` line or block-comment end above (through blanks) counts as documented", () => {

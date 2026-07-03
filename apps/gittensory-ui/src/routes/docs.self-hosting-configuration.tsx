@@ -33,6 +33,12 @@ function SelfHostingConfiguration() {
       title="Configuration"
       description="The self-host configuration model: deployment env, private per-repo policy, feature flags, and review modes."
     >
+      <p>
+        This page is the exhaustive reference. For the short path — the required secrets plus a
+        conservative first-boot config — start with <code>.env.selfhost.example</code> in{" "}
+        <Link to="/docs/self-hosting-quickstart">Quickstart</Link> instead.
+      </p>
+
       <h2>Config layers</h2>
       <FeatureRow
         items={[

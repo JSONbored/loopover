@@ -34,42 +34,78 @@ function SelfHostingQuickstart() {
     >
       <h2>1. Copy the sample env</h2>
       <p>
-        The sample env contains placeholders only. Keep your real <code>.env</code> out of git and
-        prefer mounted secret files for multiline values like the GitHub App private key.
+        <code>.env.selfhost.example</code> is the short path: required secrets plus a conservative
+        first-boot config, with nothing about the Cloudflare Worker deploy. Copy it and fill in the
+        placeholders — keep your real <code>.env</code> out of git and prefer mounted secret files
+        for multiline values like the GitHub App private key.
       </p>
       <CodeBlock
         lang="bash"
-        code={`cp .env.example .env
+        code={`cp .env.selfhost.example .env
 # edit .env`}
       />
+      <Callout variant="note">
+        <code>.env.selfhost.example</code> already ships a conservative starting config —{" "}
+        <code>dry-run</code> mode, a small repo allowlist, unified comments, safety, and grounding,
+        with AI, RAG, and REES left off. Switch to live only after webhook delivery, logs, and
+        review output match expectations. For every optional env var (observability, backup,
+        additional AI providers) see <code>.env.example</code>'s self-host section or the{" "}
+        <Link to="/docs/self-hosting-configuration">generated reference table</Link>.
+      </Callout>
 
-      <h2>2. Start conservative</h2>
+      <h2>2. Choose your AI provider (optional)</h2>
       <p>
-        Begin with a small allowlist, unified comments, safety, and grounding. Leave AI, RAG, and
-        REES off until webhook delivery and deterministic review are working.
+        Skip this step for a fully deterministic review (no AI). Otherwise uncomment ONE block in{" "}
+        <code>.env.selfhost.example</code> — Claude Code, Codex, or both. The self-host image
+        bundles both CLIs by default; credentials and provider choice are runtime-only.
       </p>
       <CodeBlock
         filename=".env"
-        code={`SELFHOST_DEPLOYMENT_MODE=dry-run
-GITTENSORY_REVIEW_REPOS=owner/repo
-GITTENSORY_REVIEW_UNIFIED_COMMENT=true
-GITTENSORY_REVIEW_SAFETY=true
-GITTENSORY_REVIEW_GROUNDING=true
-GITTENSORY_REVIEW_RAG=false
-GITTENSORY_REVIEW_ENRICHMENT=false`}
+        code={`# Claude Code only
+AI_PROVIDER=claude-code
+CLAUDE_CODE_OAUTH_TOKEN=          # from \`claude setup-token\`
+
+# Codex only — requires the explicit unsafe-reviewer opt-in below (see Callout)
+AI_PROVIDER=codex
+GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1
+
+# Both, synthesized into one decision
+AI_PROVIDER=claude-code,codex
+AI_COMBINE=synthesis`}
       />
-      <Callout variant="note">
-        <code>dry-run</code> computes reviews but suppresses writes. Switch to live only after
-        webhook delivery, logs, and review output match expectations.
+      <Callout variant="warn" title="Codex is fail-closed by default">
+        Codex stores its OAuth credential in <code>auth.json</code> on the same filesystem that
+        prompt-influenced reviews can read, so it requires explicit opt-in (
+        <code>GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) and a mounted{" "}
+        <code>/data/codex</code> auth volume. Claude Code has no equivalent restriction. See{" "}
+        <Link to="/docs/self-hosting-ai-providers">AI providers</Link> for the full reference.
       </Callout>
 
       <h2>3. Boot the stack</h2>
+      <p>
+        <strong>Recommended: pull the published image.</strong> No local build, no Node toolchain —
+        the script pulls, restarts, and waits for the health check to pass.
+      </p>
       <CodeBlock
         lang="bash"
-        code={`docker compose up -d --build
+        code={`./scripts/deploy-selfhost-image.sh
 curl http://localhost:8787/health
 curl http://localhost:8787/ready`}
       />
+      <p>
+        Pin a specific release instead of <code>:latest</code>, or point at your own registry:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
+GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
+      />
+      <Callout variant="note" title="Building from source instead">
+        Contributors and anyone customizing the Dockerfile can still build locally —{" "}
+        <code>docker compose up -d --build</code> builds the <code>gittensory</code> service from
+        the checkout instead of pulling a published image. Everything else on this page (env, health
+        checks, GitHub App) is identical either way.
+      </Callout>
       <FeatureRow
         items={[
           {
@@ -88,6 +124,37 @@ curl http://localhost:8787/ready`}
         ]}
       />
 
+      <h2>Defaults at a glance</h2>
+      <p>
+        Nothing below needs a flag to start; everything past the first row needs an explicit{" "}
+        <code>--profile</code> (combine freely) or an explicit <code>AI_PROVIDER</code>.
+      </p>
+      <CodeBlock
+        lang="text"
+        code={`ENABLED BY DEFAULT (no flags needed)
+  gittensory app + Redis        SQLite database, dry-run-friendly, Orb telemetry (always-on, see below)
+
+RECOMMENDED FOR PRODUCTION (opt-in)
+  --profile postgres             shared/multi-instance database (pgvector-capable)
+  --profile pgbouncer            connection pooling in front of Postgres
+  --profile caddy                automatic HTTPS via Let's Encrypt
+  --profile litestream            continuous SQLite backup to S3-compatible storage
+  --profile observability        Prometheus + Alertmanager + Loki + Grafana
+
+OPT-IN, NOT REQUIRED FOR A TRIAL INSTANCE
+  --profile qdrant                dedicated RAG vector store (else sqlite-vec/pgvector)
+  --profile ollama                local model for AI review or embeddings
+  --profile tailscale             private network sidecar
+  --profile runners               self-hosted GitHub Actions runner
+  --profile backup                scheduled backup + backup-exporter jobs
+  AI_PROVIDER=...                 off by default; reviews are deterministic-only until set`}
+      />
+      <Callout variant="safety">
+        Orb fleet-calibration telemetry (verdict, outcome, cycle time — never repo names, code, or
+        logins) is on by default with no opt-out flag once your GitHub App is configured; set{" "}
+        <code>ORB_AIR_GAP=true</code> for an air-gapped instance that sends nothing.
+      </Callout>
+
       <h2>4. Install or connect the GitHub App</h2>
       <p>
         Point your App webhook to <code>https://your-host.example/v1/github/webhook</code>, set the
@@ -105,6 +172,13 @@ selfhost_ai_provider          # only when AI_PROVIDER is set
 selfhost_job_dead             # investigate immediately if present
 review_context_fetch_failed   # REES/RAG/grounding context failure`}
       />
+      <p>
+        A cold first boot on SQLite commonly logs a one-time{" "}
+        <code>selfhost_migrations_applied</code> burst and a brief Redis connection retry while the
+        sidecar finishes starting — both are expected and stop once the stack is warm. Anything else
+        that looks wrong, or a <code>/ready</code> that stays unhealthy past a couple minutes, is
+        covered in <Link to="/docs/self-hosting-troubleshooting">Troubleshooting</Link>.
+      </p>
       <p>
         After the deterministic path is stable, continue with{" "}
         <Link to="/docs/self-hosting-configuration">Configuration</Link> and then layer in AI, REES,

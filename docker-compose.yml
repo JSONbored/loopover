@@ -1,7 +1,12 @@
-# One-command self-host for gittensory (#980): docker compose up --build
+# Self-host for gittensory (#980). Two ways to boot the `gittensory` service — everything else on
+# this page (profiles, env, health checks) is identical either way:
 #
-# SECRETS: copy .env.example → .env, fill in your GitHub App credentials and any optional secrets.
-# The file is gitignored. Every value below is a sample placeholder — never commit real secrets.
+#   RECOMMENDED: ./scripts/deploy-selfhost-image.sh     # pulls the published image, no local build
+#   Building from source: docker compose up --build     # for contributors / custom Dockerfile changes
+#
+# SECRETS: copy .env.selfhost.example → .env (the focused self-host starter) or .env.example → .env
+# (the exhaustive reference) and fill in your GitHub App credentials and any optional secrets. The
+# file is gitignored. Every value in either sample is a placeholder — never commit real secrets.
 #
 # PROFILES — activate optional services by passing --profile <name> (combine freely):
 #
@@ -17,7 +22,8 @@
 #   --profile runners       GitHub Actions self-hosted runner
 #
 # Examples:
-#   docker compose up --build                                    # SQLite + Redis, no external AI
+#   ./scripts/deploy-selfhost-image.sh                            # SQLite + Redis, published image
+#   docker compose up --build                                    # SQLite + Redis, build from source
 #   docker compose --profile postgres --profile caddy up -d     # Postgres + HTTPS
 #   docker compose --profile observability up -d                 # metrics + logs + dashboards
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners

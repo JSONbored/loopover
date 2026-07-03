@@ -12,6 +12,7 @@ output/
 .env
 .env.*
 !.env.example
+!.env.selfhost.example
 docker-compose.override.yml
 !docker-compose.override.yml.example
 *.local

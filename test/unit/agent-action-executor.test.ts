@@ -267,6 +267,20 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(closePullRequest).not.toHaveBeenCalled();
   });
 
+  it("REGRESSION (#hard-blockers-not-ai-judgment): closeConcreteEvidence round-trips through the persist/replay round trip so a staged concrete-evidence close still bypasses the close-precision breaker at accept-time", () => {
+    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: true, reason: "leaked secret", closeComment: "closing", closeKind: "heuristic", closeConcreteEvidence: true };
+    const persisted = actionParams(concreteClose);
+    expect(persisted.closeConcreteEvidence).toBe(true);
+    const replayed = pendingActionToPlanned({ actionClass: "close", params: persisted, reason: concreteClose.reason });
+    expect(replayed.closeConcreteEvidence).toBe(true);
+  });
+
+  it("closeConcreteEvidence is omitted from persisted params when absent on the planned action (no stray key)", () => {
+    const ambiguousClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "verdict failed", closeComment: "closing", closeKind: "heuristic" };
+    const persisted = actionParams(ambiguousClose);
+    expect(persisted).not.toHaveProperty("closeConcreteEvidence");
+  });
+
   it("LIVE non-CI heuristic close proceeds when live CI is passing because the close reason is independent of CI", async () => {
     const env = createTestEnv({});
     // "not_required", not omitted: the planner always tags a fresh heuristic close explicitly (#2478).

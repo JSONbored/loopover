@@ -978,6 +978,12 @@ export type AgentPendingActionParams = {
   // ALWAYS set (to "failed" or "not_required") for a freshly planned heuristic close (#2478) -- never omitted --
   // so `undefined` unambiguously means a LEGACY row staged before this field existed, not "not CI-driven".
   closeRequiresCiState?: "failed" | "not_required";
+  // Persisted so the close-precision breaker's concrete-evidence exemption (see
+  // PlannedAgentAction.closeConcreteEvidence) still applies correctly when a staged heuristic close is later
+  // accepted -- without this, EVERY staged close would silently fall back to "not concrete" at accept-time and
+  // stay wrongly subject to the breaker even when it was planned from red CI, a conflict, a committed secret,
+  // or another concrete signal.
+  closeConcreteEvidence?: boolean;
   expectedHeadSha?: string;
   // For an `approve` action: retract the bot's own stale approval instead of posting a new one (see
   // PlannedAgentAction.dismissStaleApproval). Must round-trip through staging like every other action-specific

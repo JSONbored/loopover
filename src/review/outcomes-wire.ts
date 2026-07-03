@@ -39,6 +39,7 @@ import {
   maybeAutoClearHoldOnly,
 } from "./auto-tune";
 import { computeGateEval } from "./parity";
+import { GITTENSORY_NATIVE_SOURCE } from "./parity-wire";
 
 /** PURE: parse the PR number an "Reverts #N / Reverts owner/repo#N" body refers to (GitHub's revert PRs).
  *  Mirrors reviewbot runtime.ts parseRevertedPrNumber. Returns undefined when the body isn't a revert. */
@@ -101,6 +102,41 @@ export async function isCloseHoldOnly(
       }),
     );
     return false; // fail-OPEN: a DB blip must never silently change the close path
+  }
+}
+
+/** Every project currently holding a PER-PROJECT (not `:global`) `holdonly:`/`closehold:` flag. Used ONLY to
+ *  widen the auto-clear tick's candidate set beyond `report.rows` (#autoclear-deadlock) — the eval report only
+ *  contains a project once it has a fresh DECIDED sample in the window, but a breaker that is suppressing every
+ *  merge/close for a project stops that project from producing new decided samples at all, so a project with no
+ *  OTHER (e.g. merge-side) activity can silently never reappear in `report.rows` and its stuck flag would never
+ *  be reconsidered. `:global` is deliberately excluded here (mirrors {@link shouldAutoClear}: a human-set global
+ *  freeze is never auto-cleared, so it must never enter an auto-clear candidate set). Fail-open (empty) on a DB
+ *  error, matching every other flag read in this module. */
+async function listEngagedProjectScopes(env: Env): Promise<{ holdonly: string[]; closehold: string[] }> {
+  try {
+    const res = await env.DB.prepare(
+      "SELECT key, value FROM system_flags WHERE key LIKE 'holdonly:%' OR key LIKE 'closehold:%'",
+    ).all<{ key: string; value: string }>();
+    const holdonly: string[] = [];
+    const closehold: string[] = [];
+    for (const row of res.results ?? []) {
+      if (!flagTruthy(row.value)) continue;
+      const [prefix, ...rest] = row.key.split(":");
+      const project = rest.join(":");
+      if (!project || project === "global") continue;
+      if (prefix === "holdonly") holdonly.push(project);
+      else if (prefix === "closehold") closehold.push(project);
+    }
+    return { holdonly, closehold };
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        ev: "flags_read_error",
+        message: errorMessage(error).slice(0, 120),
+      }),
+    );
+    return { holdonly: [], closehold: [] };
   }
 }
 
@@ -448,7 +484,14 @@ const BREAKER_EVAL_WINDOW_DAYS = 90;
 
 /**
  * One precision-circuit-breaker tick, run on the scheduled (selftune) cron. Reads the gate-eval confusion
- * matrix over gittensory's OWN recorded pr_outcome/gate_decision rows, then engages/clears BOTH breakers:
+ * matrix over gittensory's OWN recorded pr_outcome/gate_decision rows -- SCOPED to `source: 'gittensory-native'`
+ * (#autoclear-deadlock / stale-source): review_audit can also carry historical `gate_decision` rows from the
+ * pre-convergence reviewbot engine (source='reviewbot'), which stopped running once a repo converged and so
+ * never grows. Reading across ALL sources (the pre-fix behavior) let a permanently-frozen legacy prediction set
+ * dominate a project's measured precision forever, with no way for it to ever reflect the LIVE gate's actual
+ * behavior -- exactly the scenario that leaves a breaker stuck: precision can never "recover" against data that
+ * never changes. Scoping to the live source makes the loop honest: it judges (and can only re-engage on) what
+ * THIS instance's own gate has actually predicted. It then engages/clears BOTH breakers:
  *   • MERGE: ENGAGES holdonly:<project> for any repo whose merge precision dropped below the floor over a real
  *     sample (applyAutoTune) — the would-MERGE → HOLD downgrade then kicks in on the next merge path; AUTO-CLEARS
  *     an auto-engaged breaker once its cooldown elapsed AND precision recovered (maybeAutoClearHoldOnly).
@@ -466,6 +509,7 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     const report: GateEvalReport = await computeGateEval(env, {
       days: BREAKER_EVAL_WINDOW_DAYS,
       nowMs,
+      source: GITTENSORY_NATIVE_SOURCE,
     });
     const flags = createFlagStore(env);
     const engaged = await applyAutoTune(flags, report);
@@ -507,22 +551,22 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
         }),
       );
     }
-    // Auto-clear any auto-engaged breaker (merge AND close) that has cooled down + recovered (one per repo in the report).
-    for (const row of report.rows) {
-      if (await maybeAutoClearHoldOnly(flags, report, row.project, nowMs)) {
-        console.log(
-          JSON.stringify({ ev: "breaker_auto_cleared", project: row.project }),
-        );
+    // Auto-clear any auto-engaged breaker (merge AND close) that has cooled down + recovered. Candidates are the
+    // UNION of report.rows (projects with a fresh decided sample) and every project currently holding a
+    // per-project flag (#autoclear-deadlock) — a project whose breaker is suppressing 100% of its merges/closes
+    // stops producing new decided samples for THAT action class and can drop out of report.rows entirely, which
+    // would otherwise strand its flag engaged forever regardless of how long the cooldown has elapsed.
+    const engagedScopes = await listEngagedProjectScopes(env);
+    const mergeClearCandidates = new Set([...report.rows.map((row) => row.project), ...engagedScopes.holdonly]);
+    const closeClearCandidates = new Set([...report.rows.map((row) => row.project), ...engagedScopes.closehold]);
+    for (const project of mergeClearCandidates) {
+      if (await maybeAutoClearHoldOnly(flags, report, project, nowMs)) {
+        console.log(JSON.stringify({ ev: "breaker_auto_cleared", project }));
       }
-      if (
-        await maybeAutoClearCloseHoldOnly(flags, report, row.project, nowMs)
-      ) {
-        console.log(
-          JSON.stringify({
-            ev: "close_breaker_auto_cleared",
-            project: row.project,
-          }),
-        );
+    }
+    for (const project of closeClearCandidates) {
+      if (await maybeAutoClearCloseHoldOnly(flags, report, project, nowMs)) {
+        console.log(JSON.stringify({ ev: "close_breaker_auto_cleared", project }));
       }
     }
   } catch (error) {

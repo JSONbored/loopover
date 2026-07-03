@@ -794,10 +794,13 @@ describe("downgradeMergeToHold — accuracy circuit-breaker (#self-improve / GAP
 });
 
 describe("downgradeCloseToHold — close-precision circuit-breaker (#close-precision-breaker)", () => {
-  // A REAL heuristic would-close plan from the planner: red CI on a contributor PR → changes-requested label +
-  // a heuristic close.
+  // A REAL heuristic would-close plan from the planner, backed by NO concrete evidence: a bare gate-verdict
+  // failure with no red CI, no conflict, no duplicate, and no gate-blocker code the breaker trusts (see
+  // CONCRETE_EVIDENCE_BLOCKER_CODES) — an unconfirmed/ambiguous verdict, exactly the class of close the
+  // breaker exists to catch. (Deliberately NOT CI-driven: a red-CI close is concrete evidence and now EXEMPT —
+  // see the closeConcreteEvidence describe block below.)
   const heuristicClosePlan = () =>
-    planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto", review_state_label: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], blockerTitles: ["x"], pr: { labels: [] } }));
+    planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto", review_state_label: "auto" }, ciState: "passed", blockerTitles: ["readiness score too low"], pr: { labels: [] } }));
   // A REAL deterministic linked-issue-hard-rule close (the exempt kind).
   const linkedIssueClosePlan = () =>
     planAgentMaintenanceActions(
@@ -813,8 +816,9 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
 
   it("a real heuristic would-CLOSE plan drops the close + adds needs-human-review + KEEPS changes-requested", () => {
     const plan = heuristicClosePlan();
-    // sanity: the planner really would heuristically close, with a changes-requested label.
-    expect(plan.some((a) => a.actionClass === "close" && a.closeKind === "heuristic")).toBe(true);
+    // sanity: the planner really would heuristically close, with a changes-requested label, and the close
+    // carries NO concrete evidence (so it stays subject to the breaker below).
+    expect(plan.some((a) => a.actionClass === "close" && a.closeKind === "heuristic" && a.closeConcreteEvidence === false)).toBe(true);
     expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(true);
     const held = downgradeCloseToHold(plan, true);
     expect(held.some((a) => a.actionClass === "close")).toBe(false); // the would-close is downgraded...
@@ -872,6 +876,77 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
     const nullishClose = { actionClass: "close", reason: "CI failing", closeKind: "heuristic" } as unknown as PlannedAgentAction;
     const heldNullish = downgradeCloseToHold([nullishClose], true);
     expect(heldNullish.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)?.requiresApproval).toBe(false);
+  });
+});
+
+describe("closeConcreteEvidence — concrete-evidence exemption from the close-precision breaker (#hard-blockers-not-ai-judgment)", () => {
+  const closeOf = (plan: ReturnType<typeof planAgentMaintenanceActions>) => plan.find((a) => a.actionClass === "close");
+
+  it("red CI (ciFailed) is concrete evidence — planned with closeConcreteEvidence: true", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("a base conflict (isConflict) is concrete evidence even with ciState passed (the isConflict OR-arm, ciFailed false)", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [], mergeableState: "dirty" } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("a deterministic linked-issue-overlap duplicate (linkedDuplicateCount > 0) is concrete evidence", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [], linkedDuplicateCount: 1 } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("linkedDuplicateCount absent (nullish ?? 0) does NOT count as concrete on its own", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
+  });
+
+  it("a committed secret (secret_leak) is concrete evidence via gateBlockerCodes", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["secret_leak"], blockerTitles: ["Possible leaked secret"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("a dual-model AI CONSENSUS defect (ai_consensus_defect) is concrete evidence — both reviewers independently agreed", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_consensus_defect"], blockerTitles: ["AI review found a defect"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("a SPLIT AI review (ai_review_split) is deliberately NOT concrete — the reviewers disagreed, stays ambiguous", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_review_split"], blockerTitles: ["AI reviewers disagreed"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
+  });
+
+  it("an unrecognized/unknown gate-blocker code stays NOT concrete (fail-safe: only explicitly classified codes are trusted)", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["some_future_code"], blockerTitles: ["x"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
+  });
+
+  it("a mix of one concrete + one non-concrete blocker code is still concrete (the concrete signal alone is sufficient)", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_review_split", "secret_leak"], blockerTitles: ["x", "y"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("the close-precision breaker EXEMPTS a concrete-evidence close even while engaged (the actual bug this fixes)", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto", review_state_label: "auto" }, ciState: "failed", failingCheckNames: ["ci"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeConcreteEvidence: true });
+    const held = downgradeCloseToHold(plan, true);
+    // Unlike a non-concrete heuristic close, this one SURVIVES the breaker unchanged.
+    expect(held).toBe(plan);
+    expect(held.some((a) => a.actionClass === "close")).toBe(true);
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(false);
+  });
+
+  it("downgradeCloseToHold still downgrades a non-concrete heuristic close alongside a KEPT concrete one", () => {
+    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "secret leaked", closeKind: "heuristic", closeConcreteEvidence: true };
+    const ambiguousClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "verdict failed", closeKind: "heuristic", closeConcreteEvidence: false };
+    const held = downgradeCloseToHold([concreteClose, ambiguousClose], true);
+    // Both are `closeKind: "heuristic"`, but only the non-concrete one gets swept (+ its replacement label) —
+    // this can't happen in a real plan (the planner emits at most one close), but proves the predicate
+    // discriminates on closeConcreteEvidence alone, not on closeKind or array position.
+    expect(held.some((a) => a === concreteClose)).toBe(true);
+    expect(held.some((a) => a === ambiguousClose)).toBe(false);
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(true);
   });
 });
 

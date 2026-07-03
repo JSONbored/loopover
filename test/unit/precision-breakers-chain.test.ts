@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPrecisionBreakers } from "../../src/queue/processors";
+import { applyPrecisionBreakers, precisionBreakerDowngradeDirections } from "../../src/queue/processors";
 import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, type PlannedAgentAction } from "../../src/settings/agent-actions";
 
 // The processors chaining at maybeRunAgentMaintenance:
@@ -40,5 +40,38 @@ describe("applyPrecisionBreakers — chaining the merge + close precision breake
     expect(out.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(true); // KEPT
     // needs-human-review added exactly once (the second downgrade is idempotent on the label).
     expect(out.filter((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toHaveLength(1);
+  });
+});
+
+describe("precisionBreakerDowngradeDirections — bounded-cardinality breaker-downgrade observability (#terminal-outcome-audit)", () => {
+  it("empty when neither breaker is engaged (the common, byte-identical path)", () => {
+    const planned = [readyLabel, mergeAction];
+    expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, false, false))).toEqual([]);
+  });
+
+  it("['merge'] when the merge breaker dropped a would-merge", () => {
+    const planned = [readyLabel, mergeAction];
+    expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, true, false))).toEqual(["merge"]);
+  });
+
+  it("['close'] when the close breaker dropped a heuristic would-close", () => {
+    const planned = [changesLabel, heuristicClose];
+    expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, false, true))).toEqual(["close"]);
+  });
+
+  it("['merge', 'close'] (stable order) when both breakers downgrade in the same pass", () => {
+    const planned = [readyLabel, mergeAction, changesLabel, heuristicClose];
+    expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, true, true))).toEqual(["merge", "close"]);
+  });
+
+  it("empty when closeHoldOnly is engaged but the only close present is concrete-evidence-exempt (not actually downgraded)", () => {
+    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "leaked secret", closeKind: "heuristic", closeConcreteEvidence: true };
+    const planned = [concreteClose];
+    expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, false, true))).toEqual([]);
+  });
+
+  it("empty when holdOnly is engaged but no merge was ever planned (nothing to downgrade)", () => {
+    const planned = [changesLabel];
+    expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, true, true))).toEqual([]);
   });
 });

@@ -676,6 +676,8 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     // Round-trip the CI dependency separately from closeKind: closeKind is intentionally broad (gate-verdict /
     // duplicate / slop / CI) for the close-precision breaker, but only red-CI closes need the live-CI guard.
     ...(action.closeRequiresCiState !== undefined ? { closeRequiresCiState: action.closeRequiresCiState } : {}),
+    // Round-trip the concrete-evidence tag so the breaker's exemption still applies when a staged close accepts.
+    ...(action.closeConcreteEvidence !== undefined ? { closeConcreteEvidence: action.closeConcreteEvidence } : {}),
   };
 }
 

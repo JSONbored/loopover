@@ -112,6 +112,7 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_regate_ai_skipped_current_total", { help: "Regate requests skipped because AI state is current.", type: "counter" }],
   ["gittensory_public_surface_publish_skipped_current_total", { help: "Public surface publishes skipped because state is current.", type: "counter" }],
   ["gittensory_gate_decisions_total", { help: "Gate decisions by conclusion.", type: "counter" }],
+  ["gittensory_precision_breaker_downgrades_total", { help: "Would-merge/would-close actions downgraded to a human hold by an accuracy circuit-breaker, by breaker direction.", type: "counter" }],
   ["gittensory_reviews_published_total", { help: "Published review comments.", type: "counter" }],
   ["gittensory_github_branch_protection_permission_denied_total", { help: "GitHub branch-protection reads denied by permissions.", type: "counter" }],
   ["gittensory_github_pr_files_fetch_total", { help: "GitHub pull-request file fetch attempts.", type: "counter" }],

@@ -6,6 +6,18 @@ type GitHubLabel = {
   name?: string | null;
 };
 
+function parseRepoFullName(repoFullName: string): { owner: string; repo: string } {
+  const parts = repoFullName.split("/");
+  const owner = parts[0];
+  const repo = parts[1];
+  // Reject any whitespace (leading, trailing, or per-segment like `owner/ repo`) so a padded slug can never
+  // reach a GitHub call — a valid owner/repo name never contains spaces.
+  if (parts.length !== 2 || !owner || !repo || /\s/.test(repoFullName)) {
+    throw new Error(`Invalid repository full name: ${repoFullName}`);
+  }
+  return { owner, repo };
+}
+
 export async function ensurePullRequestLabel(
   env: Env,
   installationId: number,
@@ -14,8 +26,7 @@ export async function ensurePullRequestLabel(
   labelName: string,
   options: { createMissingLabel: boolean; mode?: AgentActionMode },
 ): Promise<{ applied: boolean; created: boolean }> {
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   const token = await createInstallationToken(env, installationId);
   // Non-live mode suppresses the label create + apply writes; the GET dedup probe below still runs.
@@ -61,8 +72,13 @@ export async function ensurePullRequestLabel(
 /** Remove a single label from a PR if present. Best-effort — a 404 (label not on the PR) is ignored. Used to
  *  keep the mutually-exclusive managed TYPE labels (gittensor:bug/feature/priority) down to exactly one. */
 export async function removePullRequestLabel(env: Env, installationId: number, repoFullName: string, pullNumber: number, labelName: string, mode: AgentActionMode = "live"): Promise<void> {
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) return;
+  let owner: string;
+  let repo: string;
+  try {
+    ({ owner, repo } = parseRepoFullName(repoFullName));
+  } catch {
+    return;
+  }
   const token = await createInstallationToken(env, installationId);
   const octokit = makeInstallationOctokit(env, token, mode, githubRateLimitAdmissionKeyForInstallation(installationId));
   await octokit

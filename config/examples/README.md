@@ -159,6 +159,31 @@ Owner/admin/automation-bot logins and anyone on `autoCloseExemptLogins` are alwa
 the thread's own author is ever throttled — a third party mentioning the login on someone else's
 PR/issue never counts.
 
+## Linked-issue label propagation
+
+`settings.linkedIssueLabelPropagation` copies a label from a linked/closing issue onto the PR when
+the issue already carries it — the only mechanism that can ever select a maintainer-reward or
+moderation-weighted label; it is never inferred from a PR's title, changed files, AI output, or
+existing PR labels. If your labels carry that kind of weight, this is exactly the sort of rule that
+belongs in the private layer rather than the public `.gittensory.yml`, so a contributor can see
+*that* the mapping exists (via its effect) without being able to read the exact issue-label ->
+PR-label rules and game them:
+
+```yaml
+# .gittensory.yml (global default)
+settings:
+  linkedIssueLabelPropagation:
+    enabled: true
+    mode: exclusive_type_label
+    mappings:
+      - issueLabel: customer:vip
+        prLabel: triage:vip
+        removeOtherTypeLabels: false
+```
+
+A per-repo override's `mappings` list **replaces** the global default wholesale (the standard
+array-replace overlay semantics above) — it does not merge with it.
+
 ## What belongs here vs. in the public `.gittensory.yml`
 
 - **Private config** (this directory): anti-abuse thresholds, the contributor cap, maintainer/

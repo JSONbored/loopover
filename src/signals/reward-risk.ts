@@ -358,14 +358,18 @@ export function buildContributorRewardRiskStrategy(args: {
     [
     ...args.fit.opportunities.map((opportunity) => opportunity.repoFullName),
       ...args.outcomeHistory.repoOutcomes.filter((outcome) => registeredRepoNames.has(outcome.repoFullName.toLowerCase())).map((outcome) => outcome.repoFullName),
-    ...args.repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName),
+      ...args.repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName),
     ],
     registeredRepoNames,
   );
+  const issuesByRepo = groupByRepo(args.allIssues);
+  const pullRequestsByRepo = groupByRepo(args.allPullRequests);
+  const recentMergedPullRequestsByRepo = groupByRepo(args.recentMergedPullRequests ?? []);
   const repoAnalyses = candidateRepoNames
     .map((repoFullName) => {
       /* v8 ignore next -- Strategy inputs usually originate from repository records; null protects stale fit snapshots. */
       const repo = args.repositories.find((candidate) => sameRepo(candidate.fullName, repoFullName)) ?? null;
+      const repoKey = repoFullName.toLowerCase();
       return buildRepoRewardRisk({
         login: args.login,
         repo,
@@ -374,9 +378,9 @@ export function buildContributorRewardRiskStrategy(args: {
         outcomeHistory: args.outcomeHistory,
         scoringSnapshot: args.scoringSnapshot,
         scoringProfile: args.scoringProfile,
-        issues: args.allIssues.filter((issue) => sameRepo(issue.repoFullName, repoFullName)),
-        pullRequests: args.allPullRequests.filter((pr) => sameRepo(pr.repoFullName, repoFullName)),
-        recentMergedPullRequests: (args.recentMergedPullRequests ?? []).filter((pr) => sameRepo(pr.repoFullName, repoFullName)),
+        issues: issuesByRepo.get(repoKey) ?? [],
+        pullRequests: pullRequestsByRepo.get(repoKey) ?? [],
+        recentMergedPullRequests: recentMergedPullRequestsByRepo.get(repoKey) ?? [],
         repoLanguage: args.fit.languageFit.find((entry) => sameRepo(entry.repoFullName, repoFullName))?.language ?? null,
       });
     })
@@ -845,6 +849,18 @@ function issueAgeDays(value: string | null | undefined): number {
 
 function sameRepo(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
+}
+
+/** Bucket records by their `repoFullName` (case-insensitive) for O(1) per-repo lookups (#2112). */
+function groupByRepo<T extends { repoFullName: string }>(records: readonly T[]): Map<string, T[]> {
+  const buckets = new Map<string, T[]>();
+  for (const record of records) {
+    const key = record.repoFullName.toLowerCase();
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(record);
+    else buckets.set(key, [record]);
+  }
+  return buckets;
 }
 
 function uniqueRegisteredRepoNames(repoFullNames: string[], registeredRepoNames: Map<string, string>): string[] {

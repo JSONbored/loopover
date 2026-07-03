@@ -263,11 +263,16 @@ export function createSqliteQueue(
         [prefixLength, supersededKeyPrefix],
       ).rows[0] as { id: number } | undefined;
       if (existing) {
+        // created_at is deliberately NOT overwritten here (#selfhost-runtime-drift): it anchors the maintenance
+        // trickle's age clock (see maintenance-admission.ts). A periodic scheduler re-enqueuing the SAME still-
+        // pending maintenance need must coalesce into the existing row without resetting how long that need has
+        // genuinely been outstanding -- otherwise a re-enqueue cadence shorter than the trickle's maxDeferAgeMs
+        // (4h default) can keep re-arming the clock forever, and sustained pressure defers the job indefinitely.
         driver.query(
           `UPDATE ${TABLE}
-             SET payload=?, run_after=max(run_after, ?), created_at=?, priority=max(priority, ?), job_key=?, last_error=NULL
+             SET payload=?, run_after=max(run_after, ?), priority=max(priority, ?), job_key=?, last_error=NULL
            WHERE id=?`,
-          [payload, runAfter, now, priority, key, existing.id],
+          [payload, runAfter, priority, key, existing.id],
         );
         driver.query(
           `DELETE FROM ${TABLE}
@@ -285,11 +290,13 @@ export function createSqliteQueue(
         [key],
       ).rows[0] as { id: number } | undefined;
       if (existing) {
+        // See the supersededKeyPrefix branch above: created_at is preserved across a coalesced re-enqueue so the
+        // maintenance trickle clock reflects genuine wait time, not the most recent re-request.
         driver.query(
           `UPDATE ${TABLE}
-             SET payload=?, run_after=max(run_after, ?), created_at=?, priority=max(priority, ?), last_error=NULL
+             SET payload=?, run_after=max(run_after, ?), priority=max(priority, ?), last_error=NULL
            WHERE id=?`,
-          [payload, runAfter, now, priority, existing.id],
+          [payload, runAfter, priority, existing.id],
         );
         recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
         kickOne();
@@ -480,6 +487,23 @@ export function createSqliteQueue(
             { parentTraceParent: jobTraceParent },
           );
           return true;
+        }
+        // Force-admitted despite pressure (#selfhost-runtime-drift): a distinct signal from a normal clear-
+        // pressure admission -- it means the box has been under SUSTAINED load for the job's entire
+        // maxDeferAgeMs wait, not just a brief blip. A dashboard trending this alongside the deferred-by-reason
+        // counters distinguishes "load-shed maintenance is working as designed" from "maintenance is chronically
+        // starved and only ever runs via the trickle floor" (the "truly stuck" signal operators need).
+        if (decision.reason === "trickle_max_defer_age") {
+          recordQueueMetric(driver, "gittensory_jobs_maintenance_trickle_admitted_total");
+          incr("gittensory_jobs_maintenance_trickle_admitted_by_type_total", { job_type: message.type });
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "selfhost_queue_maintenance_trickle_admitted",
+              jobType: message.type,
+              pending_ms: Date.now() - job.created_at,
+            }),
+          );
         }
       }
       try {

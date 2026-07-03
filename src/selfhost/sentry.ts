@@ -17,7 +17,7 @@ import { hashedInstallationIdWith } from "./review-tracing";
 type SentryNs = typeof import("@sentry/node");
 type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
 type SentryMonitorConfig = NonNullable<Parameters<SentryNs["captureCheckIn"]>[1]>;
-export type SentryMonitorName = "scheduled-loop" | "orb-export" | "orb-relay-drain";
+export type SentryMonitorName = "scheduled-loop" | "orb-export" | "orb-relay-drain" | "orb-relay-register";
 type SentryScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setTag(key: string, value: string): void;
@@ -97,6 +97,16 @@ const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryM
   },
   "orb-relay-drain": {
     slug: "orb-relay-drain",
+    config: {
+      schedule: { type: "interval", value: 1, unit: "minute" },
+      checkinMargin: 2,
+      maxRuntime: 1,
+      failureIssueThreshold: 3,
+      recoveryThreshold: 1,
+    },
+  },
+  "orb-relay-register": {
+    slug: "orb-relay-register",
     config: {
       schedule: { type: "interval", value: 1, unit: "minute" },
       checkinMargin: 2,

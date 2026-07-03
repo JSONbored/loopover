@@ -165,7 +165,8 @@ import {
   reviewedPullRequestHeadSha,
   type PullRequestFreshness,
 } from "../github/pr-freshness";
-import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
+import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
+import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import {
@@ -6260,15 +6261,18 @@ async function maybePublishPrPublicSurface(
       return undefined;
   }
 
-  // Per-PR TYPE label (reviewbot auto-label parity): exactly ONE of gittensor:bug/feature/priority by the PR
-  // title + changed paths. Gated by `typeLabelsEnabled` (#label-decoupling), NOT `decision.willLabel` -- type
-  // labels are internal triage metadata, applied regardless of author type (bot/maintainer/missing-author) or
-  // the narrower reasons `willLabel` itself can be false (`oss_maintainer` mode + an unconfirmed miner,
-  // `autoLabelEnabled`, or the repo's `publicSurface` mode) -- see `typeLabelsEnabled`'s doc comment in
-  // types.ts. The ONE thing still respected is `publicAudienceMode: "gittensor_only"`'s stricter promise to
-  // stay entirely quiet for a non-confirmed-miner author (`not_official_gittensor_miner` /
-  // `miner_detection_unavailable`) -- that mode's whole point is total silence for that audience, not merely
-  // suppressing the context label, so a type label would violate it same as a comment would.
+  // Per-PR TYPE label (reviewbot auto-label parity): bug/feature by the PR title, or a configured
+  // `linkedIssueLabelPropagation` mapping (#priority-linked-issue-gate) -- the ONLY way a maintainer-
+  // reward label like gittensor:priority can ever be chosen; never inferred from title, changed
+  // files, AI output, or existing PR labels. Gated by `typeLabelsEnabled` (#label-decoupling), NOT
+  // `decision.willLabel` -- type labels are internal triage metadata, applied regardless of author
+  // type (bot/maintainer/missing-author) or the narrower reasons `willLabel` itself can be false
+  // (`oss_maintainer` mode + an unconfirmed miner, `autoLabelEnabled`, or the repo's `publicSurface`
+  // mode) -- see `typeLabelsEnabled`'s doc comment in types.ts. The ONE thing still respected is
+  // `publicAudienceMode: "gittensor_only"`'s stricter promise to stay entirely quiet for a
+  // non-confirmed-miner author (`not_official_gittensor_miner` / `miner_detection_unavailable`) --
+  // that mode's whole point is total silence for that audience, not merely suppressing the context
+  // label, so a type label would violate it same as a comment would.
   // `typeLabelsEnabled` is optional only for RepositorySettings-fixture-construction backward compat (see
   // its doc comment in types.ts); getRepositorySettings always resolves it to a concrete boolean, so the
   // `?? true` fallback is unreachable on this webhook-integration path (unlike a pure function such as
@@ -6282,43 +6286,49 @@ async function maybePublishPrPublicSurface(
     decision.skipReason !== "not_official_gittensor_miner"
   ) {
     try {
-      const contentGlobs =
-        (settings as { contentGlobs?: string[] }).contentGlobs ?? [];
-      // contentGlobs is a forward-compat hook, not yet wired to any real settings field (no caller ever
-      // populates it), so it is always [] today -- the content-glob branch below is unreachable in
-      // production and cannot be exercised by a realistic test.
-      /* v8 ignore start */
-      const typeFiles = contentGlobs.length > 0
-        ? await resolvePullRequestFilesForReview(env, {
-            installationId,
-            repoFullName,
-            pullNumber: pr.number,
-          }).catch(() => [] as Awaited<ReturnType<typeof listPullRequestFiles>>)
-        : [];
-      /* v8 ignore stop */
-      const chosenType = resolvePrTypeLabel({
+      // Same reasoning as `typeLabelsEnabled` above: `settings.typeLabels` is optional only for
+      // RepositorySettings-fixture-construction backward compat -- getRepositorySettings always
+      // resolves it to a concrete, complete PrTypeLabelSet (parseTypeLabelSet never returns
+      // undefined), so the `?? DEFAULT_TYPE_LABELS` fallback is unreachable on this webhook-
+      // integration path.
+      /* v8 ignore next -- see the comment above */
+      const typeLabels = settings.typeLabels ?? DEFAULT_TYPE_LABELS;
+      const propagation = settings.linkedIssueLabelPropagation;
+      // Caller-gated (mirrors shouldCollectLinkedIssueEvidence/resolveLinkedIssueHardRule's own
+      // cheap-check-before-fetch precedent): zero extra GitHub calls when propagation is off, which
+      // is the default -- a repo that never opts in pays nothing for this feature.
+      const linkedIssueLabels =
+        propagation?.enabled && pr.linkedIssues.length > 0
+          ? await fetchLinkedIssueLabelsForPropagation({
+              env,
+              repoFullName,
+              linkedIssues: pr.linkedIssues,
+              installationId,
+            })
+          : [];
+      const decisionResult = resolvePrTypeLabel({
         title: pr.title,
-        /* v8 ignore next -- see the contentGlobs note above; typeFiles is always [] today so this callback never runs */
-        changedPaths: typeFiles.map((file) => file.path),
-        contentGlobs,
+        linkedIssueLabels,
+        labels: typeLabels,
+        propagation,
       });
-      await ensurePullRequestLabel(
-        env,
-        installationId,
-        repoFullName,
-        pr.number,
-        chosenType,
-        { createMissingLabel: true, mode },
-      );
-      for (const other of ALL_TYPE_LABELS.filter(
-        (label) => label !== chosenType,
-      )) {
+      for (const label of decisionResult.applyLabels) {
+        await ensurePullRequestLabel(
+          env,
+          installationId,
+          repoFullName,
+          pr.number,
+          label,
+          { createMissingLabel: true, mode },
+        );
+      }
+      for (const label of decisionResult.removeLabels) {
         await removePullRequestLabel(
           env,
           installationId,
           repoFullName,
           pr.number,
-          other,
+          label,
           mode,
         );
       }
@@ -6328,7 +6338,8 @@ async function maybePublishPrPublicSurface(
           repoFullName,
           pull: pr.number,
           applied: true,
-          label: chosenType,
+          labels: decisionResult.applyLabels,
+          source: decisionResult.source,
         }),
       );
     } catch (error) {

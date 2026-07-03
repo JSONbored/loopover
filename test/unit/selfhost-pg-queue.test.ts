@@ -363,12 +363,29 @@ describe("createPgQueue (durable #977)", () => {
     );
     expect(m.pool.query).toHaveBeenCalledWith(
       expect.stringContaining("SET payload=$1, run_after=GREATEST"),
-      expect.arrayContaining([expect.stringContaining('"deliveryId":"ci-2"'), expect.any(Number), expect.any(Number), 10, "existing"]),
+      expect.arrayContaining([expect.stringContaining('"deliveryId":"ci-2"'), expect.any(Number), 10, "existing"]),
     );
     expect(m.pool.query).not.toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
       expect.arrayContaining([expect.stringContaining('"deliveryId":"ci-2"')]),
     );
+  });
+
+  it("does not reset created_at when coalescing a re-enqueue into an existing pending row (regression for #selfhost-runtime-drift)", async () => {
+    // created_at anchors the maintenance trickle's age clock (maintenance-admission.ts). If a coalesced
+    // re-enqueue reset it, a periodic scheduler re-requesting the same still-pending maintenance job faster
+    // than the trickle's maxDeferAgeMs would re-arm the clock forever and defeat the anti-starvation escape.
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing" }], rowCount: 1 });
+
+    await q.binding.send(msg("refresh-registry"));
+
+    const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const coalesceCall = calls.find((c: unknown[]) => String(c[0]).includes("SET payload=$1, run_after=GREATEST"));
+    expect(coalesceCall?.[0]).toBeDefined();
+    expect(String(coalesceCall?.[0])).not.toContain("created_at");
   });
 
   it("lets a pending full RAG index absorb a later repo incremental", async () => {
@@ -414,7 +431,6 @@ describe("createPgQueue (durable #977)", () => {
       expect.stringContaining("SET payload=$1, run_after=GREATEST"),
       expect.arrayContaining([
         expect.stringContaining('"requestedBy":"schedule"'),
-        expect.any(Number),
         expect.any(Number),
         0,
         "rag-index-repo:jsonbored/gittensory:full",
@@ -487,7 +503,6 @@ describe("createPgQueue (durable #977)", () => {
       expect.arrayContaining([
         expect.stringContaining('"type":"backfill-registered-repos"'),
         expect.any(Number),
-        expect.any(Number),
         0,
         "existing-backfill",
       ]),
@@ -496,7 +511,6 @@ describe("createPgQueue (durable #977)", () => {
       expect.stringContaining("SET payload=$1, run_after=GREATEST"),
       expect.arrayContaining([
         expect.stringContaining('"type":"generate-weekly-value-report"'),
-        expect.any(Number),
         expect.any(Number),
         0,
         "existing-report",
@@ -1873,6 +1887,9 @@ describe("createPgQueue (durable #977)", () => {
         const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
         await q.drain();
         expect(started).toEqual(["build-contributor-evidence"]);
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1',
+        );
       } finally {
         if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS;
         else process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = oldEnv;

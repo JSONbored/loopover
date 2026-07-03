@@ -37,7 +37,7 @@ import {
   setupTokenFormRejection,
   timingSafeStrEqual,
 } from "./selfhost/setup-wizard";
-import { isOrbBrokerMode, registerOrbRelayTarget } from "./orb/broker-client";
+import { createOrbRelayRegistrationState, isOrbBrokerMode, registerOrbRelayTargetWithRetry } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import {
@@ -73,6 +73,7 @@ import {
 } from "./selfhost/sentry";
 import {
   drainOrbRelayWithMonitor,
+  registerOrbRelayWithMonitor,
   runOrbExportWithMonitor,
   runScheduledLoopWithMonitor,
 } from "./selfhost/monitored-work";
@@ -607,6 +608,7 @@ async function main(): Promise<void> {
     "gittensory_jobs_coalesced_total",
     "gittensory_jobs_recovered_total",
     "gittensory_jobs_maintenance_admission_deferred_total",
+    "gittensory_jobs_maintenance_trickle_admitted_total",
   ]) {
     gauge(name.replace("_total", "_persisted_total"), () =>
       durableJobMetric(name),
@@ -899,35 +901,30 @@ async function main(): Promise<void> {
   setInterval(runOrbExport, 3_600_000); // then hourly
   /* v8 ignore stop */
 
-  // Brokered self-host: register our relay target with the central Orb (best-effort, fire-and-forget). PUSH mode
-  // (default) registers a public relay URL the Orb POSTs to; PULL mode (ORB_RELAY_MODE=pull) registers no URL and
-  // the drain loop below pulls events outbound — the right fit behind NAT/tailnet (no inbound endpoint exposed).
-  void registerOrbRelayTarget({
+  // Brokered self-host: register our relay target with the central Orb (best-effort). PUSH mode (default)
+  // registers a public relay URL the Orb POSTs to; PULL mode (ORB_RELAY_MODE=pull) registers no URL and the
+  // drain loop below pulls events outbound — the right fit behind NAT/tailnet (no inbound endpoint exposed).
+  // A bare one-shot boot-time attempt never recovers from a transient broker outage without a restart
+  // (#selfhost-runtime-drift), so this now RETRIES on a timer: registerOrbRelayWithMonitor no-ops once
+  // registered and otherwise backs off to at most one attempt per ORB_RELAY_REGISTER_RETRY_BACKOFF_MS.
+  /* v8 ignore start -- self-host entrypoint timer; the retry/backoff logic itself is unit-tested in
+   * orb-broker-client.test.ts and selfhost-monitored-work.test.ts. */
+  const orbRelayEnv = {
     ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
     ORB_BROKER_URL: process.env.ORB_BROKER_URL,
     PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
     ORB_RELAY_MODE: process.env.ORB_RELAY_MODE,
-  })
-    .then((r) => {
-      if (r.status === "registered") {
-        console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r.status }));
-      } else if (r.status === "failed") {
-        // A failed registration is fatal for PUSH mode (the Orb can't reach our public relay URL → the container
-        // looks alive but reviews NOTHING → error). In PULL mode the outbound drain loop below delivers events
-        // regardless, so a failed announce is only degraded telemetry → warn (not paged as a deaf container).
-        // Either way carry the reason (HTTP status / fetch error) in `error` so Sentry shows WHY, not "(no message)".
-        const pull = process.env.ORB_RELAY_MODE === "pull";
-        console.error(
-          JSON.stringify({
-            level: pull ? "warn" : "error",
-            event: "selfhost_orb_relay_register_failed",
-            mode: pull ? "pull" : "push",
-            error: r.reason ?? "unknown",
-          }),
-        );
-      }
-    })
-    .catch((error) => captureError(error, { kind: "orb_relay_register" }));
+  };
+  const orbRelayRegistrationState = createOrbRelayRegistrationState();
+  const attemptOrbRelayRegistration = (): Promise<void> =>
+    registerOrbRelayWithMonitor({
+      env: orbRelayEnv,
+      state: orbRelayRegistrationState,
+      register: registerOrbRelayTargetWithRetry,
+    }).catch((error) => captureError(error, { kind: "orb_relay_register" }));
+  void attemptOrbRelayRegistration();
+  setInterval(() => void attemptOrbRelayRegistration(), 60_000);
+  /* v8 ignore stop */
 
   // Pull-mode relay drain (#secure-relay): when ORB_RELAY_MODE=pull, the engine DRAINS its events from the Orb on a
   // timer instead of exposing an inbound endpoint — the right fit behind NAT/tailnet. Acks the previous batch so the

@@ -846,7 +846,9 @@ test("renderBrief: renders the license block", () => {
     ],
   });
   assert.match(r.promptSection, /Dependency licenses/);
-  assert.match(r.promptSection, /`g@1` \(npm\): GPL-3\.0 — \*\*copyleft\*\*/);
+  // The declared license text now renders inside its own escaped code span (like package@version), so a benign
+  // SPDX id is preserved verbatim while a hostile one can't break out of the span.
+  assert.match(r.promptSection, /`g@1` \(npm\): `GPL-3\.0` — \*\*copyleft\*\*/);
 });
 
 test("buildBrief: license analyzer runs alongside the others", async () => {

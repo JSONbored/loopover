@@ -632,6 +632,31 @@ export const REES_ANALYZERS = [
         "Structured-fields-only: reads name/status/conclusion/started_at/completed_at, never check output or logs. Fail-safe on missing token/head SHA/fetch error.",
     },
   },
+  {
+    name: "undocumentedExport",
+    title: "Undocumented public exports",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["files", "github-token", "head-sha"],
+    limits: {
+      maxFiles: 10,
+      maxFindings: 30,
+    },
+    docs: {
+      summary:
+        "Flags exports newly added to a package's public entrypoint (an index.* barrel) that ship with no adjacent doc comment.",
+      looksAt:
+        "Direct `export const/let/var/function/class/interface/type/enum` declarations added to changed index.* files, checked against the file fetched at headSha.",
+      reports:
+        "File, line, and symbol name of each undocumented added export — never file contents.",
+      network:
+        "One GitHub contents fetch per changed entrypoint (at headSha). Requires GitHub token forwarding for private repos.",
+      notes:
+        "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line (except tool directives like `eslint-disable`) or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not).",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

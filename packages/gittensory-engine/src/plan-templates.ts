@@ -17,7 +17,7 @@ export type RawPlanStep = {
 };
 
 // The lifecycle-stage transitions this library provides a template for.
-export type PlanTemplateStage = "discover" | "analyze" | "prepare";
+export type PlanTemplateStage = "discover" | "analyze" | "create" | "manage" | "plan" | "prepare";
 
 // Context woven into a template's step titles so a plan reads against the opportunity it targets.
 export type PlanTemplateContext = {
@@ -65,6 +65,16 @@ export function analyzePlanTemplate(context: PlanTemplateContext = {}): RawPlanS
   ];
 }
 
+// plan: validate the analyze prompt packet, build the execution DAG, then run a readiness check before prepare.
+export function planPlanTemplate(context: PlanTemplateContext = {}): RawPlanStep[] {
+  const subject = normalizeSubject(context.subject);
+  return [
+    { id: "packet-validate", title: titleFor("Validate prompt packet", subject), actionClass: "analyze", dependsOn: [], maxAttempts: 1 },
+    { id: "plan-dag-build", title: titleFor("Build execution plan DAG", subject), actionClass: "compose", dependsOn: ["packet-validate"], maxAttempts: 2 },
+    { id: "readiness-check", title: titleFor("Run plan readiness check", subject), actionClass: "analyze", dependsOn: ["plan-dag-build"], maxAttempts: 1 },
+  ];
+}
+
 // prepare: a strict chain — create the branch, invoke the coding agent (placeholder step; no actuation here), then
 // run the local tests. Mirrors the PREPARE-phase ordering described in the plan-template issue.
 export function preparePlanTemplate(context: PlanTemplateContext = {}): RawPlanStep[] {
@@ -76,12 +86,35 @@ export function preparePlanTemplate(context: PlanTemplateContext = {}): RawPlanS
   ];
 }
 
+// create: commit the working tree, push the branch, then open the pull request with the public-safe packet.
+export function createPlanTemplate(context: PlanTemplateContext = {}): RawPlanStep[] {
+  const subject = normalizeSubject(context.subject);
+  return [
+    { id: "commit-changes", title: titleFor("Commit working tree changes", subject), actionClass: "vcs", dependsOn: [], maxAttempts: 2 },
+    { id: "push-branch", title: titleFor("Push feature branch", subject), actionClass: "vcs", dependsOn: ["commit-changes"], maxAttempts: 3 },
+    { id: "open-pull-request", title: titleFor("Open pull request", subject), actionClass: "github", dependsOn: ["push-branch"], maxAttempts: 2 },
+  ];
+}
+
+// manage: wait for CI, read the gate verdict, then sync the fork default branch for the next cycle.
+export function managePlanTemplate(context: PlanTemplateContext = {}): RawPlanStep[] {
+  const subject = normalizeSubject(context.subject);
+  return [
+    { id: "wait-ci", title: titleFor("Wait for CI completion", subject), actionClass: "test", dependsOn: [], maxAttempts: 5 },
+    { id: "read-gate-result", title: titleFor("Read gate verdict", subject), actionClass: "analyze", dependsOn: ["wait-ci"], maxAttempts: 2 },
+    { id: "sync-fork", title: titleFor("Sync fork default branch", subject), actionClass: "vcs", dependsOn: ["read-gate-result"], maxAttempts: 3 },
+  ];
+}
+
 // Registry of every stage transition to its template builder, so callers can enumerate or dispatch by stage.
 // Frozen so a consumer cannot mutate the shared registry and change dispatch behavior process-wide.
 export const PLAN_TEMPLATE_BUILDERS: Readonly<Record<PlanTemplateStage, (context?: PlanTemplateContext) => RawPlanStep[]>> =
   Object.freeze({
     discover: discoverPlanTemplate,
     analyze: analyzePlanTemplate,
+    create: createPlanTemplate,
+    manage: managePlanTemplate,
+    plan: planPlanTemplate,
     prepare: preparePlanTemplate,
   });
 

@@ -137,9 +137,12 @@ export interface MaintenanceAdmissionDecision {
 
 /** PURE policy decision: admit this maintenance job now, or defer it? Checked in priority order -- the
  *  trickle (age) escape hatch first, so a starved job is never re-denied by a later check, then each pressure
- *  signal in turn. `pendingSinceMs` is the job's ORIGINAL enqueue time (its row's created_at), not the time of
- *  its most recent deferral, so the trickle clock only resets on a genuine fresh request (a coalesced
- *  re-enqueue), never on a repeated denial of the same wait. */
+ *  signal in turn. `pendingSinceMs` is the job's ORIGINAL enqueue time (its row's created_at), which the queue
+ *  backends (sqlite-queue.ts / pg-queue.ts) preserve across BOTH an admission-deferral requeue AND a coalesced
+ *  re-enqueue (a periodic scheduler re-requesting the same still-pending maintenance need) -- only a truly
+ *  fresh need, enqueued after the prior row was fully processed and deleted, starts a new clock. Otherwise a
+ *  re-enqueue cadence shorter than `maxDeferAgeMs` would keep re-arming the clock and defeat the trickle
+ *  entirely under sustained pressure. */
 export function evaluateMaintenanceAdmission(
   signals: MaintenancePressureSignals,
   config: MaintenanceAdmissionConfig,

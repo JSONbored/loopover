@@ -474,11 +474,16 @@ export function createPgQueue(
         )
       ).rows[0] as { id: string } | undefined;
       if (existing) {
+        // created_at is deliberately NOT overwritten here (#selfhost-runtime-drift): it anchors the maintenance
+        // trickle's age clock (see maintenance-admission.ts). A periodic scheduler re-enqueuing the SAME still-
+        // pending maintenance need must coalesce into the existing row without resetting how long that need has
+        // genuinely been outstanding -- otherwise a re-enqueue cadence shorter than the trickle's maxDeferAgeMs
+        // (4h default) can keep re-arming the clock forever, and sustained pressure defers the job indefinitely.
         await pool.query(
           `UPDATE ${TABLE}
-             SET payload=$1, run_after=GREATEST(run_after, $2), created_at=$3, priority=GREATEST(priority, $4), job_key=$5, last_error=NULL
-           WHERE id=$6`,
-          [payload, runAfter, now, priority, key, existing.id],
+             SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), job_key=$4, last_error=NULL
+           WHERE id=$5`,
+          [payload, runAfter, priority, key, existing.id],
         );
         await pool.query(
           `DELETE FROM ${TABLE}
@@ -498,11 +503,13 @@ export function createPgQueue(
         )
       ).rows[0] as { id: string } | undefined;
       if (existing) {
+        // See the supersededKeyPrefix branch above: created_at is preserved across a coalesced re-enqueue so the
+        // maintenance trickle clock reflects genuine wait time, not the most recent re-request.
         await pool.query(
           `UPDATE ${TABLE}
-             SET payload=$1, run_after=GREATEST(run_after, $2), created_at=$3, priority=GREATEST(priority, $4), last_error=NULL
-           WHERE id=$5`,
-          [payload, runAfter, now, priority, existing.id],
+             SET payload=$1, run_after=GREATEST(run_after, $2), priority=GREATEST(priority, $3), last_error=NULL
+           WHERE id=$4`,
+          [payload, runAfter, priority, existing.id],
         );
         await recordQueueMetric("gittensory_jobs_coalesced_total");
         kickOne();
@@ -702,6 +709,23 @@ export function createPgQueue(
             { parentTraceParent: jobTraceParent },
           );
           return true;
+        }
+        // Force-admitted despite pressure (#selfhost-runtime-drift): a distinct signal from a normal clear-
+        // pressure admission -- it means the box has been under SUSTAINED load for the job's entire
+        // maxDeferAgeMs wait, not just a brief blip. A dashboard trending this alongside the deferred-by-reason
+        // counters distinguishes "load-shed maintenance is working as designed" from "maintenance is chronically
+        // starved and only ever runs via the trickle floor" (the "truly stuck" signal operators need).
+        if (decision.reason === "trickle_max_defer_age") {
+          await recordQueueMetric("gittensory_jobs_maintenance_trickle_admitted_total");
+          incr("gittensory_jobs_maintenance_trickle_admitted_by_type_total", { job_type: message.type });
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "selfhost_queue_maintenance_trickle_admitted",
+              jobType: message.type,
+              pending_ms: Date.now() - Number(job.created_at),
+            }),
+          );
         }
       }
       try {

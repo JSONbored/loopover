@@ -7,23 +7,23 @@ export type SelfHostEnvReferenceRow = {
 export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "AI_COMBINE",
-    firstReference: "src/selfhost/ai.ts:888",
+    firstReference: "src/selfhost/ai.ts:930",
   },
   {
     name: "AI_EMBED_API_KEY",
-    firstReference: "src/server.ts:420",
+    firstReference: "src/server.ts:421",
   },
   {
     name: "AI_EMBED_BASE_URL",
-    firstReference: "src/server.ts:417",
+    firstReference: "src/server.ts:418",
   },
   {
     name: "AI_EMBED_MODEL",
-    firstReference: "src/selfhost/ai.ts:784",
+    firstReference: "src/selfhost/ai.ts:826",
   },
   {
     name: "AI_ON_MERGE",
-    firstReference: "src/selfhost/ai.ts:890",
+    firstReference: "src/selfhost/ai.ts:932",
   },
   {
     name: "AI_PROVIDER",
@@ -31,7 +31,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ANTHROPIC_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:788",
+    firstReference: "src/selfhost/ai.ts:830",
   },
   {
     name: "ANTHROPIC_AI_MODEL",
@@ -39,11 +39,11 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ANTHROPIC_API_KEY",
-    firstReference: "src/selfhost/ai.ts:787",
+    firstReference: "src/selfhost/ai.ts:829",
   },
   {
     name: "BACKUP_ACKNOWLEDGED",
-    firstReference: "src/server.ts:359",
+    firstReference: "src/server.ts:360",
   },
   {
     name: "BROWSER_WS_ENDPOINT",
@@ -74,12 +74,16 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts:112",
   },
   {
+    name: "CODEX_HOME",
+    firstReference: "src/selfhost/ai.ts:274",
+  },
+  {
     name: "CRON_INTERVAL_MS",
-    firstReference: "src/server.ts:845",
+    firstReference: "src/server.ts:863",
   },
   {
     name: "DATABASE_PATH",
-    firstReference: "src/server.ts:242",
+    firstReference: "src/server.ts:243",
   },
   {
     name: "DATABASE_URL",
@@ -103,15 +107,19 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "GITHUB_CACHE_TTL_SECONDS",
-    firstReference: "src/server.ts:488",
+    firstReference: "src/server.ts:489",
   },
   {
     name: "GITTENSORY_REPO_CONFIG_DIR",
-    firstReference: "src/server.ts:276",
+    firstReference: "src/server.ts:277",
   },
   {
     name: "GITTENSORY_VERSION",
     firstReference: "src/selfhost/health.ts:29",
+  },
+  {
+    name: "HOME",
+    firstReference: "src/selfhost/ai.ts:274",
   },
   {
     name: "MAINTENANCE_ADMISSION_ENABLED",
@@ -119,7 +127,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "MIGRATIONS_DIR",
-    firstReference: "src/server.ts:372",
+    firstReference: "src/server.ts:373",
   },
   {
     name: "OBSERVABILITY_SMOKE_POLL_MS",
@@ -131,11 +139,11 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OLLAMA_AI_API_KEY",
-    firstReference: "src/selfhost/ai.ts:781",
+    firstReference: "src/selfhost/ai.ts:823",
   },
   {
     name: "OLLAMA_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:777",
+    firstReference: "src/selfhost/ai.ts:819",
   },
   {
     name: "OLLAMA_AI_MODEL",
@@ -143,7 +151,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OPENAI_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:779",
+    firstReference: "src/selfhost/ai.ts:821",
   },
   {
     name: "OPENAI_AI_MODEL",
@@ -151,15 +159,15 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "OPENAI_API_KEY",
-    firstReference: "src/selfhost/ai.ts:781",
+    firstReference: "src/selfhost/ai.ts:823",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_API_KEY",
-    firstReference: "src/selfhost/ai.ts:781",
+    firstReference: "src/selfhost/ai.ts:823",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_BASE_URL",
-    firstReference: "src/selfhost/ai.ts:780",
+    firstReference: "src/selfhost/ai.ts:822",
   },
   {
     name: "OPENAI_COMPATIBLE_AI_MODEL",
@@ -179,7 +187,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ORB_BROKER_URL",
-    firstReference: "src/server.ts:889",
+    firstReference: "src/server.ts:907",
   },
   {
     name: "ORB_COLLECTOR_TOKEN",
@@ -195,7 +203,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ORB_RELAY_MODE",
-    firstReference: "src/server.ts:891",
+    firstReference: "src/server.ts:909",
   },
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -227,11 +235,11 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "PGVECTOR_ENABLED",
-    firstReference: "src/server.ts:222",
+    firstReference: "src/server.ts:223",
   },
   {
     name: "PORT",
-    firstReference: "src/server.ts:644",
+    firstReference: "src/server.ts:662",
   },
   {
     name: "PUBLIC_API_ORIGIN",
@@ -247,7 +255,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "QDRANT_URL",
-    firstReference: "src/server.ts:507",
+    firstReference: "src/server.ts:508",
   },
   {
     name: "QUEUE_BACKGROUND_CONCURRENCY",
@@ -259,7 +267,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "REVIEW_AUDIT_DIR",
-    firstReference: "src/server.ts:552",
+    firstReference: "src/server.ts:553",
   },
   {
     name: "SELFHOST_BUNDLE_ALL",
@@ -295,23 +303,23 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "SETUP_OUTPUT_PATH",
-    firstReference: "src/server.ts:761",
+    firstReference: "src/server.ts:779",
   },
 ];
 
 export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| Name | First reference |",
   "| --- | --- |",
-  "| `AI_COMBINE` | `src/selfhost/ai.ts:888` |",
-  "| `AI_EMBED_API_KEY` | `src/server.ts:420` |",
-  "| `AI_EMBED_BASE_URL` | `src/server.ts:417` |",
-  "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts:784` |",
-  "| `AI_ON_MERGE` | `src/selfhost/ai.ts:890` |",
+  "| `AI_COMBINE` | `src/selfhost/ai.ts:930` |",
+  "| `AI_EMBED_API_KEY` | `src/server.ts:421` |",
+  "| `AI_EMBED_BASE_URL` | `src/server.ts:418` |",
+  "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts:826` |",
+  "| `AI_ON_MERGE` | `src/selfhost/ai.ts:932` |",
   "| `AI_PROVIDER` | `src/selfhost/ai-config.ts:43` |",
-  "| `ANTHROPIC_AI_BASE_URL` | `src/selfhost/ai.ts:788` |",
+  "| `ANTHROPIC_AI_BASE_URL` | `src/selfhost/ai.ts:830` |",
   "| `ANTHROPIC_AI_MODEL` | `src/selfhost/ai.ts:57` |",
-  "| `ANTHROPIC_API_KEY` | `src/selfhost/ai.ts:787` |",
-  "| `BACKUP_ACKNOWLEDGED` | `src/server.ts:359` |",
+  "| `ANTHROPIC_API_KEY` | `src/selfhost/ai.ts:829` |",
+  "| `BACKUP_ACKNOWLEDGED` | `src/server.ts:360` |",
   "| `BROWSER_WS_ENDPOINT` | `src/selfhost/stubs/puppeteer.ts:11` |",
   "| `CLAUDE_AI_EFFORT` | `src/selfhost/ai.ts:108` |",
   "| `CLAUDE_AI_MODEL` | `src/selfhost/ai.ts:49` |",
@@ -319,37 +327,39 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CODEX_AI_EFFORT` | `src/selfhost/ai.ts:112` |",
   "| `CODEX_AI_MODEL` | `src/selfhost/ai.ts:53` |",
   "| `CODEX_AI_TIMEOUT_MS` | `src/selfhost/ai.ts:112` |",
-  "| `CRON_INTERVAL_MS` | `src/server.ts:845` |",
-  "| `DATABASE_PATH` | `src/server.ts:242` |",
+  "| `CODEX_HOME` | `src/selfhost/ai.ts:274` |",
+  "| `CRON_INTERVAL_MS` | `src/server.ts:863` |",
+  "| `DATABASE_PATH` | `src/server.ts:243` |",
   "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/selfhost/discord-notify.ts:31` |",
   "| `DISCORD_WEBHOOK_URL` | `src/selfhost/discord-notify.ts:40` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts:166` |",
-  "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:488` |",
-  "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts:276` |",
+  "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:489` |",
+  "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts:277` |",
   "| `GITTENSORY_VERSION` | `src/selfhost/health.ts:29` |",
+  "| `HOME` | `src/selfhost/ai.ts:274` |",
   "| `MAINTENANCE_ADMISSION_ENABLED` | `src/selfhost/maintenance-admission.ts:83` |",
-  "| `MIGRATIONS_DIR` | `src/server.ts:372` |",
+  "| `MIGRATIONS_DIR` | `src/server.ts:373` |",
   "| `OBSERVABILITY_SMOKE_POLL_MS` | `scripts/smoke-observability-traces.mjs:8` |",
   "| `OBSERVABILITY_SMOKE_TIMEOUT_MS` | `scripts/smoke-observability-traces.mjs:6` |",
-  "| `OLLAMA_AI_API_KEY` | `src/selfhost/ai.ts:781` |",
-  "| `OLLAMA_AI_BASE_URL` | `src/selfhost/ai.ts:777` |",
+  "| `OLLAMA_AI_API_KEY` | `src/selfhost/ai.ts:823` |",
+  "| `OLLAMA_AI_BASE_URL` | `src/selfhost/ai.ts:819` |",
   "| `OLLAMA_AI_MODEL` | `src/selfhost/ai.ts:61` |",
-  "| `OPENAI_AI_BASE_URL` | `src/selfhost/ai.ts:779` |",
+  "| `OPENAI_AI_BASE_URL` | `src/selfhost/ai.ts:821` |",
   "| `OPENAI_AI_MODEL` | `src/selfhost/ai.ts:62` |",
-  "| `OPENAI_API_KEY` | `src/selfhost/ai.ts:781` |",
-  "| `OPENAI_COMPATIBLE_AI_API_KEY` | `src/selfhost/ai.ts:781` |",
-  "| `OPENAI_COMPATIBLE_AI_BASE_URL` | `src/selfhost/ai.ts:780` |",
+  "| `OPENAI_API_KEY` | `src/selfhost/ai.ts:823` |",
+  "| `OPENAI_COMPATIBLE_AI_API_KEY` | `src/selfhost/ai.ts:823` |",
+  "| `OPENAI_COMPATIBLE_AI_BASE_URL` | `src/selfhost/ai.ts:822` |",
   "| `OPENAI_COMPATIBLE_AI_MODEL` | `src/selfhost/ai.ts:63` |",
   "| `ORB_AIR_GAP` | `src/selfhost/orb-collector.ts:161` |",
   "| `ORB_ANONYMIZE` | `src/selfhost/orb-collector.ts:174` |",
   "| `ORB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
-  "| `ORB_BROKER_URL` | `src/server.ts:889` |",
+  "| `ORB_BROKER_URL` | `src/server.ts:907` |",
   "| `ORB_COLLECTOR_TOKEN` | `src/selfhost/orb-collector.ts:205` |",
   "| `ORB_COLLECTOR_URL` | `src/selfhost/orb-collector.ts:172` |",
   "| `ORB_ENROLLMENT_SECRET` | `src/selfhost/orb-collector.ts:165` |",
-  "| `ORB_RELAY_MODE` | `src/server.ts:891` |",
+  "| `ORB_RELAY_MODE` | `src/server.ts:909` |",
   "| `OTEL_EXPORTER_OTLP_ENDPOINT` | `src/selfhost/otel.ts:47` |",
   "| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `src/selfhost/otel.ts:45` |",
   "| `OTEL_SERVICE_ENVIRONMENT` | `src/selfhost/otel.ts:60` |",
@@ -357,15 +367,15 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_EXPORTER` | `src/selfhost/otel.ts:40` |",
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts:74` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts:76` |",
-  "| `PGVECTOR_ENABLED` | `src/server.ts:222` |",
-  "| `PORT` | `src/server.ts:644` |",
+  "| `PGVECTOR_ENABLED` | `src/server.ts:223` |",
+  "| `PORT` | `src/server.ts:662` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:192` |",
   "| `QDRANT_API_KEY` | `src/selfhost/qdrant-vectorize.ts:50` |",
   "| `QDRANT_DIM` | `src/selfhost/qdrant-vectorize.ts:71` |",
-  "| `QDRANT_URL` | `src/server.ts:507` |",
+  "| `QDRANT_URL` | `src/server.ts:508` |",
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts:102` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts:144` |",
-  "| `REVIEW_AUDIT_DIR` | `src/server.ts:552` |",
+  "| `REVIEW_AUDIT_DIR` | `src/server.ts:553` |",
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.mjs:13` |",
   "| `SELFHOST_SERVICE` | `scripts/smoke-observability-traces.mjs:5` |",
   "| `SELFHOST_SETUP_TOKEN` | `src/selfhost/preflight.ts:186` |",
@@ -374,5 +384,5 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `SENTRY_RELEASE` | `src/selfhost/otel.ts:62` |",
   "| `SENTRY_SERVER_NAME` | `src/selfhost/sentry.ts:373` |",
   "| `SENTRY_TRACES_SAMPLE_RATE` | `src/selfhost/sentry.ts:161` |",
-  "| `SETUP_OUTPUT_PATH` | `src/server.ts:761` |",
+  "| `SETUP_OUTPUT_PATH` | `src/server.ts:779` |",
 ].join("\n");

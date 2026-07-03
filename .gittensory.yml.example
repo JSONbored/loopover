@@ -293,14 +293,42 @@ settings:
   # The label name to apply. String. Default: gittensor.
   gittensorLabel: gittensor
 
-  # Apply the per-PR TYPE/taxonomy label -- exactly one of gittensor:bug / gittensor:feature /
-  # gittensor:priority, classified from the PR title + changed paths (#label-decoupling). Independent of
-  # `autoLabelEnabled` above (which only governs the base `gittensorLabel` context label): a type label is
-  # internal triage metadata, so it applies to every PR regardless of author type (bot/maintainer/missing
-  # author) or `publicAudienceMode`/`publicSurface`, UNLESS `publicAudienceMode: gittensor_only` is muting
-  # this PR's author entirely (that mode's whole point is total silence for a non-confirmed-miner author).
+  # Apply the per-PR TYPE/taxonomy label -- bug/feature by the PR title, or priority via
+  # `linkedIssueLabelPropagation` below (#label-decoupling). Independent of `autoLabelEnabled` above
+  # (which only governs the base `gittensorLabel` context label): a type label is internal triage
+  # metadata, so it applies to every PR regardless of author type (bot/maintainer/missing author) or
+  # `publicAudienceMode`/`publicSurface`, UNLESS `publicAudienceMode: gittensor_only` is muting this
+  # PR's author entirely (that mode's whole point is total silence for a non-confirmed-miner author).
   # Bool. Default: true.
   typeLabelsEnabled: true
+
+  # Per-repo override of the three TYPE label NAMES. Omit any key to keep its default. Map with
+  # string values bug/feature/priority. Default: gittensor:bug / gittensor:feature / gittensor:priority.
+  # typeLabels:
+  #   bug: gittensor:bug
+  #   feature: gittensor:feature
+  #   priority: gittensor:priority
+
+  # Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can select a
+  # label like `gittensor:priority` -- it is NEVER inferred from a PR's title, changed files, AI
+  # output, or existing PR labels, only ever copied from a linked/closing issue ("Fixes #123") that
+  # ALREADY carries the configured issue label. Generic beyond the priority use case: any issue label
+  # can map to any PR label. `removeOtherTypeLabels: true` REPLACES the type label entirely (bug/
+  # feature are removed), matching how `gittensor:priority` behaves today; `false` applies the mapped
+  # label ADDITIVELY alongside the normal title-based bug/feature label, leaving it untouched -- useful
+  # for a mapping unrelated to the bug/feature/priority triad (e.g. a `customer:vip` issue label
+  # copied to a `triage:vip` PR label). Disabled by default (no mappings) -- a self-hoster opts in per
+  # repo. If your labels carry reward or moderation weight, configure this in PRIVATE per-repo/global
+  # config (see `config/examples/README.md`) rather than the public `.gittensory.yml`, so contributors
+  # cannot see the exact mapping rules. A per-repo `mappings` override in the private-config layer
+  # REPLACES the global default list wholesale -- it does not merge with it.
+  # linkedIssueLabelPropagation:
+  #   enabled: true
+  #   mode: exclusive_type_label
+  #   mappings:
+  #     - issueLabel: gittensor:priority
+  #       prLabel: gittensor:priority
+  #       removeOtherTypeLabels: true
 
   # Create the label if it does not yet exist. Bool. Default: true.
   createMissingLabel: true
@@ -336,7 +364,9 @@ settings:
   #   1. Context label (`gittensorLabel`, gated by `autoLabelEnabled` above) — the base per-PR marker shown
   #      to the public surface, subject to `publicAudienceMode`/`publicSurface`/author-qualification.
   #   2. Taxonomy/type label (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`, gated by
-  #      `typeLabelsEnabled` above) — internal triage metadata, applied independently of #1.
+  #      `typeLabelsEnabled` above) — internal triage metadata, applied independently of #1. bug/
+  #      feature come from the PR title; priority ONLY from `linkedIssueLabelPropagation` above —
+  #      never inferred from title, files, AI, or existing PR labels (#priority-linked-issue-gate).
   #   3. Autonomy-outcome labels (`gittensory:ready-to-merge` etc.) — gated by the `review_state_label`
   #      autonomy class below, advisory commentary on the bot's own verdict.
   #   4. Anti-abuse enforcement labels (blacklist/contributor-cap/review-nag) — gated by the `close`

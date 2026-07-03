@@ -12,7 +12,7 @@ const script = readFileSync(SCRIPT_PATH, "utf8");
 
 // The exact source files that emit every selfhost_* event referenced in the checklist/script, per an
 // audit against the real console.log/console.error({ event: "selfhost_..." }) call sites.
-const EVENT_SOURCE_FILES = ["src/server.ts", "src/selfhost/ai.ts"];
+const EVENT_SOURCE_FILES = ["src/server.ts", "src/selfhost/ai.ts", "src/selfhost/monitored-work.ts"];
 const eventSource = EVENT_SOURCE_FILES.map((path) => readFileSync(path, "utf8")).join("\n");
 
 describe("self-hosting-release-checklist doc + smoke script: event names match source (#1944)", () => {

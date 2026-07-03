@@ -53,6 +53,22 @@ test("scanUndocumentedExport: flags the undocumented export, not the documented 
   assert.match(brief, /undoc/);
 });
 
+test("scanUndocumentedExport: fetches the entrypoint at the head ref with a per-segment-encoded path", async () => {
+  let calledUrl = "";
+  const recording = async (url) => {
+    calledUrl = url;
+    return url.includes("/contents/") ? rawResponse(HEAD) : new Response("", { status: 404 });
+  };
+  await scanUndocumentedExport(req([{ path: "src/dir name/index.ts", status: "modified", patch: PATCH }]), recording);
+  // path segments are individually encoded (space -> %20) and the head SHA is passed as ?ref=
+  assert.match(calledUrl, /\/repos\/octo\/repo\/contents\/src\/dir%20name\/index\.ts\?ref=abc123$/);
+});
+
+test("parseAddedExports: matches an indented (namespace-level) export too", () => {
+  const patch = ["@@ -1,0 +1,1 @@", "+  export const nested = 1;"].join("\n");
+  assert.deepEqual(parseAddedExports(patch), [{ symbol: "nested", newLine: 1 }]);
+});
+
 test("scanUndocumentedExport: a non-entrypoint file is skipped (only index.* is scanned)", async () => {
   const findings = await scanUndocumentedExport(
     req([{ path: "src/helpers.ts", status: "modified", patch: PATCH }]),

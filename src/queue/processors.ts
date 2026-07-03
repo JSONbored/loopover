@@ -5528,35 +5528,39 @@ export async function enrichSecretScanFilesWithPatchFallback(
   if (!headSha) return files;
   return Promise.all(
     files.map(async (file) => {
-      const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
-      if (existingPatch) return file;
-      const status = file.status ?? "modified";
-      if (status === "removed") return file;
-      const headContent = await args.fetcher.getFileContent(
-        file.path,
-        headSha,
-        SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
-      );
-      if (!headContent) return file;
-      let addedLines: string[];
-      if (status === "added" || status === "renamed") {
-        addedLines = headContent.split("\n");
-      } else if (status === "modified" && args.baseSha?.trim()) {
-        const baseContent =
-          (await args.fetcher.getFileContent(
-            file.path,
-            args.baseSha.trim(),
-            SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
-          )) ?? "";
-        addedLines = addedLinesForSecretScan(baseContent, headContent);
-      } else {
+      try {
+        const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+        if (existingPatch) return file;
+        const status = file.status ?? "modified";
+        if (status === "removed") return file;
+        const headContent = await args.fetcher.getFileContent(
+          file.path,
+          headSha,
+          SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
+        );
+        if (!headContent) return file;
+        let addedLines: string[];
+        if (status === "added" || status === "renamed") {
+          addedLines = headContent.split("\n");
+        } else if (status === "modified" && args.baseSha?.trim()) {
+          const baseContent =
+            (await args.fetcher.getFileContent(
+              file.path,
+              args.baseSha.trim(),
+              SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
+            )) ?? "";
+          addedLines = addedLinesForSecretScan(baseContent, headContent);
+        } else {
+          return file;
+        }
+        if (addedLines.length === 0) return file;
+        return {
+          ...file,
+          payload: { ...file.payload, patch: syntheticSecretScanPatch(addedLines) },
+        };
+      } catch {
         return file;
       }
-      if (addedLines.length === 0) return file;
-      return {
-        ...file,
-        payload: { ...file.payload, patch: syntheticSecretScanPatch(addedLines) },
-      };
     }),
   );
 }
@@ -6127,12 +6131,25 @@ export async function maybeAddSecretLeakFinding(
       (await listPullRequestFiles(env, args.repoFullName, args.pullNumber));
     let scanFiles = files;
     if (args.headSha) {
-      const fetcher = await makeGithubFileFetcher(env, args.repoFullName, args.installationId);
-      scanFiles = await enrichSecretScanFilesWithPatchFallback(files, {
-        headSha: args.headSha,
-        baseSha: args.baseSha,
-        fetcher,
-      });
+      try {
+        const fetcher = await makeGithubFileFetcher(env, args.repoFullName, args.installationId);
+        scanFiles = await enrichSecretScanFilesWithPatchFallback(files, {
+          headSha: args.headSha,
+          baseSha: args.baseSha,
+          fetcher,
+        });
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "secret_scan_patch_fallback_failed",
+            repository: args.repoFullName,
+            pullNumber: args.pullNumber,
+            error: errorMessage(error),
+          }),
+        );
+        scanFiles = files;
+      }
     }
     const finding = secretLeakFinding(buildSecretScanDiff(scanFiles));
     if (finding) args.advisory.findings.push(finding);

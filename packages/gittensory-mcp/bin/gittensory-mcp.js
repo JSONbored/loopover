@@ -184,6 +184,26 @@ const checkBeforeStartShape = {
   plannedPaths: z.array(z.string()).optional(),
 };
 
+const findOpportunitiesShape = {
+  targets: z
+    .array(
+      z.object({
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+      }),
+    )
+    .optional(),
+  searchQuery: z.string().min(1).max(500).optional(),
+  goalSpec: z
+    .object({
+      lane: z.string().min(1).optional(),
+      minRankScore: z.number().min(0).max(100).optional(),
+      languages: z.array(z.string()).optional(),
+    })
+    .optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+};
+
 const lintPrTextShape = {
   commitMessages: z.array(z.string()).max(50).optional(),
   prBody: z.string().optional(),
@@ -377,6 +397,24 @@ server.registerTool(
       ...(plannedPaths ? { plannedPaths } : {}),
     };
     return toolResult("Gittensory pre-start check.", await apiPost(`${prefix}/check-before-start`, body));
+  },
+);
+
+server.registerTool(
+  "gittensory_find_opportunities",
+  {
+    description:
+      "Cross-repo discovery: find high-fit contribution opportunities across registered Gittensor repos. Returns a ranked, public-safe list filtered by your MinerGoalSpec (lane, min rank score, languages). Metadata-only, no GitHub writes.",
+    inputSchema: findOpportunitiesShape,
+  },
+  async ({ targets, searchQuery, goalSpec, limit }) => {
+    const body = {
+      ...(targets && targets.length > 0 ? { targets } : {}),
+      ...(searchQuery ? { searchQuery } : {}),
+      ...(goalSpec ? { goalSpec } : {}),
+      ...(limit != null ? { limit } : {}),
+    };
+    return toolResult("Gittensory cross-repo opportunities.", await apiPost("/v1/opportunities/find", body));
   },
 );
 

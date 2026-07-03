@@ -244,6 +244,27 @@ export async function startFixtureServer(
       response.end(JSON.stringify(slopRiskFixture(body)));
       return;
     }
+    if (request.url === "/v1/opportunities/find" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as {
+        targets?: Array<{ owner: string; repo: string }>;
+        searchQuery?: string;
+        goalSpec?: { lane?: string; minRankScore?: number; languages?: string[] };
+        limit?: number;
+      };
+      const limit = body.limit ?? 5;
+      const lane = body.goalSpec?.lane ?? "default";
+      const minRank = body.goalSpec?.minRankScore ?? 0;
+      const candidates = [
+        { owner: "JSONbored", repo: "gittensory", issueNumber: 100, title: "Improve REES test retry", rankScore: 85, laneFit: lane, freshness: 0.9, dupRisk: 0.1, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "gittensory", issueNumber: 101, title: "Add label-audit coverage", rankScore: 72, laneFit: lane, freshness: 0.7, dupRisk: 0.2, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "gittensory", issueNumber: 102, title: "Fix flaky buildBrief test", rankScore: 68, laneFit: lane, freshness: 0.5, dupRisk: 0.3, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "gittensory", issueNumber: 103, title: "Normalize path matchers", rankScore: 55, laneFit: lane, freshness: 0.4, dupRisk: 0.1, aiPolicyAllowed: true },
+        { owner: "JSONbored", repo: "gittensory", issueNumber: 104, title: "Document score breakdown", rankScore: 45, laneFit: lane, freshness: 0.3, dupRisk: 0.1, aiPolicyAllowed: true },
+      ];
+      const ranked = candidates.filter((c) => c.rankScore >= minRank).slice(0, limit);
+      response.end(JSON.stringify({ ranked, totalCandidates: candidates.length, appliedLane: lane, appliedMinRankScore: minRank }));
+      return;
+    }
     // #784 maintainer controls (agent approval queue + kill-switch).
     if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "GET") {
       response.end(JSON.stringify({ repoFullName: "owner/repo", pendingActions: [{ id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" }] }));

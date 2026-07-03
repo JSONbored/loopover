@@ -542,26 +542,7 @@ export function createPgQueue(
         );
         await recordQueueMetric("gittensory_jobs_dead_total");
         logAudit({
-        // Job succeeded — delete it. Retry on transient connection errors (pool auto-reconnects).
-        // If all retries fail with a connection error, leave the row in 'processing'; the reclaim
-        // mechanism will reset it to 'pending' on the next tick. Any non-connection error re-throws.
-        try {
-          await retryPoolQuery(() => pool.query(`DELETE FROM ${TABLE} WHERE id=$1`, [job.id]));
-        } catch (deleteErr) {
-          if (isPgConnectionError(deleteErr)) {
-            console.warn(
-              JSON.stringify({
-                level: "warn",
-                event: "selfhost_queue_pg_connection_lost_on_delete",
-                id: job.id,
-                code: (deleteErr as Record<string, unknown>)["code"],
-                message: "PG connection terminated after job succeeded; reclaim mechanism will retry",
-              }),
-            );
-            return true;
-          }
-          throw deleteErr;
-        }
+          event: "job_dead",
           ts: Date.now(),
           job_id: job.id,
           latency_ms: Date.now() - claimedAt,
@@ -573,21 +554,6 @@ export function createPgQueue(
           reason: "unparseable_payload",
           jobId: job.id,
         });
-        // If the connection was lost during job processing itself (consume() made its own PG calls),
-        // leave the job in 'processing' state for the reclaim mechanism to reset. We still warn so
-        // operators can correlate with DB restart events.
-        if (isPgConnectionError(error)) {
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              event: "selfhost_queue_pg_connection_lost",
-              id: job.id,
-              code: (error as Record<string, unknown>)["code"],
-              message: "PG connection terminated during job processing; reclaim mechanism will retry",
-            }),
-          );
-          return true;
-        }
         return true;
       }
       const jobTraceParent = message.type === "github-webhook" ? message.traceParent : undefined;
@@ -609,13 +575,15 @@ export function createPgQueue(
               `${job.job_key ?? ""}:${job.id}:${job.payload}`,
             );
             const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
-            const update = await pool.query(
-              `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
-              [retryAfter, lastError, job.id],
-            await retryPoolQuery(() => pool.query(
+            const update = await retryPoolQuery(() =>
+              pool.query(
+                `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                [retryAfter, lastError, job.id],
+              ),
+            );
             if (update.rowCount) {
               await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total");
-            ));
+              incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
               console.warn(
                 JSON.stringify({
                   level: "warn",
@@ -634,10 +602,10 @@ export function createPgQueue(
         const decision = evaluateMaintenanceAdmission(
           await maintenancePressureSignals(Date.now()),
           maintenanceAdmissionConfig,
-          await retryPoolQuery(() => pool.query(
+          Number(job.created_at),
           Date.now(),
         );
-          ));
+        if (!decision.admit) {
           await withReviewSpan(
             "selfhost.queue.maintenance_admission_deferred",
             { "job.type": message.type, "queue.backend": "postgres", "maintenance_admission.reason": decision.reason },
@@ -647,9 +615,11 @@ export function createPgQueue(
                 maintenanceAdmissionConfig,
                 `${job.job_key ?? ""}:${job.id}:${job.payload}`,
               );
-              const update = await pool.query(
-                `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
-                [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
+              const update = await retryPoolQuery(() =>
+                pool.query(
+                  `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                  [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
+                ),
               );
               if (update.rowCount) {
                 await recordQueueMetric("gittensory_jobs_maintenance_admission_deferred_total");
@@ -667,10 +637,10 @@ export function createPgQueue(
                   }),
                 );
               }
-          await retryPoolQuery(() => pool.query(
+            },
             { parentTraceParent: jobTraceParent },
           );
-          ));
+          return true;
         }
       }
       try {
@@ -680,7 +650,26 @@ export function createPgQueue(
           () => consume(message),
           { parentTraceParent: message.type === "github-webhook" ? message.traceParent : undefined },
         );
-        await pool.query(`DELETE FROM ${TABLE} WHERE id=$1`, [job.id]);
+        // Retry on transient connection errors (the pool auto-reconnects). If all retries fail with a
+        // connection error, leave the row in 'processing' -- reclaimExpiredProcessingJobs() resets it to
+        // 'pending' on the next tick, so the job is retried rather than double-processed or lost.
+        try {
+          await retryPoolQuery(() => pool.query(`DELETE FROM ${TABLE} WHERE id=$1`, [job.id]));
+        } catch (deleteErr) {
+          if (isPgConnectionError(deleteErr)) {
+            console.warn(
+              JSON.stringify({
+                level: "warn",
+                event: "selfhost_queue_pg_connection_lost_on_delete",
+                id: job.id,
+                code: (deleteErr as Record<string, unknown>)["code"],
+                message: "PG connection terminated after job succeeded; reclaim mechanism will retry",
+              }),
+            );
+            return true;
+          }
+          throw deleteErr;
+        }
         await recordQueueMetric("gittensory_jobs_processed_total");
         logAudit({
           event: "job_complete",
@@ -692,6 +681,22 @@ export function createPgQueue(
           attempts: Number(job.attempts) + 1,
         }, jobTraceParent);
       } catch (error) {
+        // If the connection was lost during job processing itself (consume() made its own PG calls), leave
+        // the job in 'processing' state for the reclaim mechanism to reset rather than cascading into a
+        // secondary error trying to reschedule it over a dead connection. Still warn so operators can
+        // correlate with DB restart events.
+        if (isPgConnectionError(error)) {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "selfhost_queue_pg_connection_lost",
+              id: job.id,
+              code: (error as Record<string, unknown>)["code"],
+              message: "PG connection terminated during job processing; reclaim mechanism will retry",
+            }),
+          );
+          return true;
+        }
         const attempts = Number(job.attempts) + 1;
         const errMsg = errorMessageWithCause(error);
         const rateLimitDelayMs = githubRateLimitRetryDelayMs(error);

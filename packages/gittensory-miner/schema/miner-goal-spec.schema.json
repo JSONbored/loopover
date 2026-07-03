@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gittensory.dev/schema/miner-goal-spec.schema.json",
+  "title": "MinerGoalSpec",
+  "description": "Per-repo miner configuration parsed from .gittensory-miner.yml. Describes what an autonomous miner should look for in a target repo and how it should behave. Mirrors the implemented MinerGoalSpec type in packages/gittensory-engine/src/miner-goal-spec.ts. Safe by default: a repo with no file is still minable.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "minerEnabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this repo permits autonomous miners at all. Explicit opt-out: set false to halt all miner targeting of this repo."
+    },
+    "wantedPaths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Glob list of work areas a miner should prefer; a candidate touching these is favored."
+    },
+    "blockedPaths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Glob list of paths off-limits to a miner; a candidate touching one of these should be skipped."
+    },
+    "preferredLabels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Issue/PR labels a miner should prefer to target; a candidate carrying one is favored."
+    },
+    "blockedLabels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Issue/PR labels a miner must not target; a candidate carrying one should be skipped."
+    },
+    "maxConcurrentClaims": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Maximum number of issues a single miner may hold claimed on this repo at once, so one miner cannot monopolize the queue."
+    },
+    "issueDiscoveryPolicy": {
+      "type": "string",
+      "enum": ["encouraged", "neutral", "discouraged"],
+      "default": "neutral",
+      "description": "How strongly this repo encourages a miner to open discovery issues."
+    }
+  }
+}

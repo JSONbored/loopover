@@ -71,18 +71,17 @@ export function computeLaneFit(input: GoalModelInput): number {
   if (matchesAnyLabel(candidateLabels, goalSpec.blockedLabels)) {
     return 0;
   }
-  const pathMatches = matchesAnyPath(candidatePaths, goalSpec.wantedPaths);
-  const labelMatches = matchesAnyLabel(candidateLabels, goalSpec.preferredLabels);
-  if (!pathMatches && !labelMatches) {
-    if (goalSpec.wantedPaths.length === 0 && goalSpec.preferredLabels.length === 0) {
-      return 0.5;
-    }
-    return 0;
-  }
-  const totalCriteria = goalSpec.wantedPaths.length + goalSpec.preferredLabels.length;
-  const matchedCriteria = (pathMatches ? 1 : 0) + (labelMatches ? 1 : 0);
-  if (totalCriteria === 0) {
+  const hasPathCriteria = goalSpec.wantedPaths.length > 0;
+  const hasLabelCriteria = goalSpec.preferredLabels.length > 0;
+  if (!hasPathCriteria && !hasLabelCriteria) {
     return 0.5;
   }
-  return matchedCriteria / totalCriteria;
+  const pathMatches = hasPathCriteria && matchesAnyPath(candidatePaths, goalSpec.wantedPaths);
+  const labelMatches = hasLabelCriteria && matchesAnyLabel(candidateLabels, goalSpec.preferredLabels);
+  if (!pathMatches && !labelMatches) {
+    return 0;
+  }
+  const activeDimensions = (hasPathCriteria ? 1 : 0) + (hasLabelCriteria ? 1 : 0);
+  const matchedDimensions = (pathMatches ? 1 : 0) + (labelMatches ? 1 : 0);
+  return matchedDimensions / activeDimensions;
 }

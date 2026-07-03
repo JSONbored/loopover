@@ -86,6 +86,42 @@ test("computeLaneFit returns 0.5 when only one of two preferred criteria matches
   assert.equal(result, 0.5);
 });
 
+test("computeLaneFit returns 1.0 when multiple wantedPaths are set and one matches", () => {
+  const result = computeLaneFit(
+    input({
+      candidatePaths: ["src/app.ts"],
+      candidateLabels: [],
+      goalSpec: baseSpec({ wantedPaths: ["src/**", "lib/**", "packages/**"] }),
+    }),
+  );
+  assert.equal(result, 1);
+});
+
+test("computeLaneFit returns 1.0 when multiple preferredLabels are set and one matches", () => {
+  const result = computeLaneFit(
+    input({
+      candidatePaths: [],
+      candidateLabels: ["bug"],
+      goalSpec: baseSpec({ preferredLabels: ["bug", "feature", "enhancement"] }),
+    }),
+  );
+  assert.equal(result, 1);
+});
+
+test("computeLaneFit returns 1.0 when both multi-entry lists have at least one match", () => {
+  const result = computeLaneFit(
+    input({
+      candidatePaths: ["lib/utils.ts"],
+      candidateLabels: ["enhancement"],
+      goalSpec: baseSpec({
+        wantedPaths: ["src/**", "lib/**", "packages/**"],
+        preferredLabels: ["bug", "feature", "enhancement"],
+      }),
+    }),
+  );
+  assert.equal(result, 1);
+});
+
 test("computeLaneFit returns 1.0 when only wantedPaths is set and matches", () => {
   const result = computeLaneFit(
     input({

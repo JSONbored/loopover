@@ -63,6 +63,22 @@ fi
 exit 0
 `;
 
+const STUB_PG_DUMP = `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-f" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+if [ -z "$out" ]; then
+  exit 2
+fi
+printf %s "stub-postgres-dump-bytes" > "$out"
+exit 0
+`;
+
 function createHarness() {
   const dir = mkdtempSync(join(tmpdir(), "gittensory-backup-"));
   const binDir = join(dir, "bin");
@@ -76,13 +92,16 @@ function createHarness() {
   const curlStub = join(binDir, "curl");
   writeFileSync(curlStub, STUB_CURL);
   chmodSync(curlStub, 0o755);
+  const pgDumpStub = join(binDir, "pg_dump");
+  writeFileSync(pgDumpStub, STUB_PG_DUMP);
+  chmodSync(pgDumpStub, 0o755);
   return { dir, binDir, outDir, dbPath };
 }
 
 function runBackup(
   h: ReturnType<typeof createHarness>,
   mode: "ok" | "corrupt",
-  options: { qdrant?: boolean } = {},
+  options: { databaseUrl?: string; qdrant?: boolean } = {},
 ) {
   // Absolute /bin/sh so the command itself never depends on PATH; the script's own
   // sqlite3/gzip/date lookups use the PATH we inject (stub bin first, real tools after).
@@ -95,8 +114,8 @@ function runBackup(
       DATABASE_PATH: h.dbPath,
       BACKUP_RETAIN: "1",
       STUB_SQLITE_MODE: mode,
-      // Force the SQLite branch + skip Qdrant regardless of the ambient test env.
-      DATABASE_URL: "",
+      // Keep ambient test env from selecting a different backup branch or Qdrant target.
+      DATABASE_URL: options.databaseUrl ?? "",
       GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "",
       QDRANT_URL: options.qdrant ? "http://qdrant.test" : "",
     },
@@ -106,6 +125,7 @@ function runBackup(
 function readManifest(h: ReturnType<typeof createHarness>) {
   return JSON.parse(readFileSync(join(h.outDir, "manifest.json"), "utf8")) as {
     ts: string;
+    postgres: { file: string; bytes: number } | null;
     sqlite: { file: string; bytes: number } | null;
     qdrant: { file: string | null };
     retain: number;
@@ -141,7 +161,14 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
     const manifest = readManifest(harness);
     expect(manifest.ts).toMatch(/^\d{8}T\d{6}Z$/);
     expect(manifest.retain).toBe(1);
-    expect(Object.keys(manifest).sort()).toEqual(["qdrant", "retain", "sqlite", "ts"]);
+    expect(Object.keys(manifest).sort()).toEqual([
+      "postgres",
+      "qdrant",
+      "retain",
+      "sqlite",
+      "ts",
+    ]);
+    expect(manifest.postgres).toBeNull();
     expect(manifest.sqlite?.file).toMatch(/^sqlite\/gittensory-\d{8}T\d{6}Z\.sqlite\.gz$/);
     expect(manifest.sqlite?.bytes).toBe(
       statSync(join(harness.outDir, manifest.sqlite!.file)).size,
@@ -155,6 +182,7 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
     expect(res.status).toBe(0);
     const manifest = readManifest(harness);
     expect(manifest.sqlite?.file).toMatch(/^sqlite\/gittensory-\d{8}T\d{6}Z\.sqlite\.gz$/);
+    expect(manifest.postgres).toBeNull();
     expect(manifest.qdrant.file).toBe("qdrant/qdrant-snapshot-123.snap");
     expect(readFileSync(join(harness.outDir, manifest.qdrant.file!), "utf8")).toBe(
       "stub-qdrant-snapshot-bytes",
@@ -169,10 +197,30 @@ describe("scripts/backup.sh sqlite online-backup verification (#2084)", () => {
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("sqlite db not found");
     const manifest = readManifest(harness);
+    expect(manifest.postgres).toBeNull();
     expect(manifest.sqlite).toBeNull();
     expect(manifest.qdrant.file).toBeNull();
     expect(existsSync(join(harness.outDir, "sqlite"))).toBe(true);
     expect(readdirSync(join(harness.outDir, "sqlite"))).toHaveLength(0);
+  });
+
+  it("records a postgres dump artifact when postgres backup succeeds", () => {
+    const res = runBackup(harness, "ok", {
+      databaseUrl: "postgresql://backup@example.invalid/gittensory",
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("[backup] postgres ->");
+    const manifest = readManifest(harness);
+    expect(manifest.postgres?.file).toMatch(/^postgres\/gittensory-\d{8}T\d{6}Z\.dump$/);
+    expect(manifest.postgres?.bytes).toBe(
+      statSync(join(harness.outDir, manifest.postgres!.file)).size,
+    );
+    expect(manifest.sqlite).toBeNull();
+    expect(manifest.qdrant.file).toBeNull();
+    expect(readFileSync(join(harness.outDir, manifest.postgres!.file), "utf8")).toBe(
+      "stub-postgres-dump-bytes",
+    );
   });
 
   it("fails loudly, removes the bad file, and skips retention when the backup is corrupt", () => {

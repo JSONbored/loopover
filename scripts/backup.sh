@@ -14,6 +14,8 @@ PGPASSFILE_CREATED=""
 MANIFEST_TMP=""
 SQLITE_MANIFEST_FILE=""
 SQLITE_MANIFEST_BYTES=""
+POSTGRES_MANIFEST_FILE=""
+POSTGRES_MANIFEST_BYTES=""
 QDRANT_MANIFEST_FILE=""
 cleanup() {
   if [ -n "$PGPASSFILE_CREATED" ]; then
@@ -72,10 +74,14 @@ json_file_entry() {
 
 write_manifest() {
   sqlite_json=null
+  postgres_json=null
   qdrant_file_json=null
 
   if [ -n "$SQLITE_MANIFEST_FILE" ]; then
     sqlite_json=$(json_file_entry "$SQLITE_MANIFEST_FILE" "$SQLITE_MANIFEST_BYTES")
+  fi
+  if [ -n "$POSTGRES_MANIFEST_FILE" ]; then
+    postgres_json=$(json_file_entry "$POSTGRES_MANIFEST_FILE" "$POSTGRES_MANIFEST_BYTES")
   fi
   if [ -n "$QDRANT_MANIFEST_FILE" ]; then
     qdrant_file_json="\"$(json_escape "$QDRANT_MANIFEST_FILE")\""
@@ -85,6 +91,7 @@ write_manifest() {
   {
     printf '{\n'
     printf '  "ts": "%s",\n' "$(json_escape "$TS")"
+    printf '  "postgres": %s,\n' "$postgres_json"
     printf '  "sqlite": %s,\n' "$sqlite_json"
     printf '  "qdrant": {"file": %s},\n' "$qdrant_file_json"
     printf '  "retain": %s\n' "$RETAIN"
@@ -237,6 +244,8 @@ case "$PG_DB" in
     prepare_pg_env
     POSTGRES_OUT="$OUT/postgres/gittensory-$TS.dump"
     pg_dump -Fc -f "$POSTGRES_OUT" "$PG_SANITIZED_URL"
+    POSTGRES_MANIFEST_FILE="postgres/$(basename "$POSTGRES_OUT")"
+    POSTGRES_MANIFEST_BYTES=$(file_bytes "$POSTGRES_OUT")
     echo "[backup] postgres -> $POSTGRES_OUT"
     ;;
   *)

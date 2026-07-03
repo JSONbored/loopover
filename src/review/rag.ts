@@ -355,7 +355,7 @@ export async function deleteChunksForPaths(infra: RagInfra, project: string, rep
 // ── Retrieval (fail-safe: "" when anything is missing/broken) ────────────────────────────────────
 /** Skip retrieval for a trivially-short query (e.g. a one-word scope string): not worth an embed +
  *  a vector query, and the matches would be noise. (#cloud-opt) */
-const MIN_QUERY_CHARS = 40;
+export const MIN_QUERY_CHARS = 40;
 /** Hard cap on neighbours per query — bounds vector-index cost even if a caller passes a large topK. (#cloud-opt) */
 const RAG_MAX_TOPK = 20;
 const EMPTY_RAG_RETRIEVAL_METRICS: RagRetrievalMetrics = {

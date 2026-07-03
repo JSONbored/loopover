@@ -16189,6 +16189,314 @@ describe("queue processors", () => {
     expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly") && line.includes("owner/repo"))).toBe(true);
     warn.mockRestore();
   });
+
+  describe("type label decoupling (#label-decoupling)", () => {
+    function stubTypeLabelFetch(prNumber: number, seen: { posted: string[]; removed: string[]; checkRunCreated: boolean }) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes(`/commits/`) && url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/check-runs") && method === "POST") {
+          seen.checkRunCreated = true;
+          return Response.json({ id: 9001 }, { status: 201 });
+        }
+        if (url.includes("/check-runs/") && method === "PATCH") return Response.json({ id: 9001 });
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/labels`) && method === "POST") {
+          seen.posted.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[]));
+          return Response.json([]);
+        }
+        if (url.includes(`/issues/${prNumber}/labels/`) && method === "DELETE") {
+          seen.removed.push(decodeURIComponent(url.split(`/issues/${prNumber}/labels/`)[1] ?? ""));
+          return new Response(null, { status: 204 });
+        }
+        if (url.endsWith("/labels") && method === "POST") return Response.json({ name: JSON.parse(String(init?.body ?? "{}")).name }, { status: 201 });
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "GET") return Response.json([]);
+        if (url.includes(`/issues/${prNumber}/comments`) && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+        return new Response("not found", { status: 404 });
+      });
+    }
+
+    it("applies the type label when oss_maintainer mode + an unconfirmed miner suppress the context label", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        publicAudienceMode: "oss_maintainer",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      await upsertOfficialMinerDetection(env, "contributor", { status: "not_found" }, 60_000);
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(210, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-oss-maintainer-unconfirmed",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 210, title: "fix: broken pagination", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha210" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:feature", "gittensor:priority"]);
+    });
+
+    it("still mutes the type label when gittensor_only mode's non-confirmed-miner silence applies, even with the gate enabled", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "all_prs",
+        publicSurface: "comment_and_label",
+        publicAudienceMode: "gittensor_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        // The only difference from the pre-existing "keeps GitHub-history-only contributors quiet" test
+        // (which has the gate off, so it returns before ever reaching the type-label decision): with the
+        // gate ENABLED, the function does NOT bail out early, so this is the only path that actually
+        // exercises `decision.skipReason === "not_official_gittensor_miner"` at the type-label gate.
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      await upsertOfficialMinerDetection(env, "contributor", { status: "not_found" }, 60_000);
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(217, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-gittensor-only-muted",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 217, title: "fix: gittensor_only silence", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha217" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.posted).toEqual([]);
+      expect(seen.removed).toEqual([]);
+    });
+
+    it("does not apply the type label when typeLabelsEnabled is false, in the same oss_maintainer + unconfirmed-miner scenario", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        publicAudienceMode: "oss_maintainer",
+        autoLabelEnabled: true,
+        typeLabelsEnabled: false,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      await upsertOfficialMinerDetection(env, "contributor", { status: "not_found" }, 60_000);
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(211, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-disabled-oss-maintainer-unconfirmed",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 211, title: "fix: broken pagination", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha211" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.posted).toEqual([]);
+      expect(seen.removed).toEqual([]);
+    });
+
+    it("applies the type label to a maintainer-authored PR even though includeMaintainerAuthors excludes it from the public surface", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        includeMaintainerAuthors: false,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(212, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-maintainer-author",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 212, title: "fix: internal cleanup", state: "open", user: { login: "org-member" }, author_association: "MEMBER", head: { sha: "sha212" }, labels: [], body: "Internal." },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+      expect(seen.posted).not.toContain("gittensor");
+    });
+
+    it("applies the type label to a bot-authored PR and keeps the three type labels mutually exclusive", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(213, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-bot-author",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 213, title: "feat: add retry backoff", state: "open", user: { login: "renovate[bot]", type: "Bot" }, head: { sha: "sha213" }, labels: [], body: "Automated." },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:feature"]);
+      expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
+    });
+
+    it("applies the type label when publicSurface: comment_only makes the base context label structurally impossible", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "comment_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(214, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-comment-only-surface",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 214, title: "fix: comment-only regression", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha214" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:bug"]);
+    });
+
+    it("typeLabelsEnabled: false does not suppress the base context label for a confirmed contributor", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        typeLabelsEnabled: false,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(215, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-disabled-confirmed-contributor",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 215, title: "fix: confirmed contributor path", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha215" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor"]);
+    });
+
+    it("posts the Gittensory Context check run independently of both label families being off, with zero label writes", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        typeLabelsEnabled: false,
+        checkRunMode: "enabled",
+        gateCheckMode: "off",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+      });
+      await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(216, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-checkrun-independent",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 216, title: "fix: check-run independence", state: "open", user: { login: "contributor" }, author_association: "NONE", head: { sha: "sha216" }, labels: [], body: "Fixes #1" },
+        },
+      });
+
+      expect(seen.checkRunCreated).toBe(true);
+      expect(seen.posted).toEqual([]);
+      expect(seen.removed).toEqual([]);
+    });
+  });
 });
 
 function completeSegment(repoFullName: string, segment: "labels" | "open_issues" | "open_pull_requests") {

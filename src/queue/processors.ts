@@ -6252,6 +6252,104 @@ async function maybePublishPrPublicSurface(
       return undefined;
   }
 
+  // Per-PR TYPE label (reviewbot auto-label parity): exactly ONE of gittensor:bug/feature/priority by the PR
+  // title + changed paths. Gated by `typeLabelsEnabled` (#label-decoupling), NOT `decision.willLabel` -- type
+  // labels are internal triage metadata, applied regardless of author type (bot/maintainer/missing-author) or
+  // the narrower reasons `willLabel` itself can be false (`oss_maintainer` mode + an unconfirmed miner,
+  // `autoLabelEnabled`, or the repo's `publicSurface` mode) -- see `typeLabelsEnabled`'s doc comment in
+  // types.ts. The ONE thing still respected is `publicAudienceMode: "gittensor_only"`'s stricter promise to
+  // stay entirely quiet for a non-confirmed-miner author (`not_official_gittensor_miner` /
+  // `miner_detection_unavailable`) -- that mode's whole point is total silence for that audience, not merely
+  // suppressing the context label, so a type label would violate it same as a comment would.
+  // `typeLabelsEnabled` is optional only for RepositorySettings-fixture-construction backward compat (see
+  // its doc comment in types.ts); getRepositorySettings always resolves it to a concrete boolean, so the
+  // `?? true` fallback is unreachable on this webhook-integration path (unlike a pure function such as
+  // buildRepoSettingsPreview, which a unit test can call with a hand-built, genuinely-undefined settings object).
+  /* v8 ignore next -- see the comment above */
+  const typeLabelsEnabled = settings.typeLabelsEnabled ?? true;
+  if (
+    typeLabelsEnabled &&
+    !settings.agentPaused &&
+    decision.skipReason !== "miner_detection_unavailable" &&
+    decision.skipReason !== "not_official_gittensor_miner"
+  ) {
+    try {
+      const contentGlobs =
+        (settings as { contentGlobs?: string[] }).contentGlobs ?? [];
+      // contentGlobs is a forward-compat hook, not yet wired to any real settings field (no caller ever
+      // populates it), so it is always [] today -- the content-glob branch below is unreachable in
+      // production and cannot be exercised by a realistic test.
+      /* v8 ignore start */
+      const typeFiles = contentGlobs.length > 0
+        ? await resolvePullRequestFilesForReview(env, {
+            installationId,
+            repoFullName,
+            pullNumber: pr.number,
+          }).catch(() => [] as Awaited<ReturnType<typeof listPullRequestFiles>>)
+        : [];
+      /* v8 ignore stop */
+      const chosenType = resolvePrTypeLabel({
+        title: pr.title,
+        /* v8 ignore next -- see the contentGlobs note above; typeFiles is always [] today so this callback never runs */
+        changedPaths: typeFiles.map((file) => file.path),
+        contentGlobs,
+      });
+      await ensurePullRequestLabel(
+        env,
+        installationId,
+        repoFullName,
+        pr.number,
+        chosenType,
+        { createMissingLabel: true, mode },
+      );
+      for (const other of ALL_TYPE_LABELS.filter(
+        (label) => label !== chosenType,
+      )) {
+        await removePullRequestLabel(
+          env,
+          installationId,
+          repoFullName,
+          pr.number,
+          other,
+          mode,
+        );
+      }
+      console.log(
+        JSON.stringify({
+          ev: "type_label_decision",
+          repoFullName,
+          pull: pr.number,
+          applied: true,
+          label: chosenType,
+        }),
+      );
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          ev: "type_label_error",
+          repoFullName,
+          pull: pr.number,
+          message: errorMessage(error).slice(0, 150),
+        }),
+      );
+    }
+  } else {
+    console.log(
+      JSON.stringify({
+        ev: "type_label_decision",
+        repoFullName,
+        pull: pr.number,
+        applied: false,
+        reason: settings.agentPaused
+          ? "agent_paused"
+          : decision.skipReason === "miner_detection_unavailable" ||
+              decision.skipReason === "not_official_gittensor_miner"
+            ? decision.skipReason
+            : "typeLabelsEnabled_false",
+      }),
+    );
+  }
+
   // Respect the per-repo agent pause: suppress all public surface mutations (label, comment, context
   // check run) so a paused repo sees no gittensory-authored GitHub content. The review-agent check
   // run still posts so the required-check status is not broken (#agent-pause).
@@ -7852,56 +7950,6 @@ async function maybePublishPrPublicSurface(
         message,
       );
       if (isGitHubRateLimitedError(error)) throw error;
-    }
-    // Per-PR TYPE label (reviewbot auto-label parity): exactly ONE of gittensor:bug/feature/priority by the PR
-    // title + changed paths. Review-time + neutral, BEST-EFFORT + independent of the context label above so a
-    // type-label hiccup never drops the "label" output. Files are only fetched when content globs are configured
-    // (otherwise the label is title-derived). The status labels (ready-to-merge etc.) remain the autonomy layer's.
-    if (settings.autoLabelEnabled) {
-      try {
-        const contentGlobs =
-          (settings as { contentGlobs?: string[] }).contentGlobs ?? [];
-        const typeFiles =
-          contentGlobs.length > 0
-            ? await getReviewFiles().catch(
-                () => [] as Awaited<ReturnType<typeof getReviewFiles>>,
-              )
-            : [];
-        const chosenType = resolvePrTypeLabel({
-          title: pr.title,
-          changedPaths: typeFiles.map((file) => file.path),
-          contentGlobs,
-        });
-        await ensurePullRequestLabel(
-          env,
-          installationId,
-          repoFullName,
-          pr.number,
-          chosenType,
-          { createMissingLabel: true, mode },
-        );
-        for (const other of ALL_TYPE_LABELS.filter(
-          (label) => label !== chosenType,
-        )) {
-          await removePullRequestLabel(
-            env,
-            installationId,
-            repoFullName,
-            pr.number,
-            other,
-            mode,
-          );
-        }
-      } catch (error) {
-        console.log(
-          JSON.stringify({
-            ev: "type_label_error",
-            repoFullName,
-            pull: pr.number,
-            message: errorMessage(error).slice(0, 150),
-          }),
-        );
-      }
     }
   }
   return finishPublicSurfacePublication();

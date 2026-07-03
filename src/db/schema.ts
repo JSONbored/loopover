@@ -75,6 +75,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // regardless of the label a repo uses.
   blacklistLabel: text("blacklist_label").notNull().default("slop"),
   createMissingLabel: integer("create_missing_label", { mode: "boolean" }).notNull().default(true),
+  // #label-decoupling: independently gates the per-PR TYPE label (gittensor:bug/feature/priority),
+  // distinct from autoLabelEnabled (the base gittensor context label) and the public-surface gate.
+  typeLabelsEnabled: integer("type_labels_enabled", { mode: "boolean" }).notNull().default(true),
   publicSurface: text("public_surface").notNull().default("comment_and_label"),
   includeMaintainerAuthors: integer("include_maintainer_authors", { mode: "boolean" }).notNull().default(false),
   requireLinkedIssue: integer("require_linked_issue", { mode: "boolean" }).notNull().default(false),

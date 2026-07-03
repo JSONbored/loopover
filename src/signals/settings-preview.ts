@@ -195,6 +195,7 @@ export type RepoSettingsPreview = {
     firstTimeContributorGrace: boolean;
     slopGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
+    typeLabelsEnabled: boolean;
     gittensorLabel: string;
     blacklistLabel: string;
     createMissingLabel: boolean;
@@ -320,6 +321,7 @@ export function buildRepoSettingsPreview(args: {
       firstTimeContributorGrace: settings.firstTimeContributorGrace,
       slopGateMinScore: settings.slopGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
+      typeLabelsEnabled: settings.typeLabelsEnabled ?? true,
       gittensorLabel: settings.gittensorLabel,
       blacklistLabel: settings.blacklistLabel ?? "slop",
       createMissingLabel: settings.createMissingLabel,

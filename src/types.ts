@@ -672,6 +672,18 @@ export type RepositorySettings = {
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;
+  /** #label-decoupling: independently gates the per-PR TYPE/taxonomy label (exactly one of
+   *  `gittensor:bug`/`gittensor:feature`/`gittensor:priority`, classified from the PR title +
+   *  changed paths — see `resolvePrTypeLabel` in `settings/pr-type-label.ts`). Distinct from
+   *  {@link autoLabelEnabled} (which governs only the base {@link gittensorLabel} context label) and
+   *  from `decidePublicSurface`'s public-surface gate (miner detection / `publicAudienceMode` /
+   *  `includeMaintainerAuthors` / bot-author exclusion) — type labels are internal triage metadata
+   *  applied unconditionally to every PR, not a contributor-facing signal, so neither of those
+   *  public-surface conditions should suppress them. Default TRUE (matches the prior de-facto
+   *  behavior before this field existed, when type labels were gated by `autoLabelEnabled` nested
+   *  inside the public-surface check). Always populated by the DB layer; optional so existing
+   *  settings fixtures/callers need not be touched. */
+  typeLabelsEnabled?: boolean | undefined;
   publicSurface: "off" | "comment_and_label" | "comment_only" | "label_only";
   includeMaintainerAuthors: boolean;
   requireLinkedIssue: boolean;

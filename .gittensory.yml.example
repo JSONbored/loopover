@@ -282,6 +282,15 @@ settings:
   # The label name to apply. String. Default: gittensor.
   gittensorLabel: gittensor
 
+  # Apply the per-PR TYPE/taxonomy label -- exactly one of gittensor:bug / gittensor:feature /
+  # gittensor:priority, classified from the PR title + changed paths (#label-decoupling). Independent of
+  # `autoLabelEnabled` above (which only governs the base `gittensorLabel` context label): a type label is
+  # internal triage metadata, so it applies to every PR regardless of author type (bot/maintainer/missing
+  # author) or `publicAudienceMode`/`publicSurface`, UNLESS `publicAudienceMode: gittensor_only` is muting
+  # this PR's author entirely (that mode's whole point is total silence for a non-confirmed-miner author).
+  # Bool. Default: true.
+  typeLabelsEnabled: true
+
   # Create the label if it does not yet exist. Bool. Default: true.
   createMissingLabel: true
 
@@ -311,6 +320,17 @@ settings:
   # Bool. Default: false.
   agentDryRun: false
 
+  # Four independent label families, none of which gates or silently disables another (#label-decoupling,
+  # #label-scoping):
+  #   1. Context label (`gittensorLabel`, gated by `autoLabelEnabled` above) — the base per-PR marker shown
+  #      to the public surface, subject to `publicAudienceMode`/`publicSurface`/author-qualification.
+  #   2. Taxonomy/type label (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`, gated by
+  #      `typeLabelsEnabled` above) — internal triage metadata, applied independently of #1.
+  #   3. Autonomy-outcome labels (`gittensory:ready-to-merge` etc.) — gated by the `review_state_label`
+  #      autonomy class below, advisory commentary on the bot's own verdict.
+  #   4. Anti-abuse enforcement labels (blacklist/contributor-cap/review-nag) — gated by the `close`
+  #      autonomy class below, applied alongside the close action they accompany.
+  #
   # Autonomy dial — per-action-class level (observe … auto). Classes: review, request_changes, approve,
   # merge, close, label, review_state_label, update_branch. Map. Default: {} (= observe everywhere,
   # deny-by-default).

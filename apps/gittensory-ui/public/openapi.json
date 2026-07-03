@@ -8966,6 +8966,9 @@
           "contributorCapCancelCi": {
             "type": "boolean",
             "nullable": true
+          },
+          "typeLabelsEnabled": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -8991,6 +8994,7 @@
           "aiReviewAllAuthors",
           "closeOwnerAuthors",
           "autoLabelEnabled",
+          "typeLabelsEnabled",
           "gittensorLabel",
           "blacklistLabel",
           "createMissingLabel",
@@ -9624,6 +9628,9 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
+              },
+              "typeLabelsEnabled": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9644,6 +9651,7 @@
               "selfAuthoredLinkedIssueGateMode",
               "firstTimeContributorGrace",
               "autoLabelEnabled",
+              "typeLabelsEnabled",
               "gittensorLabel",
               "blacklistLabel",
               "createMissingLabel",

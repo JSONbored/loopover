@@ -1617,6 +1617,20 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.badgeEnabled).toBe(true); // settings: override wins over the DB-stored value
   });
 
+  it("wires settings.typeLabelsEnabled into the manifest parser and lets a per-repo override win over a global default (#label-decoupling)", () => {
+    const parsedTrue = parseFocusManifest({ settings: { typeLabelsEnabled: true } });
+    expect(parsedTrue.settings.typeLabelsEnabled).toBe(true);
+    expect(parsedTrue.warnings).toEqual([]);
+    const parsedFalse = parseFocusManifest({ settings: { typeLabelsEnabled: false } });
+    expect(parsedFalse.settings.typeLabelsEnabled).toBe(false);
+
+    // Simulates PR #1's private-config layering: a global default of `true` (DB, standing in for the
+    // global .gittensory.yml layer already merged upstream) overridden by a per-repo `settings:` block.
+    const db = { typeLabelsEnabled: true } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabelsEnabled: false } }));
+    expect(eff.typeLabelsEnabled).toBe(false); // settings: override wins over the DB/global-default value
+  });
+
   it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {
     const parsed = parseFocusManifest({ settings: { aiReviewMode: "advisory", aiReviewByok: true } });
     expect(parsed.settings.aiReviewMode).toBe("advisory");

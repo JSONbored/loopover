@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { initRunStateStore, resolveRunStateDbPath } from "./run-state.js";
+
+const dockerProbeTimeoutMs = 1500;
 
 function errorDetail(error) {
   return error instanceof Error && error.message ? error.message : "unknown_error";
@@ -13,7 +16,15 @@ export function resolveLaptopModeStateDbPath(env = process.env) {
 }
 
 export function resolveLaptopModeConfigDir(env = process.env) {
-  return dirname(resolveLaptopModeStateDbPath(env));
+  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
+    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
+    : "";
+  if (explicitConfigDir) return explicitConfigDir;
+
+  const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
+    ? env.XDG_CONFIG_HOME.trim()
+    : join(homedir(), ".config");
+  return join(configHome, "gittensory-miner");
 }
 
 /**
@@ -41,10 +52,29 @@ export function initLaptopMode(input = {}) {
   }
 }
 
+function nearestExistingAncestor(path) {
+  let candidate = dirname(path);
+  while (!existsSync(candidate)) {
+    const parent = dirname(candidate);
+    if (parent === candidate) return null;
+    candidate = parent;
+  }
+  return candidate;
+}
+
 function inspectWritablePath(path) {
   const exists = existsSync(path);
   if (!exists) {
-    return { path, exists: false, writable: false, error: null };
+    const ancestor = nearestExistingAncestor(path);
+    if (!ancestor) {
+      return { path, exists: false, writable: false, error: "missing_parent_directory" };
+    }
+    try {
+      accessSync(ancestor, constants.W_OK | constants.X_OK);
+      return { path, exists: false, writable: true, error: null };
+    } catch (error) {
+      return { path, exists: false, writable: false, error: errorDetail(error) };
+    }
   }
   try {
     accessSync(path, constants.W_OK);
@@ -96,12 +126,19 @@ function probeDocker(spawn = spawnSync) {
     result = spawn("docker", ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: dockerProbeTimeoutMs,
     });
   } catch (error) {
     return { available: false, detail: errorDetail(error) };
   }
 
   if (result.error) {
+    if (result.error.code === "ETIMEDOUT") {
+      return {
+        available: false,
+        detail: `docker --version timed out after ${dockerProbeTimeoutMs}ms`,
+      };
+    }
     return {
       available: false,
       detail: result.error.code === "ENOENT" ? "docker not found on PATH" : errorDetail(result.error),

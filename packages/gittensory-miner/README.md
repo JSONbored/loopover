@@ -48,7 +48,8 @@ gittensory-miner doctor
 
 `init` bootstraps the local config directory and the SQLite-backed `run-state.sqlite3` file. Path
 resolution mirrors the package's other local stores: `GITTENSORY_MINER_CONFIG_DIR`, then
-`XDG_CONFIG_HOME`, then `~/.config/gittensory-miner/`.
+`XDG_CONFIG_HOME`, then `~/.config/gittensory-miner/`. If you need the SQLite file elsewhere, set
+`GITTENSORY_MINER_RUN_STATE_DB`; that overrides the DB path only, not the config-dir chain.
 
 ## Commands
 
@@ -61,8 +62,8 @@ gittensory-miner init
 gittensory-miner doctor
 ```
 
-`doctor` always reports Docker as informational only. Laptop mode never requires Docker, Redis, or
-Postgres to initialize.
+`doctor` always reports Docker as informational only and times out quickly if `docker --version`
+hangs. Laptop mode never requires Docker, Redis, or Postgres to initialize.
 
 ## Version check
 

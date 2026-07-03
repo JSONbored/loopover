@@ -17,7 +17,7 @@ export type RawPlanStep = {
 };
 
 // The lifecycle-stage transitions this library provides a template for.
-export type PlanTemplateStage = "analyze" | "prepare";
+export type PlanTemplateStage = "discover" | "analyze" | "prepare";
 
 // Context woven into a template's step titles so a plan reads against the opportunity it targets.
 export type PlanTemplateContext = {
@@ -42,6 +42,16 @@ function normalizeSubject(subject: string | undefined): string {
 function titleFor(prefix: string, subject: string): string {
   const full = subject ? `${prefix}: ${subject}` : prefix;
   return full.slice(0, MAX_TITLE_CHARS);
+}
+
+// discover: rank candidate opportunities, validate lane fit, then run a pre-start check before analyze.
+export function discoverPlanTemplate(context: PlanTemplateContext = {}): RawPlanStep[] {
+  const subject = normalizeSubject(context.subject);
+  return [
+    { id: "opportunity-rank", title: titleFor("Rank candidate opportunities", subject), actionClass: "discover", dependsOn: [], maxAttempts: 2 },
+    { id: "lane-fit-check", title: titleFor("Validate miner goal lane fit", subject), actionClass: "analyze", dependsOn: ["opportunity-rank"], maxAttempts: 1 },
+    { id: "pre-start-check", title: titleFor("Run pre-start check", subject), actionClass: "analyze", dependsOn: ["lane-fit-check"], maxAttempts: 2 },
+  ];
 }
 
 // analyze: feasibility check and repository RAG retrieval run independently, then the prompt-packet build consumes
@@ -70,6 +80,7 @@ export function preparePlanTemplate(context: PlanTemplateContext = {}): RawPlanS
 // Frozen so a consumer cannot mutate the shared registry and change dispatch behavior process-wide.
 export const PLAN_TEMPLATE_BUILDERS: Readonly<Record<PlanTemplateStage, (context?: PlanTemplateContext) => RawPlanStep[]>> =
   Object.freeze({
+    discover: discoverPlanTemplate,
     analyze: analyzePlanTemplate,
     prepare: preparePlanTemplate,
   });

@@ -63,7 +63,22 @@ pg_export_connection_env() {
     */*) hostport="${hostpart%%/*}"; PGDATABASE="${hostpart#*/}" ;;
     *) hostport="$hostpart"; PGDATABASE="" ;;
   esac
+  # An IPv6 literal is bracketed in URI syntax (RFC 3986) specifically because it contains colons itself --
+  # e.g. postgres://u:p@[::1]:5432/db -- so a naive split on the FIRST colon wrongly cuts the address apart
+  # (PGHOST='[', PGPORT=':1]:5432'). Handle the bracketed forms (with and without a trailing port) before
+  # falling back to plain first-colon splitting for an ordinary hostname/IPv4 host. psql/libpq accept the
+  # IPv6 literal via PGHOST WITHOUT its brackets (brackets are only a URI-syntax disambiguator).
   case "$hostport" in
+    \[*\]:*)
+      PGHOST="${hostport#\[}"
+      PGHOST="${PGHOST%%\]:*}"
+      PGPORT="${hostport##*\]:}"
+      ;;
+    \[*\])
+      PGHOST="${hostport#\[}"
+      PGHOST="${PGHOST%\]}"
+      PGPORT=""
+      ;;
     *:*) PGHOST="${hostport%%:*}"; PGPORT="${hostport#*:}" ;;
     *) PGHOST="$hostport"; PGPORT="" ;;
   esac

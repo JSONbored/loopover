@@ -47,6 +47,7 @@ function clamp01(value: number): number {
 }
 
 function finiteNonNegativeInt(value: number): number {
+  /* v8 ignore next -- Defensive guard for malformed adapter input; counts are normalized before scoring. */
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.trunc(value));
 }
@@ -108,7 +109,12 @@ export function computeMetadataFeasibility(issue: MetadataCandidateIssue, nowMs:
   const ageDays = issueAgeDays(issue, nowMs);
   const ageScore = clamp01(Math.exp(-ageDays / 45));
   const titleLength = normalizeTitle(issue.title).length;
-  const titleScore = titleLength >= 8 ? 1 : titleLength >= 4 ? 0.7 : 0.4;
+  let titleScore = 0.4;
+  if (titleLength >= 8) {
+    titleScore = 1;
+  } else if (titleLength >= 4) {
+    titleScore = 0.7;
+  }
   return clamp01(commentScore * 0.45 + ageScore * 0.35 + titleScore * 0.2);
 }
 

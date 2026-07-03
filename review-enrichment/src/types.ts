@@ -301,6 +301,14 @@ export interface BlameLinkFinding {
   lastTouchedByShaPrefix?: string;
 }
 
+/** An export newly ADDED to a package's public entrypoint (an `index.*` barrel) that ships with no adjacent doc
+ *  comment — undocumented public surface. Reports the symbol + its line only, never file contents. (#2035) */
+export interface UndocumentedExportFinding {
+  file: string;
+  line: number;
+  symbol: string;
+}
+
 /** A review/approval integrity signal, read from structured PR-reviews API fields only (state, commit_id,
  *  user.login, submitted_at) — never diff/file content. `stale-approval`: the reviewer's latest APPROVED review
  *  predates the PR's current head commit. `self-approval`: the PR author approved their own PR.
@@ -351,6 +359,7 @@ export interface BriefFindings {
   blameLink?: BlameLinkFinding[];
   approvalIntegrity?: ApprovalIntegrityFinding[];
   ciCheckSignals?: CiCheckSignalFinding[];
+  undocumentedExport?: UndocumentedExportFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

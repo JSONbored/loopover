@@ -34,6 +34,7 @@ const EXPECTED_ANALYZERS = [
   "blameLink",
   "approvalIntegrity",
   "ciCheckSignals",
+  "undocumentedExport",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

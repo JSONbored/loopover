@@ -22,6 +22,7 @@ import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
 import { scanSecretLog } from "./secret-log.js";
 import { scanTyposquat } from "./typosquat.js";
+import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -553,6 +554,36 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanCiCheckSignals(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "undocumentedExport",
+    title: "Undocumented public exports",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: { maxFiles: 10, maxFindings: 30 },
+    docs: {
+      summary:
+        "Flags exports newly added to a package's public entrypoint (an index.* barrel) that ship with no adjacent doc comment.",
+      looksAt:
+        "Direct `export function/const/class/type/interface/enum` declarations added to changed index.* files, checked against the file fetched at headSha.",
+      reports: "File, line, and symbol name of each undocumented added export — never file contents.",
+      network: "One GitHub contents fetch per changed entrypoint (at headSha). Requires GitHub token forwarding for private repos.",
+      notes:
+        "Conservative: re-export lists (`export { x }`) and `export *` are ignored, and any preceding `//`/JSDoc comment counts as documented.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Undocumented public exports (new public surface with no doc comment)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} exports ${helpers.safeCodeSpan(item.symbol)} with no adjacent doc comment`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanUndocumentedExport(req, fetch, { signal }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

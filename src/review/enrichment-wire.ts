@@ -50,6 +50,86 @@ function sharedSecretWasNormalized(
   return (normalized ?? "") !== raw;
 }
 
+/**
+ * Fire-and-forget startup probe that POSTs to REES /v1/ping to verify the shared secret matches.
+ * Logs rees_ping_ok on success, or rees_secret_mismatch / rees_secret_missing / rees_ping_error on
+ * failure so the misconfiguration is visible in logs and Sentry before any PR triggers a review.
+ * Also warns at startup if the raw REES_SHARED_SECRET required normalization (stripped quotes/whitespace).
+ */
+export function probeReesSecretAtStartup(env: Env): void {
+  const cfg = reesConfig(env);
+  const base = cfg.REES_URL?.trim();
+  if (!base) return; // REES not configured — nothing to probe
+  const rawSecret = cfg.REES_SHARED_SECRET;
+  const sharedSecret = normalizeSharedSecret(rawSecret);
+  if (!sharedSecret) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "rees_secret_missing",
+        message:
+          "REES_URL is set but REES_SHARED_SECRET is missing or blank. All /v1/enrich calls will be rejected (503). Set REES_SHARED_SECRET to the same bare string configured on the REES service.",
+      }),
+    );
+    return;
+  }
+  if (sharedSecretWasNormalized(rawSecret, sharedSecret)) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "rees_secret_normalized",
+        message:
+          "REES_SHARED_SECRET contained surrounding quotes or whitespace that were stripped. Ensure the REES service has the same bare value (without quotes) set as its REES_SHARED_SECRET.",
+      }),
+    );
+  }
+  // Probe asynchronously — never block the server from starting.
+  void (async () => {
+    try {
+      const response = await fetch(
+        `${base.replace(/\/+$/, "")}/v1/ping`,
+        {
+          method: "POST",
+          headers: {
+            "user-agent": "gittensory-selfhost/1.0",
+            authorization: `Bearer ${sharedSecret}`,
+          },
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      if (response.ok) {
+        console.log(
+          JSON.stringify({
+            event: "rees_ping_ok",
+            message: "REES /v1/ping succeeded — shared secret matches.",
+          }),
+        );
+      } else {
+        const isAuthError = response.status === 401 || response.status === 403;
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: isAuthError ? "rees_secret_mismatch" : "rees_ping_error",
+            status: response.status,
+            message: isAuthError
+              ? `REES /v1/ping rejected the bearer token (${response.status}). The REES_SHARED_SECRET on this engine does not match the REES_SHARED_SECRET on the REES service. All /v1/enrich calls will fail until both are set to the same bare string.`
+              : `REES /v1/ping returned an unexpected status (${response.status}). Check the REES service logs.`,
+          }),
+        );
+      }
+    } catch (error) {
+      // Network errors are logged at warn level — the REES service may not be up yet at engine start.
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "rees_ping_error",
+          message: `REES /v1/ping could not connect: ${String(error).slice(0, 200)}. The REES service may still be starting up.`,
+        }),
+      );
+    }
+  })();
+}
+
 /** True when enrichment is enabled: the flag is on AND the REES URL is configured. OFF ⇒ no call, prompt unchanged. */
 export function isEnrichmentEnabled(env: Env): boolean {
   const cfg = reesConfig(env);

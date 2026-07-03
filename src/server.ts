@@ -92,6 +92,7 @@ import {
   setLocalManifestReader,
   setLocalReviewContextReader,
 } from "./signals/focus-manifest-loader";
+import { probeReesSecretAtStartup } from "./review/enrichment-wire";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -809,6 +810,11 @@ async function main(): Promise<void> {
         );
       },
       port,
+    () => {
+      console.log(JSON.stringify({ event: "selfhost_listening", port }));
+      // Probe REES shared secret at startup so mismatches appear in logs/Sentry before
+      // any PR triggers a review (fire-and-forget; never blocks server startup).
+      probeReesSecretAtStartup(env);
     },
     () => console.log(JSON.stringify({ event: "selfhost_listening", port })),
   );

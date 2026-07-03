@@ -14,7 +14,13 @@ treats any timeout/error as "no brief" and proceeds.
 | ----------------- | ------------------------------------------------------------------------------- |
 | `GET /health`     | Liveness (Railway healthcheck).                                                 |
 | `GET /ready`      | Readiness.                                                                      |
+| `POST /v1/ping`   | Auth check only — the engine calls this at startup to verify the shared secret matches. Returns `{ok:true}` or 401. |
 | `POST /v1/enrich` | `Authorization: Bearer <REES_SHARED_SECRET>` → `EnrichRequest` → `ReviewBrief`. |
+
+> **Secret format:** `REES_SHARED_SECRET` must be set to the **same bare string** on both the engine and the REES
+> service — no surrounding quotes, no extra whitespace. Both sides strip surrounding quotes and whitespace
+> automatically, but the underlying values must match exactly. If the engine logs `rees_secret_mismatch` or
+> `rees_secret_normalized` at startup, check that both env vars are set to the same literal string.
 
 See `src/types.ts` for the `EnrichRequest` / `ReviewBrief` contract. When the engine is configured with
 `REES_FORWARD_GITHUB_TOKEN=true`, requests can include a GitHub read token so token-aware analyzers can read

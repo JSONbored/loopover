@@ -51,6 +51,16 @@ app.onError((error, c) => {
   return c.json({ error: "internal_error" }, 500);
 });
 
+// Lightweight auth-check endpoint the engine calls at startup to surface secret mismatches
+// before any review runs. No analysis is performed; the response is always {ok:true} on success.
+app.post("/v1/ping", (c) => {
+  const secret = normalizeSharedSecret(process.env.REES_SHARED_SECRET);
+  if (!secret) return c.json({ error: "service_not_configured" }, 503);
+  if (!verifyBearer(c.req.header("authorization"), secret))
+    return c.json({ error: "unauthorized" }, 401);
+  return c.json({ ok: true });
+});
+
 app.post("/v1/enrich", async (c) => {
   const secret = normalizeSharedSecret(process.env.REES_SHARED_SECRET);
   // No secret configured ⇒ the service is not ready to authenticate anything; fail closed.

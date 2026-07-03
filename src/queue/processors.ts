@@ -3412,10 +3412,12 @@ async function maybeReReviewOnLinkedIssueChange(
   if (!repoFullName || !installationId || !issueNumber) return false;
   if (isConvergenceRepoAllowed(env, repoFullName)) {
     const openPullRequests = await listOpenPullRequests(env, repoFullName);
+    // Issue-side label/assignment changes can flip linked-issue hard-rule verdicts from mergeable to close.
+    // Queue every linked open PR (bounded only by listOpenPullRequests' repo-wide DB limit) so the tail cannot
+    // retain a stale passing gate until the scheduled sweep happens to reach it.
     const linkingPrNumbers = openPullRequests
       .filter((pr) => pr.linkedIssues.includes(issueNumber))
-      .map((pr) => pr.number)
-      .slice(0, SWEEP_MAX_PRS);
+      .map((pr) => pr.number);
     for (const [index, prNumber] of linkingPrNumbers.entries()) {
       if (await issueLinkedPrReReviewCoalesced(env, repoFullName, prNumber)) {
         await scheduleTrailingIssueLinkedReReview(

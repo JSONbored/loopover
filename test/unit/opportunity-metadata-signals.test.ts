@@ -106,4 +106,44 @@ describe("opportunity metadata signals", () => {
     const refactor = computeMetadataPotential({ labels: ["refactor"] });
     expect(refactor).toBeGreaterThan(baseline);
   });
+
+  it("covers feasibility title-length branches and invalid issue timestamps", () => {
+    expect(
+      computeMetadataFeasibility(
+        { ...base, title: "abcd", commentsCount: Number.NaN, updatedAt: "not-a-date" },
+        NOW,
+      ),
+    ).toBeGreaterThan(0);
+    expect(computeMetadataFeasibility({ ...base, title: "abc" }, NOW)).toBeLessThan(
+      computeMetadataFeasibility({ ...base, title: "abcdefgh" }, NOW),
+    );
+    expect(
+      computeMetadataFeasibility({ ...base, updatedAt: null, createdAt: "2026-07-03T00:00:00.000Z" }, NOW),
+    ).toBeGreaterThan(0);
+  });
+
+  it("treats blank titles as maximum dup risk and exact title matches as overlaps", () => {
+    const peers = [{ ...base, issueNumber: 11, title: base.title }];
+    expect(computeMetadataDupRisk({ ...base, title: "   " }, peers)).toBe(1);
+    expect(computeMetadataDupRisk(base, peers)).toBeGreaterThan(0);
+  });
+
+  it("ignores non-string labels and uses createdAt when updatedAt is absent for freshness", () => {
+    const input = buildMetadataRankInput(
+      {
+        ...base,
+        labels: [null as unknown as string, "  BUG  "],
+        updatedAt: null,
+        createdAt: "2026-07-03T00:00:00.000Z",
+      },
+      [base],
+      { nowMs: NOW },
+    );
+    expect(input.potential).toBeGreaterThan(0.5);
+    expect(input.freshness).toBeGreaterThan(0.8);
+    expect(computeOpportunityFreshness([], Number.NaN)).toBe(0);
+    expect(
+      computeOpportunityFreshness([{ state: "open", createdAt: "2026-07-03T00:00:00.000Z" }], NOW),
+    ).toBeGreaterThan(0.8);
+  });
 });

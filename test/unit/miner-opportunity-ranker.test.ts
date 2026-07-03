@@ -152,4 +152,37 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     expect(ranked[0]?.laneFit).toBe(1);
     expect(ranked[0]?.aiPolicySource).toBe("none");
   });
+
+  it("derives owner/repo fields and ignores blank goal-spec YAML content", () => {
+    const ranked = rankCandidateIssues(
+      [
+        {
+          repoFullName: "acme/widgets",
+          issueNumber: 99,
+          title: "Derived owner repo fields",
+          labels: ["help wanted"],
+          commentsCount: 1,
+          createdAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-02T00:00:00.000Z",
+          aiPolicyAllowed: true,
+          aiPolicySource: "AI-USAGE.md",
+        },
+      ],
+      {
+        nowMs: NOW,
+        goalSpecContentByRepo: { "acme/widgets": "   " },
+      },
+    );
+    expect(ranked[0]?.owner).toBe("acme");
+    expect(ranked[0]?.repo).toBe("widgets");
+    expect(ranked[0]?.aiPolicySource).toBe("AI-USAGE.md");
+  });
+
+  it("uses Date.now when nowMs is not finite", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-03T12:00:00.000Z"));
+    const ranked = rankCandidateIssues([rawIssue()], { nowMs: Number.NaN });
+    expect(ranked[0]?.freshness).toBeGreaterThan(0);
+    vi.useRealTimers();
+  });
 });

@@ -70,6 +70,9 @@ describe("governor ledger normalization (#2328)", () => {
     expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: "bad" })).toThrow(
       /invalid_repo_full_name/,
     );
+    expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: "a/b/c" })).toThrow(
+      /invalid_repo_full_name/,
+    );
     expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: 42 } as unknown)).toThrow(
       /invalid_repo_full_name/,
     );

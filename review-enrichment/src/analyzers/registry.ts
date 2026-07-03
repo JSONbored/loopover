@@ -571,7 +571,7 @@ export const ANALYZER_DESCRIPTORS = [
       reports: "File, line, and symbol name of each undocumented added export — never file contents.",
       network: "One GitHub contents fetch per changed entrypoint (at headSha). Requires GitHub token forwarding for private repos.",
       notes:
-        "Conservative: re-export lists (`export { x }`) and `export *` are ignored, and any preceding `//`/JSDoc comment counts as documented.",
+        "Conservative: re-export lists (`export { x }`) and `export *` are ignored; a preceding `//` line or a real JSDoc `/**` block counts as documented (a plain `/* … */` block does not).",
     },
     render: (findings, helpers) => {
       if (!findings.length) return [];

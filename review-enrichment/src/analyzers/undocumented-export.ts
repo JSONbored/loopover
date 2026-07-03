@@ -52,13 +52,13 @@ export function parseAddedExports(patch: string): Array<{ symbol: string; newLin
   return out;
 }
 
-/** True when the line at `lineIndex` (0-based) has an adjacent doc comment directly above it — a block comment
- *  ending in `*​/` (JSDoc or plain) or a `//` line — allowing only blank lines in between. Conservative: ANY
- *  preceding comment counts as documented, so only an export with code (or nothing) directly above is flagged. Pure. */
+/** True when the line at `lineIndex` (0-based) has an adjacent DOC comment directly above it: a `//` line comment,
+ *  or a block comment whose opener is a real JSDoc `/**` (walked up from its `*​/` terminator). Blank lines and
+ *  decorator lines (`@Component()`) in between are skipped. A plain non-doc block (`/* eslint-disable *​/`) and a
+ *  code line with a trailing block comment are NOT documentation, so a genuinely undocumented export is still
+ *  flagged. Pure. */
 export function hasPrecedingDocComment(lines: string[], lineIndex: number): boolean {
   let i = lineIndex - 1;
-  // Skip blank lines AND decorator lines (`@Component()`) between the export and its doc comment, so a documented
-  // decorated `export class` is not falsely flagged.
   while (i >= 0) {
     const trimmed = lines[i]!.trim();
     if (trimmed === "" || trimmed.startsWith("@")) {
@@ -69,9 +69,13 @@ export function hasPrecedingDocComment(lines: string[], lineIndex: number): bool
   }
   if (i < 0) return false;
   const above = lines[i]!.trim();
-  // Require a COMMENT-ONLY line: a `//` line comment or a block-comment opener/body/terminator (starts with `/*`
-  // or `*`). A code line with a TRAILING block comment starts with code, so it is not treated as documentation.
-  return above.startsWith("//") || above.startsWith("/*") || above.startsWith("*");
+  if (above.startsWith("//")) return true; // a line comment counts as documentation
+  if (!above.endsWith("*/")) return false; // not a block-comment terminator directly above → undocumented
+  // Walk up to the block's opener; only a real JSDoc block (`/**`) is documentation. This also rejects a code line
+  // with a trailing comment (`const x = 1; /* c */`) — its opener line starts with code, not `/**`.
+  let j = i;
+  while (j >= 0 && !lines[j]!.includes("/*")) j -= 1;
+  return j >= 0 && lines[j]!.trimStart().startsWith("/**");
 }
 
 async function readBoundedText(resp: Response, signal?: AbortSignal): Promise<string | null> {
@@ -122,15 +126,20 @@ export async function scanUndocumentedExport(
     Accept: "application/vnd.github.raw",
     "X-GitHub-Api-Version": "2022-11-28",
   };
-  const entrypoints = files
-    .filter((file) => file.patch && ENTRYPOINT_RE.test(file.path) && !SKIP_RE.test(file.path))
-    .slice(0, MAX_FILES);
+  // Parse added exports FIRST (cheap, pure), then spend the MAX_FILES fetch budget only on entrypoints that actually
+  // have added exports — so index files with no relevant additions can't consume the budget and hide later ones.
+  const candidates: Array<{ file: (typeof files)[number]; added: Array<{ symbol: string; newLine: number }> }> = [];
+  for (const file of files) {
+    if (!file.patch || !ENTRYPOINT_RE.test(file.path) || SKIP_RE.test(file.path)) continue;
+    const added = parseAddedExports(file.patch);
+    if (!added.length) continue;
+    candidates.push({ file, added });
+    if (candidates.length >= MAX_FILES) break;
+  }
 
   const findings: UndocumentedExportFinding[] = [];
-  for (const file of entrypoints) {
+  for (const { file, added } of candidates) {
     if (options.signal?.aborted) break;
-    const added = parseAddedExports(file.patch!);
-    if (!added.length) continue;
 
     let content: string | null = null;
     try {

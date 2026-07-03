@@ -42,7 +42,10 @@ test("hasPrecedingDocComment: a `//` line or block-comment end above (through bl
   assert.equal(hasPrecedingDocComment(["export const x = 1;"], 0), false); // nothing above
   // a CODE line with a trailing block comment ends in `*/` but is not documentation
   assert.equal(hasPrecedingDocComment(["const c = 1; /* trailing */", "export const x = 1;"], 1), false);
-  assert.equal(hasPrecedingDocComment([" * jsdoc body", "export const x = 1;"], 1), true); // block-comment body line
+  // a multi-line JSDoc block counts; a plain (non-doc) block comment does NOT
+  assert.equal(hasPrecedingDocComment(["/**", " * doc", " */", "export const x = 1;"], 3), true);
+  assert.equal(hasPrecedingDocComment(["/* eslint-disable */", "export const x = 1;"], 1), false);
+  assert.equal(hasPrecedingDocComment(["/*", " plain", " */", "export const x = 1;"], 3), false);
   // a doc comment above a DECORATOR on the export still counts (decorator lines are skipped while walking up)
   assert.equal(hasPrecedingDocComment(["/** doc */", "@Component()", "export class Widget {}"], 2), true);
   assert.equal(hasPrecedingDocComment(["@Component()", "export class Widget {}"], 1), false); // decorator only, no doc
@@ -100,6 +103,25 @@ test("scanUndocumentedExport: an oversized response (content-length over the cap
     oversized,
   );
   assert.deepEqual(findings, []); // the bounded-read guard bails before parsing content
+});
+
+test("scanUndocumentedExport: entrypoints without added exports don't consume the file budget", async () => {
+  // MAX_FILES worth of index files that add NO export must not crowd out a later index file that does.
+  const noop = "@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = 2;";
+  const fillers = Array.from({ length: 10 }, (_, i) => ({ path: `p${i}/index.ts`, status: "modified", patch: noop }));
+  const real = { path: "real/index.ts", status: "modified", patch: PATCH };
+  const findings = await scanUndocumentedExport(req([...fillers, real]), headFetch(HEAD));
+  assert.deepEqual(findings, [{ file: "real/index.ts", line: 4, symbol: "undoc" }]);
+});
+
+test("scanUndocumentedExport: preserves the { file, line, symbol } contract through the render", async () => {
+  const findings = await scanUndocumentedExport(req([{ path: "pkg/index.ts", status: "modified", patch: PATCH }]), headFetch(HEAD));
+  assert.equal(findings.length, 1);
+  assert.deepEqual(Object.keys(findings[0]).sort(), ["file", "line", "symbol"]);
+  assert.deepEqual(findings[0], { file: "pkg/index.ts", line: 4, symbol: "undoc" });
+  const brief = renderBrief({ undocumentedExport: findings }).promptSection;
+  assert.match(brief, /pkg\/index\.ts:4/); // file:line preserved by the inline renderer
+  assert.match(brief, /\bundoc\b/); // symbol preserved
 });
 
 test("scanUndocumentedExport: no token or no headSha → skipped (no finding, no throw)", async () => {

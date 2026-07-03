@@ -17,6 +17,15 @@ describe("test evidence helpers", () => {
     expect(isTestPath("src/widget.rs")).toBe(false);
   });
 
+  it("detects pytest's default test_*.py prefix convention, not just the *_test.py suffix", () => {
+    expect(isTestPath("mypackage/test_utils.py")).toBe(true); // pytest default, sitting next to source
+    expect(isTestPath("src/app/test_auth.py")).toBe(true);
+    expect(isTestPath("test_top_level.py")).toBe(true); // repo-root test file
+    expect(isTestPath("internal/cache_test.py")).toBe(true); // the pre-existing suffix form still matches
+    expect(isTestPath("src/app/latest_config.py")).toBe(false); // `test_` mid-segment ⇒ not a test
+    expect(isTestPath("src/app/testing.py")).toBe(false); // no `test_` boundary ⇒ not a test
+  });
+
   it("does not treat framework or integration directory names alone as test evidence", () => {
     expect(isTestPath("src/integration/auth.ts")).toBe(false);
     expect(isTestPath("src/playwright/client.ts")).toBe(false);

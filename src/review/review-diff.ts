@@ -6,18 +6,24 @@
 // which survived even with full-file grounding on). This builder orders source-first, reduces oversized
 // patches hunk-aware instead of dropping them, and always lists patch-less/over-budget files. (#accuracy-gap-1)
 
+import { isTestPath } from "../signals/test-evidence";
+
 /** Char budget of the diff fed to the review models. The 120B review models have ~128k-token context, so
  *  even a large PR fits in ONE coherent pass (accuracy over speed). Only a genuinely huge PR truncates —
  *  and then SOURCE survives via priority ordering. */
 export const DEFAULT_DIFF_BUDGET = 80_000;
 
 /** Review priority for diff ordering. When the budget is tight, SOURCE survives and
- *  lockfiles/generated/docs/tests are dropped first (least useful to a code reviewer). Lower = kept. */
+ *  lockfiles/generated/docs/tests are dropped first (least useful to a code reviewer). Lower = kept.
+ *  Test detection delegates to the canonical `isTestPath` so this matcher can't drift from it — the
+ *  previous inline regex missed real conventions (pytest `test_*.py`, Go `*_test.go`, Ruby `*_spec.rb`,
+ *  Cypress/Playwright `.cy`/`.e2e`, a bare `spec/` dir), so those tests were ranked as SOURCE(0) and
+ *  could displace real source under a tight budget — the exact opposite of this function's job. */
 export function diffFilePriority(path: string): number {
   if (/(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|cargo\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
   if (/(^|\/)(dist|build|out|coverage|vendor|node_modules)\//i.test(path)) return 4;
   if (/\.(md|mdx|rst|txt|adoc)$/i.test(path)) return 2;
-  if (/\.(test|spec)\.[a-z0-9]+$|(^|\/)(__tests__|tests?)\//i.test(path)) return 1;
+  if (isTestPath(path)) return 1;
   return 0; // source code
 }
 

@@ -10,6 +10,29 @@ describe("diffFilePriority — source survives, noise drops first", () => {
     expect(diffFilePriority("dist/bundle.js")).toBe(4);
     expect(diffFilePriority("app.min.css")).toBe(4);
   });
+
+  it("ranks every canonical test convention as tests(1), not source(0)", () => {
+    // These are all tests; before delegating to isTestPath the inline regex missed them and ranked
+    // them SOURCE(0), so on a tight budget they could displace real source (the opposite of the goal).
+    for (const path of [
+      "e2e/checkout.cy.ts", // Cypress
+      "e2e/flow.e2e.mjs", // Playwright/e2e, module extension
+      "pkg/server/handler_test.go", // Go suffix
+      "app/services/cleanup_test.py", // pytest suffix
+      "tests/test_utils.py", // pytest prefix (would be a test dir too, but bare test_*.py must also count)
+      "models/user_spec.rb", // RSpec suffix
+      "spec/models/account.rb", // bare spec/ directory
+      "src/test/fixtures.ts", // src/test convention
+      "components/__snapshots__/Card.tsx", // snapshot dir (non-.snap file)
+    ]) {
+      expect(diffFilePriority(path)).toBe(1);
+    }
+  });
+
+  it("still treats plain production sources as source(0)", () => {
+    expect(diffFilePriority("src/review/review-diff.ts")).toBe(0);
+    expect(diffFilePriority("packages/api/handler.py")).toBe(0);
+  });
 });
 
 describe("addedLineCount — counts +lines, ignores +++ header", () => {

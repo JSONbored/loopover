@@ -101,6 +101,27 @@ describe("review-grounding: diffFilePriority (source survives the budget first)"
     expect(diffFilePriority("dist/bundle.js")).toBe(4);
     expect(diffFilePriority("src/a.ts")).toBeLessThan(diffFilePriority("README.md"));
   });
+
+  it("ranks every canonical test convention as tests(1) so real source is inlined first", () => {
+    for (const path of [
+      "e2e/checkout.cy.ts", // Cypress
+      "e2e/flow.e2e.mjs", // Playwright/e2e, module extension
+      "pkg/server/handler_test.go", // Go suffix
+      "app/services/cleanup_test.py", // pytest suffix
+      "tests/test_utils.py", // pytest prefix
+      "models/user_spec.rb", // RSpec suffix
+      "spec/models/account.rb", // bare spec/ directory
+      "src/test/fixtures.ts", // src/test convention
+      "components/__snapshots__/Card.tsx", // snapshot dir (non-.snap file)
+    ]) {
+      expect(diffFilePriority(path)).toBe(1);
+    }
+  });
+
+  it("still treats plain production sources as source(0)", () => {
+    expect(diffFilePriority("src/review/review-grounding.ts")).toBe(0);
+    expect(diffFilePriority("packages/api/handler.py")).toBe(0);
+  });
 });
 
 describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-safe + bounded)", () => {

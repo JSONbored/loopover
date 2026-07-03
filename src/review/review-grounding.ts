@@ -15,6 +15,7 @@
 // params instead of reviewbot's RunContext/ReviewTarget/github helpers, so fetchFullFileContents is
 // self-contained and unit-testable. The host wires a real GitHub-backed FileFetcher at the call site.
 
+import { isTestPath } from "../signals/test-evidence";
 import { neutralizePromptInjection } from "./prompt-injection";
 
 // ── Inlined minimal types (ported from reviewbot src/core/types.ts) ──────────────────────────────
@@ -104,12 +105,15 @@ export function buildGrounding(f: GroundingFlags, checks?: CheckAggregate, fileC
 
 // ── Diff priority (ported from reviewbot src/core/diff.ts diffFilePriority) ───────────────────────
 /** Review priority for diff ordering. When the budget is tight, SOURCE survives and
- *  lockfiles/generated/docs/tests are dropped first (least useful to a code reviewer). Lower = kept. */
+ *  lockfiles/generated/docs/tests are dropped first (least useful to a code reviewer). Lower = kept.
+ *  Test detection delegates to the canonical `isTestPath` so this matcher can't drift from it (the inline
+ *  copy missed pytest `test_*.py`, Go `*_test.go`, Ruby `*_spec.rb`, Cypress/Playwright `.cy`/`.e2e`, and a
+ *  bare `spec/` dir — so those tests ranked as SOURCE(0) and were inlined ahead of real source). */
 export function diffFilePriority(path: string): number {
   if (/(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|cargo\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
   if (/(^|\/)(dist|build|out|coverage|vendor|node_modules)\//i.test(path)) return 4;
   if (/\.(md|mdx|rst|txt|adoc)$/i.test(path)) return 2;
-  if (/\.(test|spec)\.[a-z0-9]+$|(^|\/)(__tests__|tests?)\//i.test(path)) return 1;
+  if (isTestPath(path)) return 1;
   return 0; // source code
 }
 

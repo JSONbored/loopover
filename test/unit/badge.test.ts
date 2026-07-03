@@ -45,6 +45,15 @@ describe("buildBadgeColor", () => {
     expect(buildBadgeColor(quality({ queueHealthLevel: "low", realContributionPct: 40 }))).toBe("#db6d28");
   });
 
+  it("never renders a lower severity than the queue color when the real-contribution share is low", () => {
+    // A low real-contribution share floors the color at `high` (orange) but must not DOWNGRADE a more-severe
+    // queue: a critical queue (red) with low contribution is doubly bad and must stay red, not become orange.
+    expect(buildBadgeColor(quality({ queueHealthLevel: "critical", realContributionPct: 20 }))).toBe("#f85149");
+    // A `high` queue with low contribution stays high (no double-count), and medium still escalates to high.
+    expect(buildBadgeColor(quality({ queueHealthLevel: "high", realContributionPct: 20 }))).toBe("#db6d28");
+    expect(buildBadgeColor(quality({ queueHealthLevel: "medium", realContributionPct: 20 }))).toBe("#db6d28");
+  });
+
   it("uses queue color when the contribution share is unknown", () => {
     expect(buildBadgeColor(quality({ queueHealthLevel: "low", realContributionPct: null }))).toBe("#3fb950");
   });

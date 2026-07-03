@@ -14,6 +14,9 @@ const QUEUE_COLORS: Record<QueueHealthLevel, string> = {
   critical: "#f85149",
 };
 
+// Severity order of the queue-health levels, ascending (low = least alarming … critical = most alarming).
+const QUEUE_SEVERITY: Record<QueueHealthLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+
 const LOW_REAL_CONTRIBUTION_PCT = 50;
 const UNAVAILABLE_COLOR = "#9e9e9e";
 
@@ -33,11 +36,14 @@ export function buildBadgeMessage(quality: PublicRepoQuality): string {
 }
 
 export function buildBadgeColor(quality: PublicRepoQuality): string {
-  // Color tracks queue health, but a low real-contribution share dominates the signal.
+  const queueColor = QUEUE_COLORS[quality.queueHealthLevel];
+  // A low real-contribution share dominates the signal — it FLOORS the color at `high`, escalating a healthier
+  // queue up to orange. It must never DOWNGRADE a more-severe queue: a `critical` (red) queue with low contribution
+  // is doubly bad, so keep its color rather than replacing it with the less-alarming `high` orange.
   if (quality.realContributionPct !== null && quality.realContributionPct < LOW_REAL_CONTRIBUTION_PCT) {
-    return QUEUE_COLORS.high;
+    return QUEUE_SEVERITY[quality.queueHealthLevel] >= QUEUE_SEVERITY.high ? queueColor : QUEUE_COLORS.high;
   }
-  return QUEUE_COLORS[quality.queueHealthLevel];
+  return queueColor;
 }
 
 export function buildShieldsBadge(quality: PublicRepoQuality, cacheSeconds: number): ShieldsBadge {

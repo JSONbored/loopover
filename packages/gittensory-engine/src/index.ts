@@ -40,3 +40,16 @@ export {
   type ContributorFitCheck,
   type ContributorFitProfile,
 } from "./contributor-fit.js";
+export {
+  computeOpportunityFreshness,
+  type FreshnessIssue,
+} from "./opportunity-freshness.js";
+export {
+  buildMetadataRankInput,
+  computeMetadataDupRisk,
+  computeMetadataFeasibility,
+  computeMetadataPotential,
+  rankMetadataOpportunities,
+  type MetadataCandidateIssue,
+  type MetadataRankContext,
+} from "./opportunity-metadata.js";

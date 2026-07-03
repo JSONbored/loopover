@@ -5,6 +5,7 @@ import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/
 import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
+import { parseGitHubLoginList } from "../auth/security";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
@@ -127,8 +128,13 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
     const authorLogin = pr.authorLogin ?? "";
     const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
+    // Fleet-operator identity (#2133): an ADMIN_GITHUB_LOGINS login gets the same never-auto-closed exemption
+    // as the owner, so it must be re-gated on closeOwnerAuthors here too — matching the live planner
+    // (queue/processors.ts) and staging (settings/agent-actions.ts closeEligible). Without this, an admin PR
+    // staged for close while the toggle was on would still close after the operator turns it off.
+    const authorIsAdmin = authorLogin.length > 0 && parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
     const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
-    const closeEligible = (!authorIsOwner && !authorIsAutomationBot) || (authorIsOwner && settings.closeOwnerAuthors === true);
+    const closeEligible = (!authorIsOwner && !authorIsAdmin && !authorIsAutomationBot) || ((authorIsOwner || authorIsAdmin) && settings.closeOwnerAuthors === true);
     let stillJustified = closeEligible;
     if (closeEligible) {
       const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, pending.repoFullName);
@@ -245,8 +251,11 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     const repoOwner = pending.repoFullName.includes("/") ? pending.repoFullName.slice(0, pending.repoFullName.indexOf("/")) : "";
     const authorLogin = pr.authorLogin ?? "";
     const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
+    // Fleet-operator identity (#2133): mirror the primary close-eligibility exemption for an admin login, so a
+    // now-close-eligible admin PR supersedes its staged merge on the same terms an owner's does.
+    const authorIsAdmin = authorLogin.length > 0 && parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
     const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
-    const closeEligible = (!authorIsOwner && !authorIsAutomationBot) || (authorIsOwner && settings.closeOwnerAuthors === true);
+    const closeEligible = (!authorIsOwner && !authorIsAdmin && !authorIsAutomationBot) || ((authorIsOwner || authorIsAdmin) && settings.closeOwnerAuthors === true);
     if (closeEligible) {
       const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, pending.repoFullName);
       // Best-effort mint, same as the #2126 CI/mergeable/review re-check above: a failed mint here does NOT

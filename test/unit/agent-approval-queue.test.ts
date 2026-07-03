@@ -407,6 +407,60 @@ describe("agent approval queue (#779)", () => {
     expect(closeStillEligible).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
   });
 
+  it("REGRESSION: accept supersedes a staged close for a fleet-ADMIN author when closeOwnerAuthors is turned off before accept (#2133 admin exemption)", async () => {
+    // #2133 gives an ADMIN_GITHUB_LOGINS login the same never-auto-closed exemption as the owner, so the
+    // accept-time re-check must re-gate an admin on closeOwnerAuthors exactly like an owner. The old re-check
+    // omitted authorIsAdmin, treating a non-owner admin as an ordinary contributor (always close-eligible), so
+    // an admin PR staged while the toggle was on would still close after the operator turned it off.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x", ADMIN_GITHUB_LOGINS: "fleetadmin" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" }, closeOwnerAuthors: false });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "fleetadmin" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    // Intentionally no resolveLinkedIssueHardRule mock: an ineligible admin must be superseded WITHOUT the rule
+    // being consulted (asserted below), so queuing an unconsumed `...Once` here would leak to later tests.
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "ineligible", closeKind: "linked-issue-hard-rule", expectedHeadSha: "h7" }, reason: "linked issue ineligible" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("no_longer_close_eligible");
+    expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
+    const { closePullRequest: closeAdminNoLonger } = await import("../../src/github/pr-actions");
+    expect(closeAdminNoLonger).not.toHaveBeenCalled();
+  });
+
+  it("accept still executes a staged close for a fleet-ADMIN author when closeOwnerAuthors is (still) true at accept time", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x", ADMIN_GITHUB_LOGINS: "fleetadmin" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" }, closeOwnerAuthors: true });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "fleetadmin" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "still ineligible" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "ineligible", closeKind: "linked-issue-hard-rule", expectedHeadSha: "h7" }, reason: "linked issue ineligible" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest: closeAdminStill } = await import("../../src/github/pr-actions");
+    expect(closeAdminStill).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("supersedes a staged MERGE for a fleet-ADMIN author when the linked-issue rule is now violated and admin-close is enabled (#2133 merge-side exemption)", async () => {
+    // Merge-re-check side of the same #2133 fix: an admin is close-eligible (closeOwnerAuthors true), so a
+    // linked-issue rule that BECAME violated must supersede the admin's staged merge — exactly as it would an
+    // owner's. Before the fix, the merge re-check ignored authorIsAdmin and (for an owner-repo admin) still
+    // treated them as an ordinary contributor; here it exercises the admin arm of closeEligible.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x", ADMIN_GITHUB_LOGINS: "fleetadmin" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, closeOwnerAuthors: true });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "fleetadmin" }, head: { sha: "h7" }, labels: [], body: "Closes #9" });
+    vi.mocked(resolveLinkedIssueHardRule).mockResolvedValueOnce({ violated: true, reason: "admin's linked issue is ineligible" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("linked_issue_hard_rule");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("accept tolerates a slash-less repoFullName for a staged linked-issue hard-rule close (defensive fallback)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { close: "auto_with_approval" } });

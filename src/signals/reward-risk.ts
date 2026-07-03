@@ -430,7 +430,9 @@ export function buildMaintainerNoiseReport(
   const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
   const intake = buildContributorIntakeHealth(repo, issues, pullRequests, fullName, collisions);
   const unlinked = pullRequests.filter((pr) => pr.state === "open" && pr.linkedIssues.length === 0).length;
-  const broadDiffSignals = pullRequests.filter((pr) => pr.title.length > 120 || /refactor|cleanup|misc|various/i.test(pr.title)).length;
+  const broadDiffSignals = pullRequests.filter(
+    (pr) => pr.state === "open" && (pr.title.length > 120 || /refactor|cleanup|misc|various/i.test(pr.title)),
+  ).length;
   const noiseSources = [
     ...(unlinked > 0 ? [`${unlinked} open PR(s) lack linked issue context.`] : []),
     ...(collisions.summary.highRiskCount > 0 ? [`${collisions.summary.highRiskCount} high-risk duplicate/WIP cluster(s).`] : []),

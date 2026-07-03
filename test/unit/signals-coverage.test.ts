@@ -451,6 +451,27 @@ describe("signal coverage edge cases", () => {
     expect(closedReviewability.noiseSources.join("\n")).toMatch(/failing|broad|closed PR rate|PR is closed/i);
   });
 
+  it("counts broad-diff maintainer-noise only for open PRs, not merged/closed history", () => {
+    const directRepo = repo("owner/direct");
+    const broadSource = (prRecord: PullRequestRecord) =>
+      buildMaintainerNoiseReport(directRepo, [], [prRecord], [], directRepo.fullName).noiseSources.join("\n");
+    // An OPEN PR whose title matches the broad regex is live queue burden -> surfaces as broad-diff noise.
+    const openBroadTitle = pr(directRepo.fullName, 41, "Refactor and cleanup of various modules", { linkedIssues: [1] });
+    expect(broadSource(openBroadTitle)).toMatch(/broad or hard to triage/i);
+    // An OPEN PR with an overlong (>120 char) title is also broad-diff noise.
+    const openLongTitle = pr(directRepo.fullName, 42, "Add pagination, filtering, and sorting to the labels endpoint across the API and MCP surfaces".padEnd(130, "."), {
+      linkedIssues: [1],
+    });
+    expect(broadSource(openLongTitle)).toMatch(/broad or hard to triage/i);
+    // An OPEN PR with a short, plain title is neither -> no broad-diff noise.
+    const openPlainTitle = pr(directRepo.fullName, 43, "Fix null check in cache loader", { linkedIssues: [1] });
+    expect(broadSource(openPlainTitle)).not.toMatch(/broad or hard to triage/i);
+    // The broad title on a MERGED PR is history, not queue burden -> must not surface, mirroring the
+    // open-only scoping the sibling unlinked-PR signal already uses.
+    const mergedBroad = pr(directRepo.fullName, 44, "Refactor and cleanup of various modules", { state: "merged", mergedAt: "2026-01-01T00:00:00.000Z", linkedIssues: [1] });
+    expect(broadSource(mergedBroad)).not.toMatch(/broad or hard to triage/i);
+  });
+
   it("covers private reward/risk edge scoring for unknown, issue-only, and maintainer contexts", () => {
     const directRepo = repo("owner/direct", { labelMultipliers: { "status:ready": 2, feature: 1.5 } });
     const issueRepo = repo("owner/issues", { issueDiscoveryShare: 1 });

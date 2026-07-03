@@ -117,17 +117,37 @@ export function githubAppReadinessProbe(
  *  environment to confirm the binary is present AND authenticated before any review is attempted. A missing auth
  *  volume or an unauthenticated CLI exits non-zero here rather than silently inside a subprocess spawned mid-review.
  *  Only registered when `GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1` (the opt-in for the codex reviewer path). */
+/** `codex --version` only proves the binary starts — it exits 0 with no usable credentials at all, so on its
+ *  own it can't catch the exact missing/empty-auth-volume misconfiguration this probe exists to surface.
+ *  Also stat the auth file so a present-but-empty or altogether-missing auth.json still fails readiness. */
+async function defaultCodexAuthFileCheck(env: Record<string, string | undefined>): Promise<boolean> {
+  const { stat } = await import("node:fs/promises");
+  const base = env.CODEX_HOME ?? `${env.HOME ?? "~"}/.codex`;
+  try {
+    const info = await stat(`${base}/auth.json`);
+    return info.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function codexAuthReadinessProbe(
   parentEnv: Record<string, string | undefined>,
   runCodexVersion: (env: Record<string, string | undefined>) => Promise<{ code: number | null }>,
+  checkAuthFile: (env: Record<string, string | undefined>) => Promise<boolean> = defaultCodexAuthFileCheck,
 ): ReadinessProbe | null {
   if (parentEnv.GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") return null;
   return {
     name: "codex_auth",
-    check: () =>
-      runCodexVersion(parentEnv)
-        .then(({ code }) => code === 0)
-        .catch(() => false),
+    check: async () => {
+      const [versionOk, authFileOk] = await Promise.all([
+        runCodexVersion(parentEnv)
+          .then(({ code }) => code === 0)
+          .catch(() => false),
+        checkAuthFile(parentEnv).catch(() => false),
+      ]);
+      return versionOk && authFileOk;
+    },
   };
 }
 

@@ -1,4 +1,7 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import {
@@ -119,27 +122,93 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
     ).toBeNull();
   });
 
-  it("reports healthy when codex --version exits 0", async () => {
-    const probe = codexAuthReadinessProbe({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, async () => ({
-      code: 0,
-    }));
+  it("reports healthy only when BOTH codex --version exits 0 AND the auth file check passes", async () => {
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => ({ code: 0 }),
+      async () => true,
+    );
     expect(probe).not.toBeNull();
     expect(probe!.name).toBe("codex_auth");
     await expect(probe!.check()).resolves.toBe(true);
   });
 
   it("reports unhealthy when codex --version exits non-zero (missing/unauthenticated auth volume)", async () => {
-    const probe = codexAuthReadinessProbe({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, async () => ({
-      code: 1,
-    }));
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => ({ code: 1 }),
+      async () => true,
+    );
     await expect(probe!.check()).resolves.toBe(false);
   });
 
   it("fails closed (does not throw) when spawning codex itself rejects", async () => {
-    const probe = codexAuthReadinessProbe({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, async () => {
-      throw new Error("ENOENT: codex not found");
-    });
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => {
+        throw new Error("ENOENT: codex not found");
+      },
+      async () => true,
+    );
     await expect(probe!.check()).resolves.toBe(false);
+  });
+
+  it("regression: reports unhealthy when the auth FILE check fails even though `codex --version` succeeds", async () => {
+    // The gap `codex --version` alone misses: the binary starts fine (exit 0) but no real credentials exist.
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => ({ code: 0 }),
+      async () => false,
+    );
+    await expect(probe!.check()).resolves.toBe(false);
+  });
+
+  it("fails closed when the auth file check itself throws", async () => {
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => ({ code: 0 }),
+      async () => {
+        throw new Error("EACCES");
+      },
+    );
+    await expect(probe!.check()).resolves.toBe(false);
+  });
+
+  describe("defaultCodexAuthFileCheck (the real filesystem check)", () => {
+    it("false when auth.json is missing, false when empty, true once populated — CODEX_HOME wins over HOME", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "codex-health-auth-"));
+      const versionOk = async () => ({ code: 0 });
+
+      const missing = codexAuthReadinessProbe({ CODEX_HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
+      await expect(missing!.check()).resolves.toBe(false);
+
+      writeFileSync(join(dir, "auth.json"), "");
+      const empty = codexAuthReadinessProbe({ CODEX_HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
+      await expect(empty!.check()).resolves.toBe(false);
+
+      writeFileSync(join(dir, "auth.json"), JSON.stringify({ token: "t" }));
+      const populated = codexAuthReadinessProbe({ CODEX_HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, versionOk);
+      await expect(populated!.check()).resolves.toBe(true);
+    });
+
+    it("falls back to HOME/.codex/auth.json when CODEX_HOME is unset", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "codex-health-home-"));
+      mkdirSync(join(dir, ".codex"), { recursive: true });
+      writeFileSync(join(dir, ".codex", "auth.json"), JSON.stringify({ token: "t" }));
+      const probe = codexAuthReadinessProbe(
+        { HOME: dir, GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        async () => ({ code: 0 }),
+      );
+      await expect(probe!.check()).resolves.toBe(true);
+    });
+
+    it("falls back to the literal ~/.codex/auth.json (fails safe) when neither CODEX_HOME nor HOME is set", async () => {
+      const probe = codexAuthReadinessProbe(
+        { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+        async () => ({ code: 0 }),
+      );
+      await expect(probe!.check()).resolves.toBe(false);
+    });
   });
 });
 

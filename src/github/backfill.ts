@@ -2041,7 +2041,6 @@ async function fetchAndStorePullRequestDetails(
   // >=): millisecond-resolution ISO timestamps can tie when a sync and a racing invalidation land in the same
   // millisecond, and sub-millisecond ordering is unknowable from the stored strings — a tie must fail toward
   // "still needs a refetch," never toward silently trusting a possibly-stale cache.
-  const reviewsSyncedAtBefore = existingState?.reviewsSyncedAt;
   const reviewsUpToDate = isReviewsCacheUpToDate(existingState);
   const fileFetchStartedAt = nowIso();
   // Gate review finding (TOCTOU race): `existingState` above is a snapshot read at the TOP of this call. If a
@@ -2060,17 +2059,26 @@ async function fetchAndStorePullRequestDetails(
   ]);
   const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
   // A filesSyncedAt/headSha pair means "the stored pull_request_files rows are a confirmed snapshot for
-  // this exact head." On a failed refetch we preserve old file rows, so we must also preserve the old marker
-  // instead of stamping the new head; otherwise the next run would cache-hit stale rows for the new diff.
-  const headShaResult = filesUpToDate || fileSyncFailed ? existingState?.headSha : pr.headSha;
-  const filesSyncedAtResult = filesUpToDate || fileSyncFailed ? existingState?.filesSyncedAt : fileFetchStartedAt;
+  // this exact head." On a cache-hit skip or a failed refetch we did not advance the stored files, so we must
+  // not advance the marker either -- BUT we must also not *replay* the snapshot we read at the top of this
+  // call. `existingState` is a TOCTOU read: if a DIFFERENT concurrent call for the same PR successfully syncs
+  // to an even newer head between that read and this call's own persist, re-writing our stale snapshot here
+  // would regress the durable marker backward and clobber the newer, correct value the concurrent call just
+  // wrote (gate review finding). `upsertPullRequestDetailSyncState` treats an `undefined` field as "leave this
+  // column unchanged" (see its PARTIAL-UPDATE CONTRACT comment) -- so returning `undefined` instead of the
+  // snapshot tells every caller's upsert to skip the column entirely, which is safe whether the row is still
+  // exactly what we read or has since moved on: either way we simply don't touch it.
+  const headShaResult = filesUpToDate || fileSyncFailed ? undefined : pr.headSha;
+  const filesSyncedAtResult = filesUpToDate || fileSyncFailed ? undefined : fileFetchStartedAt;
   // reviewsSyncedAt only ever ADVANCES on a genuine success in THIS call -- never on a cache-hit skip, and
   // never on a failed fetch attempt. This is what makes a stored reviewsSyncedAt a trustworthy "last confirmed
   // successful sync" marker on its own (no separate errorSummary string-matching needed: a failed or skipped
-  // pass simply preserves whatever was already known, which -- being unchanged -- correctly keeps comparing as
-  // stale against reviewsInvalidatedAt on the next pass until a real fetch actually succeeds).
+  // pass simply leaves whatever was already known untouched, which -- being unchanged -- correctly keeps
+  // comparing as stale against reviewsInvalidatedAt on the next pass until a real fetch actually succeeds).
+  // Same TOCTOU hazard as headSha/filesSyncedAt above: `undefined` (not the pre-fetch `existingState`
+  // snapshot) so a skipped/failed pass never regresses a marker a concurrent call has since advanced.
   const reviewSyncFailedThisCall = !reviewsUpToDate && warnings.slice(warningStart).some((warning) => warning.startsWith(`Review sync failed for #${pr.number}:`));
-  const reviewsSyncedAtResult = !reviewsUpToDate && !reviewSyncFailedThisCall ? reviewFetchStartedAt : reviewsSyncedAtBefore;
+  const reviewsSyncedAtResult = !reviewsUpToDate && !reviewSyncFailedThisCall ? reviewFetchStartedAt : undefined;
 
   if (!filesUpToDate && !fileSyncFailed) {
     await deletePullRequestFiles(env, repoFullName, pr.number);

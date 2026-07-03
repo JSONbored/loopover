@@ -143,6 +143,7 @@ import {
 import {
   isForegroundDeferralStale,
   resolveForegroundLivenessConfig,
+  selectForegroundDeferralsToRelease,
   type ForegroundLivenessConfig,
 } from "./foreground-liveness";
 import type { JobMessage } from "../types";
@@ -516,16 +517,20 @@ export function createPgQueue(
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
-   *  not currently due) then a per-row conditional UPDATE, mirroring reviveEligibleDeadJobs' shape. Each
-   *  candidate is released on EITHER of two independent conditions: it has genuinely been waiting past the
-   *  age-based trickle ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED
-   *  recovery (#selfhost-queue-liveness VPS incident) -- re-evaluating rateLimitAdmissionDelayMs against
-   *  CURRENT observations right now says it would be admitted immediately. The age floor alone can leave a job
-   *  pinned to a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a
-   *  fresher, healthier observation arrived moments after it was deferred; the condition check recovers it on
-   *  the NEXT sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the
-   *  underlying rate-limit pressure has actually cleared, regardless of job age. Logs + records a metric ONCE
-   *  per sweep (aggregate count), not per row, so a large release batch cannot spam the log. */
+   *  not currently due), an eligibility pass, a ramp-up CAP, then a per-row conditional UPDATE only for the
+   *  capped subset -- mirroring reviveEligibleDeadJobs' shape but with the extra ramp-up step. Each candidate is
+   *  ELIGIBLE on EITHER of two independent conditions: it has genuinely been waiting past the age-based trickle
+   *  ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED recovery
+   *  (#selfhost-queue-liveness VPS incident) -- re-evaluating rateLimitAdmissionDelayMs against CURRENT
+   *  observations right now says it would be admitted immediately. The age floor alone can leave a job pinned to
+   *  a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a fresher,
+   *  healthier observation arrived moments after it was deferred; the condition check recovers it on the NEXT
+   *  sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the underlying
+   *  rate-limit pressure has actually cleared, regardless of job age. When more jobs are eligible than
+   *  maxReleasePerSweep allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited
+   *  backlog drains gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once.
+   *  Logs + records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam
+   *  the log. */
   async function releaseStaleForegroundDeferrals(): Promise<number> {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
@@ -533,19 +538,25 @@ export function createPgQueue(
       `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2`,
       [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
     );
+    const eligible: Array<{ id: string; pendingSinceMs: number; ageStale: boolean }> = [];
+    for (const row of res.rows as Array<{ id: string; payload: string; created_at: number | string }>) {
+      const pendingSinceMs = Number(row.created_at);
+      const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, pendingSinceMs, now);
+      if (!ageStale && !(await isRateLimitAdmissionNowClear(row.payload))) continue;
+      eligible.push({ id: row.id, pendingSinceMs, ageStale });
+    }
+    const toRelease = selectForegroundDeferralsToRelease(eligible, foregroundLivenessConfig.maxReleasePerSweep);
     let released = 0;
     let releasedByAge = 0;
     let releasedByRateLimitClear = 0;
-    for (const row of res.rows as Array<{ id: string; payload: string; created_at: number | string }>) {
-      const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, Number(row.created_at), now);
-      if (!ageStale && !(await isRateLimitAdmissionNowClear(row.payload))) continue;
+    for (const candidate of toRelease) {
       const update = await pool.query(
         `UPDATE ${TABLE} SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1`,
-        [now, row.id],
+        [now, candidate.id],
       );
       const rowsChanged = update.rowCount ?? 0;
       released += rowsChanged;
-      if (ageStale) releasedByAge += rowsChanged;
+      if (candidate.ageStale) releasedByAge += rowsChanged;
       else releasedByRateLimitClear += rowsChanged;
     }
     if (released) {

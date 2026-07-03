@@ -59,6 +59,7 @@ import {
 import {
   isForegroundDeferralStale,
   resolveForegroundLivenessConfig,
+  selectForegroundDeferralsToRelease,
   type ForegroundLivenessConfig,
 } from "./foreground-liveness";
 import type { JobMessage } from "../types";
@@ -312,16 +313,20 @@ export function createSqliteQueue(
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
-   *  not currently due) then a per-row conditional UPDATE, mirroring reviveEligibleDeadJobs' shape. Each
-   *  candidate is released on EITHER of two independent conditions: it has genuinely been waiting past the
-   *  age-based trickle ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED
-   *  recovery (#selfhost-queue-liveness VPS incident) -- re-evaluating rate-limit admission against CURRENT
-   *  observations right now says it would be admitted immediately. The age floor alone can leave a job pinned
-   *  to a stale reset timestamp for up to its full original delay (observed up to ~15m) even when a fresher,
-   *  healthier observation arrived moments after it was deferred; the condition check recovers it on the NEXT
-   *  sweep tick instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the underlying
-   *  rate-limit pressure has actually cleared, regardless of job age. Logs + records a metric ONCE per sweep
-   *  (aggregate count), not per row, so a large release batch cannot spam the log. */
+   *  not currently due), an eligibility pass, a ramp-up CAP, then a per-row conditional UPDATE only for the
+   *  capped subset -- mirroring reviveEligibleDeadJobs' shape but with the extra ramp-up step. Each candidate is
+   *  ELIGIBLE on EITHER of two independent conditions: it has genuinely been waiting past the age-based trickle
+   *  ceiling (isForegroundDeferralStale, unconditional backstop), OR -- CONDITION-BASED recovery
+   *  (#selfhost-queue-liveness VPS incident) -- re-evaluating rate-limit admission against CURRENT observations
+   *  right now says it would be admitted immediately. The age floor alone can leave a job pinned to a stale
+   *  reset timestamp for up to its full original delay (observed up to ~15m) even when a fresher, healthier
+   *  observation arrived moments after it was deferred; the condition check recovers it on the NEXT sweep tick
+   *  instead (bounded by FOREGROUND_LIVENESS_CHECK_INTERVAL_MS, default 60s) whenever the underlying rate-limit
+   *  pressure has actually cleared, regardless of job age. When more jobs are eligible than maxReleasePerSweep
+   *  allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited backlog drains
+   *  gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once. Logs +
+   *  records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam the
+   *  log. */
   function releaseStaleForegroundDeferrals(): number {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
@@ -329,18 +334,23 @@ export function createSqliteQueue(
       `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>?`,
       [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
     );
-    let released = 0;
-    let releasedByAge = 0;
-    let releasedByRateLimitClear = 0;
+    const eligible: Array<{ id: number; pendingSinceMs: number; ageStale: boolean }> = [];
     for (const row of rows as Array<{ id: number; payload: string; created_at: number }>) {
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, row.created_at, now);
       if (!ageStale && !isRateLimitAdmissionNowClear(row.payload)) continue;
+      eligible.push({ id: row.id, pendingSinceMs: row.created_at, ageStale });
+    }
+    const toRelease = selectForegroundDeferralsToRelease(eligible, foregroundLivenessConfig.maxReleasePerSweep);
+    let released = 0;
+    let releasedByAge = 0;
+    let releasedByRateLimitClear = 0;
+    for (const candidate of toRelease) {
       const { changes } = driver.query(
         `UPDATE ${TABLE} SET run_after=? WHERE id=? AND status='pending' AND run_after>?`,
-        [now, row.id, now],
+        [now, candidate.id, now],
       );
       released += changes;
-      if (ageStale) releasedByAge += changes;
+      if (candidate.ageStale) releasedByAge += changes;
       else releasedByRateLimitClear += changes;
     }
     if (released) {

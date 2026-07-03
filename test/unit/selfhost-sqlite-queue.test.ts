@@ -1672,6 +1672,7 @@ describe("createSqliteQueue (durable #980)", () => {
     afterEach(() => {
       delete process.env.FOREGROUND_LIVENESS_ENABLED;
       delete process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS;
+      delete process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP;
     });
 
     /** Directly inserts a foreground-priority (>=8 by default) pending row with an explicit created_at/run_after,
@@ -1885,6 +1886,36 @@ describe("createSqliteQueue (durable #980)", () => {
       // the next poll tick -- drain() confirms all three are now genuinely runnable.
       await q.drain();
       expect(started.length).toBe(3);
+    });
+
+    // Ramp-up cap (#selfhost-queue-liveness): a large inherited backlog (the production incident had ~190
+    // over-deferred rows) must not release ALL of it in one sweep -- that many jobs re-attempting GitHub reads
+    // at once can immediately re-trip the same rate-limit bucket they were deferred for. With the cap set below
+    // the eligible count, assert exactly `cap` rows release (not all of them), and that the OLDEST rows
+    // (smallest created_at) are the ones chosen -- the newest-of-the-batch row must still be pending afterward.
+    it("caps releases at FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP, releasing the oldest rows first", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2";
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const now = Date.now();
+      const farFuture = now + 60 * 60_000;
+      // 4 stale-eligible rows at distinct ages; only the 2 OLDEST should be released.
+      const ages = [10 * 60_000, 8 * 60_000, 6 * 60_000, 5 * 60_000]; // minutes-old, oldest first
+      for (const ageMs of ages) {
+        seedForegroundPendingRow(driver, { createdAt: now - ageMs, runAfter: farFuture });
+      }
+
+      const released = q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(2);
+      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 2");
+      const remainingFuture = driver.query(
+        `SELECT COUNT(*) AS c FROM _selfhost_jobs WHERE status='pending' AND run_after>?`,
+        [now],
+      ).rows[0] as { c: number };
+      // 2 of the 4 seeded rows remain deferred into the future -- the 2 NEWEST (least stale) ones.
+      expect(remainingFuture.c).toBe(2);
     });
 
     // Mirrors reviveDeadLetterJobsSafely's own regression test: the foreground-liveness interval had no error

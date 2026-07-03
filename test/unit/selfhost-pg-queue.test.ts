@@ -1805,6 +1805,44 @@ describe("createPgQueue (durable #977)", () => {
       expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 3");
     });
 
+    // Ramp-up cap (#selfhost-queue-liveness): a large inherited backlog (the production incident had ~190
+    // over-deferred rows) must not release ALL of it in one sweep -- that many jobs re-attempting GitHub reads
+    // at once can immediately re-trip the same rate-limit bucket they were deferred for. With the cap set
+    // below the eligible count, assert only `cap` rows get their UPDATE issued, and that the OLDEST rows
+    // (smallest created_at) are the ones chosen.
+    it("caps releases at FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP, releasing the oldest rows first", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000"; // 1m floor
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2";
+      const m = makePool();
+      const now = Date.now();
+      // 4 stale-eligible rows at distinct ages; only the 2 OLDEST should be released.
+      m.setForegroundLivenessCandidates([
+        { id: "oldest", created_at: now - 10 * 60_000 },
+        { id: "second-oldest", created_at: now - 8 * 60_000 },
+        { id: "newer", created_at: now - 6 * 60_000 },
+        { id: "newest", created_at: now - 5 * 60_000 },
+      ]);
+      const q = createPgQueue(m.pool, async () => undefined);
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(2);
+      for (const id of ["oldest", "second-oldest"]) {
+        expect(m.fn).toHaveBeenCalledWith(
+          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.arrayContaining([id]),
+        );
+      }
+      for (const id of ["newer", "newest"]) {
+        expect(m.fn).not.toHaveBeenCalledWith(
+          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.arrayContaining([id]),
+        );
+      }
+      expect(await renderMetrics()).toContain("gittensory_jobs_foreground_liveness_released_total 2");
+      delete process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP;
+    });
+
     // A stale candidate can lose the UPDATE race (another instance/tick already moved it) -- mirrors
     // reviveDeadLetterJobs' own "AND status='dead'" re-check pattern: only rows whose UPDATE actually matched
     // (rowCount 1) count toward the release total, never the raw SELECT candidate count.

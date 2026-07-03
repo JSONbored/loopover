@@ -540,6 +540,20 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       expect(retry[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
       expect(await auditCount(env, "merge")).toBe(1);
     });
+
+    it("REGRESSION (gate finding): scopes the cooldown per PR — a denial on a DIFFERENT PR in the same installation/repo/action-class is not suppressed", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "read" as const, issues: "write" as const };
+
+      const prA = await executeAgentMaintenanceActions(env, ctx({ installationId: 205, pullNumber: 501, installationPermissions: perms }), [merge]);
+      const prB = await executeAgentMaintenanceActions(env, ctx({ installationId: 205, pullNumber: 502, installationPermissions: perms }), [merge]);
+
+      // Both denials are loud — PR B's cooldown key differs from PR A's, so it must never be silently
+      // suppressed by PR A's already-armed cooldown within the same 15m window.
+      expect(prA[0]).toMatchObject({ outcome: "denied", detail: "pull_requests: write not granted — maintainer must re-consent" });
+      expect(prB[0]).toMatchObject({ outcome: "denied", detail: "pull_requests: write not granted — maintainer must re-consent" });
+      expect(await auditCount(env, "merge")).toBe(2); // one audit row per PR, not one shared row
+    });
   });
 
   it("#label-close-split-brain: a coupled anti-abuse label+close pair (matching closeKind) BOTH complete when the close succeeds", async () => {

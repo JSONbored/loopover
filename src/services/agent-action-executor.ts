@@ -62,13 +62,16 @@ function shouldRefreshInstallationHealthAfterPrWriteFailure(installationId: numb
 // calls and re-write an identical audit record on every sweep (#selfhost-runtime-drift) -- that burns queue/API
 // cycles on an outcome that cannot change until the maintainer re-consents (which itself only refreshes on the
 // INSTALLATION_HEALTH_REFRESH_COOLDOWN_MS cadence above, or the periodic refresh-installation-health job). A
-// bounded per-installation/repo/action-class cooldown suppresses the redundant audit write/log while still
+// bounded per-installation/repo/PR/action-class cooldown suppresses the redundant audit write/log while still
 // counting every suppressed attempt, so the denial remains visible in metrics without flooding the audit table.
+// The key is scoped to the PR too -- the permission denial is installation-wide, but a denial already audited
+// for one PR must never silently suppress the FIRST denial audit for a different PR in the same repo/window,
+// or that PR's maintainer never sees why it was denied.
 const PR_WRITE_DENIAL_COOLDOWN_MS = 15 * 60 * 1000;
 const writePermissionDenialCooldown = new Map<string, number>();
 
-function writePermissionDenialKey(installationId: number, repoFullName: string, actionClass: AgentActionClass): string {
-  return `${installationId}:${repoFullName}:${actionClass}`;
+function writePermissionDenialKey(installationId: number, repoFullName: string, pullNumber: number, actionClass: AgentActionClass): string {
+  return `${installationId}:${repoFullName}:${pullNumber}:${actionClass}`;
 }
 
 /** True when this exact installation/repo/action-class was already denied for a missing write permission within
@@ -215,7 +218,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     //    `label` mutates via the Issues API (`issues: write`, always held), so it is exempt from this gate.
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
       incr("gittensory_agent_action_permission_denied_total", { actionClass: action.actionClass });
-      const cooldownKey = writePermissionDenialKey(ctx.installationId, ctx.repoFullName, action.actionClass);
+      const cooldownKey = writePermissionDenialKey(ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.actionClass);
       if (shouldSuppressWritePermissionDenial(cooldownKey, Date.now())) {
         // Already denied + audited for this exact installation/repo/action-class within the cooldown window --
         // count it (the denial stays visible in metrics) without re-writing an identical audit record every pass.

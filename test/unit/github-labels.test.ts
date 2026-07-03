@@ -13,24 +13,28 @@ describe("GitHub PR labels", () => {
     await expect(ensurePullRequestLabel(createTestEnv(), 123, "owner/repo/extra", 4, "gittensor", { createMissingLabel: true })).rejects.toThrow(
       /Invalid repository full name/,
     );
-    await expect(ensurePullRequestLabel(createTestEnv(), 123, " owner/repo ", 4, "gittensor", { createMissingLabel: true })).rejects.toThrow(
-      /Invalid repository full name/,
-    );
+    for (const padded of [" owner/repo ", "owner/ repo", "owner /repo", "own er/repo"]) {
+      await expect(ensurePullRequestLabel(createTestEnv(), 123, padded, 4, "gittensor", { createMissingLabel: true })).rejects.toThrow(
+        /Invalid repository full name/,
+      );
+    }
     let called = false;
     vi.stubGlobal("fetch", async () => {
       called = true;
       return Response.json({ token: "t" });
     });
-    await expect(
-      ensurePullRequestLabel(
-        createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }),
-        123,
-        "owner/repo/extra",
-        4,
-        "gittensor",
-        { createMissingLabel: true },
-      ),
-    ).rejects.toThrow(/Invalid repository full name/);
+    for (const malformed of ["owner/repo/extra", "owner/ repo", "owner /repo"]) {
+      await expect(
+        ensurePullRequestLabel(
+          createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }),
+          123,
+          malformed,
+          4,
+          "gittensor",
+          { createMissingLabel: true },
+        ),
+      ).rejects.toThrow(/Invalid repository full name/);
+    }
     expect(called).toBe(false);
   });
 
@@ -40,7 +44,7 @@ describe("GitHub PR labels", () => {
       called = true;
       return Response.json({ token: "t" });
     });
-    for (const repoFullName of ["invalid", "owner/repo/extra", " owner/repo "]) {
+    for (const repoFullName of ["invalid", "owner/repo/extra", " owner/repo ", "owner/ repo", "owner /repo"]) {
       await expect(
         removePullRequestLabel(
           createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }),

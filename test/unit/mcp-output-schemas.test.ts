@@ -361,6 +361,50 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.ranked).toEqual([]);
   });
 
+  it("gittensory_find_opportunities skips closed issues and filters by minRankScore", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 1, title: "Open issue", state: "open", labels: [{ name: "bug" }], user: { login: "alice" } });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 2, title: "Closed issue", state: "closed", labels: [{ name: "bug" }], user: { login: "alice" } });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_find_opportunities",
+      arguments: { targets: [{ owner: "octo", repo: "demo" }], goalSpec: { minRankScore: 99 } },
+    });
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    const ranked = data.ranked as unknown[];
+    expect(ranked.length).toBe(0);
+  });
+
+  it("gittensory_find_opportunities applies goalSpec.lane for laneFit scoring", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 1, title: "Open unlabeled issue", state: "open", labels: [], user: { login: "alice" } });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_find_opportunities",
+      arguments: { targets: [{ owner: "octo", repo: "demo" }], goalSpec: { lane: "scoring" } },
+    });
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    const ranked = data.ranked as Array<Record<string, unknown>>;
+    if (ranked.length > 0) {
+      expect(ranked[0]?.laneFit).toBe(0.7);
+    }
+  });
+
+  it("gittensory_find_opportunities handles searchQuery-only input", async () => {
+    const { client } = await connectTestClient();
+    const result = await client.callTool({
+      name: "gittensory_find_opportunities",
+      arguments: { searchQuery: "test coverage" },
+    });
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    expect(data.ranked).toEqual([]);
+  });
+
   it("gittensory_remediation_plan returns validated structured content", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });

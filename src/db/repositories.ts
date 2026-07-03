@@ -3150,19 +3150,56 @@ async function listRepoFullNamesForInstallation(env: Env, installationId: number
  * never gated them on -- the exact cross-tenant leak install-scoped helpers elsewhere in this codebase (e.g.
  * markRepositoriesRemovedFromInstallation) exist to avoid.
  */
-export async function countOpenItemsForAuthorAcrossRepos(env: Env, installationId: number, authorLogin: string): Promise<number> {
+export type OpenItemAcrossInstallRow = { repoFullName: string; number: number; kind: "pull_request" | "issue" };
+
+const AUTHOR_OPEN_ITEM_LIST_LIMIT = 20_000;
+
+/**
+ * Install-wide open-item ROWS for one author (#2562 gate-review follow-up), across every repo THIS
+ * INSTALLATION tracks. Returns the actual rows (not just a count) so the caller can LIVE-VERIFY each one
+ * before trusting the aggregate toward an irreversible close -- the stored DB cache can lag GitHub for a repo
+ * OTHER than the one the current webhook is for, and an inflated stale count must never itself trigger a
+ * close (mirrors the existing per-repo issue-cap's own sibling live-verification, #2479). Same-database
+ * aggregate only -- no cross-instance networking, mirroring the install-scoped singleton shape of
+ * global_contributor_blacklist. Case-insensitive login match (mirrors loginMatches/findBlacklistEntry
+ * elsewhere in this file).
+ */
+export async function listOpenItemsForAuthorAcrossInstall(env: Env, installationId: number, authorLogin: string): Promise<OpenItemAcrossInstallRow[]> {
   const repoNames = await listRepoFullNamesForInstallation(env, installationId);
-  if (repoNames.length === 0) return 0;
+  if (repoNames.length === 0) return [];
   const db = getDb(env.DB);
-  const [[prRow], [issueRow]] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(pullRequests).where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin), inArray(pullRequests.repoFullName, repoNames))),
-    db.select({ count: sql<number>`count(*)` }).from(issues).where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin), inArray(issues.repoFullName, repoNames))),
-  ]);
-  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
-  const prCount = Number(prRow?.count ?? 0);
-  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
-  const issueCount = Number(issueRow?.count ?? 0);
-  return prCount + issueCount;
+  const prRows = await db
+    .select({ repoFullName: pullRequests.repoFullName, number: pullRequests.number })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin), inArray(pullRequests.repoFullName, repoNames)))
+    .limit(AUTHOR_OPEN_ITEM_LIST_LIMIT);
+  if (prRows.length === AUTHOR_OPEN_ITEM_LIST_LIMIT) {
+    await recordAuditEvent(env, {
+      eventType: "agent.global_open_item_cap.author_items_truncated",
+      actor: "gittensory",
+      targetKey: `${authorLogin}@installation:${installationId}`,
+      outcome: "error",
+      detail: `author has >= ${AUTHOR_OPEN_ITEM_LIST_LIMIT} open pull requests across the install; the global contributor-cap check may undercount`,
+    }).catch(() => undefined);
+  }
+  const issueRows = await db
+    .select({ repoFullName: issues.repoFullName, number: issues.number })
+    .from(issues)
+    .where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin), inArray(issues.repoFullName, repoNames)))
+    .limit(AUTHOR_OPEN_ITEM_LIST_LIMIT);
+  if (issueRows.length === AUTHOR_OPEN_ITEM_LIST_LIMIT) {
+    await recordAuditEvent(env, {
+      eventType: "agent.global_open_item_cap.author_items_truncated",
+      actor: "gittensory",
+      targetKey: `${authorLogin}@installation:${installationId}`,
+      outcome: "error",
+      detail: `author has >= ${AUTHOR_OPEN_ITEM_LIST_LIMIT} open issues across the install; the global contributor-cap check may undercount`,
+    }).catch(() => undefined);
+  }
+  return [
+    ...prRows.map((row) => ({ repoFullName: row.repoFullName, number: row.number, kind: "pull_request" as const })),
+    ...issueRows.map((row) => ({ repoFullName: row.repoFullName, number: row.number, kind: "issue" as const })),
+  ];
 }
 
 // Anti-farming (#anti-gaming-flood): how many PRs this author has SUBMITTED to this repo since `sinceIso` (ANY

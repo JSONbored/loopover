@@ -7793,12 +7793,16 @@ describe("queue processors", () => {
       const url = input.toString();
       const method = init?.method ?? "GET";
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/pulls/55/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
       if (url.includes("/pulls/55/reviews")) return Response.json([]);
       if (url.includes("/pulls/55/commits")) return Response.json([]);
       if (url.endsWith("/pulls/55") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 55, state: "closed" }); }
       if (url.endsWith("/pulls/55")) return Response.json({ number: 55, state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, mergeable_state: "clean" });
+      // Install-wide live-verify (#2562 gate-review follow-up) re-fetches every OTHER counted sibling before
+      // trusting it toward the cap -- both of farmer99's other open items must resolve as confirmed-open here.
+      if (url.endsWith("/repos/JSONbored/repo-a/pulls/20")) return Response.json({ number: 20, state: "open" });
+      if (url.endsWith("/repos/JSONbored/repo-b/pulls/10")) return Response.json({ number: 10, state: "open" });
       if (url.includes("/commits/f55/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/commits/f55/status")) return Response.json({ state: "success", statuses: [] });
       if (url.includes("/issues/55/labels") && method === "GET") return Response.json([]);
@@ -7822,7 +7826,9 @@ describe("queue processors", () => {
 
     expect(seen.closed).toBe(true);
     expect(seen.labels).toContain("over-contributor-limit");
-    expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open pull requests") && c.includes("across every repository it gates"))).toBe(true);
+    // Install-wide cap counts BOTH open PRs and open issues together (#2562 gate-review follow-up), so the
+    // close message reports the mixed noun rather than a stale "pull requests"-only phrasing.
+    expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open pull requests and issues") && c.includes("across every repository it gates"))).toBe(true);
     const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
     expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
   });
@@ -8840,11 +8846,15 @@ describe("queue processors", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.endsWith("/issues/62") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ state: "closed" }); }
       if (url.includes("/issues/62/labels") && method === "GET") return Response.json([]);
       if (url.includes("/issues/62/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
       if (url.includes("/issues/62/comments") && method === "POST") { seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? "")); return Response.json({ id: 1 }, { status: 201 }); }
+      // Install-wide live-verify (#2562 gate-review follow-up) re-fetches every OTHER counted sibling before
+      // trusting it toward the cap -- both of farmer99's other open items must resolve as confirmed-open here.
+      if (url.endsWith("/repos/JSONbored/repo-a/issues/20")) return Response.json({ number: 20, state: "open" });
+      if (url.endsWith("/repos/JSONbored/repo-b/issues/10")) return Response.json({ number: 10, state: "open" });
       return Response.json({});
     });
 
@@ -8862,7 +8872,9 @@ describe("queue processors", () => {
 
     expect(seen.closed).toBe(true);
     expect(seen.labels).toContain("over-contributor-limit");
-    expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open issues") && c.includes("across every repository it gates"))).toBe(true);
+    // Install-wide cap counts BOTH open PRs and open issues together (#2562 gate-review follow-up), so the
+    // close message reports the mixed noun rather than a stale "issues"-only phrasing from the old count-only path.
+    expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open pull requests and issues") && c.includes("across every repository it gates"))).toBe(true);
   });
 
   it("install-wide contributor open-item cap (#2562): off by default (env var unset) — an issue author spread across repos is never closed", async () => {

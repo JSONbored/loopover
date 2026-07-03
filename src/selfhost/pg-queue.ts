@@ -523,7 +523,18 @@ export function createPgQueue(
     if (foreground) return foreground;
     if (activeBackground >= backgroundConcurrency) return null;
     activeBackground++;
-    const background = await claimNextWhere(now, "priority < $2");
+    let background: JobRow | null;
+    try {
+      background = await claimNextWhere(now, "priority < $2");
+    } catch (error) {
+      // Release the reserved background slot if the claim query itself throws (a dropped connection / lock
+      // timeout — the exact raw pool failures pump() below is documented to catch). claimNext() runs OUTSIDE
+      // processOne's try/finally, so without this rollback the reserved slot leaks permanently; since
+      // backgroundConcurrency defaults to 1, a single such error would starve the entire background/maintenance
+      // lane with no recovery short of a restart. (#selfhost-bg-slot-leak)
+      activeBackground--;
+      throw error;
+    }
     if (!background) {
       activeBackground--;
       return null;

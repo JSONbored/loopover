@@ -36,6 +36,12 @@ test("computeMinerGoalLaneFit applies issueDiscoveryPolicy modifiers", () => {
   assert.equal(computeMinerGoalLaneFit({ labels: ["feature"] }, discouraged), 1);
 });
 
+test("computeMinerGoalLaneFit returns 0 when a blocked label matches case-insensitively", () => {
+  const spec = { ...DEFAULT_MINER_GOAL_SPEC, blockedLabels: ["wontfix"] };
+  assert.equal(computeMinerGoalLaneFit({ labels: ["WontFix"] }, spec), 0);
+  assert.equal(computeMinerGoalLaneFit({ labels: ["bug"] }, spec), 1);
+});
+
 test("computeMinerGoalLaneFit ignores malformed label entries safely", () => {
   assert.equal(
     computeMinerGoalLaneFit({ labels: ["bug", "", 42 as unknown as string, "  "] }, {

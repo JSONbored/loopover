@@ -38,6 +38,12 @@ preferredLabels:
   - bug
   - enhancement
 
+# Issue/PR labels a miner must not target; candidates carrying one are skipped.
+# String list. Default: [] (nothing blocked).
+blockedLabels:
+  - wontfix
+  - duplicate
+
 # Maximum issues a single miner may hold claimed on this repo at once, so one
 # miner cannot monopolize the queue. A positive integer (>= 1); a non-integer is
 # floored. Default: 1.

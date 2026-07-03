@@ -31,6 +31,7 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     wantedPaths: ["src/**", " src/** ", "", "docs/**"],
     blockedPaths: ["dist/**"],
     preferredLabels: ["help wanted", "help wanted", "gittensor:feature"],
+    blockedLabels: ["duplicate", " duplicate "],
     maxConcurrentClaims: 2.9,
     issueDiscoveryPolicy: "encouraged",
   });
@@ -41,6 +42,7 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
     wantedPaths: ["src/**", "docs/**"],
     blockedPaths: ["dist/**"],
     preferredLabels: ["help wanted", "gittensor:feature"],
+    blockedLabels: ["duplicate"],
     maxConcurrentClaims: 2,
     issueDiscoveryPolicy: "encouraged",
   });
@@ -63,6 +65,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     wantedPaths: "src/**",
     blockedPaths: [123, " dist/** ", "", longEntry],
     preferredLabels: [false, "bugfix"],
+    blockedLabels: [123, " wontfix "],
     maxConcurrentClaims: 0.9,
     issueDiscoveryPolicy: "always",
   });
@@ -73,6 +76,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
     wantedPaths: [],
     blockedPaths: ["dist/**", longEntry.slice(0, 256)],
     preferredLabels: ["bugfix"],
+    blockedLabels: ["wontfix"],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
   });
@@ -81,6 +85,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
   assert.match(warningText, /wantedPaths/i);
   assert.match(warningText, /blockedPaths/i);
   assert.match(warningText, /preferredLabels/i);
+  assert.match(warningText, /blockedLabels/i);
   assert.match(warningText, /maxConcurrentClaims/i);
   assert.match(warningText, /issueDiscoveryPolicy/i);
   assert.match(warningText, /truncated an over-long entry/i);
@@ -97,6 +102,7 @@ test("parseMinerGoalSpec: unknown-only or default-only content stays absent with
     wantedPaths: [],
     blockedPaths: [],
     preferredLabels: [],
+    blockedLabels: [],
     maxConcurrentClaims: 1,
     issueDiscoveryPolicy: "neutral",
   });

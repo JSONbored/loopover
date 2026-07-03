@@ -134,6 +134,11 @@ const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([
   "pubspec.yaml",
   "mix.exs",
   "go.work",
+  // Swift Package Manager + CocoaPods manifests. Their lockfiles
+  // (package.resolved, podfile.lock) are already recognized above, so the
+  // manifests they resolve belong in the same dependency-manifest category.
+  "package.swift",
+  "podfile",
 ]);
 
 const DOCS_EXTENSIONS: ReadonlySet<string> = new Set(["md", "mdx", "markdown", "rst", "adoc", "asciidoc"]);

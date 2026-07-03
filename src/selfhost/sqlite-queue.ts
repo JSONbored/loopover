@@ -310,7 +310,17 @@ export function createSqliteQueue(
     if (foreground) return foreground;
     if (activeBackground >= backgroundConcurrency) return null;
     activeBackground++;
-    const background = claimNextWhere(now, "priority<?");
+    let background: JobRow | null;
+    try {
+      background = claimNextWhere(now, "priority<?");
+    } catch (error) {
+      // Release the reserved background slot if the claim query itself throws (a SQLite "database is locked" / I/O
+      // error). claimNext() runs OUTSIDE processOne's try/finally, so without this rollback the reserved slot leaks
+      // permanently; since backgroundConcurrency defaults to 1, a single such error would starve the entire
+      // background/maintenance lane with no recovery short of a restart. (#selfhost-bg-slot-leak)
+      activeBackground--;
+      throw error;
+    }
     if (!background) {
       activeBackground--;
       return null;

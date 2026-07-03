@@ -20,6 +20,7 @@ function freezeSpec(spec: MinerGoalSpec): Readonly<MinerGoalSpec> {
     wantedPaths: Object.freeze([...spec.wantedPaths]),
     blockedPaths: Object.freeze([...spec.blockedPaths]),
     preferredLabels: Object.freeze([...spec.preferredLabels]),
+    blockedLabels: Object.freeze([...spec.blockedLabels]),
   });
 }
 
@@ -96,6 +97,7 @@ export function parseMinerGoalSpec(raw: unknown): MinerGoalSpecParseResult {
     wantedPaths: parseStringList(record.wantedPaths, "wantedPaths", warnings),
     blockedPaths: parseStringList(record.blockedPaths, "blockedPaths", warnings),
     preferredLabels: parseStringList(record.preferredLabels, "preferredLabels", warnings),
+    blockedLabels: parseStringList(record.blockedLabels, "blockedLabels", warnings),
     maxConcurrentClaims: parseClaims(record.maxConcurrentClaims, warnings),
     issueDiscoveryPolicy: parsePolicy(record.issueDiscoveryPolicy, warnings),
   });

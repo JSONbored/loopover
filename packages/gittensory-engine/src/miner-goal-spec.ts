@@ -34,6 +34,11 @@ export type MinerGoalSpec = {
    */
   preferredLabels: readonly string[];
   /**
+   * Issue/PR labels a miner must not target; a candidate carrying one should be skipped. String list.
+   * Default: [] (nothing blocked).
+   */
+  blockedLabels: readonly string[];
+  /**
    * Maximum number of issues a single miner may hold claimed on this repo at once, so one miner cannot monopolize
    * a repo's queue. A positive integer (`>= 1`); the parser is expected to floor a non-integer toward zero
    * (`Math.floor`) and reject any value below 1. Default: 1.
@@ -69,6 +74,7 @@ export const DEFAULT_MINER_GOAL_SPEC: Readonly<MinerGoalSpec> = Object.freeze({
   wantedPaths: Object.freeze([]),
   blockedPaths: Object.freeze([]),
   preferredLabels: Object.freeze([]),
+  blockedLabels: Object.freeze([]),
   maxConcurrentClaims: 1,
   issueDiscoveryPolicy: "neutral",
 });
@@ -83,6 +89,7 @@ function cloneDefaultMinerGoalSpec(): MinerGoalSpec {
     wantedPaths: [...DEFAULT_MINER_GOAL_SPEC.wantedPaths],
     blockedPaths: [...DEFAULT_MINER_GOAL_SPEC.blockedPaths],
     preferredLabels: [...DEFAULT_MINER_GOAL_SPEC.preferredLabels],
+    blockedLabels: [...DEFAULT_MINER_GOAL_SPEC.blockedLabels],
   };
 }
 
@@ -172,6 +179,7 @@ function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
     spec.wantedPaths.length > 0 ||
     spec.blockedPaths.length > 0 ||
     spec.preferredLabels.length > 0 ||
+    spec.blockedLabels.length > 0 ||
     spec.maxConcurrentClaims !== DEFAULT_MINER_GOAL_SPEC.maxConcurrentClaims ||
     spec.issueDiscoveryPolicy !== DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy
   );
@@ -201,6 +209,7 @@ export function parseMinerGoalSpec(raw: unknown): ParsedMinerGoalSpec {
     wantedPaths: normalizeStringList(record.wantedPaths, "wantedPaths", warnings),
     blockedPaths: normalizeStringList(record.blockedPaths, "blockedPaths", warnings),
     preferredLabels: normalizeStringList(record.preferredLabels, "preferredLabels", warnings),
+    blockedLabels: normalizeStringList(record.blockedLabels, "blockedLabels", warnings),
     maxConcurrentClaims: normalizePositiveInteger(
       record.maxConcurrentClaims,
       "maxConcurrentClaims",

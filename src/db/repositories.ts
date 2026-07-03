@@ -4071,20 +4071,31 @@ export async function recordGateBlockOutcome(
     overridden: false,
     // blockedAt + updatedAt default to nowIso() via the schema `$defaultFn` on a fresh insert.
   };
+  // Null-safe, dialect-portable "head SHA unchanged" predicate. Preserve `overridden` ONLY when the head SHA
+  // is unchanged: a maintainer override applies to the exact commit it was granted on, so a NEW commit
+  // re-blocking must clear it — otherwise a one-time override would permanently disable the gate (and the
+  // draft-dodge auto-close) for every future push to the PR. (#audit-3.14)
+  //
+  // Build the predicate from the (build-time) value rather than SQLite's `head_sha IS <value>` operator:
+  // that operator is a hard parse error on the self-host Postgres backend (`head_sha IS $1`), and because the
+  // sole caller records this as best-effort telemetry (`.catch`), it silently threw away every gate_outcomes
+  // upsert there — killing the draft-dodge enforcement `getGateBlockOutcome` drives. Deriving the branch here
+  // also keeps the value out of an untyped `$n IS NULL` position (which Postgres rejects). Both dialects treat
+  // `col = ?` / `col IS NULL` identically, matching the original null-safe semantics on SQLite.
+  const headShaUnchanged =
+    values.headSha === null
+      ? sql`${gateOutcomes.headSha} IS NULL`
+      : sql`${gateOutcomes.headSha} = ${values.headSha}`;
   await getDb(env.DB)
     .insert(gateOutcomes)
     .values(values)
     .onConflictDoUpdate({
       target: [gateOutcomes.repoFullName, gateOutcomes.pullNumber],
-      // Refresh the codes/head/timestamp on a re-block. Preserve `overridden` ONLY when the head SHA is
-      // unchanged: a maintainer override applies to the exact commit it was granted on, so a NEW commit
-      // re-blocking must clear it — otherwise a one-time override would permanently disable the gate
-      // (and the draft-dodge auto-close) for every future push to the PR. (#audit-3.14)
       set: {
         headSha: values.headSha,
         blockerCodesJson: values.blockerCodesJson,
         updatedAt: nowIso(),
-        overridden: sql`CASE WHEN ${gateOutcomes.headSha} IS ${values.headSha} THEN ${gateOutcomes.overridden} ELSE 0 END`,
+        overridden: sql`CASE WHEN ${headShaUnchanged} THEN ${gateOutcomes.overridden} ELSE 0 END`,
       },
     });
 }

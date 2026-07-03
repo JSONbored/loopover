@@ -314,6 +314,8 @@ describe("classifyChangedFile", () => {
       ["pubspec.yaml", "dependency_manifest"],
       ["mix.exs", "dependency_manifest"],
       ["go.work", "dependency_manifest"],
+      ["MyApp/Package.swift", "dependency_manifest"], // Swift PM manifest (package.resolved lockfile already recognized)
+      ["ios/Podfile", "dependency_manifest"], // CocoaPods manifest (Podfile.lock already recognized)
       ["tsconfig.json", "config"],
       ["vitest.config.ts", "config"],
       ["wrangler.jsonc", "config"],

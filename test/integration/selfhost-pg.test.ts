@@ -8,6 +8,7 @@ import { runSelfHostMigrations } from "../../src/selfhost/migrate";
 import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "../../src/selfhost/pg-adapter";
 import { pruneExpiredRecords } from "../../src/db/retention";
 import { processJob } from "../../src/queue/processors";
+import { getGateBlockOutcome, markGateOutcomeOverridden, recordGateBlockOutcome } from "../../src/db/repositories";
 
 const URL = process.env.PG_TEST_URL;
 const suite = URL ? describe : describe.skip;
@@ -83,6 +84,32 @@ suite("Postgres backend (#977) — real Postgres", () => {
     await expect(processJob(env, { type: "prune-retention", requestedBy: "schedule" })).resolves.toBeUndefined();
     const audit = await db.prepare("SELECT outcome FROM audit_events WHERE event_type = ?").bind("retention.prune").first<{ outcome: string }>();
     expect(audit?.outcome).toBe("success");
+  });
+
+  it("recordGateBlockOutcome upserts on Postgres and preserves/clears `overridden` null-safely (regression: the SQLite-only `head_sha IS <value>` operator was a hard Postgres parse error, so the swallowed upsert silently dropped every gate_outcomes row and the draft-dodge enforcement it drives)", async () => {
+    const db = createPgAdapter(pool);
+    const env = { DB: db } as unknown as Env;
+
+    // (1) Core regression: the ON CONFLICT upsert must not throw on Postgres. Before the fix its `overridden`
+    // clause emitted `head_sha IS $1`, which Postgres rejects at parse time, so this INSERT threw and — via the
+    // caller's best-effort `.catch(() => undefined)` — no gate_outcomes row was ever persisted on this backend.
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 42, headSha: "sha-a", blockerCodes: ["slop_risk"] });
+    expect(await getGateBlockOutcome(env, "owner/repo", 42)).toMatchObject({ headSha: "sha-a", overridden: false, blockerCodes: ["slop_risk"] });
+
+    // (2) A re-block on the SAME head preserves a maintainer override (the `=` branch of the null-safe compare).
+    await markGateOutcomeOverridden(env, "owner/repo", 42);
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 42, headSha: "sha-a", blockerCodes: ["slop_risk", "missing_linked_issue"] });
+    expect(await getGateBlockOutcome(env, "owner/repo", 42)).toMatchObject({ overridden: true, blockerCodes: ["slop_risk", "missing_linked_issue"] });
+
+    // (3) A re-block on a NEW head clears the override — it binds to the exact commit it was granted on (#audit-3.14).
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 42, headSha: "sha-b", blockerCodes: ["slop_risk"] });
+    expect(await getGateBlockOutcome(env, "owner/repo", 42)).toMatchObject({ headSha: "sha-b", overridden: false });
+
+    // (4) Null-safe branch: two blocks that both record NO head SHA still match, preserving the override.
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 43, blockerCodes: ["x"] });
+    await markGateOutcomeOverridden(env, "owner/repo", 43);
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 43, blockerCodes: ["x", "y"] });
+    expect(await getGateBlockOutcome(env, "owner/repo", 43)).toMatchObject({ overridden: true });
   });
 
   it("tunes github_rate_limit_observations autovacuum below Postgres's default, idempotently (#2543)", async () => {

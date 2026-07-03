@@ -19,6 +19,7 @@ test("parseMinerGoalSpec coerces a full valid object and marks present", () => {
     wantedPaths: [" src/** ", "src/**"],
     blockedPaths: ["dist/**"],
     preferredLabels: [" bug ", "feature"],
+    blockedLabels: [" wontfix ", "duplicate"],
     maxConcurrentClaims: 3,
     issueDiscoveryPolicy: "ENCOURAGED",
   });
@@ -29,6 +30,7 @@ test("parseMinerGoalSpec coerces a full valid object and marks present", () => {
     wantedPaths: ["src/**"],
     blockedPaths: ["dist/**"],
     preferredLabels: ["bug", "feature"],
+    blockedLabels: ["wontfix", "duplicate"],
     maxConcurrentClaims: 3,
     issueDiscoveryPolicy: "encouraged",
   });

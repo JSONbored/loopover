@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
+import { runDenyCheck } from "../lib/deny-check.js";
 import {
   awaitOpportunisticUpdateCheck,
   resolveUpgradeCommand,
@@ -39,6 +40,12 @@ if (
   printVersion({ packageName, packageVersion });
   await awaitOpportunisticUpdateCheck(updateCheck);
   process.exit(0);
+}
+
+if (cliArgs[0] === "hooks" && cliArgs[1] === "check") {
+  const exitCode = runDenyCheck(cliArgs.slice(2));
+  await awaitOpportunisticUpdateCheck(updateCheck);
+  process.exit(exitCode);
 }
 
 const exitCode = runCli(cliArgs, { packageName });

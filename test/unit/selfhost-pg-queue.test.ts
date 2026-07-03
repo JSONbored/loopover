@@ -716,6 +716,44 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  it("REGRESSION: releases the reserved background slot when a background claim query rejects (#selfhost-bg-slot-leak)", async () => {
+    // A raw pool failure during the BACKGROUND claim (a dropped connection / lock timeout — the exact failures
+    // pump() is documented to catch) rejects out of claimNext(), which runs OUTSIDE processOne's try/finally, so
+    // its reserved slot must be rolled back. Without the rollback the slot leaks; since backgroundConcurrency
+    // defaults to 1, a single such error would starve the entire background/maintenance lane until a restart.
+    // Assert the lane still drains a background job after one rejected claim.
+    const m = makePool();
+    let failNextBackgroundClaim = true;
+    const pool = {
+      query: async (sql: unknown, params?: unknown[]) => {
+        const q = String(sql);
+        if (failNextBackgroundClaim && q.includes("UPDATE _selfhost_jobs SET status='processing'") && q.includes("priority < $2")) {
+          failNextBackgroundClaim = false;
+          throw new Error("connection terminated unexpectedly");
+        }
+        return (m.pool as unknown as { query(sql: unknown, params?: unknown[]): Promise<unknown> }).query(q, params);
+      },
+    } as unknown as Pool;
+    const seen: string[] = [];
+    const q = createPgQueue(pool, async (j) => void seen.push(typeOf(j)), { backgroundConcurrency: 1 });
+    await q.init();
+
+    // First drain: foreground claim empty, background claim rejects (transient). pump() catches it; the reserved
+    // slot must be released so the lane is not permanently starved.
+    m.enqueueResult({ rows: [], rowCount: 0 }); // foreground claim → empty
+    await q.drain();
+    expect(seen).toEqual([]);
+
+    // Second drain: the lane must have recovered — foreground empty, background claim returns the job.
+    m.enqueueResult({ rows: [], rowCount: 0 }); // foreground claim → empty
+    m.enqueueResult({
+      rows: [{ id: "background", payload: JSON.stringify(msg("agent-regate-sweep")), attempts: 0, job_key: "agent-regate-sweep", priority: 0 }],
+      rowCount: 1,
+    }); // background claim → job
+    await q.drain();
+    expect(seen).toEqual(["agent-regate-sweep"]);
+  });
+
   it("pre-yields GitHub-budget background jobs when the persisted REST budget is reserved", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));

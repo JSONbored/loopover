@@ -26,6 +26,11 @@ export function computeMinerGoalLaneFit(
   spec: MinerGoalSpec,
 ): number {
   const issueLabels = normalizeLabels(issue.labels);
+  const blocked = normalizeLabels(spec.blockedLabels);
+  if (blocked.length > 0 && blocked.some((label) => issueLabels.includes(label))) {
+    return 0;
+  }
+
   const preferred = normalizeLabels(spec.preferredLabels);
 
   let score: number;

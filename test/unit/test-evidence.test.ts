@@ -34,6 +34,22 @@ describe("test evidence helpers", () => {
     expect(isTestPath("src/app/testing.py")).toBe(false); // no `test_` boundary ⇒ not a test
   });
 
+  it("detects JVM / C# / Swift class-suffix test conventions", () => {
+    // Paths NOT under a test/ directory, so only the class-suffix rule can match.
+    expect(isTestPath("app/src/main/java/WidgetTest.java")).toBe(true); // JUnit
+    expect(isTestPath("app/UserServiceTests.kt")).toBe(true); // Kotlin
+    expect(isTestPath("modules/pricing/PricingSpec.scala")).toBe(true); // ScalaTest
+    expect(isTestPath("Services/OrderTests.cs")).toBe(true); // xUnit/NUnit
+    expect(isTestPath("Sources/App/LoginTests.swift")).toBe(true); // XCTest
+    expect(isTestPath("gradle/CartSpec.groovy")).toBe(true); // Spock
+    // Case-sensitive suffix: words merely ending in test/spec are not tests.
+    expect(isTestPath("app/src/main/java/Latest.java")).toBe(false);
+    expect(isTestPath("Services/Contest.cs")).toBe(false);
+    expect(isTestPath("modules/manifest.scala")).toBe(false);
+    // A non-JVM extension with the same class name is unaffected by this rule.
+    expect(isTestPath("lib/WidgetTest.rb")).toBe(false);
+  });
+
   it("does not treat framework or integration directory names alone as test evidence", () => {
     expect(isTestPath("src/integration/auth.ts")).toBe(false);
     expect(isTestPath("src/playwright/client.ts")).toBe(false);

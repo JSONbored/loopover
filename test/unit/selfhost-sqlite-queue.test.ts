@@ -89,6 +89,40 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(q.size()).toBe(0);
   });
 
+  it("REGRESSION: releases the reserved background slot when a background claim query throws (#selfhost-bg-slot-leak)", async () => {
+    // A raw driver failure during the BACKGROUND claim (a transient SQLite "database is locked" / I/O error) throws
+    // out of claimNext(), which runs OUTSIDE processOne's try/finally, so its reserved slot must be rolled back.
+    // Without the rollback the slot leaks; since backgroundConcurrency defaults to 1, a single such error would
+    // starve the entire background/maintenance lane until a restart. Assert the lane still drains a background job
+    // after one throwing claim.
+    let failNextBackgroundClaim = true;
+    const base = makeDriver();
+    const driver = {
+      exec: base.exec.bind(base),
+      query: vi.fn((sql: string, params: unknown[]) => {
+        if (failNextBackgroundClaim && sql.includes("status='pending'") && sql.includes("priority<?")) {
+          failNextBackgroundClaim = false;
+          throw new Error("database is locked");
+        }
+        return base.query(sql, params);
+      }),
+    } as ReturnType<typeof nodeSqliteDriver>;
+    const seen: string[] = [];
+    const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)));
+    // Seed a background job (priority 0 < 8) directly, avoiding send()'s fire-and-forget pump so the drain timing
+    // is deterministic.
+    driver.query(
+      "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
+      [JSON.stringify(msg("bg-probe"))],
+    );
+
+    await q.drain(); // background claim throws once; pump() catches it, the job stays pending
+    expect(seen).toEqual([]);
+
+    await q.drain(); // the reserved slot was released, so the recovered lane now drains the background job
+    expect(seen).toEqual(["bg-probe"]);
+  });
+
   it("copies carried webhook trace ids into job audit logs", async () => {
     const driver = makeDriver();
     const writes: string[] = [];

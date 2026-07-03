@@ -25,6 +25,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_issue_quality",
   "gittensory_validate_linked_issue",
   "gittensory_check_before_start",
+  "gittensory_find_opportunities",
   "gittensory_lint_pr_text",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
@@ -330,6 +331,34 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(["go", "raise", "avoid"]).toContain(data.recommendation);
     expect(data.found).toBe(false);
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_find_opportunities returns a ranked list for a repo with open issues", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 1, title: "Fix bug in scoring", state: "open", labels: [{ name: "bug" }], user: { login: "alice" } });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 2, title: "Add feature for docs", state: "open", labels: [{ name: "feature" }], user: { login: "bob" } });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "gittensory_find_opportunities", arguments: { targets: [{ owner: "octo", repo: "demo" }], limit: 5 } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    expect(Array.isArray(data.ranked)).toBe(true);
+    expect(typeof data.totalCandidates).toBe("number");
+    const ranked = data.ranked as Array<Record<string, unknown>>;
+    if (ranked.length > 0) {
+      expect(ranked[0]?.aiPolicyAllowed).toBe(true);
+      expect(typeof ranked[0]?.rankScore).toBe("number");
+      expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+    }
+  });
+
+  it("gittensory_find_opportunities returns validation_error when no targets or searchQuery", async () => {
+    const { client } = await connectTestClient();
+    const result = await client.callTool({ name: "gittensory_find_opportunities", arguments: {} });
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("validation_error");
+    expect(data.ranked).toEqual([]);
   });
 
   it("gittensory_remediation_plan returns validated structured content", async () => {

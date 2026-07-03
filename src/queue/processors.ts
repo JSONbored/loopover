@@ -9042,17 +9042,14 @@ async function recloseDisallowedReopenIfNeeded(
     pr.number,
   );
   const latestReopenerLogin = latestReopener.login?.toLowerCase() ?? null;
-  // A bounded scan that RAN TO COMPLETION and cannot see any reopened event must NOT deny the re-close: otherwise
-  // a contributor can pad the event timeline until their disallowed reopen falls outside the inspected window.
-  // Only a fully covered timeline with no reopen, or a visible different latest reopener, proves this webhook was
-  // superseded. A timeline read that ERRORED is different — it proves nothing — so it must still fail CLOSED, the
-  // opposite of the closer-lookup's fail-open bias above, because wrongly re-closing a maintainer-authorized PR
-  // is the worse failure mode than leaving a disallowed reopen unclosed for one more tick. (#2369)
+  // A bounded scan that ran to completion but did NOT cover every page is still ambiguous when it finds no
+  // reopened event: an unread older page may contain either the original contributor reopen or a later maintainer
+  // reopen hidden by padding. Only a visible matching reopener proves this webhook is still the live disallowed
+  // reopen; every other shape fails closed, because wrongly re-closing a maintainer-authorized PR is worse than
+  // leaving a disallowed reopen open for one more tick. (#2369)
   const reopenerSuperseded =
     latestReopener.errored ||
-    (latestReopener.coveredAllPages
-      ? latestReopenerLogin !== reopener
-      : latestReopenerLogin != null && latestReopenerLogin !== reopener);
+    latestReopenerLogin !== reopener;
   if (reopenerSuperseded) {
     await recordAuditEvent(env, {
       eventType: "github_app.reopen_reclosed",

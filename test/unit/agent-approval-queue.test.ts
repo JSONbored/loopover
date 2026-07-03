@@ -59,6 +59,7 @@ import {
   listNotificationDeliveriesForRecipient,
   listPendingAgentActions,
   setPendingAgentActionStatus,
+  upsertGlobalContributorBlacklist,
   upsertInstallation,
   upsertPullRequestFromGitHub,
   upsertRepositorySettings,
@@ -289,6 +290,23 @@ describe("agent approval queue (#779)", () => {
     expect(result.executionOutcome).toBe("completed");
     const { closePullRequest: closeStillBlacklisted } = await import("../../src/github/pr-actions");
     expect(closeStillBlacklisted).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
+  });
+
+  it("REGRESSION: accept rechecks blacklist closes against the effective global blacklist", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await Promise.all([
+      upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval" }, contributorBlacklist: [] }),
+      upsertGlobalContributorBlacklist(env, { contributorBlacklist: [{ login: "fleet-banned", reason: "global" }] }),
+    ]);
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "fleet-banned" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "close", autonomyLevel: "auto_with_approval", params: { closeComment: "blocked", closeKind: "blacklist", expectedHeadSha: "h7" }, reason: "blacklisted contributor" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    const { closePullRequest: closeGloballyBlacklisted } = await import("../../src/github/pr-actions");
+    expect(closeGloballyBlacklisted).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
   });
 
   it("REGRESSION (#2452): accept supersedes a staged blacklist close when the contributor is NO LONGER blacklisted at accept time", async () => {

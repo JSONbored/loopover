@@ -2855,22 +2855,28 @@ function isPrStateCacheFresh(fetchedAt: string | null | undefined): boolean {
  *  the row's own `status` (defaulting to "never_synced" only when no row exists yet) — this write must NEVER force
  *  `status: "complete"`, since `status` is shared with the FILES-cache staleness machinery
  *  (backfillOpenPullRequestDetails / refreshPullRequestDetails treat `status !== "complete"` as "needs a files
- *  resync"); a PR-state-only write claiming `complete` would falsely mark a files sync that never happened. A
- *  write failure is swallowed (#2537 fail-open: the cache is an optimization, never a correctness dependency —
- *  every caller already tolerates a live-fetch fallback). */
+ *  resync"); a PR-state-only write claiming `complete` would falsely mark a files sync that never happened.
+ *  When that PR-state-only read advances `headSha`, clear `filesSyncedAt` in the same upsert so the shared
+ *  headSha/filesSyncedAt file-cache invariant never claims old files were fetched for the new head. A write
+ *  failure is swallowed (#2537 fail-open: the cache is an optimization, never a correctness dependency — every
+ *  caller already tolerates a live-fetch fallback). */
 async function writeThroughPrStateCache(
   env: Env,
   repoFullName: string,
   prNumber: number,
-  previousStatus: PullRequestDetailSyncStateRecord["status"] | undefined,
+  previousState: Pick<PullRequestDetailSyncStateRecord, "status" | "headSha" | "filesSyncedAt"> | null | undefined,
   fields: { prMergeableState?: string | null; prState?: string | null; headSha?: string | null },
 ): Promise<void> {
   incr(PR_STATE_CACHE_METRIC, { field: "write", result: "set" });
+  const fileSnapshotBecameStale = Boolean(
+    fields.headSha && previousState?.headSha && previousState.headSha !== fields.headSha && previousState.filesSyncedAt,
+  );
   await upsertPullRequestDetailSyncState(env, {
     repoFullName,
     pullNumber: prNumber,
-    status: previousStatus ?? "never_synced",
+    status: previousState?.status ?? "never_synced",
     prStateFetchedAt: nowIso(),
+    ...(fileSnapshotBecameStale ? { filesSyncedAt: null } : {}),
     ...fields,
   }).catch(() => undefined);
 }
@@ -2895,12 +2901,12 @@ async function fetchAndCachePrStateFields(
   prNumber: number,
   token: string | undefined,
   admissionKey: GitHubRateLimitAdmissionKey | undefined,
-  previousStatus: PullRequestDetailSyncStateRecord["status"] | undefined,
+  previousState: Pick<PullRequestDetailSyncStateRecord, "status" | "headSha" | "filesSyncedAt"> | null | undefined,
 ): Promise<GitHubPullRequestPayload | undefined> {
   const live = await fetchLivePullRequest(env, repoFullName, prNumber, token, admissionKey);
   if (!live) return undefined;
   const liveHeadSha = live.head?.sha;
-  await writeThroughPrStateCache(env, repoFullName, prNumber, previousStatus, {
+  await writeThroughPrStateCache(env, repoFullName, prNumber, previousState, {
     prMergeableState: live.mergeable_state ?? null,
     prState: live.state ?? null,
     // Omit (not null) when the live payload carries no head SHA -- mirrors primeDurablePrStateCache's own
@@ -2924,7 +2930,7 @@ export async function primeDurablePrStateCache(
   if (!live) return;
   const existing = await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null);
   const liveHeadSha = live.head?.sha;
-  await writeThroughPrStateCache(env, repoFullName, prNumber, existing?.status, {
+  await writeThroughPrStateCache(env, repoFullName, prNumber, existing, {
     prMergeableState: live.mergeable_state ?? null,
     prState: live.state ?? null,
     // Omit (not null) when the live payload carries no head SHA — a PR-state-only write must never CLEAR the
@@ -2951,7 +2957,7 @@ export async function cachedFetchLivePullRequestMergeState(
     return cached.prMergeableState ?? undefined;
   }
   incr(PR_STATE_CACHE_METRIC, { field: "mergeable_state", result: "miss" });
-  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached);
   return live?.mergeable_state ?? undefined;
 }
 
@@ -2970,7 +2976,7 @@ export async function cachedFetchLivePullRequestState(
     return cached.prState ?? undefined;
   }
   incr(PR_STATE_CACHE_METRIC, { field: "state", result: "miss" });
-  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached);
   return live?.state ?? undefined;
 }
 
@@ -2993,7 +2999,7 @@ export async function cachedFetchLivePullRequestHeadSha(
     return cached.headSha;
   }
   incr(PR_STATE_CACHE_METRIC, { field: "head_sha", result: "miss" });
-  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached?.status);
+  const live = await fetchAndCachePrStateFields(env, repoFullName, prNumber, token, admissionKey, cached);
   return live?.head?.sha ?? undefined;
 }
 

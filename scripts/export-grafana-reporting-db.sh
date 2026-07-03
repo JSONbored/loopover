@@ -40,8 +40,49 @@ pg_enabled() {
   esac
 }
 
+# Split $PG_DB (a postgres://[user[:pass]@]host[:port]/dbname[?query] URL) into separate PGHOST/PGPORT/PGUSER/
+# PGPASSWORD/PGDATABASE/PGSSLMODE env vars and export them, so every psql call below authenticates purely
+# through the environment: never a URL on argv (the credential-leak-via-`ps`-listings concern #2461 addressed)
+# and never through PGDATABASE holding the WHOLE url (the #2461 regression -- unlike passing the url as psql's
+# positional dbname argument, PGDATABASE is not URI-expanded by libpq; it is taken as a literal, nonexistent
+# database name, so psql falls back to a local Unix-socket connection attempt instead of the intended TCP host).
+# Known limitation: no percent-decoding of the user/password segment (matches this script's pre-existing scope --
+# neither the original positional-arg form nor this one has ever decoded a percent-encoded credential).
+pg_export_connection_env() {
+  rest="${PG_DB#*://}"
+  no_query="${rest%%\?*}"
+  case "$rest" in
+    "$no_query"'?'*) query="${rest#"$no_query"?}" ;;
+    *) query="" ;;
+  esac
+  case "$no_query" in
+    *@*) userinfo="${no_query%%@*}"; hostpart="${no_query#*@}" ;;
+    *) userinfo=""; hostpart="$no_query" ;;
+  esac
+  case "$hostpart" in
+    */*) hostport="${hostpart%%/*}"; PGDATABASE="${hostpart#*/}" ;;
+    *) hostport="$hostpart"; PGDATABASE="" ;;
+  esac
+  case "$hostport" in
+    *:*) PGHOST="${hostport%%:*}"; PGPORT="${hostport#*:}" ;;
+    *) PGHOST="$hostport"; PGPORT="" ;;
+  esac
+  case "$userinfo" in
+    *:*) PGUSER="${userinfo%%:*}"; PGPASSWORD="${userinfo#*:}" ;;
+    *) PGUSER="$userinfo"; PGPASSWORD="" ;;
+  esac
+  export PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
+  case "$query" in
+    *sslmode=*)
+      sslpart="${query#*sslmode=}"
+      PGSSLMODE="${sslpart%%&*}"
+      export PGSSLMODE
+      ;;
+  esac
+}
+
 pg_scalar() {
-  PGDATABASE="$PG_DB" psql -X -q -t -A -v ON_ERROR_STOP=1 -c "$1"
+  psql -X -q -t -A -v ON_ERROR_STOP=1 -c "$1"
 }
 
 pg_table_exists() {
@@ -63,7 +104,7 @@ pg_column_exists() {
 pg_copy_csv() {
   query="$1"
   out="$2"
-  PGDATABASE="$PG_DB" psql -X -q -v ON_ERROR_STOP=1 -c "COPY ($query) TO STDOUT WITH CSV" >"$out"
+  psql -X -q -v ON_ERROR_STOP=1 -c "COPY ($query) TO STDOUT WITH CSV" >"$out"
 }
 
 sqlite_import_csv() {
@@ -119,6 +160,7 @@ if pg_enabled; then
     echo "reporting export failed: DATABASE_URL is Postgres but psql is not installed" >&2
     exit 1
   fi
+  pg_export_connection_env
 
   if ! pg_table_exists "pull_requests" &&
      ! pg_table_exists "advisories" &&
@@ -155,7 +197,7 @@ current_pull_requests AS (
     CASE
       WHEN lower(p.state) = 'closed' AND p.merged_at IS NOT NULL THEN 'merged'
       WHEN lower(p.state) = 'closed' THEN 'closed'
-      WHEN a.conclusion IN ('failure', 'action_required') THEN 'manual'
+      WHEN a.conclusion IN ('failure', 'action_required', 'neutral') THEN 'manual'
       WHEN a.conclusion IS NOT NULL THEN 'commented'
       ELSE 'manual'
     END AS status,
@@ -163,7 +205,7 @@ current_pull_requests AS (
       WHEN 'success' THEN 'merge'
       WHEN 'failure' THEN 'close'
       WHEN 'action_required' THEN 'manual'
-      WHEN 'neutral' THEN 'comment'
+      WHEN 'neutral' THEN 'manual'
       WHEN 'skipped' THEN 'ignore'
       ELSE NULL
     END AS verdict,
@@ -298,7 +340,7 @@ current_pull_requests AS (
     CASE
       WHEN lower(p.state) = 'closed' AND p.merged_at IS NOT NULL THEN 'merged'
       WHEN lower(p.state) = 'closed' THEN 'closed'
-      WHEN a.conclusion IN ('failure', 'action_required') THEN 'manual'
+      WHEN a.conclusion IN ('failure', 'action_required', 'neutral') THEN 'manual'
       WHEN a.conclusion IS NOT NULL THEN 'commented'
       ELSE 'manual'
     END AS status,
@@ -306,7 +348,7 @@ current_pull_requests AS (
       WHEN 'success' THEN 'merge'
       WHEN 'failure' THEN 'close'
       WHEN 'action_required' THEN 'manual'
-      WHEN 'neutral' THEN 'comment'
+      WHEN 'neutral' THEN 'manual'
       WHEN 'skipped' THEN 'ignore'
       ELSE NULL
     END AS verdict,

@@ -56,8 +56,14 @@ case " $args " in
     exit 8
     ;;
 esac
-if [ "\${PGDATABASE:-}" != "postgres://gittensory:pw@postgres:5432/gittensory" ]; then
-  echo 'psql did not receive postgres URL through PGDATABASE' >&2
+case " \${PGHOST:-} \${PGPORT:-} \${PGUSER:-} \${PGPASSWORD:-} \${PGDATABASE:-} " in
+  *" postgres://"*|*" postgresql://"*)
+    echo 'psql received the whole postgres URL through an env var instead of split components' >&2
+    exit 8
+    ;;
+esac
+if [ "\${PGHOST:-}" != "postgres" ] || [ "\${PGPORT:-}" != "5432" ] || [ "\${PGUSER:-}" != "gittensory" ] || [ "\${PGPASSWORD:-}" != "pw" ] || [ "\${PGDATABASE:-}" != "gittensory" ]; then
+  echo 'psql did not receive the split connection env vars (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE)' >&2
   exit 8
 fi
 case "$args" in
@@ -219,8 +225,11 @@ esac
 
     expect(sqlite(outDb, "PRAGMA quick_check;")).toBe("ok");
     expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("3");
+    // Latest advisory conclusion for #1690 is 'neutral' -- counted as 'manual' (matches gateHeld's held-for-review
+    // definition in src/signals/engine.ts, not 'commented'/'comment') so the dashboard's manual-review panel
+    // reflects the same held state the live app itself surfaces via gittensory:needs-human-review.
     expect(sqlite(outDb, "SELECT submitter || '|' || status || '|' || verdict || '|' || updated_at FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1690;")).toBe(
-      "JSONbored|commented|comment|2026-06-28T21:40:00Z",
+      "JSONbored|manual|manual|2026-06-28T21:40:00Z",
     );
     expect(sqlite(outDb, "SELECT status || '|' || verdict || '|' || updated_at FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1691;")).toBe(
       "merged|merge|2026-06-28T21:47:40Z",

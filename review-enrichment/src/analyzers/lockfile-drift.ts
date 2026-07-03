@@ -10,6 +10,7 @@ import type {
 import type { AnalysisContext } from "../analysis-context.js";
 import { extractDependencyChanges } from "./dependency-scan.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { isDiffFileHeaderLine } from "./diff-lines.js";
 import { isParseableLockfile, lockfileBasename } from "../lockfile-path.js";
 
 interface LockfileChange {
@@ -126,7 +127,7 @@ function* patchLines(
   for (const raw of patch.split("\n")) {
     seen += 1;
     if (seen > maxLines) break;
-    if (raw.startsWith("+++ ") || raw.startsWith("---")) continue;
+    if (isDiffFileHeaderLine(raw)) continue;
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
     if (hunk) {
       newLine = Number(hunk[1]);

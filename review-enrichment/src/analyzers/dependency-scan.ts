@@ -9,6 +9,7 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { isDiffFileHeaderLine } from "./diff-lines.js";
 
 export interface DepChange {
   ecosystem: string;
@@ -107,11 +108,7 @@ export function extractDependencyChanges(
     if (manifestFiles > maxManifestFiles) break;
     for (const line of file.patch.split("\n", maxPatchLinesPerFile)) {
       const sign = line[0];
-      if (
-        (sign !== "+" && sign !== "-") ||
-        line.startsWith("+++ ") ||
-        line.startsWith("---")
-      )
+      if ((sign !== "+" && sign !== "-") || isDiffFileHeaderLine(line))
         continue;
       const parsed = parseLine(manifest, line.slice(1).trim());
       if (!parsed) continue;

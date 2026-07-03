@@ -113,6 +113,24 @@ export function githubAppReadinessProbe(
   };
 }
 
+/** Readiness probe for the codex CLI auth (#GITTENSORY-C). Runs `codex --version` in the restricted codex
+ *  environment to confirm the binary is present AND authenticated before any review is attempted. A missing auth
+ *  volume or an unauthenticated CLI exits non-zero here rather than silently inside a subprocess spawned mid-review.
+ *  Only registered when `GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1` (the opt-in for the codex reviewer path). */
+export function codexAuthReadinessProbe(
+  parentEnv: Record<string, string | undefined>,
+  runCodexVersion: (env: Record<string, string | undefined>) => Promise<{ code: number | null }>,
+): ReadinessProbe | null {
+  if (parentEnv.GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") return null;
+  return {
+    name: "codex_auth",
+    check: () =>
+      runCodexVersion(parentEnv)
+        .then(({ code }) => code === 0)
+        .catch(() => false),
+  };
+}
+
 /** Boot-time DATA-SAFETY advisory. A single SQLite file with no acknowledged backup is a data-loss SPOF — yet
  *  `/ready` would still answer 200, so an operator can run with zero durability believing they're healthy. Returns
  *  the warning to log at boot (or null on Postgres, or once the operator sets `BACKUP_ACKNOWLEDGED=true` after

@@ -42,6 +42,7 @@ import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import {
   buildHealthBody,
+  codexAuthReadinessProbe,
   githubAppReadinessProbe,
   readiness,
   resolveHealthVersion,
@@ -571,6 +572,23 @@ async function main(): Promise<void> {
   if (githubAppProbe) {
     readinessProbes.push({
       name: githubAppProbe.name,
+    });
+  }
+
+  // Codex auth probe (#GITTENSORY-C): verify the codex CLI is authenticated at boot so a missing or
+  // unauthenticated auth volume surfaces in /ready instead of silently inside a spawned subprocess mid-review.
+  const codexProbe = codexAuthReadinessProbe(process.env, async (env) => {
+    const { spawn } = await import("node:child_process");
+    return new Promise((resolve) => {
+      const child = spawn("codex", ["--version"], { env: env as NodeJS.ProcessEnv, stdio: "ignore" });
+      child.on("close", (code) => resolve({ code }));
+      child.on("error", () => resolve({ code: 1 }));
+    });
+  });
+  if (codexProbe) {
+    readinessProbes.push({
+      name: codexProbe.name,
+      check: () => withTimeout(codexProbe.check()),
       check: () => withTimeout(githubAppProbe.check()),
     });
   }

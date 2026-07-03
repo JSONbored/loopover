@@ -1935,10 +1935,15 @@ function buildPolicyContributionLanes(manifest: FocusManifest): FocusManifestPol
   const lanes: FocusManifestPolicyContributionLane[] = [];
   const safeWantedPaths = manifest.wantedPaths.filter(isFocusManifestPublicSafe);
   const safeBlockedPaths = manifest.blockedPaths.filter(isFocusManifestPublicSafe);
+  const safeTestExpectations = manifest.testExpectations.filter(isFocusManifestPublicSafe);
 
+  // Derive the public preference only from public-safe signals: use the SAME filtered list that surfaces in
+  // validationExpectations below, not the raw testExpectations. Otherwise a manifest whose only test expectation is
+  // public-unsafe (e.g. a wallet/seed phrase) is redacted from the lane yet still flips the public preference to
+  // "preferred" ("…with required validation evidence"), a self-contradictory verdict with no visible basis.
   const directPrPreference: "preferred" | "neutral" | "discouraged" =
     manifest.issueDiscoveryPolicy === "encouraged" ? "discouraged"
-    : safeWantedPaths.length > 0 || manifest.testExpectations.length > 0 ? "preferred"
+    : safeWantedPaths.length > 0 || safeTestExpectations.length > 0 ? "preferred"
     : "neutral";
 
   lanes.push({
@@ -1953,7 +1958,7 @@ function buildPolicyContributionLanes(manifest: FocusManifest): FocusManifestPol
           : "Direct pull requests are accepted when they stay inside maintainer-wanted scope.",
     preferredPaths: safeWantedPaths,
     discouragedPaths: safeBlockedPaths,
-    validationExpectations: manifest.testExpectations.filter(isFocusManifestPublicSafe),
+    validationExpectations: safeTestExpectations,
     publicNotes: manifest.publicNotes.filter(isFocusManifestPublicSafe),
   });
 

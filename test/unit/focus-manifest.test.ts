@@ -386,6 +386,26 @@ describe("compileFocusManifestPolicy", () => {
     expect(policy.authenticated.privateNoteCount).toBe(0);
   });
 
+  it("does not mark the direct-PR lane 'preferred' from a redacted (public-unsafe) test expectation", () => {
+    // The only test expectation is public-unsafe (wallet/seed) and there are no wanted paths, so nothing
+    // public-safe signals that direct PRs are preferred. The lane preference must derive from the same
+    // public-safe-filtered list it displays, not the raw testExpectations count.
+    const manifest = parseFocusManifest({ testExpectations: ["Submit your wallet seed phrase"] });
+    const policy = compileFocusManifestPolicy(REPO, manifest, opts);
+    const directPr = policy.publicSafe.contributionLanes.find((lane) => lane.id === "direct-pr");
+    expect(directPr).toBeDefined();
+    expect(directPr!.validationExpectations).toEqual([]); // the unsafe expectation is redacted from the lane
+    expect(directPr!.preferredPaths).toEqual([]);
+    expect(directPr!.preference).toBe("neutral"); // was wrongly "preferred", driven by the raw (unfiltered) count
+    expect(directPr!.summary).not.toMatch(/required validation evidence/i);
+
+    // A PUBLIC-SAFE test expectation (no wanted paths) still drives the lane to "preferred" — the signal is real.
+    const safeManifest = parseFocusManifest({ testExpectations: ["unit tests for new branches"] });
+    const safeDirectPr = compileFocusManifestPolicy(REPO, safeManifest, opts).publicSafe.contributionLanes.find((lane) => lane.id === "direct-pr");
+    expect(safeDirectPr!.preference).toBe("preferred");
+    expect(safeDirectPr!.validationExpectations).toEqual(["unit tests for new branches"]);
+  });
+
   it("forwards parse warnings into authenticated.parseWarnings for a malformed manifest", () => {
     const policy = compileFocusManifestPolicy(REPO, parseFocusManifestContent("{ broken json"), opts);
     expect(policy.present).toBe(false);

@@ -1,4 +1,5 @@
-import { getInstallation, getPullRequest, getRepositorySettings, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
+import { getInstallation, getPullRequest, getPendingAgentAction, recordAuditEvent, setPendingAgentActionStatus } from "../db/repositories";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import { createInstallationToken } from "../github/app";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-action-executor";
@@ -39,7 +40,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
 
   // accept → execute the staged action live, then record the result.
   const [settings, pr, installation] = await Promise.all([
-    getRepositorySettings(env, pending.repoFullName),
+    resolveRepositorySettings(env, pending.repoFullName),
     getPullRequest(env, pending.repoFullName, pending.pullNumber),
     getInstallation(env, pending.installationId),
   ]);
@@ -95,7 +96,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // FORCE-PUSH; it says nothing about whether the contributor is STILL blacklisted, and a blacklist close is a
   // sticky auto_with_approval row with no expiry -- a maintainer can remove the entry (or edit .gittensory.yml)
   // at any point while it sits waiting. `settings` was fetched fresh at the top of this function, so this
-  // mirrors the exact same pure check the planner uses (processors.ts), just re-run against CURRENT config.
+  // mirrors the exact same pure check the planner uses (processors.ts), just re-run against CURRENT effective config.
   if (pending.actionClass === "close" && pending.params.closeKind === "blacklist" && pr) {
     const stillBlacklisted = findBlacklistEntry(pr.authorLogin, settings.contributorBlacklist) !== null;
     if (!stillBlacklisted) {

@@ -263,6 +263,34 @@ function codexCliEnv(parent: Record<string, string | undefined>): Record<string,
   return child;
 }
 
+/** Resolve the path to codex's auth file so we can preflight it before spawning the subprocess.
+ *  Codex stores credentials at `$CODEX_HOME/auth.json` when CODEX_HOME is set, otherwise
+ *  `$HOME/.codex/auth.json`. The Docker setup symlinks /home/node/.codex → /data/codex, so this
+ *  path is only populated after the operator runs `codex auth` at runtime. */
+export function resolveCodexAuthPath(env: Record<string, string | undefined>): string {
+  // Use the sync path.join from the already-imported "node:path" delimiter import above.
+  // We only need `join` here, which we can reconstruct simply to avoid a dynamic import in a sync helper.
+  const sep = "/";
+  const base = env.CODEX_HOME ?? `${env.HOME ?? "~"}${sep}.codex`;
+  return `${base}${sep}auth.json`;
+}
+
+/** Throws `codex_auth_not_configured` if codex's auth.json does not exist or is unreadable.
+ *  Called before spawning the codex subprocess so the error message is immediately actionable
+ *  ("run `codex auth`") rather than the cryptic `codex_exit_1: Reading prompt from stdin...`
+ *  that surfaces when the CLI silently fails without credentials. */
+async function assertCodexAuthConfigured(env: Record<string, string | undefined>): Promise<void> {
+  const { access } = await import("node:fs/promises");
+  const authPath = resolveCodexAuthPath(env);
+  try {
+    await access(authPath);
+  } catch {
+    throw new Error(
+      `codex_auth_not_configured: ${authPath} not found — run \`codex auth\` to authenticate, then restart the container`,
+    );
+  }
+}
+
 async function isolatedCliCwd(): Promise<string> {
   const { mkdtemp } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
@@ -585,6 +613,7 @@ export function createCodexAi(parentEnv: Record<string, string | undefined>, spa
       let stdoutForMetrics = "";
       try {
         assertCodexCredentialIsolation(parentEnv);
+        await assertCodexAuthConfigured(parentEnv);
         const env = codexCliEnv(parentEnv);
         const prompt = toMessages(options).map((m) => m.content).join("\n\n");
         const spawn = spawnImpl ?? (await defaultSpawn());

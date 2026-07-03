@@ -8970,65 +8970,30 @@
           "typeLabelsEnabled": {
             "type": "boolean"
           },
-          "typeLabels": {
-            "type": "object",
-            "properties": {
-              "bug": {
-                "type": "string"
-              },
-              "feature": {
-                "type": "string"
-              },
-              "priority": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "bug",
-              "feature",
-              "priority"
+          "moderationGateMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
             ]
           },
-          "linkedIssueLabelPropagation": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "exclusive_type_label"
-                ]
-              },
-              "mappings": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "issueLabel": {
-                      "type": "string"
-                    },
-                    "prLabel": {
-                      "type": "string"
-                    },
-                    "removeOtherTypeLabels": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "issueLabel",
-                    "prLabel",
-                    "removeOtherTypeLabels"
-                  ]
-                }
-              }
-            },
-            "required": [
-              "enabled",
-              "mode",
-              "mappings"
-            ]
+          "moderationRules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "contributor_cap",
+                "blacklist",
+                "review_nag"
+              ]
+            }
+          },
+          "moderationWarningLabel": {
+            "type": "string"
+          },
+          "moderationBannedLabel": {
+            "type": "string"
           }
         },
         "required": [

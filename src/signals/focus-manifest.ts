@@ -6,6 +6,7 @@ import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../se
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig, VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES } from "../review/linked-issue-label-propagation";
+import { normalizeModerationLabel, normalizeModerationRules } from "../settings/moderation-rules";
 import { hasUnsafeWildcardCount } from "./change-guardrail";
 import { PUBLIC_LOCAL_PATH_INLINE } from "./redaction";
 
@@ -192,6 +193,10 @@ export type FocusManifestSettings = Partial<
     | "commandRateLimitMaxPerWindow"
     | "commandRateLimitAiMaxPerWindow"
     | "commandRateLimitWindowHours"
+    | "moderationGateMode"
+    | "moderationRules"
+    | "moderationWarningLabel"
+    | "moderationBannedLabel"
   >
 > & {
   // `typeLabels`/`linkedIssueLabelPropagation` are declared PARTIAL here (not via the `Pick<RepositorySettings,
@@ -1130,6 +1135,23 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (commandRateLimitAiMaxPerWindow !== null) out.commandRateLimitAiMaxPerWindow = commandRateLimitAiMaxPerWindow;
   const commandRateLimitWindowHours = normalizeOptionalPositiveInteger(r.commandRateLimitWindowHours, "settings.commandRateLimitWindowHours", warnings);
   if (commandRateLimitWindowHours !== null) out.commandRateLimitWindowHours = commandRateLimitWindowHours;
+  // Moderation-rules engine (#selfhost-mod-engine): per-repo override of the global moderation config.
+  const moderationGateMode = normalizeOptionalEnum(r.moderationGateMode, "settings.moderationGateMode", ["inherit", "off", "enabled"] as const, warnings);
+  if (moderationGateMode !== null) out.moderationGateMode = moderationGateMode;
+  // Only set when at least one VALID rule survives normalization, same "never blank the DB-configured value
+  // via a malformed block" reasoning as autoCloseExemptLogins above -- an explicit EMPTY override (opting
+  // every rule out for this repo) is expressed by setting an empty array, which normalizeModerationRules
+  // itself returns unchanged, so this guard would also silently drop that intentional case. Guard on
+  // `r.moderationRules !== undefined` alone (not "length > 0") so an intentional empty list still applies.
+  if (r.moderationRules !== undefined) {
+    const { rules, warnings: moderationRuleWarnings } = normalizeModerationRules(r.moderationRules);
+    warnings.push(...moderationRuleWarnings);
+    out.moderationRules = rules;
+  }
+  const moderationWarningLabel = normalizeModerationLabel(r.moderationWarningLabel);
+  if (moderationWarningLabel !== undefined) out.moderationWarningLabel = moderationWarningLabel;
+  const moderationBannedLabel = normalizeModerationLabel(r.moderationBannedLabel);
+  if (moderationBannedLabel !== undefined) out.moderationBannedLabel = moderationBannedLabel;
   return out;
 }
 

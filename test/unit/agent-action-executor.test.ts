@@ -53,7 +53,7 @@ import {
 } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
-import { isGlobalAgentFrozen, setGlobalAgentFrozen, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
@@ -678,6 +678,144 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(outcomes[0]?.outcome).toBe("error");
     expect(refreshInstallationHealthForInstallation).toHaveBeenCalledWith(env, 126);
     expect((await auditFor(env, "close"))?.outcome).toBe("error");
+  });
+});
+
+describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
+      status: "current",
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+    }));
+    // clearAllMocks() resets call history but does NOT drain a queued mockRejectedValueOnce/mockResolvedValueOnce
+    // left over from an earlier test elsewhere in this file (e.g. the installation-health-refresh tests above
+    // queue a one-time closePullRequest rejection) -- re-pin the base implementation explicitly so this describe
+    // block's "the close actually completed" assumption is never at the mercy of file-level test order.
+    vi.mocked(closePullRequest).mockResolvedValue({ state: "closed" });
+  });
+
+  const coupledClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", closeComment: "closing", closeKind: "contributor_cap" };
+  const coupledLabel: PlannedAgentAction = { actionClass: "label", autonomyClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", label: "over-contributor-limit", labelOp: "add", closeKind: "contributor_cap" };
+
+  it("OFF by default: a completed contributor_cap close applies NO mod label when the global moderation config is disabled (the DB default)", async () => {
+    const env = createTestEnv({});
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+  });
+
+  it("applies the default mod:warning label at the 1st lifetime violation once the global config is enabled", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("4 violations -> warning only; the 5th (default threshold) escalates to mod:banned + auto-blacklists the login", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    for (let i = 0; i < 4; i++) {
+      vi.clearAllMocks();
+      await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+      expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+      expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+    }
+    vi.clearAllMocks();
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.map((entry) => entry.login)).toContain("farmer99");
+  });
+
+  it("does NOT auto-blacklist when autoBlacklistOnBan is off, even at the ban threshold", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1, autoBlacklistOnBan: false });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.map((entry) => entry.login)).not.toContain("farmer99");
+  });
+
+  it("does not double-add an actor who is already on the global blacklist", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1 });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [{ ...coupledClose }, { ...coupledLabel }]);
+    const blacklist = await getGlobalContributorBlacklist(env);
+    expect(blacklist?.filter((entry) => entry.login === "farmer99")).toHaveLength(1);
+  });
+
+  it("per-repo moderationGateMode 'off' force-disables the layer even when the global config is enabled", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationGateMode: "off" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("per-repo moderationGateMode 'enabled' force-enables the layer even when the global config is disabled (the default)", async () => {
+    const env = createTestEnv({});
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationGateMode: "enabled" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("per-repo moderationRules override EXCLUDING contributor_cap means a contributor_cap close on THIS repo does not count as a violation", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationRules: ["blacklist"] } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("per-repo custom label overrides win over the global config's label", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, warningLabel: "global:warn" });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", moderationSettings: { moderationWarningLabel: "repo:warn" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "repo:warn", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "global:warn", expect.anything());
+  });
+
+  it("no escalation in dry-run mode -- a mutation that didn't really happen must not count as a violation", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", agentDryRun: true }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("no escalation when the close is denied (not completed) -- e.g. the label-close split-brain guard's own denial path", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", installationPermissions: { pull_requests: "read", issues: "write" } }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("no escalation for a close with no author login (defensive -- should not happen for a real PR/issue)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: undefined }), [coupledClose, coupledLabel]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", expect.anything());
+  });
+
+  it("no escalation for an UNRELATED heuristic close (not one of the three moderation-tracked rule types)", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true });
+    const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "gate failed", closeComment: "closing", closeKind: "heuristic" };
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [heuristicClose]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("violationDecayDays (rolling window) excludes an old violation from the ban threshold, unlike the permanent-tally default", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 2, violationDecayDays: 1 });
+    // A violation from 10 days ago -- outside the 1-day decay window -- must NOT count toward the threshold.
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, ?, ?, 'completed', 'old', '{}', ?)")
+      .bind(crypto.randomUUID(), "moderation.violation.contributor_cap", "farmer99", "owner/repo#1", tenDaysAgo)
+      .run();
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    // Only the JUST-recorded violation counts (1 < banThreshold 2) -> warning, not banned.
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
   });
 });
 

@@ -678,6 +678,10 @@ export const RepositorySettingsSchema = z
     commandRateLimitMaxPerWindow: z.number().int().positive().optional(),
     commandRateLimitAiMaxPerWindow: z.number().int().positive().optional(),
     commandRateLimitWindowHours: z.number().int().positive().optional(),
+    moderationGateMode: z.enum(["inherit", "off", "enabled"]).optional(),
+    moderationRules: z.array(z.enum(["contributor_cap", "blacklist", "review_nag"])).optional(),
+    moderationWarningLabel: z.string().optional(),
+    moderationBannedLabel: z.string().optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })

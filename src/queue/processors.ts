@@ -2220,6 +2220,12 @@ async function runAgentMaintenancePlanAndExecute(
       // CI-run cancellation on a contributor_cap close (#2462): the repo's own explicit setting always wins;
       // null/undefined (unset) falls back to the install-wide CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var.
       contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
+      moderationSettings: {
+        moderationGateMode: settings.moderationGateMode,
+        moderationRules: settings.moderationRules,
+        moderationWarningLabel: settings.moderationWarningLabel,
+        moderationBannedLabel: settings.moderationBannedLabel,
+      },
     },
     breakerOnPlan,
   );
@@ -4095,7 +4101,16 @@ async function maybeCloseIssueOverContributorCap(
       if (planned.length > 0) {
         await executeIssueMaintenanceActions(
           env,
-          { installationId, repoFullName, issueNumber: issue.number, autonomy: settings.autonomy, agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun },
+          {
+            installationId,
+            repoFullName,
+            issueNumber: issue.number,
+            autonomy: settings.autonomy,
+            agentPaused: settings.agentPaused,
+            agentDryRun: settings.agentDryRun,
+            authorLogin,
+            moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+          },
           planned,
         );
       }
@@ -4164,7 +4179,16 @@ async function maybeCloseIssueOverContributorCap(
   for (const overCapNumber of overCapNumbers) {
     await executeIssueMaintenanceActions(
       env,
-      { installationId, repoFullName, issueNumber: overCapNumber, autonomy: settings.autonomy, agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun },
+      {
+        installationId,
+        repoFullName,
+        issueNumber: overCapNumber,
+        autonomy: settings.autonomy,
+        agentPaused: settings.agentPaused,
+        agentDryRun: settings.agentDryRun,
+        authorLogin,
+        moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
+      },
       planned,
     );
   }
@@ -9468,6 +9492,7 @@ async function maybeThrottleReviewNagPing(
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
+      moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
     },
     planned,
   );
@@ -9632,6 +9657,7 @@ async function maybeThrottleMonitoredMentions(
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
+      moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
     },
     planned,
   );

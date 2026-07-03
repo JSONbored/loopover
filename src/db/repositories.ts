@@ -163,6 +163,7 @@ import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPO
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
+import { DEFAULT_GLOBAL_MODERATION_CONFIG, normalizeModerationLabel, normalizeModerationRules, type GlobalModerationConfig, type ModerationRuleType } from "../settings/moderation-rules";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig } from "../review/linked-issue-label-propagation";
@@ -525,6 +526,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       commandRateLimitMaxPerWindow: 20,
       commandRateLimitAiMaxPerWindow: 5,
       commandRateLimitWindowHours: 24,
+      moderationGateMode: "inherit",
+      moderationRules: undefined,
+      moderationWarningLabel: undefined,
+      moderationBannedLabel: undefined,
     };
   }
   return {
@@ -589,6 +594,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     commandRateLimitMaxPerWindow: normalizePositiveIntWithDefault(row.commandRateLimitMaxPerWindow, 20),
     commandRateLimitAiMaxPerWindow: normalizePositiveIntWithDefault(row.commandRateLimitAiMaxPerWindow, 5),
     commandRateLimitWindowHours: normalizePositiveIntWithDefault(row.commandRateLimitWindowHours, 24),
+    moderationGateMode: normalizeModerationGateMode(row.moderationGateMode),
+    moderationRules: parseModerationRulesColumn(row.moderationRulesJson),
+    moderationWarningLabel: normalizeModerationLabel(row.moderationWarningLabel),
+    moderationBannedLabel: normalizeModerationLabel(row.moderationBannedLabel),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -689,6 +698,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     commandRateLimitMaxPerWindow: normalizePositiveIntWithDefault(settings.commandRateLimitMaxPerWindow, 20),
     commandRateLimitAiMaxPerWindow: normalizePositiveIntWithDefault(settings.commandRateLimitAiMaxPerWindow, 5),
     commandRateLimitWindowHours: normalizePositiveIntWithDefault(settings.commandRateLimitWindowHours, 24),
+    moderationGateMode: normalizeModerationGateMode(settings.moderationGateMode),
+    moderationRules: settings.moderationRules,
+    moderationWarningLabel: normalizeModerationLabel(settings.moderationWarningLabel),
+    moderationBannedLabel: normalizeModerationLabel(settings.moderationBannedLabel),
   } satisfies RepositorySettings;
   const db = getDb(env.DB);
   await db
@@ -755,6 +768,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       commandRateLimitMaxPerWindow: resolved.commandRateLimitMaxPerWindow,
       commandRateLimitAiMaxPerWindow: resolved.commandRateLimitAiMaxPerWindow,
       commandRateLimitWindowHours: resolved.commandRateLimitWindowHours,
+      moderationGateMode: resolved.moderationGateMode,
+      moderationRulesJson: resolved.moderationRules === undefined ? null : jsonString(resolved.moderationRules),
+      moderationWarningLabel: resolved.moderationWarningLabel ?? null,
+      moderationBannedLabel: resolved.moderationBannedLabel ?? null,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -822,6 +839,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         commandRateLimitMaxPerWindow: resolved.commandRateLimitMaxPerWindow,
         commandRateLimitAiMaxPerWindow: resolved.commandRateLimitAiMaxPerWindow,
         commandRateLimitWindowHours: resolved.commandRateLimitWindowHours,
+        moderationGateMode: resolved.moderationGateMode,
+        moderationRulesJson: resolved.moderationRules === undefined ? null : jsonString(resolved.moderationRules),
+        moderationWarningLabel: resolved.moderationWarningLabel ?? null,
+        moderationBannedLabel: resolved.moderationBannedLabel ?? null,
         updatedAt: nowIso(),
       },
     });
@@ -2343,6 +2364,103 @@ export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: s
   /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
   if (!row) return 0;
   return row.count;
+}
+
+/** Moderation-rules engine (#selfhost-mod-engine): the actor's TOTAL violation count across every rule type in
+ *  `eventTypes` and EVERY repo this install tracks (no targetKey/route scoping -- `audit_events` carries no
+ *  repo/installation column at all, so this is inherently install-wide, mirroring the install-wide contributor
+ *  cap's own use of this same table). `sinceIso` is optional: omitted ⇒ the PERMANENT lifetime tally (the
+ *  default moderation-decay behavior); provided ⇒ only violations within that rolling window count, for an
+ *  operator who configured `violationDecayDays`. */
+export async function countModerationViolationsForActor(env: Env, actor: string, eventTypes: string[], sinceIso?: string): Promise<number> {
+  const db = getDb(env.DB);
+  const conditions = [eq(auditEvents.actor, actor), inArray(auditEvents.eventType, eventTypes)];
+  if (sinceIso !== undefined) conditions.push(gte(auditEvents.createdAt, sinceIso));
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(and(...conditions));
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return 0;
+  return row.count;
+}
+
+/** Moderation-rules engine: record one violation for `actor` under the given rule's `eventType` (see
+ *  `MODERATION_VIOLATION_EVENT_TYPE` in settings/moderation-rules.ts). `targetKey` carries the repo#number for
+ *  audit-trail/evidence purposes only -- the COUNT query above deliberately does not scope by it. */
+export async function recordModerationViolation(env: Env, args: { eventType: string; actor: string; targetKey: string; repoFullName: string; ruleReason: string }): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: args.eventType,
+    actor: args.actor,
+    targetKey: args.targetKey,
+    outcome: "completed",
+    detail: args.ruleReason,
+    metadata: { repoFullName: args.repoFullName },
+  });
+}
+
+/** Read the singleton global moderation-rules engine config (#selfhost-mod-engine). Missing table or malformed
+ *  JSON fail open to {@link DEFAULT_GLOBAL_MODERATION_CONFIG} (`enabled: false`) -- a DB hiccup on this path
+ *  must never accidentally turn ON a layer capable of auto-banning a contributor across every gated repo. */
+export async function getGlobalModerationConfig(env: Env): Promise<GlobalModerationConfig> {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT enabled, rules_json, warning_label, banned_label, ban_threshold, violation_decay_days, auto_blacklist_on_ban FROM global_moderation_config WHERE id = 'singleton'",
+    ).first<{
+      enabled: number;
+      rules_json: string;
+      warning_label: string;
+      banned_label: string;
+      ban_threshold: number;
+      violation_decay_days: number | null;
+      auto_blacklist_on_ban: number;
+    }>();
+    if (!row) return DEFAULT_GLOBAL_MODERATION_CONFIG;
+    return {
+      enabled: row.enabled === 1,
+      rules: normalizeModerationRules(parseJson<unknown>(row.rules_json, null)).rules,
+      warningLabel: normalizeModerationLabel(row.warning_label) ?? DEFAULT_GLOBAL_MODERATION_CONFIG.warningLabel,
+      bannedLabel: normalizeModerationLabel(row.banned_label) ?? DEFAULT_GLOBAL_MODERATION_CONFIG.bannedLabel,
+      banThreshold: normalizePositiveIntWithDefault(row.ban_threshold, DEFAULT_GLOBAL_MODERATION_CONFIG.banThreshold),
+      violationDecayDays: normalizeOpenItemCap(row.violation_decay_days),
+      autoBlacklistOnBan: row.auto_blacklist_on_ban === 1,
+    };
+  } catch {
+    return DEFAULT_GLOBAL_MODERATION_CONFIG;
+  }
+}
+
+/** Upsert the singleton global moderation-rules engine config. Input is normalized/validated once so malformed
+ *  stored data never reaches enforcement. Returns the normalized persisted config for convenience/tests. */
+export async function upsertGlobalModerationConfig(
+  env: Env,
+  input: Partial<GlobalModerationConfig> & { updatedBy?: string | null },
+): Promise<GlobalModerationConfig> {
+  const current = await getGlobalModerationConfig(env);
+  const resolved: GlobalModerationConfig = {
+    enabled: input.enabled ?? current.enabled,
+    rules: input.rules ? normalizeModerationRules(input.rules as unknown).rules : current.rules,
+    warningLabel: normalizeModerationLabel(input.warningLabel) ?? current.warningLabel,
+    bannedLabel: normalizeModerationLabel(input.bannedLabel) ?? current.bannedLabel,
+    banThreshold: input.banThreshold !== undefined ? normalizePositiveIntWithDefault(input.banThreshold, current.banThreshold) : current.banThreshold,
+    violationDecayDays: input.violationDecayDays !== undefined ? normalizeOpenItemCap(input.violationDecayDays) : current.violationDecayDays,
+    autoBlacklistOnBan: input.autoBlacklistOnBan ?? current.autoBlacklistOnBan,
+  };
+  await env.DB.prepare(
+    "INSERT INTO global_moderation_config (id, enabled, rules_json, warning_label, banned_label, ban_threshold, violation_decay_days, auto_blacklist_on_ban, updated_at, updated_by) VALUES ('singleton', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?) ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, rules_json = excluded.rules_json, warning_label = excluded.warning_label, banned_label = excluded.banned_label, ban_threshold = excluded.ban_threshold, violation_decay_days = excluded.violation_decay_days, auto_blacklist_on_ban = excluded.auto_blacklist_on_ban, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+  )
+    .bind(
+      resolved.enabled ? 1 : 0,
+      jsonString(resolved.rules),
+      resolved.warningLabel,
+      resolved.bannedLabel,
+      resolved.banThreshold,
+      resolved.violationDecayDays,
+      resolved.autoBlacklistOnBan ? 1 : 0,
+      input.updatedBy ?? null,
+    )
+    .run();
+  return resolved;
 }
 
 /** Whether `deliveryId` has ALREADY been recorded for this (actor, eventType, targetKey) within `sinceIso` --
@@ -6003,6 +6121,19 @@ function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "ho
 
 function normalizeCommandRateLimitPolicy(value: string | null | undefined): "off" | "hold" {
   return value === "hold" ? value : "off";
+}
+
+function normalizeModerationGateMode(value: string | null | undefined): "inherit" | "off" | "enabled" {
+  return value === "off" || value === "enabled" ? value : "inherit";
+}
+
+// NULL means "inherit the global rule set" (undefined), distinct from a normalized-but-empty list -- a repo
+// that explicitly configured an empty moderationRules override (opting every rule out) must stay empty, not
+// be coerced back to "inherit". Mirrors parseContributorBlacklist/parseAutoCloseExemptLogins's JSON-parse
+// shape, except the column itself (not just malformed JSON) can be genuinely absent.
+function parseModerationRulesColumn(value: string | null | undefined): RepositorySettings["moderationRules"] {
+  if (value === null || value === undefined) return undefined;
+  return normalizeModerationRules(parseJson<unknown>(value, null)).rules;
 }
 
 // A review-nag threshold/window is a discrete positive count, not a score — reuses the same non-clamping,

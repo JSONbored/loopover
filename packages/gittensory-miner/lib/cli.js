@@ -14,6 +14,8 @@ export function printHelp(input) {
       "  gittensory-miner --version",
       "  gittensory-miner help",
       "  gittensory-miner version",
+      "  gittensory-miner status [--json]                              Show installed versions + local state paths",
+      "  gittensory-miner doctor [--json]                              Check this laptop is set up correctly",
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",
       "  gittensory-miner state get <owner/repo> [--json]",
       "  gittensory-miner state set <owner/repo> <idle|discovering|planning|preparing> [--json]",

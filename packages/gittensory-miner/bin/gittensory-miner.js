@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runStateCli } from "../lib/run-state-cli.js";
+import { runDoctor, runStatus } from "../lib/status.js";
 import {
   awaitOpportunisticUpdateCheck,
   resolveUpgradeCommand,
@@ -10,6 +11,18 @@ import {
 } from "../lib/update-check.js";
 
 const cliArgs = process.argv.slice(2);
+
+// `status` and `doctor` are strictly local, offline commands — their contract is to make NO network calls. Dispatch
+// them BEFORE the opportunistic npm-registry update check is even started, so they can never reach that network
+// path (the update check runs for the remaining commands below).
+if (cliArgs[0] === "status") {
+  process.exit(runStatus(cliArgs.slice(1)));
+}
+
+if (cliArgs[0] === "doctor") {
+  process.exit(runDoctor(cliArgs.slice(1)));
+}
+
 const require = createRequire(import.meta.url);
 const packageName = "@jsonbored/gittensory-miner";
 const packageVersion = require("../package.json").version;

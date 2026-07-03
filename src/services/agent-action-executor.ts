@@ -246,9 +246,13 @@ async function auditContributorCapCiCancelled(
   await write.catch(() => undefined);
 }
 
-async function auditContributorCapCiCancelPermissionMissing(env: Env, targetKey: string, repoFullName: string, headSha: string, reason: string, warning: string): Promise<void> {
+// #gate finding: a genuine cancel error (network/create-token/list-run failure -- reason "error") is not a
+// permission gap; recording it under the permission-missing event type mislabels it for anyone
+// querying/dashboarding by eventType, even though metadata.reason already carries the real outcome.kind.
+async function auditContributorCapCiCancelFailed(env: Env, targetKey: string, repoFullName: string, headSha: string, reason: string, warning: string): Promise<void> {
   const metadata = { repoFullName, headSha, reason };
-  const write = recordAuditEvent(env, { eventType: "github_app.contributor_cap_ci_cancel_permission_missing", actor: AGENT_ACTOR, targetKey, outcome: "error", detail: warning, metadata });
+  const eventType = reason === "permission_missing" ? "github_app.contributor_cap_ci_cancel_permission_missing" : "github_app.contributor_cap_ci_cancel_failed";
+  const write = recordAuditEvent(env, { eventType, actor: AGENT_ACTOR, targetKey, outcome: "error", detail: warning, metadata });
   await write.catch(() => undefined);
 }
 
@@ -269,7 +273,7 @@ async function recordContributorCapCiCancelOutcome(env: Env, ctx: AgentActionExe
       message: outcome.warning,
     }),
   );
-  await auditContributorCapCiCancelPermissionMissing(env, targetKey, ctx.repoFullName, headSha, outcome.kind, outcome.warning);
+  await auditContributorCapCiCancelFailed(env, targetKey, ctx.repoFullName, headSha, outcome.kind, outcome.warning);
 }
 
 export type IssueActionExecutionContext = {

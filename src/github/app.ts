@@ -491,20 +491,25 @@ async function listWorkflowRunIdsForStatus(
   return { kind: "error", warning: `Failed to list workflow runs (${response.status}): ${message || "unknown error"}` };
 }
 
-// Same extraction rationale as listWorkflowRunIdsForStatus above.
+// Same extraction rationale as listWorkflowRunIdsForStatus above. Mirrors that function's error shape (#gate
+// finding): a non-403 (or a 403 that isn't actually a permission gap -- rate limits, abuse detection) is a
+// genuine `error`, carrying the real status + message, not a bare untyped "not a permission problem" with
+// nothing for the caller to log or surface -- the prior shape let the caller's loop silently drop a 500/404/422
+// on the floor instead of ever reaching an `error` branch at all.
 async function cancelOneWorkflowRun(
   repoPath: string,
   runId: number,
   fetchOptions: ActionsRunFetchOptions,
-): Promise<{ kind: "cancelled" } | { kind: "permission_missing"; warning: string } | { kind: "not_permission_error" }> {
+): Promise<{ kind: "cancelled" } | { kind: "permission_missing"; warning: string } | { kind: "error"; warning: string }> {
   const response = await timeoutFetch(`https://api.github.com/repos/${repoPath}/actions/runs/${runId}/cancel`, { ...fetchOptions, method: "POST" });
   // 202 = cancellation accepted; 409 = already completed/cancelling -- both are non-failures here (the run is
   // no longer going to keep burning minutes either way). Only a genuine 403 signals a scope gap.
   if (response.ok || response.status === 409) return { kind: "cancelled" };
-  if (response.status !== 403) return { kind: "not_permission_error" };
   const message = await actionsApiErrorMessage(response);
-  if (!isActionsPermissionMissingMessage(message)) return { kind: "not_permission_error" };
-  return actionsPermissionMissingResult(message);
+  if (response.status === 403 && isActionsPermissionMissingMessage(message)) {
+    return actionsPermissionMissingResult(message);
+  }
+  return { kind: "error", warning: `Failed to cancel workflow run ${runId} (${response.status}): ${message || "unknown error"}` };
 }
 
 /** List then cancel every in-progress/queued Actions run at a PR's head SHA (#2462): a PR auto-closed for
@@ -539,8 +544,12 @@ export async function cancelInFlightWorkflowRunsForHeadSha(
     let cancelledCount = 0;
     for (const runId of runIds) {
       const result = await cancelOneWorkflowRun(repoPath, runId, fetchOptions);
+      // #gate finding: ANY non-cancelled result (permission_missing OR a genuine error) must stop and surface
+      // immediately, exactly like listWorkflowRunIdsForStatus's own `listed.kind !== "ids"` check above --
+      // silently `continue`-ing past a real 500/404/422 let the final return still claim `kind: "cancelled"`
+      // with an undercounted cancelledCount, auditing a partial failure as a clean success.
       if (result.kind === "cancelled") cancelledCount += 1;
-      else if (result.kind === "permission_missing") return result;
+      else return result;
     }
     return { kind: "cancelled", cancelledCount, totalFound: runIds.size };
   } catch (error) {

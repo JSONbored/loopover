@@ -668,7 +668,7 @@ describe("GitHub check runs", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=abc123&status=in_progress")) return Response.json({ workflow_runs: [{ id: 1 }, { id: 2 }] });
       if (url.includes("/actions/runs?head_sha=abc123&status=queued")) return Response.json({ workflow_runs: [{ id: 3 }] });
       if (url.includes("/actions/runs/") && url.endsWith("/cancel") && method === "POST") {
@@ -687,7 +687,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=")) return Response.json({ workflow_runs: [] });
       return new Response("not found", { status: 404 });
     });
@@ -702,7 +702,7 @@ describe("GitHub check runs", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 9 }] });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
       if (url.endsWith("/actions/runs/9/cancel") && method === "POST") return Response.json({ message: "already completed" }, { status: 409 });
@@ -718,7 +718,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=")) return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
       return new Response("not found", { status: 404 });
     });
@@ -733,7 +733,7 @@ describe("GitHub check runs", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 5 }] });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
       if (url.endsWith("/actions/runs/5/cancel") && method === "POST") return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
@@ -748,7 +748,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=")) return Response.json({ message: "You have exceeded a secondary rate limit" }, { status: 403 });
       return new Response("not found", { status: 404 });
     });
@@ -761,7 +761,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       throw new Error("network down");
     });
 
@@ -780,7 +780,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       // No `message` field at all -- exercises the `message === ""` branch of isActionsPermissionMissingMessage
       // AND the `message || "resource not accessible..."` fallback inside the warning string.
       if (url.includes("/actions/runs?head_sha=")) return Response.json({}, { status: 403 });
@@ -796,7 +796,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       // No `workflow_runs` field at all -- exercises the `payload.workflow_runs ?? []` fallback.
       if (url.includes("/actions/runs?head_sha=")) return Response.json({});
       return new Response("not found", { status: 404 });
@@ -811,7 +811,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       throw "a bare string, not an Error instance";
     });
 
@@ -824,7 +824,7 @@ describe("GitHub check runs", () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       // A non-403, non-ok status with no message -- exercises the `message || "unknown error"` fallback in the
       // generic error path (distinct from the permission_missing path exercised by other tests above).
       if (url.includes("/actions/runs?head_sha=")) return new Response(null, { status: 500 });
@@ -835,32 +835,32 @@ describe("GitHub check runs", () => {
     expect(outcome).toEqual({ kind: "error", warning: "Failed to list workflow runs (500): unknown error" });
   });
 
-  it("cancelInFlightWorkflowRunsForHeadSha skips (does not count, does not fail) a run whose cancel call hits a non-permission error", async () => {
+  it("cancelInFlightWorkflowRunsForHeadSha (#gate finding) returns a typed error — never silently reports success — when a cancel call hits a non-permission error", async () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 42 }] });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
-      // Neither ok/409 (cancelled) nor a genuine permission-missing 403 -- a transient 500, and separately a
-      // rate-limited 403 (isActionsPermissionMissingMessage returns false) both fall through to
-      // "not_permission_error", which the caller must silently skip rather than counting or failing on.
+      // Neither ok/409 (cancelled) nor a genuine permission-missing 403 -- a transient 500 must surface as a
+      // typed `error` result, not be silently dropped and reported as `kind: "cancelled"` with an undercounted
+      // cancelledCount (the exact bug a gate review caught: a 500/404/422 audited as a successful cancellation).
       if (url.endsWith("/actions/runs/42/cancel") && method === "POST") return new Response(null, { status: 500 });
       return new Response("not found", { status: 404 });
     });
 
     await expect(
       cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-cancel-500"),
-    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 0, totalFound: 1 });
+    ).resolves.toEqual({ kind: "error", warning: expect.stringContaining("Failed to cancel workflow run 42 (500)") });
   });
 
-  it("cancelInFlightWorkflowRunsForHeadSha does not classify a rate-limited 403 on the CANCEL call as permission_missing either", async () => {
+  it("cancelInFlightWorkflowRunsForHeadSha (#gate finding) returns a typed error, not permission_missing, for a rate-limited 403 on the CANCEL call", async () => {
     const privateKey = await generatePrivateKeyPem();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       const method = init?.method ?? "GET";
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 43 }] });
       if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
       if (url.endsWith("/actions/runs/43/cancel") && method === "POST") return Response.json({ message: "secondary rate limit exceeded" }, { status: 403 });
@@ -869,7 +869,30 @@ describe("GitHub check runs", () => {
 
     await expect(
       cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-cancel-ratelimited"),
-    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 0, totalFound: 1 });
+    ).resolves.toEqual({ kind: "error", warning: expect.stringContaining("secondary rate limit exceeded") });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha stops at the FIRST failing cancel and never reports a partial success as cancelled", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let secondCancelCalled = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 44 }, { id: 45 }] });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
+      if (url.endsWith("/actions/runs/44/cancel") && method === "POST") return new Response(null, { status: 500 });
+      if (url.endsWith("/actions/runs/45/cancel") && method === "POST") {
+        secondCancelCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-cancel-partial");
+
+    expect(outcome.kind).toBe("error");
+    expect(secondCancelCalled).toBe(false); // stopped at the first failure rather than continuing past it
   });
 
   it("updates an existing Gittensory check run for the same head SHA", async () => {

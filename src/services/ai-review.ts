@@ -145,9 +145,11 @@ export function resolveEffectiveAiReviewPlan(
     // built-in default pair (2), the historical dual-reviewer behavior (see GittensoryAiReviewInput.reviewers).
     const operatorReviewerCount = operatorPlan?.reviewers?.length ?? 2;
     const repoReviewerCount = repoOverride.reviewers?.length ?? operatorReviewerCount;
-    const repoCombine = repoOverride.combine ?? operatorPlan?.combine ?? "consensus";
     const reducesReviewerCount = repoOverride.reviewers != null && repoReviewerCount < operatorReviewerCount;
-    const collapsesToSingleReviewer = repoCombine === "single" && operatorReviewerCount > 1;
+    // Must be the REPO'S OWN combine value, not `repoOverride.combine ?? operatorPlan?.combine` -- that
+    // fallback made an operator plan that itself sets `combine: "single"` (no repo override at all) spuriously
+    // report `clamped: true` on every call, since there is nothing for the repo to have bypassed.
+    const collapsesToSingleReviewer = repoOverride.combine === "single" && operatorReviewerCount > 1;
     if (reducesReviewerCount || collapsesToSingleReviewer) {
       return { combine: operatorPlan?.combine, onMerge: onMergeResolution.onMerge, reviewers: operatorPlan?.reviewers, clamped: true };
     }

@@ -1175,6 +1175,21 @@ describe("resolveEffectiveAiReviewPlan (#2567 gate-review follow-up: combine/rev
     const onMergeOnly = resolveEffectiveAiReviewPlan({ onMerge: "both" }, OPERATOR_FLOOR);
     expect(onMergeOnly).toEqual({ combine: "synthesis", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: true });
   });
+
+  // REGRESSION (gate-review follow-up on this same PR): the reviewer-count clamp must only fire on a REPO'S OWN
+  // combine override -- an operator plan that itself already sets combine: "single" (no repo override at all)
+  // must NOT be reported as clamped, since there is nothing for a repo to have bypassed.
+  it("an operator plan whose OWN combine is 'single' does not spuriously report clamped when the repo has no combine override at all", () => {
+    const operatorSingle = { combine: "single" as const, onMerge: "either" as const, reviewers: TWO_REVIEWERS };
+    const noRepoOverride = resolveEffectiveAiReviewPlan({}, operatorSingle);
+    expect(noRepoOverride).toEqual({ combine: "single", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: false });
+  });
+
+  it("an operator plan whose OWN combine is 'single' is STILL clamped when the repo separately tries to reduce the reviewer count", () => {
+    const operatorSingle = { combine: "single" as const, onMerge: "either" as const, reviewers: TWO_REVIEWERS };
+    const reduced = resolveEffectiveAiReviewPlan({ reviewers: [{ model: "claude-code" }] }, operatorSingle);
+    expect(reduced).toEqual({ combine: "single", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: true });
+  });
 });
 
 describe("pure helpers", () => {

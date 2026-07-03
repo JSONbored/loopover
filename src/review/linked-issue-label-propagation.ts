@@ -1,6 +1,3 @@
-import { fetchLinkedIssueFacts } from "../github/backfill";
-import { createInstallationToken } from "../github/app";
-import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { LinkedIssueLabelPropagationConfig, LinkedIssueLabelPropagationMapping, LinkedIssueLabelPropagationMode } from "../types";
 
 export type { LinkedIssueLabelPropagationConfig, LinkedIssueLabelPropagationMapping, LinkedIssueLabelPropagationMode } from "../types";
@@ -11,6 +8,13 @@ export type { LinkedIssueLabelPropagationConfig, LinkedIssueLabelPropagationMapp
 // changed files, AI output, or existing PR labels — only ever from a linked issue that ALREADY carries it.
 // Generic beyond that one use case: any self-hoster can map any issue label to any PR label, exclusive
 // (replaces the normal bug/feature type label, like priority does) or additive (applied alongside it).
+//
+// PURE config types + normalizer only — no GitHub/fetch/Env-dependent imports. `focus-manifest.ts`'s YAML
+// parser imports this module directly, and `focus-manifest.ts` is itself pulled into the gittensory-ui
+// workspace's isolated typecheck (via `apps/gittensory-ui/src/lib/registration-workspace.ts`), which has no
+// visibility into the Worker's ambient `Env` type. The actual GitHub fetch orchestrator
+// (`fetchLinkedIssueLabelsForPropagation`) lives in `linked-issue-label-propagation-fetch.ts` instead, kept
+// out of this file specifically so the UI workspace's typecheck never has to resolve `Env`.
 
 // Fail-SAFE default: propagation OFF, no mappings. A self-hoster must explicitly opt in per repo.
 export const DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION: LinkedIssueLabelPropagationConfig = {
@@ -68,26 +72,4 @@ export function normalizeLinkedIssueLabelPropagationConfig(input: unknown, warni
     }
   }
   return { enabled, mode, mappings };
-}
-
-/** FETCH every linked issue's labels (fail-open) and flatten into one label list for
- *  `resolvePrTypeLabel` (`src/settings/pr-type-label.ts`) to match against. Mirrors
- *  `resolveLinkedIssueHardRule`'s own fetch idiom (`src/review/linked-issue-hard-rules.ts`): a per-issue
- *  fetch failure contributes no labels rather than throwing, so if EVERY linked issue fails, the result is
- *  `[]` — which can never match a mapping, meaning a sensitive label like `gittensor:priority` never applies
- *  when its authority (the linked issue) cannot be verified. Callers should gate this behind
- *  `config.enabled` themselves before calling (mirrors `shouldCollectLinkedIssueEvidence`'s cheap-check-
- *  before-fetch precedent) — this function only short-circuits the zero-linked-issues case, since it has no
- *  visibility into the caller's enabled flag. */
-export async function fetchLinkedIssueLabelsForPropagation(args: {
-  env: Env;
-  repoFullName: string;
-  linkedIssues: number[];
-  installationId: number;
-}): Promise<string[]> {
-  if (args.linkedIssues.length === 0) return [];
-  const token = (await createInstallationToken(args.env, args.installationId).catch(() => undefined)) ?? args.env.GITHUB_PUBLIC_TOKEN;
-  const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
-  const results = await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
-  return results.flatMap((result) => (result.status === "found" ? result.facts.labels : []));
 }

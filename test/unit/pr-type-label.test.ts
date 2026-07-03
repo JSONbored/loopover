@@ -97,6 +97,15 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
     expect(result.source).toBe("title");
   });
 
+  it("does not crash when linkedIssueLabels is omitted entirely (propagation enabled with mappings configured)", () => {
+    const result = resolvePrTypeLabel({
+      title: "feat: x",
+      propagation: propagation({ mappings: [{ issueLabel: "gittensor:priority", prLabel: "gittensor:priority", removeOtherTypeLabels: true }] }),
+    });
+    expect(result.applyLabels).toEqual([DEFAULT_TYPE_LABELS.feature]);
+    expect(result.source).toBe("title");
+  });
+
   it("resolves the FIRST matching mapping when multiple linked-issue labels are present", () => {
     const result = resolvePrTypeLabel({
       title: "fix: y",

@@ -166,7 +166,7 @@ import {
   type PullRequestFreshness,
 } from "../github/pr-freshness";
 import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
-import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation";
+import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import {

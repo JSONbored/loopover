@@ -1720,6 +1720,12 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.linkedIssueLabelPropagation).toEqual({ enabled: true, mode: "exclusive_type_label", mappings: override.mappings });
   });
 
+  it("resolveEffectiveSettings falls back to the built-in defaults for a partial settings.linkedIssueLabelPropagation override when the DB has none at all", () => {
+    const db = {} as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { linkedIssueLabelPropagation: { enabled: true } } }));
+    expect(eff.linkedIssueLabelPropagation).toEqual({ enabled: true, mode: "exclusive_type_label", mappings: [] });
+  });
+
   it("warns and preserves the existing DB value when settings.linkedIssueLabelPropagation is not an object", () => {
     const parsed = parseFocusManifest({ settings: { linkedIssueLabelPropagation: ["nope"] } });
     expect(parsed.settings.linkedIssueLabelPropagation).toBeUndefined();

@@ -96,13 +96,29 @@ test("rankMetadataOpportunities: sorts candidates by descending rankScore", () =
   assert.ok((ranked[0]?.rankScore ?? 0) >= (ranked[1]?.rankScore ?? 0));
 });
 
-test("computeOpportunityFreshness and computeOpportunityCompetition mirror hosted decay curves", () => {
-  assert.equal(computeOpportunityFreshness([], NOW), 0);
+test("computeOpportunityFreshness: createdAt fallback and invalid timestamps degrade safely", () => {
   assert.ok(
     computeOpportunityFreshness(
-      [{ state: "open", updatedAt: "2026-07-03T00:00:00.000Z" }],
+      [{ state: "open", createdAt: "2026-07-03T00:00:00.000Z", updatedAt: null }],
       NOW,
     ) > 0.8,
   );
-  assert.equal(computeOpportunityCompetition(2, 4), 0.5);
+  assert.equal(
+    computeOpportunityFreshness(
+      [{ state: "open", createdAt: "not-a-date", updatedAt: "also-bad" }],
+      NOW,
+    ),
+    1,
+  );
+  assert.equal(computeOpportunityFreshness([{ state: "open", updatedAt: "2026-07-03T00:00:00.000Z" }], Number.NaN), 0);
+});
+
+test("computeMetadataDupRisk: exact-title peers and multi-overlap batches escalate risk", () => {
+  const issue = candidate({ issueNumber: 1, title: "Shared exact title string" });
+  const peers = [
+    candidate({ issueNumber: 2, title: "Shared exact title string" }),
+    candidate({ issueNumber: 3, title: "Shared exact title string" }),
+  ];
+  assert.ok(computeMetadataDupRisk(issue, peers) > 0.5);
+  assert.equal(computeMetadataDupRisk(candidate({ title: "   " }), peers), 1);
 });

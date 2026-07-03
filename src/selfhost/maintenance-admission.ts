@@ -47,6 +47,7 @@ export const MAINTENANCE_JOB_TYPES: ReadonlySet<string> = new Set([
   "ops-alerts",
   "selftune",
   "rag-index-repo",
+  "backlog-convergence-sweep",
 ]);
 
 export function isMaintenanceJobType(type: string): boolean {

@@ -704,6 +704,10 @@ export function jobCoalesceKey(payload: string): string | null {
       const repo = normalizedRepo(message.repoFullName);
       return `agent-regate-sweep:${repo ?? "all"}`;
     }
+    if (type === "backlog-convergence-sweep") {
+      const repo = normalizedRepo(message.repoFullName);
+      return `backlog-convergence-sweep:${repo ?? "all"}`;
+    }
     if (type === "recapture-preview") {
       const repo = normalizedRepo(message.repoFullName);
       const pr = normalizedNumber(message.prNumber);

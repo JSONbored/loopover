@@ -213,6 +213,17 @@ export type JobMessage =
       // Enqueued by the cron every sweep cycle (≈2 min) ONLY when ORB_BROKER_ENABLED is set.
       type: "retry-orb-relay";
       requestedBy: "schedule" | "test";
+    }
+  | {
+      // Self-host backlog-convergence sweep (#selfhost-backlog-convergence): finds open PRs whose public review
+      // surface was never published for their current head (a blind spot the periodic re-gate sweep's dispatch-
+      // time stamping can miss — see selfhost/backlog-convergence.ts) and fans out one `agent-regate-pr` job per
+      // candidate. No `repoFullName` = fan-out: enqueue one per convergence-eligible repo, mirroring
+      // "agent-regate-sweep". With `repoFullName` = sweep that one repo's stale-surface open PRs.
+      type: "backlog-convergence-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
+      installationId?: number;
     };
 
 export type GitHubWebhookPayload = {

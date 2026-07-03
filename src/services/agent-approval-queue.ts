@@ -294,6 +294,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
       installationPermissions: installation ? installation.permissions : null,
+      // CI-run cancellation on a contributor_cap close (#2462): a contributor_cap close CAN be staged for
+      // approval (close autonomy = auto_with_approval), so the accept-replay path needs this resolved the
+      // same way the live webhook path does (src/queue/processors.ts) for the cancel hook to fire here too.
+      contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
     },
     plan,
   );

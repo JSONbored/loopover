@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
+  cancelInFlightWorkflowRunsForHeadSha,
   clearInstallationTokenCacheForTest,
   createInstallationToken,
   createOrUpdateCheckRun,
@@ -659,6 +660,216 @@ describe("GitHub check runs", () => {
     await expect(
       getGithubUserCreatedAt(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "network-error"),
     ).resolves.toBeNull();
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha lists in_progress + queued runs at a head SHA and cancels each (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const cancelledIds: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=abc123&status=in_progress")) return Response.json({ workflow_runs: [{ id: 1 }, { id: 2 }] });
+      if (url.includes("/actions/runs?head_sha=abc123&status=queued")) return Response.json({ workflow_runs: [{ id: 3 }] });
+      if (url.includes("/actions/runs/") && url.endsWith("/cancel") && method === "POST") {
+        cancelledIds.push(Number(url.match(/\/actions\/runs\/(\d+)\/cancel/)?.[1]));
+        return new Response(null, { status: 202 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "abc123");
+    expect(outcome).toEqual({ kind: "cancelled", cancelledCount: 3, totalFound: 3 });
+    expect(cancelledIds.sort()).toEqual([1, 2, 3]);
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha returns cancelled with zero counts when no runs are found (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=")) return Response.json({ workflow_runs: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "no-runs-sha"),
+    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 0, totalFound: 0 });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha treats a 409 (already completed/cancelling) as a non-failure (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 9 }] });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
+      if (url.endsWith("/actions/runs/9/cancel") && method === "POST") return Response.json({ message: "already completed" }, { status: 409 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha409"),
+    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 1, totalFound: 1 });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha returns permission_missing on a genuine 403 while listing (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=")) return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha403");
+    expect(outcome.kind).toBe("permission_missing");
+    expect((outcome as { warning: string }).warning).toMatch(/actions: write permission is missing/i);
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha returns permission_missing on a genuine 403 while cancelling (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 5 }] });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
+      if (url.endsWith("/actions/runs/5/cancel") && method === "POST") return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha403cancel");
+    expect(outcome.kind).toBe("permission_missing");
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha does NOT classify a rate-limited 403 as permission_missing (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=")) return Response.json({ message: "You have exceeded a secondary rate limit" }, { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-ratelimited");
+    expect(outcome.kind).toBe("error");
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha returns an error result (never throws) on a network failure (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      throw new Error("network down");
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-network-error"),
+    ).resolves.toEqual({ kind: "error", warning: "network down" });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha returns an error result for a malformed repoFullName (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "not-a-valid-repo-name", "sha");
+    expect(outcome.kind).toBe("error");
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha falls back to a generic warning when a 403 body carries no message (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // No `message` field at all -- exercises the `message === ""` branch of isActionsPermissionMissingMessage
+      // AND the `message || "resource not accessible..."` fallback inside the warning string.
+      if (url.includes("/actions/runs?head_sha=")) return Response.json({}, { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-no-message");
+    expect(outcome.kind).toBe("permission_missing");
+    expect((outcome as { warning: string }).warning).toContain("resource not accessible by integration");
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha treats a workflow_runs-less list response as zero runs (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // No `workflow_runs` field at all -- exercises the `payload.workflow_runs ?? []` fallback.
+      if (url.includes("/actions/runs?head_sha=")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-no-workflow-runs-field"),
+    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 0, totalFound: 0 });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha reports a non-Error thrown value with a generic warning (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      throw "a bare string, not an Error instance";
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-non-error-throw"),
+    ).resolves.toEqual({ kind: "error", warning: "unknown error" });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha reports the generic list-error branch with a fallback message when the body carries none (#2462)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // A non-403, non-ok status with no message -- exercises the `message || "unknown error"` fallback in the
+      // generic error path (distinct from the permission_missing path exercised by other tests above).
+      if (url.includes("/actions/runs?head_sha=")) return new Response(null, { status: 500 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const outcome = await cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-list-500");
+    expect(outcome).toEqual({ kind: "error", warning: "Failed to list workflow runs (500): unknown error" });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha skips (does not count, does not fail) a run whose cancel call hits a non-permission error", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 42 }] });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
+      // Neither ok/409 (cancelled) nor a genuine permission-missing 403 -- a transient 500, and separately a
+      // rate-limited 403 (isActionsPermissionMissingMessage returns false) both fall through to
+      // "not_permission_error", which the caller must silently skip rather than counting or failing on.
+      if (url.endsWith("/actions/runs/42/cancel") && method === "POST") return new Response(null, { status: 500 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-cancel-500"),
+    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 0, totalFound: 1 });
+  });
+
+  it("cancelInFlightWorkflowRunsForHeadSha does not classify a rate-limited 403 on the CANCEL call as permission_missing either", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=in_progress")) return Response.json({ workflow_runs: [{ id: 43 }] });
+      if (url.includes("/actions/runs?head_sha=") && url.includes("status=queued")) return Response.json({ workflow_runs: [] });
+      if (url.endsWith("/actions/runs/43/cancel") && method === "POST") return Response.json({ message: "secondary rate limit exceeded" }, { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(
+      cancelInFlightWorkflowRunsForHeadSha(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "owner/repo", "sha-cancel-ratelimited"),
+    ).resolves.toEqual({ kind: "cancelled", cancelledCount: 0, totalFound: 1 });
   });
 
   it("updates an existing Gittensory check run for the same head SHA", async () => {

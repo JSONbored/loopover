@@ -53,6 +53,11 @@ export function buildManifest(origin: string, state: string): Record<string, unk
       checks: "write",
       metadata: "read",
       statuses: "read",
+      // actions:write (#2462) — lists + cancels in-flight Actions runs on a contributor_cap close
+      // (cancelInFlightWorkflowRunsForHeadSha, src/github/app.ts). A PRE-EXISTING install must re-approve this
+      // permission bump before cancellation works for them (see docs.self-hosting-github-app.tsx); the feature
+      // itself is off by default and degrades gracefully (skipped + logged, never blocks the close) until then.
+      actions: "write",
     },
     default_events: ["pull_request", "pull_request_review", "push", "issues", "check_suite", "check_run", "status"],
   };

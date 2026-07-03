@@ -690,6 +690,14 @@ export type RepositorySettings = {
    *  disposition works regardless of the label a repo sets. Always populated by the DB layer; optional so
    *  existing settings fixtures/callers need not be touched. */
   contributorCapLabel?: string | undefined;
+  /** Cancel in-flight CI runs on a contributor_cap close (#2462, anti-abuse): when true, after a PR is
+   *  auto-closed for exceeding {@link contributorOpenPrCap}, gittensory lists and cancels that PR's
+   *  in-progress/queued Actions runs at its head SHA. Requires the App installation to have granted
+   *  `actions: write` -- degrades gracefully (skipped + logged, never blocks the close) when it hasn't.
+   *  `null`/undefined (the DB-layer default) means "unset" and falls back to the
+   *  `CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT` env var -- unlike most boolean toggles, this one is nullable so an
+   *  explicit `false` (opt back out) is distinguishable from "not configured" for that fallback. */
+  contributorCapCancelCi?: boolean | null | undefined;
   /** Review-request nagging cooldown (#2463, anti-abuse): throttle a contributor repeatedly pinging
    *  `@gittensory` (any command) on this repo. `"off"` (default) is a no-op; `"hold"` posts a deterministic
    *  cooldown reply and takes no further action; `"close"` additionally closes the thread (PR threads only in

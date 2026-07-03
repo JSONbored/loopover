@@ -653,6 +653,7 @@ export const RepositorySettingsSchema = z
     contributorOpenPrCap: z.number().int().positive().nullable().optional(),
     contributorOpenIssueCap: z.number().int().positive().nullable().optional(),
     contributorCapLabel: z.string().optional(),
+    contributorCapCancelCi: z.boolean().nullable().optional(),
     reviewNagPolicy: z.enum(["off", "hold", "close"]).optional(),
     reviewNagMaxPings: z.number().int().positive().optional(),
     reviewNagCooldownDays: z.number().int().positive().max(MAX_REVIEW_NAG_COOLDOWN_DAYS).optional(),

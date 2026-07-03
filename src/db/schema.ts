@@ -92,6 +92,11 @@ export const repositorySettings = sqliteTable("repository_settings", {
   contributorOpenPrCap: integer("contributor_open_pr_cap"),
   contributorOpenIssueCap: integer("contributor_open_issue_cap"),
   contributorCapLabel: text("contributor_cap_label").notNull().default("over-contributor-limit"),
+  // Cancel in-flight CI runs on a contributor_cap close (#2462): null = unset, falls back to the
+  // CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var (nullable, unlike a plain boolean toggle, so an explicit `false`
+  // is distinguishable from "not configured" for that fallback). Only meaningful when the App installation has
+  // granted actions:write -- degrades gracefully (logs, never blocks the close) otherwise.
+  contributorCapCancelCi: integer("contributor_cap_cancel_ci", { mode: "boolean" }),
   // Review-request nagging cooldown (#2463, anti-abuse): default 'off' (disabled).
   reviewNagPolicy: text("review_nag_policy").notNull().default("off"),
   reviewNagMaxPings: integer("review_nag_max_pings").notNull().default(3),

@@ -1,7 +1,7 @@
 import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, isGlobalAgentFrozen, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
-import { createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
+import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
@@ -47,6 +47,10 @@ export type AgentActionExecutionContext = {
   installationPermissions: Record<string, string> | null | undefined;
   // PR author login — surfaced as the "Submitter" in the per-repo Discord action notification.
   authorLogin?: string | null | undefined;
+  // CI-run cancellation on a contributor_cap close (#2462, anti-abuse): the CALLER resolves this (repo setting
+  // ?? the CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var) before building the context — the executor itself has no
+  // settings access, only whatever ctx carries, mirroring how agentPaused/agentDryRun are already threaded in.
+  contributorCapCancelCi?: boolean | undefined;
 };
 
 export type AgentActionOutcome = {
@@ -177,6 +181,14 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);
+      // CI-run cancellation on a contributor_cap close (#2462, anti-abuse): stop burning CI minutes on a PR
+      // that was just closed for exceeding the contributor cap. Best-effort, AFTER the close already
+      // succeeded -- cancelInFlightWorkflowRunsForHeadSha never throws, so a missing actions:write grant (or
+      // any other failure here) can never retroactively turn this already-successful close into a recorded
+      // "error" by escaping into the catch block below.
+      if (action.actionClass === "close" && action.closeKind === "contributor_cap" && ctx.contributorCapCancelCi && ctx.headSha) {
+        await recordContributorCapCiCancelOutcome(env, ctx, ctx.headSha);
+      }
       // Re-approval idempotency: record the head SHA we just approved so the planner skips re-approving this
       // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
       // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
@@ -213,6 +225,46 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
   }
 
   return outcomes;
+}
+
+/** CI-run cancellation on a contributor_cap close (#2462): runs cancelInFlightWorkflowRunsForHeadSha and
+ *  records exactly one of two audit outcomes, mirroring the established `github_app.*_permission_missing`
+ *  convention (processors.ts's check-run/gate-check permission-missing audits) so a fleet-wide actions:write
+ *  scope gap surfaces the same way those already do. Never throws -- both recordAuditEvent calls are
+ *  best-effort (`.catch(() => undefined)`), since a failure to WRITE the audit record must not retroactively
+ *  affect the close this already ran after. */
+async function recordContributorCapCiCancelOutcome(env: Env, ctx: AgentActionExecutionContext, headSha: string): Promise<void> {
+  const targetKey = `${ctx.repoFullName}#${ctx.pullNumber}`;
+  const outcome = await cancelInFlightWorkflowRunsForHeadSha(env, ctx.installationId, ctx.repoFullName, headSha);
+  if (outcome.kind === "cancelled") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.contributor_cap_ci_cancelled",
+      actor: AGENT_ACTOR,
+      targetKey,
+      outcome: "completed",
+      detail: `cancelled ${outcome.cancelledCount} of ${outcome.totalFound} in-flight workflow run(s)`,
+      metadata: { repoFullName: ctx.repoFullName, headSha, cancelledCount: outcome.cancelledCount, totalFound: outcome.totalFound },
+    }).catch(() => undefined);
+    return;
+  }
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event: "contributor_cap_ci_cancel_failed",
+      reason: outcome.kind,
+      repository: ctx.repoFullName,
+      pullNumber: ctx.pullNumber,
+      message: outcome.warning,
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "github_app.contributor_cap_ci_cancel_permission_missing",
+    actor: AGENT_ACTOR,
+    targetKey,
+    outcome: "error",
+    detail: outcome.warning,
+    metadata: { repoFullName: ctx.repoFullName, headSha, reason: outcome.kind },
+  }).catch(() => undefined);
 }
 
 export type IssueActionExecutionContext = {

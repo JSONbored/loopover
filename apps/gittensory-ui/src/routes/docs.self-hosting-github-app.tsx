@@ -98,10 +98,51 @@ SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a fresh
         </li>
         <li>Commit statuses: read.</li>
         <li>Metadata: read.</li>
+        <li>
+          Actions: write — lets a repo opt into cancelling a closed PR's in-flight CI runs (the{" "}
+          <code>contributorCapCancelCi</code> setting). Off by default and never required: a repo
+          that doesn't enable it, or an installation that hasn't re-approved this permission on an
+          existing App, sees no behavior change — the cancellation attempt is skipped and logged,
+          never blocking the close itself.
+        </li>
       </ul>
       <p>
         Events: pull request, pull request review, push, issues, check suite, check run, and status.
       </p>
+
+      <h2>Re-approving a permission bump on an existing App</h2>
+      <p>
+        A future release can widen this permission list (most recently, Actions: write for the
+        opt-in CI-cancellation feature). GitHub does <strong>not</strong> silently grant a new
+        permission to an App that's already installed — the operator who owns the App must
+        explicitly re-approve it, the same one-time consent step as the original install.
+      </p>
+      <p>
+        Until you re-approve, the self-host keeps working exactly as before: any feature that needs
+        the new permission degrades gracefully (skipped and logged, never a hard failure) rather
+        than erroring. There's no forced upgrade window.
+      </p>
+      <p>To re-approve:</p>
+      <ol>
+        <li>
+          Open your App's settings page —{" "}
+          <code>https://github.com/settings/apps/&lt;your-app-slug&gt;/permissions</code>{" "}
+          (organization Apps:{" "}
+          <code>
+            https://github.com/organizations/&lt;org&gt;/settings/apps/&lt;your-app-slug&gt;/permissions
+          </code>
+          ).
+        </li>
+        <li>
+          GitHub shows a diff between the App's currently-granted permissions and what the App
+          manifest now requests. Review it, then save — GitHub sends the installation owner a
+          request to accept the new grant.
+        </li>
+        <li>
+          Accept the request (as the installation owner, on each installed org/account). The new
+          permission takes effect immediately; no App reinstall or webhook resubscription needed.
+        </li>
+      </ol>
 
       <h2>Direct App env</h2>
       <CodeBlock

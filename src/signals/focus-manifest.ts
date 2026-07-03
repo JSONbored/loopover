@@ -167,6 +167,7 @@ export type FocusManifestSettings = Partial<
     | "contributorOpenPrCap"
     | "contributorOpenIssueCap"
     | "contributorCapLabel"
+    | "contributorCapCancelCi"
     | "reviewNagPolicy"
     | "reviewNagMaxPings"
     | "reviewNagCooldownDays"
@@ -964,6 +965,15 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const contributorCapLabel = normalizeOptionalString(r.contributorCapLabel, "settings.contributorCapLabel", warnings);
   if (contributorCapLabel !== null) out.contributorCapLabel = contributorCapLabel;
+  // CI-run cancellation on a contributor_cap close (#2462): an explicit yml `null` is load-bearing (clears a
+  // DB-configured value back to "unset", falling through to the CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var),
+  // matching contributorOpenPrCap's own null-vs-omitted distinction above.
+  if (r.contributorCapCancelCi === null) {
+    out.contributorCapCancelCi = null;
+  } else {
+    const contributorCapCancelCi = normalizeOptionalBoolean(r.contributorCapCancelCi, "settings.contributorCapCancelCi", warnings);
+    if (contributorCapCancelCi !== null) out.contributorCapCancelCi = contributorCapCancelCi;
+  }
   // Review-request nagging cooldown (#2463): throttle a contributor repeatedly pinging @gittensory for review.
   const reviewNagPolicy = normalizeOptionalEnum(r.reviewNagPolicy, "settings.reviewNagPolicy", ["off", "hold", "close"] as const, warnings);
   if (reviewNagPolicy !== null) out.reviewNagPolicy = reviewNagPolicy;

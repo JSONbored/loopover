@@ -7283,6 +7283,236 @@ describe("queue processors", () => {
     expect(seen.comments.some((c) => c.includes("@farmer99") && c.includes("3 open pull requests") && c.includes("limit of 2"))).toBe(true);
   });
 
+  function stubContributorCapCiCancelFetch(seen: { closed: boolean; cancelledIds: number[]; listedStatuses: string[] }, runListResponses: { in_progress?: number[]; queued?: number[] } = {}, cancelResponse: () => Response = () => new Response(null, { status: 202 })) {
+    return async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/55/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/55/reviews")) return Response.json([]);
+      if (url.includes("/pulls/55/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/55") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 55, state: "closed" }); }
+      if (url.endsWith("/pulls/55")) return Response.json({ number: 55, state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, mergeable_state: "clean" });
+      if (url.includes("/commits/f55/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/f55/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/55/labels")) return Response.json([]);
+      if (url.includes("/issues/55/comments")) return Response.json([]);
+      if (url.includes("/actions/runs?head_sha=f55&status=in_progress")) { seen.listedStatuses.push("in_progress"); return Response.json({ workflow_runs: (runListResponses.in_progress ?? []).map((id) => ({ id })) }); }
+      if (url.includes("/actions/runs?head_sha=f55&status=queued")) { seen.listedStatuses.push("queued"); return Response.json({ workflow_runs: (runListResponses.queued ?? []).map((id) => ({ id })) }); }
+      if (url.includes("/actions/runs/") && url.endsWith("/cancel") && method === "POST") {
+        seen.cancelledIds.push(Number(url.match(/\/actions\/runs\/(\d+)\/cancel/)?.[1]));
+        return cancelResponse();
+      }
+      return Response.json({});
+    };
+  }
+
+  it("contributor open-PR cap (#2462): a contributor_cap close cancels the PR's in-flight CI runs when contributorCapCancelCi is enabled", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 53, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f53" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR two", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 2,
+      contributorCapCancelCi: true,
+    });
+    const seen = { closed: false, cancelledIds: [] as number[], listedStatuses: [] as string[] };
+    vi.stubGlobal("fetch", stubContributorCapCiCancelFetch(seen, { in_progress: [101], queued: [102] }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-cap-cancel-ci-enabled",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(seen.listedStatuses.sort()).toEqual(["in_progress", "queued"]);
+    expect(seen.cancelledIds.sort()).toEqual([101, 102]);
+    const cancelAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.contributor_cap_ci_cancelled'").first<{ n: number }>();
+    expect(cancelAudit?.n).toBeGreaterThanOrEqual(1);
+  });
+
+  it("contributor open-PR cap (#2462): contributorCapCancelCi unset (default) never attempts to cancel CI runs", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 53, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f53" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR two", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 2,
+      // contributorCapCancelCi intentionally omitted — off by default, no CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT set.
+    });
+    const seen = { closed: false, cancelledIds: [] as number[], listedStatuses: [] as string[] };
+    vi.stubGlobal("fetch", stubContributorCapCiCancelFetch(seen, { in_progress: [201] }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-cap-cancel-ci-off",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(seen.listedStatuses).toEqual([]);
+    expect(seen.cancelledIds).toEqual([]);
+  });
+
+  it("contributor open-PR cap (#2462): a missing actions:write permission degrades gracefully — the close still succeeds and a permission_missing audit is recorded", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 53, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f53" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR two", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 2,
+      contributorCapCancelCi: true,
+    });
+    const seen = { closed: false, cancelledIds: [] as number[], listedStatuses: [] as string[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/actions/runs?head_sha=")) return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+      return stubContributorCapCiCancelFetch(seen)(input, init);
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-cap-cancel-ci-permission-missing",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    // The close itself still succeeded and is recorded "completed", NOT "error" -- the cancel-permission gap
+    // must never retroactively fail an already-successful close (#2462 core requirement).
+    expect(seen.closed).toBe(true);
+    const closeAudit = await env.DB.prepare("select outcome from audit_events where event_type = 'agent.action.close' order by created_at desc limit 1").first<{ outcome: string }>();
+    expect(closeAudit?.outcome).toBe("completed");
+    const permissionAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.contributor_cap_ci_cancel_permission_missing'").first<{ n: number }>();
+    expect(permissionAudit?.n).toBeGreaterThanOrEqual(1);
+  });
+
+  it("contributor open-PR cap (#2462): CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var enables cancellation when the repo hasn't configured its own value", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT: "true" });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 53, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f53" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR two", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 2,
+      // contributorCapCancelCi intentionally omitted (null) -- falls back to the env var default above.
+    });
+    const seen = { closed: false, cancelledIds: [] as number[], listedStatuses: [] as string[] };
+    vi.stubGlobal("fetch", stubContributorCapCiCancelFetch(seen, { in_progress: [301] }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-cap-cancel-ci-env-default",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(seen.cancelledIds).toEqual([301]);
+  });
+
+  it("contributor open-PR cap (#2462): an explicit repo-level contributorCapCancelCi: false overrides a true CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT: "true" });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 53, title: "Farmer PR one", state: "open", user: { login: "farmer99" }, head: { sha: "f53" }, labels: [], body: "x" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 54, title: "Farmer PR two", state: "open", user: { login: "farmer99" }, head: { sha: "f54" }, labels: [], body: "y" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+      autonomy: { close: "auto", label: "auto" },
+      contributorOpenPrCap: 2,
+      contributorCapCancelCi: false,
+    });
+    const seen = { closed: false, cancelledIds: [] as number[], listedStatuses: [] as string[] };
+    vi.stubGlobal("fetch", stubContributorCapCiCancelFetch(seen, { in_progress: [401] }));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "contributor-cap-cancel-ci-repo-override",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 55, title: "Farmer's 3rd PR", state: "open", user: { login: "farmer99" }, head: { sha: "f55" }, labels: [], body: "x", mergeable_state: "clean", reviewDecision: "APPROVED" },
+      },
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(seen.listedStatuses).toEqual([]);
+    expect(seen.cancelledIds).toEqual([]);
+  });
+
   it("contributor open-PR cap (#2270): disabled (no cap configured, the default) never closes an over-threshold contributor", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {

@@ -328,6 +328,13 @@ settings:
   # Label applied to a PR/issue closed for exceeding a cap above. String. Default: over-contributor-limit.
   # contributorCapLabel: over-contributor-limit
 
+  # Cancel in-flight CI runs when a PR is auto-closed for exceeding contributorOpenPrCap above (#2462).
+  # Requires the App installation to have granted the `actions: write` permission -- degrades gracefully
+  # (skipped + logged, the close itself still succeeds) when it hasn't. Bool or omit/null to fall back to
+  # the CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var. Default: null (falls back to the env var, itself off
+  # by default).
+  # contributorCapCancelCi: true
+
   # Review-request nagging cooldown (#2463, anti-abuse): throttle a non-owner/non-admin/non-bot
   # contributor who repeatedly pings @gittensory for review on the same PR/issue. "hold" replies with a
   # cooldown notice and takes no further action; "close" closes the PR (issues degrade to "hold" until

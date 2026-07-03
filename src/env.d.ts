@@ -89,6 +89,11 @@ declare global {
      *  same contributor_cap short-circuit (src/settings/agent-actions.ts). A positive integer string (e.g. "20");
      *  see src/settings/global-contributor-cap.ts for parsing. */
     GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string;
+    /** Install-wide default for the per-repo contributorCapCancelCi setting (#2462): "true"/"1"/"yes"/"on"
+     *  (case-insensitive) enables cancelling in-flight CI runs on a contributor_cap close for every repo that
+     *  hasn't explicitly configured its own value. Unset/blank/anything else = off (the existing behavior). A
+     *  repo's own `contributorCapCancelCi` (DB or `.gittensory.yml`) always takes precedence over this. */
+    CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
     /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's

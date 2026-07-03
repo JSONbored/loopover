@@ -8,6 +8,7 @@ import {
   githubRateLimitAdmissionKeyForInstallation,
   makeInstallationOctokit,
   timeoutFetch,
+  type GitHubRateLimitAdmissionKey,
 } from "./client";
 import { maintainerControlPanelUrl } from "./footer";
 import type { AgentActionMode } from "../settings/agent-execution";
@@ -430,6 +431,120 @@ export async function getGithubUserCreatedAt(
     return typeof payload.created_at === "string" ? payload.created_at : null;
   } catch {
     return null;
+  }
+}
+
+/** Sentinel result for cancelInFlightWorkflowRunsForHeadSha (#2462) -- mirrors CheckRunOutcome's shape (a
+ *  typed "degraded, not thrown" result) so a missing `actions: write` grant never has to be distinguished
+ *  from a genuine network/API failure by the caller via exception type-narrowing. */
+export type CancelWorkflowRunsOutcome =
+  | { kind: "cancelled"; cancelledCount: number; totalFound: number }
+  | { kind: "permission_missing"; warning: string }
+  | { kind: "error"; warning: string };
+
+// A rate-limit / secondary-limit 403 is NOT a permission gap -- mirrors isCheckRunPermissionError's own
+// exclusion (src/github/app.ts, isRateLimitedError check) so a burst-load 403 is never misrecorded as a
+// permanent actions:write scope gap. Operates on the RAW response body's `message` field (not a thrown
+// Octokit error) since these wrappers use plain timeoutFetch, not an Octokit client.
+function isActionsPermissionMissingMessage(message: string): boolean {
+  if (/secondary rate limit|\babuse\b|api rate limit exceeded|rate limit/i.test(message)) return false;
+  return /resource not accessible by integration|not have permission/i.test(message) || message === "";
+}
+
+async function actionsApiErrorMessage(response: Response): Promise<string> {
+  const body = (await response.json().catch(() => null)) as { message?: unknown } | null;
+  return typeof body?.message === "string" ? body.message : "";
+}
+
+function actionsPermissionMissingResult(message: string): { kind: "permission_missing"; warning: string } {
+  return {
+    kind: "permission_missing",
+    warning: `GitHub App Actions: write permission is missing (${message || "resource not accessible by integration"}). Enable it in the GitHub App settings and re-approve the installation.`,
+  };
+}
+
+type ActionsRunFetchOptions = {
+  headers: HeadersInit;
+  githubRateLimitAdmission: true;
+  githubRateLimitAdmissionKey: GitHubRateLimitAdmissionKey;
+};
+
+// Split out of cancelInFlightWorkflowRunsForHeadSha (a named function, not an inline for-of body) so v8's
+// per-branch coverage tracking attributes hits correctly across repeated loop iterations with early returns
+// -- an inline loop body with early `return`s inside a `for` inside an `async function` can under-report the
+// "condition false" side of a branch even when it demonstrably executes (confirmed via a live debug trace).
+async function listWorkflowRunIdsForStatus(
+  repoPath: string,
+  headSha: string,
+  status: "in_progress" | "queued",
+  fetchOptions: ActionsRunFetchOptions,
+): Promise<{ kind: "ids"; ids: number[] } | { kind: "permission_missing"; warning: string } | { kind: "error"; warning: string }> {
+  const response = await timeoutFetch(`https://api.github.com/repos/${repoPath}/actions/runs?head_sha=${encodeURIComponent(headSha)}&status=${status}`, fetchOptions);
+  if (response.ok) {
+    const payload = (await response.json()) as { workflow_runs?: Array<{ id: number }> };
+    return { kind: "ids", ids: (payload.workflow_runs ?? []).map((run) => run.id) };
+  }
+  const message = await actionsApiErrorMessage(response);
+  if (response.status === 403 && isActionsPermissionMissingMessage(message)) {
+    return actionsPermissionMissingResult(message);
+  }
+  return { kind: "error", warning: `Failed to list workflow runs (${response.status}): ${message || "unknown error"}` };
+}
+
+// Same extraction rationale as listWorkflowRunIdsForStatus above.
+async function cancelOneWorkflowRun(
+  repoPath: string,
+  runId: number,
+  fetchOptions: ActionsRunFetchOptions,
+): Promise<{ kind: "cancelled" } | { kind: "permission_missing"; warning: string } | { kind: "not_permission_error" }> {
+  const response = await timeoutFetch(`https://api.github.com/repos/${repoPath}/actions/runs/${runId}/cancel`, { ...fetchOptions, method: "POST" });
+  // 202 = cancellation accepted; 409 = already completed/cancelling -- both are non-failures here (the run is
+  // no longer going to keep burning minutes either way). Only a genuine 403 signals a scope gap.
+  if (response.ok || response.status === 409) return { kind: "cancelled" };
+  if (response.status !== 403) return { kind: "not_permission_error" };
+  const message = await actionsApiErrorMessage(response);
+  if (!isActionsPermissionMissingMessage(message)) return { kind: "not_permission_error" };
+  return actionsPermissionMissingResult(message);
+}
+
+/** List then cancel every in-progress/queued Actions run at a PR's head SHA (#2462): a PR auto-closed for
+ *  exceeding the per-contributor open-item cap should also stop burning CI minutes on its in-flight runs.
+ *  Needs `actions: write` (list needs `actions: read`, effectively granted alongside write) -- an
+ *  installation that hasn't granted it gets a typed `permission_missing` result, never a thrown error, so
+ *  this can run as a best-effort side effect AFTER a close has already succeeded without risking that
+ *  success being misrecorded as a failure. Greenfield: no existing Actions-API wrapper to extend. */
+export async function cancelInFlightWorkflowRunsForHeadSha(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  headSha: string,
+): Promise<CancelWorkflowRunsOutcome> {
+  const [owner, repo] = repoFullName.split("/");
+  if (!owner || !repo) return { kind: "error", warning: `Invalid repository full name: ${repoFullName}` };
+  const repoPath = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  try {
+    const token = await createInstallationToken(env, installationId);
+    const fetchOptions: ActionsRunFetchOptions = {
+      headers: githubHeaders(`Bearer ${token}`),
+      githubRateLimitAdmission: true,
+      githubRateLimitAdmissionKey: githubRateLimitAdmissionKeyForInstallation(installationId),
+    };
+    const runIds = new Set<number>();
+    for (const status of ["in_progress", "queued"] as const) {
+      const listed = await listWorkflowRunIdsForStatus(repoPath, headSha, status, fetchOptions);
+      if (listed.kind !== "ids") return listed;
+      for (const id of listed.ids) runIds.add(id);
+    }
+    if (runIds.size === 0) return { kind: "cancelled", cancelledCount: 0, totalFound: 0 };
+    let cancelledCount = 0;
+    for (const runId of runIds) {
+      const result = await cancelOneWorkflowRun(repoPath, runId, fetchOptions);
+      if (result.kind === "cancelled") cancelledCount += 1;
+      else if (result.kind === "permission_missing") return result;
+    }
+    return { kind: "cancelled", cancelledCount, totalFound: runIds.size };
+  } catch (error) {
+    return { kind: "error", warning: error instanceof Error ? error.message : "unknown error" };
   }
 }
 

@@ -1496,6 +1496,26 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(invalid.warnings.some((w) => /settings\.commandRateLimitWindowHours/.test(w))).toBe(true);
   });
 
+  it("parses + resolves contributorCapCancelCi from the settings: block, overlaying the DB (#2462)", () => {
+    const manifest = parseFocusManifest({ settings: { contributorCapCancelCi: true } });
+    expect(manifest.settings.contributorCapCancelCi).toBe(true);
+    const eff = resolveEffectiveSettings({ contributorCapCancelCi: null } as unknown as RepositorySettings, manifest);
+    expect(eff.contributorCapCancelCi).toBe(true);
+    // An explicit yml `false` also sets it (distinct from `null`, which clears back to unset below).
+    const disabled = parseFocusManifest({ settings: { contributorCapCancelCi: false } });
+    expect(disabled.settings.contributorCapCancelCi).toBe(false);
+    // An explicit yml `null` clears a DB-configured value back to unset (load-bearing null).
+    const cleared = resolveEffectiveSettings({ contributorCapCancelCi: true } as unknown as RepositorySettings, parseFocusManifest({ settings: { contributorCapCancelCi: null } }));
+    expect(cleared.contributorCapCancelCi).toBeNull();
+    // Omitted in yml ⇒ the DB-configured value survives untouched.
+    const noOverride = resolveEffectiveSettings({ contributorCapCancelCi: true } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(noOverride.contributorCapCancelCi).toBe(true);
+    // A non-boolean value is dropped with a warning rather than silently coerced.
+    const invalid = parseFocusManifest({ settings: { contributorCapCancelCi: "yes" as never } });
+    expect(invalid.settings.contributorCapCancelCi).toBeUndefined();
+    expect(invalid.warnings.some((w) => /settings\.contributorCapCancelCi/.test(w))).toBe(true);
+  });
+
   it("parses + resolves autoCloseExemptLogins from the settings: block, overlaying the DB (#2463)", () => {
     const manifest = parseFocusManifest({ settings: { autoCloseExemptLogins: ["Trusted-Regular", "another-one", "-bad", 42 as never] } });
     expect(manifest.settings.autoCloseExemptLogins).toEqual(["Trusted-Regular", "another-one"]); // invalid entries dropped

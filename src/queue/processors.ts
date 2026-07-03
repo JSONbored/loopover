@@ -2200,6 +2200,9 @@ async function runAgentMaintenancePlanAndExecute(
       agentDryRun: settings.agentDryRun,
       installationPermissions,
       authorLogin: pr.authorLogin,
+      // CI-run cancellation on a contributor_cap close (#2462): the repo's own explicit setting always wins;
+      // null/undefined (unset) falls back to the install-wide CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var.
+      contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
     },
     breakerOnPlan,
   );

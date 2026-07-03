@@ -17,6 +17,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   contents: "Contents",
   statuses: "Commit statuses",
   metadata: "Metadata",
+  actions: "Actions",
 };
 
 describe("self-host GitHub App manifest <-> docs parity (#2542)", () => {

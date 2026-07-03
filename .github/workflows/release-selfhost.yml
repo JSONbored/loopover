@@ -211,12 +211,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
-          # Deliberately NO cache-from/cache-to here (#2502 tried type=gha, reverted): the GHA cache scope
-          # this would read from is the SAME one selfhost.yml's regular CI build writes to on every push/PR
-          # to this repo -- a publish/release path inheriting layers from that shared, more broadly-writable
-          # cache is a cache-poisoning vector into an officially published, public image. A cold build costs
-          # more time per release (infrequent, acceptable) in exchange for the release build never trusting
-          # any cache it didn't produce itself.
+          # #2502 originally shared selfhost.yml's default (unscoped) GHA cache bucket here for speed --
+          # reverted once a security scan correctly flagged it: that bucket is written to by regular CI on
+          # every push/PR to this repo, so a publish/release path reading from it is a cache-poisoning
+          # vector into an officially published, public image. `scope=release-orb` fixes this properly
+          # instead of just going cold forever: it's a completely separate GHA cache namespace that ONLY
+          # this workflow (tag pushes on `main` / `workflow_dispatch`, both already gated by "Verify release
+          # commit is on main" + the `release` environment) ever reads from or writes to -- selfhost.yml's
+          # CI never touches it. The first release still builds cold; every release after that (rc.2, a
+          # later stable, a patch) reuses the arm64/QEMU-emulated apt-get/npm-install layers from the PRIOR
+          # release build in this same isolated scope, with zero exposure to anything a regular CI run ever
+          # produced.
+          cache-from: type=gha,scope=release-orb
+          cache-to: type=gha,mode=max,scope=release-orb
 
       - name: Finalize Sentry release
         if: steps.sentry.outputs.enabled == 'true'

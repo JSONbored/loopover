@@ -3104,20 +3104,38 @@ export async function countOpenPullRequests(env: Env, fullName: string): Promise
   return Number(row?.count ?? 0);
 }
 
+/** List every repo's fullName tracked under one installation (regression fix, #2562): pullRequests/issues have
+ *  no installationId column of their own (only repoFullName, a plain string, matched by convention against
+ *  repositories.fullName -- this codebase has no Drizzle joins to lean on instead), so scoping a cross-repo
+ *  aggregate to one install means resolving its repo set FIRST, mirroring markRepositoriesRemovedFromInstallation
+ *  (same file). */
+async function listRepoFullNamesForInstallation(env: Env, installationId: number): Promise<string[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select({ fullName: repositories.fullName }).from(repositories).where(eq(repositories.installationId, installationId)).limit(20_000);
+  return rows.map((row) => row.fullName);
+}
+
 /**
  * Install-wide open-item count for one author (#2562, anti-abuse): SUM of this author's open PRs + open
- * issues across EVERY repo tracked in this install's database -- deliberately NOT scoped by repoFullName,
- * unlike countOpenPullRequests/countOpenIssues above. This is what makes the globalContributorOpenItemCap
- * catch an actor spreading low-volume spam across several gated repos in the same self-hosted install: no
- * single repo's own cap trips, but the aggregate does. Same-database aggregate only -- no cross-instance
+ * issues across every repo THIS INSTALLATION tracks. Same-database aggregate only -- no cross-instance
  * networking, mirroring the install-scoped singleton shape of global_contributor_blacklist. Case-insensitive
  * login match (mirrors loginMatches/findBlacklistEntry elsewhere in this file).
+ *
+ * Installation-scoped (regression fix): pullRequests/issues rows carry no installationId of their own, only
+ * repoFullName. The original version of this query filtered by authorLogin alone with no installation scoping
+ * at all, so on a D1 database shared by MULTIPLE installations (the hosted product's normal shape, and possible
+ * on self-host too -- the same App installed against more than one org/account) a contributor's open items on
+ * a DIFFERENT, unrelated installation would count toward (and could wrongly close a PR on) an install that
+ * never gated them on -- the exact cross-tenant leak install-scoped helpers elsewhere in this codebase (e.g.
+ * markRepositoriesRemovedFromInstallation) exist to avoid.
  */
-export async function countOpenItemsForAuthorAcrossRepos(env: Env, authorLogin: string): Promise<number> {
+export async function countOpenItemsForAuthorAcrossRepos(env: Env, installationId: number, authorLogin: string): Promise<number> {
+  const repoNames = await listRepoFullNamesForInstallation(env, installationId);
+  if (repoNames.length === 0) return 0;
   const db = getDb(env.DB);
   const [[prRow], [issueRow]] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(pullRequests).where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin))),
-    db.select({ count: sql<number>`count(*)` }).from(issues).where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin))),
+    db.select({ count: sql<number>`count(*)` }).from(pullRequests).where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin), inArray(pullRequests.repoFullName, repoNames))),
+    db.select({ count: sql<number>`count(*)` }).from(issues).where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin), inArray(issues.repoFullName, repoNames))),
   ]);
   /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   const prCount = Number(prRow?.count ?? 0);

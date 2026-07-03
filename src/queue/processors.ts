@@ -2074,7 +2074,7 @@ async function runAgentMaintenancePlanAndExecute(
   if (contributorCapMatch === undefined && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
     const globalCap = resolveGlobalContributorOpenItemCap(env);
     if (globalCap !== null) {
-      const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, pr.authorLogin);
+      const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, installationId, pr.authorLogin);
       if (installOpenCount > globalCap) {
         contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: installOpenCount, cap: globalCap, itemKind: "pull requests", scope: "install" };
       }
@@ -3981,7 +3981,7 @@ async function maybeCloseIssueOverContributorCap(
   // match here closes THIS issue directly (unlike the per-repo cap below, there is no cross-repo sibling set to
   // union/live-verify -- the aggregate count already covers every repo, so a single over-cap read is enough).
   if (globalCap !== null && !isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) {
-    const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, authorLogin);
+    const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, installationId, authorLogin);
     if (installOpenCount > globalCap) {
       const planned = planAgentMaintenanceActions({
         conclusion: "skipped",

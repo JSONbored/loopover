@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveGlobalContributorOpenItemCap } from "../../src/settings/global-contributor-cap";
-import { countOpenItemsForAuthorAcrossRepos, upsertIssueFromGitHub, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { countOpenItemsForAuthorAcrossRepos, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("resolveGlobalContributorOpenItemCap (#2562)", () => {
@@ -25,8 +25,11 @@ describe("resolveGlobalContributorOpenItemCap (#2562)", () => {
 });
 
 describe("countOpenItemsForAuthorAcrossRepos (#2562)", () => {
-  it("sums open PRs + open issues for one author across EVERY repo in the database, not just one", async () => {
+  it("sums open PRs + open issues for one author across EVERY repo THIS INSTALLATION tracks, not just one", async () => {
     const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "org/repo-b", owner: { login: "org" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-c", full_name: "org/repo-c", owner: { login: "org" } }, 123);
     await upsertPullRequestFromGitHub(env, "org/repo-a", { number: 1, title: "a1", state: "open", user: { login: "farmer99" } });
     await upsertPullRequestFromGitHub(env, "org/repo-b", { number: 2, title: "b1", state: "open", user: { login: "farmer99" } });
     await upsertIssueFromGitHub(env, "org/repo-c", { number: 3, title: "c1", state: "open", user: { login: "farmer99" } });
@@ -34,18 +37,37 @@ describe("countOpenItemsForAuthorAcrossRepos (#2562)", () => {
     await upsertPullRequestFromGitHub(env, "org/repo-a", { number: 4, title: "a2 (closed)", state: "closed", user: { login: "farmer99" } });
     await upsertPullRequestFromGitHub(env, "org/repo-a", { number: 5, title: "a3 (other author)", state: "open", user: { login: "someone-else" } });
 
-    expect(await countOpenItemsForAuthorAcrossRepos(env, "farmer99")).toBe(3);
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "farmer99")).toBe(3);
   });
 
   it("is case-insensitive on the author login (mirrors loginMatches/findBlacklistEntry elsewhere)", async () => {
     const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org/repo-a", owner: { login: "org" } }, 123);
     await upsertPullRequestFromGitHub(env, "org/repo-a", { number: 1, title: "a1", state: "open", user: { login: "Farmer99" } });
-    expect(await countOpenItemsForAuthorAcrossRepos(env, "farmer99")).toBe(1);
-    expect(await countOpenItemsForAuthorAcrossRepos(env, "FARMER99")).toBe(1);
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "farmer99")).toBe(1);
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "FARMER99")).toBe(1);
   });
 
   it("returns 0 for an author with no open items anywhere", async () => {
     const env = createTestEnv();
-    expect(await countOpenItemsForAuthorAcrossRepos(env, "nobody")).toBe(0);
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "nobody")).toBe(0);
+  });
+
+  it("returns 0 for an installation that tracks no repos yet (regression fix, gate finding: no repoNames means no rows to scope against, not an unscoped fetch-everything)", async () => {
+    const env = createTestEnv();
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 999, "farmer99")).toBe(0);
+  });
+
+  it("REGRESSION (cross-tenant leak fix): an author's open items on a DIFFERENT installation do not count toward this installation's cap, even though both installations share the same D1 database", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo-a", full_name: "org-a/repo-a", owner: { login: "org-a" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "org-b/repo-b", owner: { login: "org-b" } }, 456);
+    // farmer99 has open items on BOTH installations -- only installation 123's own item may count toward 123's cap.
+    await upsertPullRequestFromGitHub(env, "org-a/repo-a", { number: 1, title: "a1", state: "open", user: { login: "farmer99" } });
+    await upsertPullRequestFromGitHub(env, "org-b/repo-b", { number: 2, title: "b1", state: "open", user: { login: "farmer99" } });
+    await upsertIssueFromGitHub(env, "org-b/repo-b", { number: 3, title: "b2", state: "open", user: { login: "farmer99" } });
+
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 123, "farmer99")).toBe(1);
+    expect(await countOpenItemsForAuthorAcrossRepos(env, 456, "farmer99")).toBe(2);
   });
 });

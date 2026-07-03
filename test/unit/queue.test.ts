@@ -7406,6 +7406,11 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    // upsertInstallation's own `repositories:` array is NOT itself persisted to the `repositories` table (only
+    // the `installations` row) -- the real webhook pipeline registers a repo's installationId as a side effect
+    // of processing an event FOR that repo, which never happens here for repo-b (the non-webhook-triggered repo).
+    // Register it explicitly so countOpenItemsForAuthorAcrossRepos's installation-scoped lookup can find its rows.
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-a", { number: 20, title: "Farmer PR on repo-a", state: "open", user: { login: "farmer99" }, head: { sha: "fa20" }, labels: [], body: "x" });
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer PR on repo-b", state: "open", user: { login: "farmer99" }, head: { sha: "fb10" }, labels: [], body: "y" });
     await upsertRepositorySettings(env, {
@@ -7466,6 +7471,7 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer PR on repo-b", state: "open", user: { login: "farmer99" }, head: { sha: "fb10" }, labels: [], body: "y" });
     await upsertRepositorySettings(env, {
       repoFullName: "JSONbored/repo-a",
@@ -7522,6 +7528,7 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer PR on repo-b", state: "open", user: { login: "farmer99" }, head: { sha: "fb10" }, labels: [], body: "y" });
     await upsertRepositorySettings(env, {
       repoFullName: "JSONbored/repo-a",
@@ -7581,6 +7588,7 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertPullRequestFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer PR on repo-b", state: "open", user: { login: "farmer99" }, head: { sha: "fb10" }, labels: [], body: "y" });
     await upsertRepositorySettings(env, {
       repoFullName: "JSONbored/repo-a",
@@ -8458,6 +8466,7 @@ describe("queue processors", () => {
         { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } },
       ],
     });
+    await upsertRepositoryFromGitHub(env, { name: "repo-b", full_name: "JSONbored/repo-b", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertIssueFromGitHub(env, "JSONbored/repo-a", { number: 20, title: "Farmer issue on repo-a", state: "open", user: { login: "farmer99" }, labels: [], body: "x" });
     await upsertIssueFromGitHub(env, "JSONbored/repo-b", { number: 10, title: "Farmer issue on repo-b", state: "open", user: { login: "farmer99" }, labels: [], body: "y" });
     // No contributorOpenIssueCap set — only the install-wide env cap should catch this.

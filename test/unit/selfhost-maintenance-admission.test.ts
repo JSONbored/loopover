@@ -14,6 +14,7 @@ const CLEAR_SIGNALS: MaintenancePressureSignals = {
   oldestLivePendingAgeMs: null,
   maintenancePendingCount: 0,
   oldestMaintenancePendingAgeMs: null,
+  backlogConvergencePendingCount: 0,
   hostLoadAvg1PerCore: null,
 };
 
@@ -23,6 +24,7 @@ const CONFIG: MaintenanceAdmissionConfig = {
   maxLiveJobAgeMs: 120_000,
   maxMaintenancePendingCount: 15,
   maxHostLoadAvg1PerCore: 1.5,
+  maxBacklogConvergencePendingCount: 10,
   deferMs: 180_000,
   maxDeferAgeMs: 4 * 60 * 60_000,
 };
@@ -170,6 +172,43 @@ describe("evaluateMaintenanceAdmission", () => {
     );
     expect(decision.reason).toBe("live_pending_high");
   });
+
+  it("defers when the backlog-convergence lane exceeds the threshold (#selfhost-backlog-convergence)", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, backlogConvergencePendingCount: 11 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision).toEqual({ admit: false, reason: "backlog_convergence_high" });
+  });
+
+  it("admits when backlog-convergence pending is AT (not over) the threshold", () => {
+    const decision = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, backlogConvergencePendingCount: 10 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(decision.admit).toBe(true);
+  });
+
+  it("checks backlog-convergence pressure before maintenance-lane pressure, but after live pressure (priority order)", () => {
+    const beforeMaintenance = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, backlogConvergencePendingCount: 11, maintenancePendingCount: 16 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(beforeMaintenance.reason).toBe("backlog_convergence_high");
+    const afterLive = evaluateMaintenanceAdmission(
+      { ...CLEAR_SIGNALS, backlogConvergencePendingCount: 11, livePendingCount: 6 },
+      CONFIG,
+      now - 1_000,
+      now,
+    );
+    expect(afterLive.reason).toBe("live_pending_high");
+  });
 });
 
 describe("maintenanceAdmissionDeferMs", () => {
@@ -198,6 +237,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     "MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS",
     "MAINTENANCE_ADMISSION_MAX_PENDING",
     "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
+    "MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING",
     "MAINTENANCE_ADMISSION_DEFER_MS",
     "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
   ] as const;
@@ -224,6 +264,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
       maxLiveJobAgeMs: 120_000,
       maxMaintenancePendingCount: 15,
       maxHostLoadAvg1PerCore: 1.5,
+      maxBacklogConvergencePendingCount: 10,
       deferMs: 180_000,
       maxDeferAgeMs: 4 * 60 * 60_000,
     });
@@ -234,6 +275,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     process.env.MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS = "60000";
     process.env.MAINTENANCE_ADMISSION_MAX_PENDING = "30";
     process.env.MAINTENANCE_ADMISSION_MAX_HOST_LOAD = "2.25";
+    process.env.MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING = "20";
     process.env.MAINTENANCE_ADMISSION_DEFER_MS = "5000";
     process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "3600000";
     const config = resolveMaintenanceAdmissionConfig();
@@ -241,6 +283,7 @@ describe("resolveMaintenanceAdmissionConfig", () => {
     expect(config.maxLiveJobAgeMs).toBe(60_000);
     expect(config.maxMaintenancePendingCount).toBe(30);
     expect(config.maxHostLoadAvg1PerCore).toBe(2.25);
+    expect(config.maxBacklogConvergencePendingCount).toBe(20);
     expect(config.deferMs).toBe(5_000);
     expect(config.maxDeferAgeMs).toBe(3_600_000);
   });

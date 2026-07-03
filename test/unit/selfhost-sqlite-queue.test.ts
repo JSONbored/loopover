@@ -2454,6 +2454,23 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(signals.oldestLivePendingAgeMs).toBeNull();
       expect(signals.maintenancePendingCount).toBe(0);
       expect(signals.oldestMaintenancePendingAgeMs).toBeNull();
+      expect(signals.backlogConvergencePendingCount).toBe(0);
+    });
+
+    it("pressureSignals() reports the backlog-convergence lane pending count (#selfhost-backlog-convergence)", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      await q.binding.send({
+        type: "agent-regate-pr",
+        deliveryId: "backlog-convergence:owner/repo#1",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        installationId: 1,
+      } as unknown as JobMessage);
+      // A fresh-intake row (foreground_lane='fresh') must NOT count toward the backlog-convergence signal.
+      await q.binding.send(prWebhook("fresh-unrelated"));
+      const signals = q.pressureSignals();
+      expect(signals.backlogConvergencePendingCount).toBe(1);
     });
 
     it("backfills the is_maintenance flag on startup for jobs enqueued by an older version", async () => {

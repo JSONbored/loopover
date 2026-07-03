@@ -109,14 +109,35 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
     expect((await rawAll(env, "SELECT * FROM review_audit")).length).toBe(0);
   });
 
-  it("flag-OFF records NOTHING — no D1 write (byte-identical review path)", async () => {
+  it("flag-OFF records NOTHING on the CLOUD WORKER — no D1 write (byte-identical review path)", async () => {
     const env = createTestEnv(); // flag unset → OFF
+    delete env.SELFHOST_TRANSIENT_CACHE; // simulate the cloud worker (no self-host binding)
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });
     expect((await rawAll(env, "SELECT * FROM review_audit")).length).toBe(0);
     // ...and explicitly false-valued flags are OFF too.
     const envFalse = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "false" });
+    delete envFalse.SELFHOST_TRANSIENT_CACHE;
     await recordNativeGateDecision(envFalse, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "failure" });
     expect((await rawAll(envFalse, "SELECT * FROM review_audit")).length).toBe(0);
+  });
+
+  it("SELF-HOSTED instances ALWAYS record, regardless of the flag (#orb-telemetry-gate-decision-gap)", async () => {
+    // SELFHOST_TRANSIENT_CACHE present (createTestEnv's default) === a self-hosted instance. The flag stays
+    // unset/false — exactly the state of every self-hosted instance in production today (the flag has never
+    // been documented as something to enable for self-host) — yet the row must still be written, or
+    // exportOrbBatch's FLEET_QUERY INNER JOIN against pr_outcome permanently finds nothing to export.
+    const env = createTestEnv(); // flag unset → OFF, but SELFHOST_TRANSIENT_CACHE present → self-hosted
+    await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });
+    const rows = await rawAll(env, "SELECT * FROM review_audit");
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ decision: "merge", source: GITTENSORY_NATIVE_SOURCE, summary: "all_clear" });
+
+    // ...and an explicit "false" flag value doesn't override the self-host signal either.
+    const envFalse = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "false" });
+    await recordNativeGateDecision(envFalse, { project: "owner/repo", pullNumber: 8, headSha: "def456", conclusion: "failure", reasonCode: "slop_risk" });
+    const falseRows = await rawAll(envFalse, "SELECT * FROM review_audit");
+    expect(falseRows.length).toBe(1);
+    expect(falseRows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE, summary: "slop_risk" });
   });
 
   it("fails safe: a D1 write error is swallowed + logged (telemetry never breaks finalization)", async () => {
@@ -360,8 +381,9 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (GITTENSO
     expect(rows[0]!.summary).toBe("missing_linked_issue");
   });
 
-  it("FLAG-OFF (default): the finalize path records NOTHING — byte-identical review path, no native row", async () => {
+  it("FLAG-OFF (default) on the CLOUD WORKER: the finalize path records NOTHING — byte-identical review path, no native row", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() }); // flag unset → OFF
+    delete env.SELFHOST_TRANSIENT_CACHE; // simulate the cloud worker (no self-host binding)
     await seedGateEnabledRepo(env);
     await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: parityMinerSnapshot("contributor") }, 60_000);
     stubFinalizeFetch("contributor");
@@ -371,5 +393,22 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (GITTENSO
       vi.unstubAllGlobals();
     }
     expect(await nativeRows(env)).toEqual([]);
+  });
+
+  it("FLAG-OFF (default) on a SELF-HOSTED instance: the finalize path STILL records (fleet telemetry gap fix)", async () => {
+    // SELFHOST_TRANSIENT_CACHE present (createTestEnv's default) === a self-hosted instance; the flag stays
+    // unset, matching every self-hosted instance in production. exportOrbBatch needs this row to exist.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedGateEnabledRepo(env);
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: parityMinerSnapshot("contributor") }, 60_000);
+    stubFinalizeFetch("contributor");
+    try {
+      await processJob(env, prWebhook("parity-finalize-selfhost", "contributor"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const rows = await nativeRows(env);
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE, summary: "missing_linked_issue" });
   });
 });

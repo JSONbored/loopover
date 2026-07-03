@@ -6,13 +6,20 @@
 // other half: it RECORDS the gittensory-native gate decision into the `review_audit` audit-source table
 // (migration 0049) so the harness has data to read, and exposes the readiness rollup the endpoint serves.
 //
-// SHADOW CONTRACT (must hold under every path):
+// SHADOW CONTRACT on the CLOUD WORKER (must hold under every path there):
 //   • flag-OFF (default) → recordNativeGateDecision is an immediate no-op (NO D1 write) and the parity endpoint
 //     404s. The review path is BYTE-IDENTICAL to today: the recorder is the only new statement on the gate
 //     path and it returns before touching D1 when off.
 //   • flag-ON → SHADOW mode: the recorder writes ONE row per finalized gate decision with
 //     source='gittensory-native'. It records ONLY; it NEVER changes what the gate does. The write is
 //     best-effort (a failure is swallowed) so telemetry can never break finalization.
+//
+// SELF-HOSTED INSTANCES ALWAYS RECORD, regardless of the flag (#orb-telemetry-gate-decision-gap). The flag
+// exists to guard write volume/cost on the SHARED Cloudflare D1 for a now-historical pre-cutover comparison
+// use case -- a self-hosted instance's review_audit is its own local SQLite/Postgres, so there is no shared-
+// resource concern, and this is the ONLY writer of gate_decision rows: exportOrbBatch's fleet-telemetry query
+// (src/selfhost/orb-collector.ts) INNER JOINs gate_decision to pr_outcome, so without this row every self-host
+// export silently returns zero events forever, even though pr_outcome rows (written unconditionally) exist.
 //
 // WHAT THIS RECORDS vs WHAT IS DEFERRED: this writes the gittensory-native (SHADOW) side only. The actual
 // cross-system COMPARISON needs reviewbot's authoritative rows (source='reviewbot') in the SAME table — those
@@ -22,6 +29,7 @@
 
 import { computeGateParity, isParityCutoverReady, type GateAction, type GateParityRow } from "./parity";
 import type { GateCheckConclusion } from "../rules/advisory";
+import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { errorMessage, nowIso } from "../utils/json";
 
 /** True when the shadow-parity audit is enabled. Flag-OFF (default) → recordNativeGateDecision is a no-op and
@@ -69,27 +77,36 @@ export function nativeGateActionFromConclusion(conclusion: GateCheckConclusion):
   }
 }
 
-/** The minimal env shape the recorder needs (the D1 binding). */
-type ParityRecorderEnv = { DB: D1Database; GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined };
+/** The minimal env shape the recorder needs (the D1/local-DB binding, the flag, and the self-host signal). */
+type ParityRecorderEnv = {
+  DB: D1Database;
+  GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined;
+  SELFHOST_TRANSIENT_CACHE?: NonNullable<Env["SELFHOST_TRANSIENT_CACHE"]>;
+};
 
 /**
- * SHADOW-record one gittensory-native gate decision into `review_audit` (source='gittensory-native').
+ * Record one gittensory-native gate decision into `review_audit` (source='gittensory-native').
  *
- * flag-OFF (default) → returns immediately, NO D1 write (the review path is byte-identical). flag-ON → writes
- * ONE row keyed `gate:<source>:<project>#<pr>@<sha>` with decision/head_sha/summary so computeGateParity can
- * self-join it against the authoritative source on (project, target_id, head_sha). RECORD-ONLY — it never
- * changes the gate. Best-effort: a write failure is swallowed (telemetry must not break finalization). A
+ * On the cloud worker: flag-OFF (default) → returns immediately, NO D1 write (the review path is byte-
+ * identical); flag-ON → SHADOW-records for the pre-cutover parity comparison. On a self-hosted instance, this
+ * ALWAYS records regardless of the flag (see the module header) — it's the instance's own local DB, and
+ * exportOrbBatch's fleet-telemetry export depends on this data existing.
+ *
+ * Writes ONE row keyed `gate:<source>:<project>#<pr>@<sha>` with decision/head_sha/summary. RECORD-ONLY — it
+ * never changes the gate. Best-effort: a write failure is swallowed (telemetry must not break finalization). A
  * conclusion with no comparable action (neutral/skipped) records nothing.
  *
  * Caller passes the FINALIZED gate conclusion + the head_sha it was evaluated on. The caller should also guard
- * on {@link isParityAuditEnabled} for the byte-identical-when-off contract, but this function re-checks the
- * flag so it is safe to call unconditionally.
+ * on {@link isParityAuditEnabled} for the cloud-worker byte-identical-when-off contract, but this function
+ * re-checks both the flag and the self-host signal so it is safe to call unconditionally.
  */
 export async function recordNativeGateDecision(
   env: ParityRecorderEnv,
   input: { project: string; pullNumber: number; headSha: string | null | undefined; conclusion: GateCheckConclusion; reasonCode?: string | null | undefined },
 ): Promise<void> {
-  if (!isParityAuditEnabled(env)) return; // flag-OFF: no write, byte-identical review path
+  // Self-hosted instances always record (their own local DB; exportOrbBatch needs this data). The cloud
+  // worker keeps the exact flag-gated, byte-identical-when-off contract.
+  if (!isSelfHostedReviewRuntime(env) && !isParityAuditEnabled(env)) return;
   const action = nativeGateActionFromConclusion(input.conclusion);
   if (action === null) return; // not a comparable decision (neutral/skipped) → nothing to record
   if (!input.headSha) return; // parity REQUIRES head_sha to pair a decision to a commit; no sha → not comparable

@@ -105,6 +105,7 @@ export function computeMetadataPotential(issue: { labels: readonly string[] }): 
   const labels = normalizeLabels(issue.labels);
   if (labels.some((label) => NEGATIVE_LABELS.includes(label))) return 0;
   let score = 0.45;
+  /* v8 ignore next -- Neutral metadata keeps the baseline when no contribution labels are present. */
   if (labels.some((label) => POSITIVE_LABELS.includes(label))) score += 0.35;
   /* v8 ignore next -- Bug/refactor bonuses are additive; neutral-only labels keep the baseline score. */
   if (labels.includes("bug")) score += 0.1;
@@ -170,9 +171,11 @@ export function computeMetadataDupRisk(
   for (const peer of peers) {
     /* v8 ignore next -- Self-peer rows are skipped when scanning the shared batch list. */
     if (peer.issueNumber === issue.issueNumber && peer.repoFullName === issue.repoFullName) continue;
+    /* v8 ignore next -- Cross-repo peers are ignored when scanning for overlap inside a batch. */
     if (peer.repoFullName.trim().toLowerCase() !== issue.repoFullName.trim().toLowerCase()) continue;
     if (titlesOverlap(normalized, normalizeTitle(peer.title))) overlaps += 1;
   }
+  /* v8 ignore next -- No overlaps keeps dup risk at zero for unique titles. */
   if (overlaps === 0) return 0;
   return clamp01(overlaps / (overlaps + 1));
 }

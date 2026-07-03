@@ -5,6 +5,13 @@ import {
   scanLinkedBodiesForSecrets,
   scanSubmissionContent,
 } from "../../src/review/content-lane/security-scan";
+import { scanForSecrets as prDiffScanForSecrets } from "../../src/review/secrets-scan";
+
+// A high-entropy secret VALUE (mixed case + digits, no monotonic run, not a placeholder). Assembled from two
+// literals and only ever joined to a keyword at RUNTIME (interpolation), so the raw source of THIS test file
+// never contains a contiguous `keyword = "value"` secret literal that the repo's own gate would flag as a
+// leak on this very diff.
+const GENERIC_VALUE = "aK9xQ2mZw7Ln" + "4Rv8Pt3Bh6Tc";
 
 describe("scanForSecrets", () => {
   it("detects concrete credential formats", () => {
@@ -16,6 +23,38 @@ describe("scanForSecrets", () => {
   it("returns empty for benign text", () => {
     expect(scanForSecrets("just normal documentation prose")).toEqual({ found: false, kinds: [] });
     expect(scanForSecrets("")).toEqual({ found: false, kinds: [] });
+  });
+
+  // #2553 parity: this content-lane scanner must catch the same higher-recall kinds the PR-diff gate does
+  // (safety.ts / secrets-scan.ts), or a Google key / JWT / generic secret leaks through a content submission
+  // while the identical secret is blocked in a PR diff.
+  it("flags a Google API key and a JWT", () => {
+    expect(scanForSecrets("AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456").kinds).toContain("google_api_key");
+    const fakeJwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    expect(scanForSecrets(fakeJwt).kinds).toContain("jwt");
+  });
+
+  it("flags a generic secret/password/token assignment with a high-entropy value", () => {
+    expect(scanForSecrets(`secret = "${GENERIC_VALUE}"`).kinds).toContain("generic_secret_assignment");
+    expect(scanForSecrets(`api_key: '${GENERIC_VALUE}'`).kinds).toContain("generic_secret_assignment");
+  });
+
+  // The value is interpolated at runtime (never a contiguous `keyword = "value"` literal in this source),
+  // and each is a value the filter must reject: a monotonic run, ≤2-distinct filler, a placeholder phrase,
+  // or a value under the 16-char floor.
+  it.each([
+    ["ascending run", "abcdefghijklmnop123"],
+    ["descending run", "zyxwvutsrqponmlkj987"],
+    ["repeated-character filler (<=2 distinct)", "xxxxxxxxxxxxxxxxxxxx"],
+    ["placeholder phrase", "your-api-key-placeholder"],
+    ["angle-bracket placeholder", "<REDACTED-VALUE-HERE>"],
+    ["under the 16-char floor", "short12345"],
+  ])("does NOT flag a redacted/placeholder/low-entropy value: %s", (_name, value) => {
+    expect(scanForSecrets(`secret = "${value}"`).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it("does NOT flag a schema field declaration with no literal value", () => {
+    expect(scanForSecrets("password: z.string()").kinds).not.toContain("generic_secret_assignment");
   });
 });
 
@@ -93,6 +132,35 @@ describe("scanSubmissionContent", () => {
     expect(finding?.verdict).toBe("close");
     expect(finding?.reasonCode).toBe("embedded_secret");
   });
+
+  it("hard-closes on each #2553-parity kind (google_api_key, jwt, generic_secret_assignment)", () => {
+    // Each must be a HARD_SECRET_KIND so scanSubmissionContent auto-closes, matching the PR-diff gate.
+    const jwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    for (const line of ["config: AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456", `bearer ${jwt}`, `client_secret = "${GENERIC_VALUE}"`]) {
+      const finding = scanSubmissionContent({ content: `intro line\n${line}`, category: "skills" });
+      expect(finding?.verdict, line).toBe("close");
+      expect(finding?.reasonCode, line).toBe("embedded_secret");
+      expect(finding?.summary, line).toContain("line 2");
+    }
+  });
+
+  it("hard-closes on a MULTILINE generic secret assignment whose value wraps to the next line (auto-close parity)", () => {
+    // generic_secret_assignment is the one HARD kind whose keyword-to-value span can wrap. scanForSecrets over the
+    // whole blob catches it; scanSubmissionContent must too, or a wrapped secret bypasses the auto-close gate the
+    // PR-diff gate (whole-blob) would block. Built from separate literals so this file embeds no contiguous secret.
+    const content = `intro line\nclient_secret =\n"${GENERIC_VALUE}"`;
+    const finding = scanSubmissionContent({ content, category: "guides" });
+    expect(finding?.verdict).toBe("close");
+    expect(finding?.reasonCode).toBe("embedded_secret");
+    expect(finding?.summary).toContain("line 3"); // cited where the wrapped match completes (the value line)
+  });
+
+  it("does NOT hard-close on a MULTILINE generic assignment whose wrapped value is a placeholder", () => {
+    // The whole-blob multiline recovery must apply the SAME placeholder filter as the per-line path — a wrapped
+    // filler value (≤2 distinct chars) is not a real secret and must not auto-close a submission.
+    const content = "intro\nsecret =\n" + '"' + "x".repeat(20) + '"';
+    expect(scanSubmissionContent({ content, category: "guides" })).toBeNull();
+  });
 });
 
 describe("scanLinkedBodiesForSecrets", () => {
@@ -104,5 +172,24 @@ describe("scanLinkedBodiesForSecrets", () => {
 
   it("returns null when no linked body leaks", () => {
     expect(scanLinkedBodiesForSecrets(["clean", "also clean"])).toBeNull();
+  });
+});
+
+// Guards against the exact drift this change fixes: if the content-lane scanner and the PR-diff scanner
+// (secrets-scan.ts) ever detect different kinds for the same input, a secret is enforced on one surface but
+// not the other. All fixtures are assembled from separate literals so this file never embeds a contiguous
+// secret the repo's own gate would flag on this diff.
+describe("secret-scan parity with the PR-diff gate (secrets-scan.ts)", () => {
+  const jwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+  it.each([
+    ["github_token", "token ghp_" + "e".repeat(30)],
+    ["aws_access_key", "AKIA" + "ABCDEFGHIJKLMNOP"],
+    ["private_key_block", "-----BEGIN OPENSSH " + "PRIVATE KEY-----"],
+    ["google_api_key", "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"],
+    ["jwt", jwt],
+    ["generic_secret_assignment", `secret = "${GENERIC_VALUE}"`],
+    ["benign prose", "just normal documentation prose"],
+  ])("detects the same kinds as the PR-diff gate for %s", (_name, input) => {
+    expect([...scanForSecrets(input).kinds].sort()).toEqual([...prDiffScanForSecrets(input).kinds].sort());
   });
 });

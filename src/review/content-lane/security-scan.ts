@@ -19,9 +19,63 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: "private_key_block", re: /-----BEGIN(?: RSA| EC| OPENSSH| PGP| DSA)? PRIVATE KEY-----/ },
   { name: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/ },
   { name: "slack_token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { name: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
   { name: "seed_or_mnemonic", re: /\b(?:seed phrase|mnemonic)\b/i },
   { name: "bittensor_key", re: /\b(?:hot|cold)key\b\s*[:=]/i },
 ];
+
+// Deliberately NOT in SECRET_PATTERNS above: unlike the format-specific patterns (a real GitHub token/AWS key
+// ALWAYS matches its exact character format, so a bare .test() is precise enough), a keyword-plus-quoted-value
+// SHAPE also matches plenty of non-secrets -- a Zod schema field (`password: z.string()`), a TypeScript type
+// declaration, or a placeholder value ("xxx", "your-api-key-here", "<REDACTED>"). Captured so each match's
+// VALUE can be checked against isPlaceholderSecretValue before counting as a hit; the value itself is never
+// returned from this module (only the kind name), preserving the existing never-echo-the-secret guarantee.
+const GENERIC_SECRET_ASSIGNMENT_PATTERN =
+  /(?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']([A-Za-z0-9+/=_-]{16,})["']/gi;
+
+const PLACEHOLDER_VALUE_PATTERN = /placeholder|change[_-]?me|your[_-]|<[^>]*>|\bexample\b|redacted|dummy|\bsample\b|\btodo\b|\bfixme\b|\binsert\b|replace[_-]?me|\bfake\b/i;
+
+// A string with NO repeated characters (e.g. "abcdefghijklmnop123") has HIGH Shannon entropy by raw
+// character-frequency counting, but is obviously not a real secret -- entropy alone only measures frequency,
+// not ORDER, so a keyboard-sequential/alphabetical run slips past a pure distinct-character-count check. Detect
+// the longest run of consecutive ascending or descending character codes (e.g. "abcdefg" or "9876543") and
+// treat a long one as a human-constructed test value, not a randomly generated credential -- real API
+// keys/tokens essentially never contain a 6+ character monotonic run.
+const MIN_SEQUENTIAL_RUN_LENGTH = 6;
+function hasLongSequentialRun(value: string): boolean {
+  let ascendingRun = 1;
+  let descendingRun = 1;
+  for (let i = 1; i < value.length; i += 1) {
+    const diff = value.charCodeAt(i) - value.charCodeAt(i - 1);
+    ascendingRun = diff === 1 ? ascendingRun + 1 : 1;
+    descendingRun = diff === -1 ? descendingRun + 1 : 1;
+    if (ascendingRun >= MIN_SEQUENTIAL_RUN_LENGTH || descendingRun >= MIN_SEQUENTIAL_RUN_LENGTH) return true;
+  }
+  return false;
+}
+
+/** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
+ *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), or a long monotonic character-code run
+ *  (e.g. "abcdefghijklmnop123") — real high-entropy secrets never look like any of these. */
+function isPlaceholderSecretValue(value: string): boolean {
+  if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
+  if (new Set(value.toLowerCase()).size <= 2) return true;
+  return hasLongSequentialRun(value);
+}
+
+function hasGenericSecretAssignment(text: string): boolean {
+  // No zero-length-match / lastIndex-stall guard needed: the pattern's captured value alone requires 16+
+  // characters, so every match is well over 16 characters long and lastIndex always advances past match.index.
+  GENERIC_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = GENERIC_SECRET_ASSIGNMENT_PATTERN.exec(text)) !== null) {
+    // The pattern's sole capturing group is mandatory (not `?`/`*`-wrapped), so it is always present
+    // whenever the overall match succeeds -- non-null by construction, not a runtime branch.
+    if (!isPlaceholderSecretValue(match[1]!)) return true;
+  }
+  return false;
+}
 
 export interface SecretScanResult {
   found: boolean;
@@ -32,6 +86,7 @@ export interface SecretScanResult {
 export function scanForSecrets(text: string): SecretScanResult {
   if (!text) return { found: false, kinds: [] };
   const kinds = SECRET_PATTERNS.filter((pattern) => pattern.re.test(text)).map((pattern) => pattern.name);
+  if (hasGenericSecretAssignment(text)) kinds.push("generic_secret_assignment");
   return { found: kinds.length > 0, kinds };
 }
 
@@ -48,8 +103,21 @@ export interface SecurityFinding {
 export const EXECUTABLE_CATEGORIES = new Set(["skills", "agents", "commands", "hooks", "mcp", "statuslines"]);
 
 // Concrete credential formats only — NOT the weak heuristics (seed phrase / hot|coldkey) that would
-// false-positive on legitimate Bittensor content.
-const HARD_SECRET_KINDS = new Set(["github_token", "github_pat", "private_key_block", "aws_access_key", "slack_token"]);
+// false-positive on legitimate Bittensor content. #2553: google_api_key/jwt are as format-precise as the
+// original five (near-zero false-positive risk), and generic_secret_assignment already excludes
+// placeholder/type-declaration/schema-shaped matches (see isPlaceholderSecretValue) before the kind is ever
+// produced, so all three are safe unconditional hard blockers — keeping this gate in parity with the PR-diff
+// gate it mirrors (safety.ts's HARD_SECRET_KINDS / secrets-scan.ts).
+const HARD_SECRET_KINDS = new Set([
+  "github_token",
+  "github_pat",
+  "private_key_block",
+  "aws_access_key",
+  "slack_token",
+  "google_api_key",
+  "jwt",
+  "generic_secret_assignment",
+]);
 
 // A literal pipe-to-shell install. Common in legitimate installers (uv/rustup/deno/nvm), so this is a
 // MANUAL flag for a human, never an auto-close.
@@ -64,10 +132,25 @@ function firstLineMatching(text: string, re: RegExp): { n: number; text: string 
 }
 
 function firstSecretLine(text: string): { n: number; kinds: string[] } | null {
+  // Per-line scan first — O(n): catches every LINE-CONTAINED hard kind (github_token, jwt, …) and cites its
+  // exact line. lines[i] is defined for an in-range index (split never yields holes) — assert past
+  // noUncheckedIndexedAccess.
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    const hits = scanForSecrets(lines[i] ?? "").kinds.filter((k) => HARD_SECRET_KINDS.has(k));
+    const hits = scanForSecrets(lines[i]!).kinds.filter((k) => HARD_SECRET_KINDS.has(k));
     if (hits.length) return { n: i + 1, kinds: hits };
+  }
+  // The only HARD kind whose keyword-to-value span can WRAP across lines is generic_secret_assignment, so the
+  // per-line scan above can miss it (`client_secret =\n"…"`). Recover it with ONE whole-blob pass over just that
+  // detector — LINEAR, not the quadratic prefix-rescan — citing the line where the non-placeholder match
+  // COMPLETES, so scanSubmissionContent's auto-close stays in parity with the whole-blob PR-diff gate.
+  GENERIC_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = GENERIC_SECRET_ASSIGNMENT_PATTERN.exec(text)) !== null) {
+    if (!isPlaceholderSecretValue(match[1]!)) {
+      const n = text.slice(0, match.index + match[0].length).split(/\r?\n/).length;
+      return { n, kinds: ["generic_secret_assignment"] };
+    }
   }
   return null;
 }

@@ -636,7 +636,7 @@ services:
   # app of CPU with no limits set (the default below) -- confirmed in production: 3 uncapped runner
   # containers on an 8-vCPU box left the app starved under load. See docker-compose.override.yml.example
   # for a proven CPU-priority pattern (relative cpu_shares + a per-container cpus ceiling) before scaling
-  # this up, and ./scripts/docker-prune.sh for reclaiming the disk space CI builds accumulate.
+  # this up, and ./scripts/selfhost-docker-prune.sh for reclaiming the disk space CI builds accumulate.
   # One-shot bootstrap for the runner's TMPDIR (below): guarantees /tmp/runner/tmp exists (and is
   # world-writable, matching real /tmp's mode -- the runner image's runtime user isn't guaranteed to be
   # root) on the runner-work volume BEFORE the runner container starts. A fresh named volume has nothing

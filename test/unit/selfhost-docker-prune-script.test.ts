@@ -29,9 +29,9 @@ function stubDocker(root: string): { logFile: string; binDir: string } {
   return { logFile, binDir };
 }
 
-function runPruneScript(root: string, env: Record<string, string> = {}): string {
+function runPruneScript(root: string, env: Record<string, string> = {}, args: string[] = []): string {
   const { logFile, binDir } = stubDocker(root);
-  execFileSync("sh", ["scripts/selfhost-docker-prune.sh"], {
+  execFileSync("sh", ["scripts/selfhost-docker-prune.sh", ...args], {
     cwd: process.cwd(),
     env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, ...env },
   });
@@ -43,13 +43,14 @@ afterEach(() => {
 });
 
 describe("selfhost-docker-prune.sh", () => {
-  it("prunes images and build cache with the default 7-day (168h) age floor, never a blind full wipe", () => {
+  it("prunes stopped containers, images, and build cache with the default 7-day (168h) age floor, never a blind full wipe", () => {
     const calls = runPruneScript(tmpRoot());
 
+    expect(calls).toContain("container prune -f --filter until=168h");
     expect(calls).toContain("image prune -af --filter until=168h");
     expect(calls).toContain("builder prune -af --filter until=168h");
-    // Both prune calls must always carry an `until=` filter -- a bare `docker image prune -af` (no filter)
-    // would also remove something built moments ago, defeating the rollback-safety window.
+    // Every prune call must always carry an `until=` filter -- a bare `docker image prune -af` (no filter)
+    // would also remove something built/started moments ago, defeating the rollback-safety window.
     for (const line of calls.trim().split("\n")) {
       if (line.includes("prune")) expect(line).toMatch(/--filter until=\d+h/);
     }
@@ -58,6 +59,7 @@ describe("selfhost-docker-prune.sh", () => {
   it("honors GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS to widen or narrow the safety window", () => {
     const calls = runPruneScript(tmpRoot(), { GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS: "24" });
 
+    expect(calls).toContain("container prune -f --filter until=24h");
     expect(calls).toContain("image prune -af --filter until=24h");
     expect(calls).toContain("builder prune -af --filter until=24h");
     expect(calls).not.toContain("168h");
@@ -67,9 +69,47 @@ describe("selfhost-docker-prune.sh", () => {
     const calls = runPruneScript(tmpRoot());
     const invocations = calls.trim().split("\n");
 
-    // "system df" (no prune flags) must appear before AND after the two prune calls, so an operator watching
-    // logs can see what was actually reclaimed.
+    // "system df" (no prune flags) must appear before AND after the three prune calls, so an operator
+    // watching logs can see what was actually reclaimed.
     const dfCalls = invocations.filter((line) => line === "system df");
     expect(dfCalls).toHaveLength(2);
+  });
+
+  it("--dry-run reports usage but issues no destructive prune call, and volumes are never touched by either mode", () => {
+    const calls = runPruneScript(tmpRoot(), {}, ["--dry-run"]);
+    const invocations = calls.trim().split("\n");
+
+    // Only the read-only "before" system df call -- no "after" (nothing was pruned to report on), and no
+    // container/image/builder prune invocation reached the real `docker` binary at all.
+    expect(invocations.filter((line) => line === "system df")).toHaveLength(1);
+    expect(calls).not.toMatch(/prune -f\b/);
+    expect(calls).not.toMatch(/prune -af\b/);
+    // Neither mode ever names a volume subcommand -- this script cannot delete application/backup/runner state.
+    expect(calls).not.toMatch(/\bvolume\b/);
+  });
+
+  it("--dry-run still honors GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS in its preview output", () => {
+    const root = tmpRoot();
+    const { binDir } = stubDocker(root);
+    const stdout = execFileSync("sh", ["scripts/selfhost-docker-prune.sh", "--dry-run"], {
+      cwd: process.cwd(),
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS: "48" },
+    }).toString();
+
+    expect(stdout).toContain("until=48h");
+    expect(stdout).not.toContain("until=168h");
+  });
+
+  it("rejects an unrecognized argument instead of silently ignoring it", () => {
+    const root = tmpRoot();
+    const { binDir } = stubDocker(root);
+
+    expect(() =>
+      execFileSync("sh", ["scripts/selfhost-docker-prune.sh", "--nonsense"], {
+        cwd: process.cwd(),
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        stdio: ["ignore", "ignore", "pipe"],
+      }),
+    ).toThrow();
   });
 });

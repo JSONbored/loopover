@@ -752,6 +752,47 @@ describe("createPgQueue (durable #977)", () => {
     }
   });
 
+  it("PG connection resilience: a still-dead connection on the rate-limit-defer UPDATE doesn't crash the pump loop (other claimable jobs still run)", async () => {
+    // Regression: an uncaught throw here used to escape processOne() entirely and land in pump()'s own
+    // catch (see pump()'s "selfhost_queue_pump_crashed"), which ALSO breaks pump()'s `while (await
+    // processOne())` loop -- so a SECOND already-claimable job enqueued in the same batch would be left
+    // unprocessed until the next kick, not just this one job's own retry being deferred.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const oldJitter = process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+    process.env.QUEUE_RATE_LIMIT_JITTER_MS = "0";
+    try {
+      const m = makePool();
+      m.setRateLimitRows([{ admission_key: "installation:123", repo_full_name: "owner/other-repo", remaining: "120", reset_at: "2026-06-24T12:10:00.000Z", observed_at: "2026-06-24T11:59:30.000Z" }]);
+      m.enqueueJob("background", {
+        type: "agent-regate-pr",
+        deliveryId: "sweep:owner/repo#7",
+        repoFullName: "owner/repo",
+        prNumber: 7,
+        installationId: 123,
+      });
+      m.enqueueJob("second", { type: "review" });
+      const original = (m.fn as unknown as ReturnType<typeof vi.fn>).getMockImplementation() as (sql: unknown, params?: unknown[]) => Promise<unknown>;
+      (m.fn as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        if (String(sql).includes("SET status='pending', run_after=GREATEST")) {
+          const err = new Error("connection terminated") as Error & { code: string };
+          err.code = "ECONNRESET";
+          throw err;
+        }
+        return original(sql, params);
+      });
+      const seen: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void seen.push(typeOf(j)));
+      await q.drain();
+      // The second job must still be processed in the same drain() call, proving the pump() while-loop
+      // continued past the first job's connection-loss instead of throwing out of it entirely.
+      expect(seen).toEqual(["review"]);
+    } finally {
+      if (oldJitter === undefined) delete process.env.QUEUE_RATE_LIMIT_JITTER_MS;
+      else process.env.QUEUE_RATE_LIMIT_JITTER_MS = oldJitter;
+    }
+  });
+
   it("pre-yields public-token GitHub-budget background jobs without installation ids", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));

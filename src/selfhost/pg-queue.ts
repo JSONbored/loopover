@@ -2,7 +2,7 @@
 // (persist → restart re-claims, backoff retries, dead-letter) but uses `FOR UPDATE SKIP LOCKED` so multiple
 // app instances sharing one Postgres can claim jobs concurrently without double-processing. size()/deadCount()
 // are async (the metrics gauges accept async samplers).
-import type { Pool } from "pg";
+import type { Pool, QueryResult } from "pg";
 import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
@@ -94,6 +94,32 @@ async function retryPoolQuery<T>(fn: () => Promise<T>, retries = 3, delayMs = 50
     }
   }
   throw lastErr;
+}
+
+/** Run a retryPoolQuery-wrapped update that's safe to skip on a still-dead connection: returns null
+ *  (caller should leave the job in 'processing' for reclaim) instead of throwing. An uncaught throw here
+ *  would escape processOne() entirely and crash the surrounding pump() loop (see pump()'s catch), stopping
+ *  it from processing OTHER already-claimable jobs too -- not just deferring this one job's own retry. */
+async function retryPoolUpdateOrLeaveForReclaim(
+  fn: () => Promise<QueryResult>,
+  jobId: string,
+  event: string,
+): Promise<QueryResult | null> {
+  try {
+    return await retryPoolQuery(fn);
+  } catch (err) {
+    if (!isPgConnectionError(err)) throw err;
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event,
+        id: jobId,
+        code: (err as Record<string, unknown>)["code"],
+        message: "PG connection terminated; reclaim mechanism will retry",
+      }),
+    );
+    return null;
+  }
 }
 import { hostLoadAvg1PerCore } from "./host-pressure";
 import {
@@ -593,13 +619,16 @@ export function createPgQueue(
               `${job.job_key ?? ""}:${job.id}:${job.payload}`,
             );
             const lastError = `github rate-limit ${rateLimitAdmission.kind} admission`;
-            const update = await retryPoolQuery(() =>
-              pool.query(
-                `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
-                [retryAfter, lastError, job.id],
-              ),
+            const update = await retryPoolUpdateOrLeaveForReclaim(
+              () =>
+                pool.query(
+                  `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                  [retryAfter, lastError, job.id],
+                ),
+              job.id,
+              "selfhost_queue_pg_connection_lost_on_rate_limit_defer",
             );
-            if (update.rowCount) {
+            if (update?.rowCount) {
               await recordQueueMetric("gittensory_jobs_rate_limit_deferred_total");
               incr("gittensory_jobs_rate_limit_admission_deferred_total", rateLimitMetric.labels);
               console.warn(
@@ -633,13 +662,16 @@ export function createPgQueue(
                 maintenanceAdmissionConfig,
                 `${job.job_key ?? ""}:${job.id}:${job.payload}`,
               );
-              const update = await retryPoolQuery(() =>
-                pool.query(
-                  `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
-                  [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
-                ),
+              const update = await retryPoolUpdateOrLeaveForReclaim(
+                () =>
+                  pool.query(
+                    `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                    [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
+                  ),
+                job.id,
+                "selfhost_queue_pg_connection_lost_on_maintenance_defer",
               );
-              if (update.rowCount) {
+              if (update?.rowCount) {
                 await recordQueueMetric("gittensory_jobs_maintenance_admission_deferred_total");
                 incr("gittensory_jobs_maintenance_admission_deferred_by_reason_total", {
                   reason: decision.reason,

@@ -28,6 +28,10 @@ The package also includes an append-only governor decision ledger: `initGovernor
 persist structured allow/deny/throttle/kill-switch outcomes in local SQLite for contributor audit. Insert-only —
 no enforcement wiring yet. (#2328)
 
+The package also includes a manage-phase status renderer: `gittensory-miner status` reads the local portfolio
+queue (`pr:<number>` identifiers) plus `manage_pr_update` rows from the event ledger and prints CI/gate/outcome
+columns. Pass `--json` for machine-readable output. Read-only — no network and no writes. (#2325)
+
 ## Install
 
 From a local checkout:

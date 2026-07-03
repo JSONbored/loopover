@@ -48,6 +48,24 @@ if (cliArgs[0] === "hooks" && cliArgs[1] === "check") {
   process.exit(exitCode);
 }
 
+if (cliArgs[0] === "status") {
+  const { listQueue } = await import("../lib/portfolio-queue.js");
+  const { readEvents } = await import("../lib/event-ledger.js");
+  const { parseManageStatusArgs, runManageStatus } = await import("../lib/manage-status.js");
+  try {
+    const options = parseManageStatusArgs(cliArgs.slice(1));
+    const result = runManageStatus({ listQueue, readEvents }, options);
+    process.stdout.write(result.output);
+    await awaitOpportunisticUpdateCheck(updateCheck);
+    process.exit(result.exitCode);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "manage_status_failed";
+    console.error(`status failed: ${message}`);
+    await awaitOpportunisticUpdateCheck(updateCheck);
+    process.exit(1);
+  }
+}
+
 const exitCode = runCli(cliArgs, { packageName });
 await awaitOpportunisticUpdateCheck(updateCheck);
 process.exit(exitCode);

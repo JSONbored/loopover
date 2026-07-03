@@ -64,6 +64,7 @@ describe("gittensory-miner CLI helpers", () => {
     const text = log.mock.calls[0]?.[0];
     expect(text).toContain("gittensory-miner --help");
     expect(text).toContain("gittensory-miner version");
+    expect(text).toContain("gittensory-miner status");
     expect(text).toContain("--no-update-check");
   });
 

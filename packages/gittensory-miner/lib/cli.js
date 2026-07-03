@@ -14,6 +14,7 @@ export function printHelp(input) {
       "  gittensory-miner --version",
       "  gittensory-miner help",
       "  gittensory-miner version",
+      "  gittensory-miner status [--json]",
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",
       "",
       "Options:",

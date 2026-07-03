@@ -55,6 +55,16 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(fakeKey).kinds).toContain("google_api_key");
   });
 
+  it("flags a GitLab access token", () => {
+    const fakeToken = "glpat-" + "aBcDeFgHiJkLmNoPqRsT";
+    expect(scanForSecrets(fakeToken).kinds).toContain("gitlab_token");
+  });
+
+  it("flags an npm token", () => {
+    const fakeToken = "npm_" + "a".repeat(36);
+    expect(scanForSecrets(fakeToken).kinds).toContain("npm_token");
+  });
+
   it("flags a JWT", () => {
     const fakeJwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     expect(scanForSecrets(fakeJwt).kinds).toContain("jwt");

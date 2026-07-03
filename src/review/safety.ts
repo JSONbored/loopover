@@ -29,6 +29,8 @@ const HARD_SECRET_KINDS = new Set([
   "aws_access_key",
   "slack_token",
   "google_api_key",
+  "gitlab_token",
+  "npm_token",
   "jwt",
   "generic_secret_assignment",
 ]);

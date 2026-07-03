@@ -20,6 +20,8 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/ },
   { name: "slack_token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
   { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { name: "gitlab_token", re: /\bglpat-[0-9A-Za-z_-]{20}\b/ },
+  { name: "npm_token", re: /\bnpm_[A-Za-z0-9]{36}\b/ },
   { name: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
   { name: "seed_or_mnemonic", re: /\b(?:seed phrase|mnemonic)\b/i },
   { name: "bittensor_key", re: /\b(?:hot|cold)key\b\s*[:=]/i },

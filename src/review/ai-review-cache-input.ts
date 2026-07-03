@@ -107,7 +107,14 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
     aiReviewCloseConfidence: input.aiReviewCloseConfidence ?? null,
     aiReviewCombine: input.aiReviewCombine ?? null,
     aiReviewOnMerge: input.aiReviewOnMerge ?? null,
-    aiReviewReviewers: (input.aiReviewReviewers ?? []).map((reviewer) => ({ model: reviewer.model, fallback: reviewer.fallback ?? null })),
+    // Nullish (no repo override) and an explicit [] are DIFFERENT effective plans (src/services/ai-review.ts's
+    // resolveEffectiveAiReviewPlan falls through to the built-in default reviewers for nullish but treats an
+    // explicit [] as a real, empty override) -- collapsing both to the same fingerprint would let a same-SHA
+    // cache hit replay a verdict produced under a different effective reviewer plan.
+    aiReviewReviewers:
+      input.aiReviewReviewers == null
+        ? null
+        : input.aiReviewReviewers.map((reviewer) => ({ model: reviewer.model, fallback: reviewer.fallback ?? null })),
     gatePack: input.gatePack ?? null,
     reviewerPlan: input.reviewerPlan
       ? {

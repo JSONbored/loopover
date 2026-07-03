@@ -43,6 +43,9 @@ test("hasPrecedingDocComment: a `//` line or block-comment end above (through bl
   // a CODE line with a trailing block comment ends in `*/` but is not documentation
   assert.equal(hasPrecedingDocComment(["const c = 1; /* trailing */", "export const x = 1;"], 1), false);
   assert.equal(hasPrecedingDocComment([" * jsdoc body", "export const x = 1;"], 1), true); // block-comment body line
+  // a doc comment above a DECORATOR on the export still counts (decorator lines are skipped while walking up)
+  assert.equal(hasPrecedingDocComment(["/** doc */", "@Component()", "export class Widget {}"], 2), true);
+  assert.equal(hasPrecedingDocComment(["@Component()", "export class Widget {}"], 1), false); // decorator only, no doc
 });
 
 test("scanUndocumentedExport: flags the undocumented export, not the documented one, and renders it", async () => {

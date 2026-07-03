@@ -57,7 +57,16 @@ export function parseAddedExports(patch: string): Array<{ symbol: string; newLin
  *  preceding comment counts as documented, so only an export with code (or nothing) directly above is flagged. Pure. */
 export function hasPrecedingDocComment(lines: string[], lineIndex: number): boolean {
   let i = lineIndex - 1;
-  while (i >= 0 && lines[i]!.trim() === "") i -= 1; // skip blank lines between the doc and the export
+  // Skip blank lines AND decorator lines (`@Component()`) between the export and its doc comment, so a documented
+  // decorated `export class` is not falsely flagged.
+  while (i >= 0) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed === "" || trimmed.startsWith("@")) {
+      i -= 1;
+      continue;
+    }
+    break;
+  }
   if (i < 0) return false;
   const above = lines[i]!.trim();
   // Require a COMMENT-ONLY line: a `//` line comment or a block-comment opener/body/terminator (starts with `/*`
@@ -101,8 +110,10 @@ export async function scanUndocumentedExport(
 ): Promise<UndocumentedExportFinding[]> {
   const { repoFullName, githubToken, headSha, files = [] } = req;
   if (!githubToken || !headSha) return [];
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
+  // Require EXACTLY `owner/repo`: a 3+ segment value would otherwise query the wrong repo instead of failing safe.
+  const parts = repoFullName.split("/");
+  const [owner, repo] = parts;
+  if (parts.length !== 2 || !owner || !repo || !SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return [];
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${githubToken}`,

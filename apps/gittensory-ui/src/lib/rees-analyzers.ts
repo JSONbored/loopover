@@ -648,7 +648,7 @@ export const REES_ANALYZERS = [
       summary:
         "Flags exports newly added to a package's public entrypoint (an index.* barrel) that ship with no adjacent doc comment.",
       looksAt:
-        "Direct `export function/const/class/type/interface/enum` declarations added to changed index.* files, checked against the file fetched at headSha.",
+        "Direct `export const/let/var/function/class/interface/type/enum` declarations added to changed index.* files, checked against the file fetched at headSha.",
       reports:
         "File, line, and symbol name of each undocumented added export — never file contents.",
       network:

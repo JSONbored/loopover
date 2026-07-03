@@ -126,16 +126,21 @@ describe("gittensory-miner governor ledger (#2328)", () => {
   it("uses the default singleton ledger helpers and closes cleanly", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-default-"));
     roots.push(root);
+    const previousConfigDir = process.env.GITTENSORY_MINER_CONFIG_DIR;
     process.env.GITTENSORY_MINER_CONFIG_DIR = root;
-    const entry = appendGovernorEvent({
-      eventType: "allowed",
-      actionClass: "analyze",
-      decision: "allow",
-      reason: "within budget",
-    });
-    expect(readGovernorEvents()).toEqual([entry]);
-    closeDefaultGovernorLedger();
-    closeDefaultGovernorLedger();
-    delete process.env.GITTENSORY_MINER_CONFIG_DIR;
+    try {
+      const entry = appendGovernorEvent({
+        eventType: "allowed",
+        actionClass: "analyze",
+        decision: "allow",
+        reason: "within budget",
+      });
+      expect(readGovernorEvents()).toEqual([entry]);
+      closeDefaultGovernorLedger();
+      closeDefaultGovernorLedger();
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.GITTENSORY_MINER_CONFIG_DIR;
+      else process.env.GITTENSORY_MINER_CONFIG_DIR = previousConfigDir;
+    }
   });
 });

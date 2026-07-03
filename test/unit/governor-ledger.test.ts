@@ -93,5 +93,6 @@ describe("governor ledger normalization (#2328)", () => {
       normalizeGovernorLedgerEvent({ ...base, payload: { value: undefined } }),
     ).toThrow(/invalid_payload/);
     expect(() => normalizeGovernorLedgerEvent(null)).toThrow(/invalid_event/);
+    expect(() => normalizeGovernorLedgerEvent("not-an-object")).toThrow(/invalid_event/);
   });
 });

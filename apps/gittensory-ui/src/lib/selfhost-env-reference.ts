@@ -79,7 +79,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "CRON_INTERVAL_MS",
-    firstReference: "src/server.ts:864",
+    firstReference: "src/server.ts:865",
   },
   {
     name: "DATABASE_PATH",
@@ -187,7 +187,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ORB_BROKER_URL",
-    firstReference: "src/server.ts:913",
+    firstReference: "src/server.ts:914",
   },
   {
     name: "ORB_COLLECTOR_TOKEN",
@@ -203,7 +203,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ORB_RELAY_MODE",
-    firstReference: "src/server.ts:915",
+    firstReference: "src/server.ts:916",
   },
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -239,7 +239,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "PORT",
-    firstReference: "src/server.ts:663",
+    firstReference: "src/server.ts:664",
   },
   {
     name: "PUBLIC_API_ORIGIN",
@@ -303,7 +303,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "SETUP_OUTPUT_PATH",
-    firstReference: "src/server.ts:780",
+    firstReference: "src/server.ts:781",
   },
 ];
 
@@ -328,7 +328,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CODEX_AI_MODEL` | `src/selfhost/ai.ts:53` |",
   "| `CODEX_AI_TIMEOUT_MS` | `src/selfhost/ai.ts:112` |",
   "| `CODEX_HOME` | `src/selfhost/ai.ts:274` |",
-  "| `CRON_INTERVAL_MS` | `src/server.ts:864` |",
+  "| `CRON_INTERVAL_MS` | `src/server.ts:865` |",
   "| `DATABASE_PATH` | `src/server.ts:244` |",
   "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/selfhost/discord-notify.ts:31` |",
@@ -355,11 +355,11 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `ORB_AIR_GAP` | `src/selfhost/orb-collector.ts:161` |",
   "| `ORB_ANONYMIZE` | `src/selfhost/orb-collector.ts:174` |",
   "| `ORB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
-  "| `ORB_BROKER_URL` | `src/server.ts:913` |",
+  "| `ORB_BROKER_URL` | `src/server.ts:914` |",
   "| `ORB_COLLECTOR_TOKEN` | `src/selfhost/orb-collector.ts:205` |",
   "| `ORB_COLLECTOR_URL` | `src/selfhost/orb-collector.ts:172` |",
   "| `ORB_ENROLLMENT_SECRET` | `src/selfhost/orb-collector.ts:165` |",
-  "| `ORB_RELAY_MODE` | `src/server.ts:915` |",
+  "| `ORB_RELAY_MODE` | `src/server.ts:916` |",
   "| `OTEL_EXPORTER_OTLP_ENDPOINT` | `src/selfhost/otel.ts:47` |",
   "| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `src/selfhost/otel.ts:45` |",
   "| `OTEL_SERVICE_ENVIRONMENT` | `src/selfhost/otel.ts:60` |",
@@ -368,7 +368,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts:74` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts:76` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts:224` |",
-  "| `PORT` | `src/server.ts:663` |",
+  "| `PORT` | `src/server.ts:664` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:192` |",
   "| `QDRANT_API_KEY` | `src/selfhost/qdrant-vectorize.ts:50` |",
   "| `QDRANT_DIM` | `src/selfhost/qdrant-vectorize.ts:71` |",
@@ -384,5 +384,5 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `SENTRY_RELEASE` | `src/selfhost/otel.ts:62` |",
   "| `SENTRY_SERVER_NAME` | `src/selfhost/sentry.ts:383` |",
   "| `SENTRY_TRACES_SAMPLE_RATE` | `src/selfhost/sentry.ts:171` |",
-  "| `SETUP_OUTPUT_PATH` | `src/server.ts:780` |",
+  "| `SETUP_OUTPUT_PATH` | `src/server.ts:781` |",
 ].join("\n");

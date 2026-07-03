@@ -153,3 +153,23 @@ test("computeLaneFit treats label matching case-insensitively", () => {
   );
   assert.equal(result, 1);
 });
+
+test("computeLaneFit ** glob matches both top-level and nested paths", () => {
+  const topLevel = computeLaneFit(
+    input({
+      candidatePaths: ["src/app.ts"],
+      candidateLabels: [],
+      goalSpec: baseSpec({ wantedPaths: ["src/**/*.ts"] }),
+    }),
+  );
+  assert.equal(topLevel, 1);
+
+  const nested = computeLaneFit(
+    input({
+      candidatePaths: ["src/nested/app.ts"],
+      candidateLabels: [],
+      goalSpec: baseSpec({ wantedPaths: ["src/**/*.ts"] }),
+    }),
+  );
+  assert.equal(nested, 1);
+});

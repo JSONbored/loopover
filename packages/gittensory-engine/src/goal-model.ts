@@ -23,14 +23,18 @@ function compileGlobMatcher(pattern: string): (path: string) => boolean {
   let regex = "^";
   for (let i = 0; i < normalizedPattern.length; i++) {
     const ch = normalizedPattern[i];
-    if (ch === "*") {
-      const next = normalizedPattern[i + 1];
-      if (next === "*") {
+    const next = normalizedPattern[i + 1];
+    if (ch === "*" && next === "*") {
+      const afterDoubleStar = normalizedPattern[i + 2];
+      if (afterDoubleStar === "/") {
+        regex += "(?:.*/)?";
+        i += 2;
+      } else {
         regex += ".*";
         i++;
-      } else {
-        regex += "[^/]*";
       }
+    } else if (ch === "*") {
+      regex += "[^/]*";
     } else if (ch === "?") {
       regex += "[^/]";
     } else if (/[.+^$(){}|[\]\\]/.test(ch ?? "")) {

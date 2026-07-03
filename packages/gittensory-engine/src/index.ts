@@ -34,3 +34,7 @@ export {
   isMinerRepoTargetable,
 } from "./miner-goal-lane-fit.js";
 export { computeOpportunityCompetition } from "./opportunity-competition.js";
+export {
+  computeLaneFit,
+  type GoalModelInput,
+} from "./goal-model.js";

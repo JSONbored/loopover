@@ -22,6 +22,14 @@ export type AiReviewCacheInput = {
   // eligibility/interpretation rules.
   aiReviewAllAuthors: boolean;
   aiReviewCloseConfidence: number | null | undefined;
+  // Per-repo dual-AI combine overrides (#2567): these directly shape the EFFECTIVE combine/onMerge/reviewers
+  // resolveEffectiveAiReviewPlan produces (which drives whether/how a consensus defect is computed), separate
+  // from `reviewerPlan` below (the operator's own boot-config plan). A repo flipping any of these warrants a
+  // fresh review under the new effective plan, not a replay of a decision made under the old one -- the same
+  // reasoning as aiReviewCloseConfidence above.
+  aiReviewCombine: string | null | undefined;
+  aiReviewOnMerge: string | null | undefined;
+  aiReviewReviewers: readonly { model: string; fallback?: string | null | undefined }[] | null | undefined;
   gatePack: string | null | undefined;
   reviewerPlan:
     | {
@@ -97,6 +105,9 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
     model: input.model ?? null,
     aiReviewAllAuthors: input.aiReviewAllAuthors,
     aiReviewCloseConfidence: input.aiReviewCloseConfidence ?? null,
+    aiReviewCombine: input.aiReviewCombine ?? null,
+    aiReviewOnMerge: input.aiReviewOnMerge ?? null,
+    aiReviewReviewers: (input.aiReviewReviewers ?? []).map((reviewer) => ({ model: reviewer.model, fallback: reviewer.fallback ?? null })),
     gatePack: input.gatePack ?? null,
     reviewerPlan: input.reviewerPlan
       ? {

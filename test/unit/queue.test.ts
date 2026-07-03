@@ -2374,7 +2374,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Clean PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false },
@@ -2478,6 +2478,9 @@ describe("queue processors", () => {
             model: null,
             aiReviewAllAuthors: false,
             aiReviewCloseConfidence: undefined,
+            aiReviewCombine: null,
+            aiReviewOnMerge: null,
+            aiReviewReviewers: null,
             gatePack: "oss-anti-slop",
             reviewerPlan: env.AI_REVIEW_PLAN,
             selfHostProviderConfig: null,
@@ -2547,7 +2550,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false },
@@ -2596,7 +2599,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Partially published PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false },
@@ -2648,7 +2651,7 @@ describe("queue processors", () => {
         metadata: {
           inputFingerprint: await aiReviewCacheInputFingerprint({
             title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
-            aiReviewCloseConfidence: undefined, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
             reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
             profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
             features: { grounding: false, rag: false, enrichment: false, reputation: false },
@@ -2869,6 +2872,9 @@ describe("queue processors", () => {
       model: null,
       aiReviewAllAuthors: false,
       aiReviewCloseConfidence: undefined,
+      aiReviewCombine: null,
+      aiReviewOnMerge: null,
+      aiReviewReviewers: null,
       gatePack: "oss-anti-slop",
       reviewerPlan: env.AI_REVIEW_PLAN,
       selfHostProviderConfig: null,

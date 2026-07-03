@@ -111,6 +111,55 @@ export function resolveEffectiveAiReviewOnMerge(
   return { onMerge: repoOverride, clamped: false };
 }
 
+type AiReviewPlanShape = {
+  combine?: CombineStrategy | null | undefined;
+  onMerge?: OnMerge | null | undefined;
+  reviewers?: ReadonlyArray<{ model: string; fallback?: string | null | undefined }> | null | undefined;
+};
+
+/**
+ * Resolve the FULL effective dual-AI plan (combine + onMerge + reviewers together), extending
+ * resolveEffectiveAiReviewOnMerge to close a gap it left open (gate finding on #2567): clamping `onMerge`
+ * alone does not protect the operator's `either` floor if a repo can ALSO shrink the reviewer count or switch
+ * to `combine: "single"` -- either change reduces the number of independent opinions that can trigger a
+ * blocker, achieving the same effective loosening `onMerge` alone was meant to prevent (an operator plan of
+ * two reviewers under `either` means "either ONE of two can flag it"; drop to one reviewer and there is only
+ * ever one vote to begin with, silently narrowing the floor without ever touching `onMerge`).
+ *
+ * When the operator has NOT set an `either` floor, every field resolves unclamped (repo override, else
+ * operator's own value) -- there is nothing to protect. When the operator HAS set `either`, a repo override
+ * that would reduce the effective reviewer count below the operator's own count (via a shorter `reviewers`
+ * list or a `combine: "single"` switch) is clamped: the repo's `combine`/`reviewers` overrides are ignored
+ * entirely and the operator's own values are used instead, while `onMerge` still resolves normally through
+ * resolveEffectiveAiReviewOnMerge. `clamped` is true if EITHER the onMerge clamp or this reviewer-count clamp
+ * fired, so the caller can surface either kind identically.
+ */
+export function resolveEffectiveAiReviewPlan(
+  repoOverride: AiReviewPlanShape,
+  operatorPlan: AiReviewPlanShape | null | undefined,
+): { combine: CombineStrategy | null | undefined; onMerge: OnMerge | null | undefined; reviewers: AiReviewPlanShape["reviewers"]; clamped: boolean } {
+  const onMergeResolution = resolveEffectiveAiReviewOnMerge(repoOverride.onMerge, operatorPlan?.onMerge);
+  const hasOperatorFloor = operatorPlan?.onMerge === "either";
+  if (hasOperatorFloor) {
+    // The operator's OWN effective reviewer count under their plan -- absent reviewers falls back to the
+    // built-in default pair (2), the historical dual-reviewer behavior (see GittensoryAiReviewInput.reviewers).
+    const operatorReviewerCount = operatorPlan?.reviewers?.length ?? 2;
+    const repoReviewerCount = repoOverride.reviewers?.length ?? operatorReviewerCount;
+    const repoCombine = repoOverride.combine ?? operatorPlan?.combine ?? "consensus";
+    const reducesReviewerCount = repoOverride.reviewers != null && repoReviewerCount < operatorReviewerCount;
+    const collapsesToSingleReviewer = repoCombine === "single" && operatorReviewerCount > 1;
+    if (reducesReviewerCount || collapsesToSingleReviewer) {
+      return { combine: operatorPlan?.combine, onMerge: onMergeResolution.onMerge, reviewers: operatorPlan?.reviewers, clamped: true };
+    }
+  }
+  return {
+    combine: repoOverride.combine ?? operatorPlan?.combine,
+    onMerge: onMergeResolution.onMerge,
+    reviewers: repoOverride.reviewers ?? operatorPlan?.reviewers,
+    clamped: onMergeResolution.clamped,
+  };
+}
+
 export type GittensoryAiReviewInput = {
   repoFullName: string;
   prNumber: number;
@@ -1115,12 +1164,22 @@ export async function runGittensoryAiReview(
   // combined by `consensus` — byte-identical to today. The self-host boot plan (`env.AI_REVIEW_PLAN`) supplies
   // named providers (e.g. claude-code + codex) and a strategy; an explicit `input` field overrides it. `single`
   // (or a single configured reviewer) runs ONE opinion; consensus/synthesis run two.
+  //
+  // combine/onMerge/reviewers are a per-repo REFINEMENT of the operator's plan, never a bypass (#2567): a repo
+  // can only TIGHTEN the operator's `either` floor, never loosen it by shrinking the reviewer count or
+  // switching to `combine: "single"` either (a floor of "either ONE of two reviewers can flag it" is just as
+  // bypassed by dropping to one reviewer as by flipping onMerge itself). resolveEffectiveAiReviewPlan enforces
+  // the clamp across all three fields together; a fired clamp increments a metric so it is surfaced, not
+  // silently ignored (mirrors the gittensory_ai_review_inconclusive_total pattern below).
   const plan = env.AI_REVIEW_PLAN;
+  const planResolution = resolveEffectiveAiReviewPlan(
+    { combine: input.combine, onMerge: input.onMerge, reviewers: input.reviewers },
+    plan,
+  );
   const configured: ReadonlyArray<{
     model: string;
     fallback?: string | null | undefined;
-  }> | null =
-    (input.reviewers?.length ? input.reviewers : plan?.reviewers) ?? null;
+  }> | null = planResolution.reviewers?.length ? planResolution.reviewers : null;
   const primary = configured?.[0] ?? {
     model: BEST_REVIEW_MODELS[0],
     fallback: RELIABLE_FALLBACK_MODELS[0] as string | null,
@@ -1133,15 +1192,9 @@ export async function runGittensoryAiReview(
   // i.e. runWorkersOpinion's single-model path).
   const primaryFallback = primary.fallback ?? primary.model;
   const secondaryFallback = secondary.fallback ?? secondary.model;
-  const combine: CombineStrategy =
-    input.combine ?? plan?.combine ?? "consensus";
-  // `onMerge` is a per-repo REFINEMENT of the operator's plan, never a bypass (#2567): a repo can only TIGHTEN
-  // the operator's floor (never loosen `either` down to `both`). resolveEffectiveAiReviewOnMerge enforces the
-  // clamp; a fired clamp increments a metric so it is surfaced, not silently ignored (mirrors the
-  // gittensory_ai_review_inconclusive_total pattern below).
-  const onMergeResolution = resolveEffectiveAiReviewOnMerge(input.onMerge, plan?.onMerge);
-  const onMerge = onMergeResolution.onMerge;
-  if (onMergeResolution.clamped) {
+  const combine: CombineStrategy = planResolution.combine ?? "consensus";
+  const onMerge = planResolution.onMerge;
+  if (planResolution.clamped) {
     incr("gittensory_ai_review_onmerge_clamped_total", { mode: input.mode });
   }
   const dual = combine !== "single" && (!configured || configured.length > 1);

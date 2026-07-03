@@ -6734,6 +6734,9 @@ async function maybePublishPrPublicSurface(
             model: settings.aiReviewModel,
             aiReviewAllAuthors: settings.aiReviewAllAuthors,
             aiReviewCloseConfidence: settings.aiReviewCloseConfidence,
+            aiReviewCombine: settings.aiReviewCombine,
+            aiReviewOnMerge: settings.aiReviewOnMerge,
+            aiReviewReviewers: settings.aiReviewReviewers,
             gatePack: settings.gatePack,
             reviewerPlan: env.AI_REVIEW_PLAN,
             selfHostProviderConfig: env.AI_REVIEW_PLAN

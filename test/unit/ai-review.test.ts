@@ -4,6 +4,7 @@ import {
   BEST_REVIEW_MODELS,
   buildTestEvidencePromptSection,
   resolveEffectiveAiReviewOnMerge,
+  resolveEffectiveAiReviewPlan,
   runGittensoryAiReview,
   type GittensoryAiReviewInput,
 } from "../../src/services/ai-review";
@@ -1130,6 +1131,49 @@ describe("resolveEffectiveAiReviewOnMerge (#2567, pure precedence logic)", () =>
     expect(resolveEffectiveAiReviewOnMerge("both", "both")).toEqual({ onMerge: "both", clamped: false });
     expect(resolveEffectiveAiReviewOnMerge("both", null)).toEqual({ onMerge: "both", clamped: false });
     expect(resolveEffectiveAiReviewOnMerge("both", undefined)).toEqual({ onMerge: "both", clamped: false });
+  });
+});
+
+describe("resolveEffectiveAiReviewPlan (#2567 gate-review follow-up: combine/reviewers can't bypass the onMerge floor)", () => {
+  const TWO_REVIEWERS = [{ model: "claude-code" }, { model: "codex" }];
+  const OPERATOR_FLOOR = { combine: "synthesis" as const, onMerge: "either" as const, reviewers: TWO_REVIEWERS };
+
+  it("no operator either-floor ⇒ combine/reviewers resolve unclamped, exactly like a direct override", () => {
+    const noFloor = resolveEffectiveAiReviewPlan({ combine: "single", reviewers: [{ model: "claude-code" }] }, { combine: "synthesis", onMerge: "both", reviewers: TWO_REVIEWERS });
+    expect(noFloor).toEqual({ combine: "single", onMerge: "both", reviewers: [{ model: "claude-code" }], clamped: false });
+
+    const noOperatorPlan = resolveEffectiveAiReviewPlan({ combine: "single", reviewers: [{ model: "claude-code" }] }, null);
+    expect(noOperatorPlan).toEqual({ combine: "single", onMerge: undefined, reviewers: [{ model: "claude-code" }], clamped: false });
+  });
+
+  it("gate finding: an either-floor operator plan cannot be neutered by a repo override reducing reviewer count", () => {
+    const reduced = resolveEffectiveAiReviewPlan({ reviewers: [{ model: "claude-code" }] }, OPERATOR_FLOOR);
+    expect(reduced).toEqual({ combine: "synthesis", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: true });
+  });
+
+  it("gate finding: an either-floor operator plan cannot be neutered by a repo override switching to combine: single", () => {
+    const collapsed = resolveEffectiveAiReviewPlan({ combine: "single" }, OPERATOR_FLOOR);
+    expect(collapsed).toEqual({ combine: "synthesis", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: true });
+  });
+
+  it("an either-floor operator plan with an UNCONFIGURED reviewers list (implicit default pair of 2) is still protected", () => {
+    const collapsed = resolveEffectiveAiReviewPlan({ combine: "single" }, { combine: "consensus", onMerge: "either", reviewers: undefined });
+    expect(collapsed).toEqual({ combine: "consensus", onMerge: "either", reviewers: undefined, clamped: true });
+  });
+
+  it("a repo override that keeps (or increases) the reviewer count and does not collapse to single passes through unclamped", () => {
+    const sameCount = resolveEffectiveAiReviewPlan({ combine: "consensus", reviewers: [{ model: "claude-code" }, { model: "ollama" }] }, OPERATOR_FLOOR);
+    expect(sameCount).toEqual({ combine: "consensus", onMerge: "either", reviewers: [{ model: "claude-code" }, { model: "ollama" }], clamped: false });
+  });
+
+  it("a repo tightening onMerge to either under an either floor is unaffected by the reviewer-count clamp (no reviewers/combine override at all)", () => {
+    const tightened = resolveEffectiveAiReviewPlan({ onMerge: "either" }, OPERATOR_FLOOR);
+    expect(tightened).toEqual({ combine: "synthesis", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: false });
+  });
+
+  it("the onMerge clamp still fires independently when combine/reviewers are untouched", () => {
+    const onMergeOnly = resolveEffectiveAiReviewPlan({ onMerge: "both" }, OPERATOR_FLOOR);
+    expect(onMergeOnly).toEqual({ combine: "synthesis", onMerge: "either", reviewers: TWO_REVIEWERS, clamped: true });
   });
 });
 

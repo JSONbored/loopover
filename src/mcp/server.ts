@@ -2091,7 +2091,9 @@ export class GittensoryMcp {
     limit?: number | undefined;
   }): Promise<ToolPayload> {
     const limit = input.limit ?? 10;
-    const minRankScore = input.goalSpec?.minRankScore ?? 0;
+    const goalSpec = input.goalSpec;
+    const minRankScore = goalSpec?.minRankScore ?? 0;
+    const goalLane = goalSpec?.lane;
     const repos = input.targets ?? [];
     if (repos.length === 0 && !input.searchQuery) {
       return {
@@ -2120,9 +2122,10 @@ export class GittensoryMcp {
         if (issue.state !== "open") continue;
         const isClaimed = claimedIssueNumbers.has(issue.number);
         const dupRisk = isClaimed ? 0.8 : 0.1;
-        const ageDays = issue.updatedAt ? Math.max(0, (Date.now() - new Date(issue.updatedAt).getTime()) / 86400000) : 30;
+        const updatedMs = issue.updatedAt ? new Date(issue.updatedAt).getTime() : Date.now();
+        const ageDays = Math.max(0, (Date.now() - updatedMs) / 86400000);
         const freshness = Math.max(0, 1 - ageDays / 30);
-        const laneFit = input.goalSpec?.lane ? 0.7 : 0.5;
+        const laneFit = goalLane ? 0.7 : 0.5;
         const potential = 0.6;
         const feasibility = issue.labels.length > 0 ? 0.7 : 0.5;
         const score = rankOpportunityScore({ potential, feasibility, laneFit, freshness, dupRisk });

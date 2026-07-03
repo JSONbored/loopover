@@ -67,6 +67,15 @@ describe("MinerGoalSpec parser (#2301)", () => {
     expect(parsed.warnings.join(" ")).toMatch(/exceeded 100 entries/i);
   });
 
+  it("accepts exactly 100 unique entries without a cap warning", () => {
+    const wantedPaths = Array.from({ length: 100 }, (_, index) => `src/${index}.ts`);
+    const parsed = parseMinerGoalSpec({ wantedPaths });
+
+    expect(parsed.present).toBe(true);
+    expect(parsed.spec.wantedPaths).toEqual(wantedPaths);
+    expect(parsed.warnings.join(" ")).not.toMatch(/exceeded 100 entries/i);
+  });
+
   it("falls back per field for invalid values without throwing", () => {
     const parsed = parseMinerGoalSpec({
       minerEnabled: "yes",
@@ -204,6 +213,18 @@ describe("MinerGoalSpec parser (#2301)", () => {
     });
 
     expect(parseMinerGoalSpecContent(`wantedPaths:\n  - ${"好".repeat(12_000)}\n`)).toEqual({
+      present: false,
+      spec: DEFAULT_MINER_GOAL_SPEC,
+      warnings: ["MinerGoalSpec content exceeded 32768 bytes; ignoring it and falling back to safe defaults."],
+    });
+
+    expect(parseMinerGoalSpecContent(`wantedPaths:\n  - ${"é".repeat(17_000)}\n`)).toEqual({
+      present: false,
+      spec: DEFAULT_MINER_GOAL_SPEC,
+      warnings: ["MinerGoalSpec content exceeded 32768 bytes; ignoring it and falling back to safe defaults."],
+    });
+
+    expect(parseMinerGoalSpecContent(`wantedPaths:\n  - ${"🙂".repeat(9_000)}\n`)).toEqual({
       present: false,
       spec: DEFAULT_MINER_GOAL_SPEC,
       warnings: ["MinerGoalSpec content exceeded 32768 bytes; ignoring it and falling back to safe defaults."],

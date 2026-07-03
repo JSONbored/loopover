@@ -47,6 +47,15 @@ test("parseMinerGoalSpec: valid raw config normalizes every field and keeps non-
   assert.deepEqual(parsed.warnings, []);
 });
 
+test("parseMinerGoalSpec: exactly 100 unique entries are accepted without a cap warning", () => {
+  const wantedPaths = Array.from({ length: 100 }, (_, index) => `src/${index}.ts`);
+  const parsed = parseMinerGoalSpec({ wantedPaths });
+
+  assert.equal(parsed.present, true);
+  assert.deepEqual(parsed.spec.wantedPaths, wantedPaths);
+  assert.ok(!parsed.warnings.some((warning) => /exceeded 100 entries/i.test(warning)));
+});
+
 test("parseMinerGoalSpec: malformed fields fall back independently with targeted warnings", () => {
   const longEntry = "x".repeat(300);
   const parsed = parseMinerGoalSpec({
@@ -149,4 +158,12 @@ test("parseMinerGoalSpecContent: non-mapping parsed content and oversized conten
   const multibyteOversized = parseMinerGoalSpecContent(`wantedPaths:\n  - ${"好".repeat(12_000)}\n`);
   assert.equal(multibyteOversized.present, false);
   assert.match(multibyteOversized.warnings.join(" "), /exceeded 32768 bytes/i);
+
+  const twoByteOversized = parseMinerGoalSpecContent(`wantedPaths:\n  - ${"é".repeat(17_000)}\n`);
+  assert.equal(twoByteOversized.present, false);
+  assert.match(twoByteOversized.warnings.join(" "), /exceeded 32768 bytes/i);
+
+  const fourByteOversized = parseMinerGoalSpecContent(`wantedPaths:\n  - ${"🙂".repeat(9_000)}\n`);
+  assert.equal(fourByteOversized.present, false);
+  assert.match(fourByteOversized.warnings.join(" "), /exceeded 32768 bytes/i);
 });

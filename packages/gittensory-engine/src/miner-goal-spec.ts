@@ -110,14 +110,13 @@ function normalizeStringList(value: unknown, field: string, warnings: string[]):
       warnings.push(`MinerGoalSpec field "${field}" truncated an over-long entry.`);
       normalized = normalized.slice(0, MAX_ITEM_LENGTH);
     }
-    if (!seen.has(normalized)) {
-      result.push(normalized);
-      seen.add(normalized);
-    }
+    if (seen.has(normalized)) continue;
     if (result.length >= MAX_LIST_ITEMS) {
       warnings.push(`MinerGoalSpec field "${field}" exceeded ${MAX_LIST_ITEMS} entries; extra entries ignored.`);
       break;
     }
+    result.push(normalized);
+    seen.add(normalized);
   }
   return result;
 }
@@ -158,8 +157,7 @@ function normalizePositiveInteger(value: unknown, field: string, fallback: numbe
 function utf8ByteLength(value: string): number {
   let bytes = 0;
   for (const char of value) {
-    const codePoint = char.codePointAt(0);
-    if (codePoint === undefined) continue;
+    const codePoint = char.codePointAt(0) as number;
     if (codePoint <= 0x7f) bytes += 1;
     else if (codePoint <= 0x7ff) bytes += 2;
     else if (codePoint <= 0xffff) bytes += 3;

@@ -25,6 +25,15 @@
 # strongly you want review work to win contention (8:1 below is deliberately aggressive), and keep each
 # runner replica's `cpus` ceiling at roughly (host vCPUs) / (number of runner replicas you plan to run),
 # so a single busy runner can't monopolize the box even before shares kick in.
+#
+# This is the HOST-level (Docker CPU scheduling) half of the fix. The APPLICATION-level half is the
+# MAINTENANCE_ADMISSION_* knobs in .env.example: gittensory itself defers its own maintenance sweeps
+# (contributor evidence, RAG indexing, drift scans...) under queue/host pressure so live webhook/review
+# work always wins there too. Also see ./scripts/docker-prune.sh for the disk-usage side of running CI
+# builds on the same box (build cache/image growth, not just CPU).
+# The RECOMMENDED alternative to all of this: don't co-locate runners with the review stack at all -- use
+# GitHub-hosted CI, or a separate dedicated runner host (see the runner service's comment in
+# docker-compose.yml).
 
 services:
   gittensory:

@@ -52,6 +52,7 @@ interface OsvVuln {
 const MAX_LOCKFILE_FILES = 12;
 const MAX_PATCH_LINES_PER_FILE = 1200;
 const MAX_OSV_QUERIES = 40;
+const LOCKFILE_OSV_BATCH_CHUNK_SIZE = 10;
 const VERSION_SAFE_RE = /^[0-9][0-9A-Za-z._+-]*$/;
 const MAX_PACKAGE_LEN = 200;
 const MAX_VERSION_LEN = 100;
@@ -377,38 +378,43 @@ export async function queryOsvBatch(
 ): Promise<Map<string, Cve[]>> {
   const results = new Map<string, Cve[]>();
   if (!changes.length || signal?.aborted) return results;
-  const fetchOptions = {
-    endpointCategory: "osv-querybatch",
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      queries: changes.map((change) => ({
-        package: { name: change.package, ecosystem: change.ecosystem },
-        version: change.to,
-      })),
-    }),
-    signal,
-    fetchImpl,
-    diagnostics: options.diagnostics,
-    phase: "lockfile-drift",
-    subcall: "osv-querybatch",
-    maxBytes: 1024 * 1024,
-    maxCallsPerCategory: 1,
-  };
-  const response = options.analysis
-    ? await options.analysis.fetchJson<{
+  const maxBatchCalls = Math.ceil(changes.length / LOCKFILE_OSV_BATCH_CHUNK_SIZE);
+  for (let i = 0; i < changes.length; i += LOCKFILE_OSV_BATCH_CHUNK_SIZE) {
+    if (signal?.aborted) break;
+    const chunk = changes.slice(i, i + LOCKFILE_OSV_BATCH_CHUNK_SIZE);
+    const fetchOptions = {
+      endpointCategory: "osv-querybatch",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        queries: chunk.map((change) => ({
+          package: { name: change.package, ecosystem: change.ecosystem },
+          version: change.to,
+        })),
+      }),
+      signal,
+      fetchImpl,
+      diagnostics: options.diagnostics,
+      phase: "lockfile-drift",
+      subcall: "osv-querybatch",
+      maxBytes: 1024 * 1024,
+      maxCallsPerCategory: maxBatchCalls,
+    };
+    const response = options.analysis
+      ? await options.analysis.fetchJson<{
+          results?: Array<{ vulns?: OsvVuln[] }>;
+        }>("https://api.osv.dev/v1/querybatch", fetchOptions)
+      : await boundedFetchJson<{
         results?: Array<{ vulns?: OsvVuln[] }>;
-      }>("https://api.osv.dev/v1/querybatch", fetchOptions)
-    : await boundedFetchJson<{
-      results?: Array<{ vulns?: OsvVuln[] }>;
-    }>("https://api.osv.dev/v1/querybatch", fetchOptions);
-  if (!response.ok) return results;
-  changes.forEach((change, index) => {
-    results.set(
-      `${change.ecosystem}::${change.package}@${change.to}`,
-      toCves(response.data.results?.[index]?.vulns),
-    );
-  });
+      }>("https://api.osv.dev/v1/querybatch", fetchOptions);
+    if (!response.ok) continue;
+    chunk.forEach((change, index) => {
+      results.set(
+        `${change.ecosystem}::${change.package}@${change.to}`,
+        toCves(response.data.results?.[index]?.vulns),
+      );
+    });
+  }
   return results;
 }
 

@@ -842,7 +842,6 @@ export function buildCollisionReport(
   const items = [...pairwiseIssues.map(issueItem), ...pairwisePullRequests.map(prItem), ...pairwiseRecentMergedPullRequests.map(recentMergedItem)];
   const itemTerms = new Map<string, CollisionTerms>();
   for (const item of items) itemTerms.set(itemKey(item), collisionTerms(item));
-  /* v8 ignore start -- Pairwise collision guards protect sparse cached rows; public collision behavior is covered by report tests. */
   for (let leftIndex = 0; leftIndex < items.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < items.length; rightIndex += 1) {
       const left = items[leftIndex];
@@ -891,7 +890,6 @@ export function buildCollisionReport(
       });
     }
   }
-  /* v8 ignore stop */
 
   const clusterList = [...clusters.values()].sort((left, right) => riskRank(right.risk) - riskRank(left.risk));
   const report = {

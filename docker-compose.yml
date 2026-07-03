@@ -609,12 +609,17 @@ services:
     network_mode: host # Tailscale needs host networking to advertise the host's address
 
   # ── Self-hosted GitHub Actions runner (--profile runners) ─────────────────
+  # NOT part of the default recommended stack -- purely optional. Three deployment modes (see .env.example
+  # for the full explanation): (1) app-only VPS + GitHub-hosted CI (recommended default, no runner here at
+  # all), (2) a separate dedicated runner host, (3) co-located runners on this SAME box (this profile).
   # Runs `runs-on: self-hosted` jobs on this machine. Set RUNNER_TOKEN= (or ACCESS_TOKEN=)
   # and RUNNER_REPO_URL= (e.g. https://github.com/your-org/your-repo) in .env.
   # Get a token at: https://github.com/<owner>/<repo>/settings/actions/runners/new
   # Running this alongside the main `gittensory` app on the SAME host? A burst of CI jobs can starve the
-  # app of CPU with no limits set (the default below). See docker-compose.override.yml.example for a
-  # proven CPU-priority pattern (relative cpu_shares + a per-container cpus ceiling) before scaling this up.
+  # app of CPU with no limits set (the default below) -- confirmed in production: 3 uncapped runner
+  # containers on an 8-vCPU box left the app starved under load. See docker-compose.override.yml.example
+  # for a proven CPU-priority pattern (relative cpu_shares + a per-container cpus ceiling) before scaling
+  # this up, and ./scripts/docker-prune.sh for reclaiming the disk space CI builds accumulate.
   runner:
     # Pin to a specific version tag — `latest` is mutable. Find a digest via:
     # docker pull myoung34/github-runner:ubuntu-jammy && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-jammy

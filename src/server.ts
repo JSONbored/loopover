@@ -54,6 +54,7 @@ import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "./se
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { resolvePostgresPoolMax } from "./selfhost/queue-common";
+import type { MaintenancePressureSignals } from "./selfhost/maintenance-admission";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
 import { createFsBlobStore } from "./selfhost/blob-store";
@@ -127,6 +128,7 @@ interface Backend {
     size(): number | Promise<number>;
     deadCount(): number | Promise<number>;
     stats(): Record<string, number> | Promise<Record<string, number>>;
+    pressureSignals(): MaintenancePressureSignals | Promise<MaintenancePressureSignals>;
   };
   vectorize?: Vectorize;
   shutdown(): Promise<void>;
@@ -586,11 +588,29 @@ async function main(): Promise<void> {
     "gittensory_jobs_rate_limit_deferred_total",
     "gittensory_jobs_coalesced_total",
     "gittensory_jobs_recovered_total",
+    "gittensory_jobs_maintenance_admission_deferred_total",
   ]) {
     gauge(name.replace("_total", "_persisted_total"), () =>
       durableJobMetric(name),
     );
   }
+  // Runtime-pressure gauges (#selfhost-runtime-pressure): the SAME signals the maintenance-admission policy
+  // consults at claim time (see maintenance-admission.ts), so the dashboard shows exactly what's gating
+  // maintenance work right now -- live vs. maintenance queue depth, how stale the oldest of each is, and
+  // (best-effort) host CPU pressure. Distinguishes "the app queue is backed up" from "CI/other host load is
+  // starving the app" from "GitHub/AI latency", the ambiguity that made the original slowdown hard to diagnose.
+  const maintenancePressure = () => backend.queue.pressureSignals();
+  gauge("gittensory_queue_live_pending", async () => (await maintenancePressure()).livePendingCount);
+  gauge("gittensory_queue_maintenance_pending", async () => (await maintenancePressure()).maintenancePendingCount);
+  gauge("gittensory_queue_oldest_live_pending_age_seconds", async () =>
+    Math.floor(((await maintenancePressure()).oldestLivePendingAgeMs ?? 0) / 1000),
+  );
+  gauge("gittensory_queue_oldest_maintenance_pending_age_seconds", async () =>
+    Math.floor(((await maintenancePressure()).oldestMaintenancePendingAgeMs ?? 0) / 1000),
+  );
+  // -1 (not 0) when unavailable -- a genuine idle host reads 0, so a dashboard can tell "known idle" apart
+  // from "no signal on this platform" (see host-pressure.ts).
+  gauge("gittensory_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
   gauge("gittensory_uptime_seconds", () =>
     Math.floor((Date.now() - startedAt) / 1000),
   );

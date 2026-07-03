@@ -5,7 +5,13 @@ import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
 import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
+import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
 import type { JobMessage } from "../../src/types";
+
+// Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
+// maintenance-admission test in this file would be flaky against the real node:os signal. Default to
+// "unavailable" (null, never gates) here; individual host-load tests override the mock explicitly.
+vi.mock("../../src/selfhost/host-pressure", () => ({ hostLoadAvg1PerCore: vi.fn(() => null) }));
 
 function makeDriver(): ReturnType<typeof nodeSqliteDriver> {
   return nodeSqliteDriver(new DatabaseSync(":memory:") as never);
@@ -69,6 +75,7 @@ describe("createSqliteQueue (durable #980)", () => {
     vi.useRealTimers();
     resetMetrics();
     vi.restoreAllMocks();
+    vi.mocked(hostLoadAvg1PerCore).mockReturnValue(null);
   });
 
   it("persists + drains FIFO through the consumer", async () => {
@@ -2033,5 +2040,293 @@ describe("createSqliteQueue (durable #980)", () => {
     await new Promise((r) => setTimeout(r, 12)); // let the tick claim it + enter the slow consume
     await q.stop(); // waits for the in-flight consume to finish
     expect(done).toBe(true);
+  });
+
+  describe("maintenance-admission pressure gating (#selfhost-runtime-pressure)", () => {
+    const envKeys = [
+      "MAINTENANCE_ADMISSION_ENABLED",
+      "MAINTENANCE_ADMISSION_MAX_LIVE_PENDING",
+      "MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS",
+      "MAINTENANCE_ADMISSION_MAX_PENDING",
+      "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
+      "MAINTENANCE_ADMISSION_DEFER_MS",
+      "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
+    ] as const;
+    const saved: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      for (const key of envKeys) {
+        saved[key] = process.env[key];
+        delete process.env[key];
+      }
+    });
+    afterEach(() => {
+      for (const key of envKeys) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    });
+
+    // Directly occupies rows the way currently-pending/processing live work would, without needing worker-slot
+    // choreography -- the admission check reads real table state, not the consumer callback.
+    function seedLiveRows(driver: ReturnType<typeof makeDriver>, count: number, status: "pending" | "processing" = "processing"): void {
+      const now = Date.now();
+      for (let i = 0; i < count; i += 1) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, ?, 0, ?, ?, 10, NULL, 0)`,
+          [JSON.stringify({ type: "github-webhook", deliveryId: `seed-${i}`, eventName: "x", payload: {} }), status, now, now],
+        );
+      }
+    }
+
+    it("defers a maintenance job when live queue pressure is high", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6); // default threshold is 5
+      const before = Date.now();
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+
+      expect(started).not.toContain("build-contributor-evidence");
+      const row = driver.query(
+        "SELECT status, run_after, last_error FROM _selfhost_jobs WHERE payload LIKE '%build-contributor-evidence%'",
+        [],
+      ).rows[0] as { status: string; run_after: number; last_error: string };
+      expect(row.status).toBe("pending");
+      expect(row.run_after).toBeGreaterThan(before);
+      expect(row.last_error).toContain("live_pending_high");
+      expect(q.stats()).toMatchObject({ gittensory_jobs_maintenance_admission_deferred_total: 1 });
+      expect(await renderMetrics()).toContain(
+        'gittensory_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
+      );
+    });
+
+    it("admits a maintenance job immediately when pressure is clear", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+      expect(q.size()).toBe(0);
+    });
+
+    it("never defers live/foreground work, even under the same pressure that defers maintenance work", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6);
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.binding.send(msg("github-webhook"));
+      await q.drain();
+      expect(started).toEqual(["github-webhook"]);
+      expect(started).not.toContain("build-contributor-evidence");
+    });
+
+    it("does not defer a targeted background job that is not classified as maintenance", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6);
+      await q.binding.send({
+        type: "backfill-repo-segment",
+        requestedBy: "api",
+        repoFullName: "jsonbored/gittensory",
+        segment: "labels",
+      } as unknown as JobMessage);
+      await q.drain();
+      expect(started).toEqual(["backfill-repo-segment"]);
+    });
+
+    it("defers a maintenance job when the maintenance lane itself is already backed up", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      const now = Date.now();
+      for (let i = 0; i < 16; i += 1) { // default threshold is 15
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 0, NULL, 1)`,
+          [JSON.stringify({ type: "rollup-product-usage", requestedBy: "test" }), now + 3_600_000, now],
+        );
+      }
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+      const row = driver.query(
+        "SELECT last_error FROM _selfhost_jobs WHERE payload LIKE '%build-contributor-evidence%'",
+        [],
+      ).rows[0] as { last_error: string };
+      expect(row.last_error).toContain("maintenance_pending_high");
+    });
+
+    it("defers a maintenance job when host load per core exceeds the threshold", async () => {
+      vi.mocked(hostLoadAvg1PerCore).mockReturnValue(5);
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+      const row = driver.query(
+        "SELECT last_error FROM _selfhost_jobs WHERE payload LIKE '%build-contributor-evidence%'",
+        [],
+      ).rows[0] as { last_error: string };
+      expect(row.last_error).toContain("host_load_high");
+    });
+
+    it("admits unconditionally when MAINTENANCE_ADMISSION_ENABLED is disabled, even under high pressure", async () => {
+      process.env.MAINTENANCE_ADMISSION_ENABLED = "false";
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6);
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+    });
+
+    it("force-admits via trickle once a maintenance job has waited past the max defer age, even under pressure", async () => {
+      process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "60000"; // 1m (parsePositiveIntEnv floor)
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6);
+      const staleCreatedAt = Date.now() - 61_000;
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify({ type: "build-contributor-evidence", requestedBy: "schedule" }), staleCreatedAt],
+      );
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+    });
+
+    it("pressureSignals() reports live/maintenance pending counts and oldest ages", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      seedLiveRows(driver, 2, "pending");
+      const now = Date.now();
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, ?, ?, 0, NULL, 1)`,
+        [JSON.stringify({ type: "rollup-product-usage", requestedBy: "test" }), now + 3_600_000, now - 5_000],
+      );
+      const signals = q.pressureSignals();
+      expect(signals.livePendingCount).toBe(2);
+      expect(signals.oldestLivePendingAgeMs).toBeGreaterThanOrEqual(0);
+      expect(signals.maintenancePendingCount).toBe(1);
+      expect(signals.oldestMaintenancePendingAgeMs).toBeGreaterThanOrEqual(5_000);
+      expect(signals.hostLoadAvg1PerCore).toBeNull();
+    });
+
+    it("pressureSignals() reports null oldest ages when a lane has no pending work", async () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      const signals = q.pressureSignals();
+      expect(signals.livePendingCount).toBe(0);
+      expect(signals.oldestLivePendingAgeMs).toBeNull();
+      expect(signals.maintenancePendingCount).toBe(0);
+      expect(signals.oldestMaintenancePendingAgeMs).toBeNull();
+    });
+
+    it("backfills the is_maintenance flag on startup for jobs enqueued by an older version", async () => {
+      const driver = nodeSqliteDriver(new DatabaseSync(":memory:") as never);
+      driver.exec(`
+        CREATE TABLE _selfhost_jobs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          run_after INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          last_error TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          job_key TEXT
+        );
+      `);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
+        [JSON.stringify(msg("build-contributor-evidence"))],
+      );
+      createSqliteQueue(driver, async () => undefined);
+      const row = driver.query("SELECT is_maintenance FROM _selfhost_jobs", []).rows[0] as { is_maintenance: number };
+      expect(Number(row.is_maintenance)).toBe(1);
+    });
+
+    it("does not crash the startup backfill on an unparseable pending payload", async () => {
+      const driver = makeDriver();
+      const q1 = createSqliteQueue(driver, async () => undefined); // creates the table
+      await q1.stop();
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
+        ["not valid json"],
+      );
+      expect(() => createSqliteQueue(driver, async () => undefined)).not.toThrow();
+      const row = driver.query(
+        "SELECT is_maintenance FROM _selfhost_jobs WHERE payload = ?",
+        ["not valid json"],
+      ).rows[0] as { is_maintenance: number };
+      expect(Number(row.is_maintenance)).toBe(0);
+    });
+
+    it("leaves an already-correct is_maintenance flag alone (backfill no-op branch)", async () => {
+      const driver = makeDriver();
+      const q1 = createSqliteQueue(driver, async () => undefined);
+      await q1.binding.send(msg("build-contributor-evidence"));
+      await q1.stop();
+      // Re-open a queue over the same driver: the row's is_maintenance is already correct (set 1 at enqueue),
+      // so the startup backfill should count it as unchanged.
+      const writes: string[] = [];
+      vi.mocked(process.stdout.write).mockImplementation((chunk) => {
+        writes.push(String(chunk));
+        return true;
+      });
+      createSqliteQueue(driver, async () => undefined);
+      expect(writes.some((w) => w.includes("selfhost_queue_maintenance_flags_backfilled"))).toBe(false);
+    });
+
+    it("defers a maintenance job with no job_key (a raw/legacy row) using an empty jitter seed segment", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6);
+      const before = Date.now();
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify({ type: "build-contributor-evidence", requestedBy: "test" }), before],
+      );
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+      const row = driver.query(
+        "SELECT run_after FROM _selfhost_jobs WHERE payload LIKE '%build-contributor-evidence%'",
+        [],
+      ).rows[0] as { run_after: number };
+      expect(row.run_after).toBeGreaterThan(before);
+    });
+
+    it("skips the maintenance-admission-deferred metric when the defer update changes no rows", async () => {
+      const base = makeDriver();
+      const driver = {
+        exec: base.exec.bind(base),
+        query: vi.fn((sql: string, params: unknown[]) => {
+          if (sql.includes("SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?)")) {
+            return { rows: [], changes: 0 };
+          }
+          return base.query(sql, params);
+        }),
+      } as ReturnType<typeof nodeSqliteDriver>;
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      seedLiveRows(driver, 6);
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+      expect(q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_admission_deferred_total");
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_deferred_by_reason_total");
+    });
   });
 });

@@ -31,12 +31,12 @@
     "lib"
   ],
   "scripts": {
-    "build": "node --check bin/gittensory-miner.js && node --check lib/cli.js && node --check lib/update-check.js && node --check lib/opportunity-fanout.js && node --check lib/ci-poller.js"
+    "build": "node --check bin/gittensory-miner.js && node --check lib/cli.js && node --check lib/update-check.js && node --check lib/opportunity-fanout.js && node --check lib/ci-poller.js && node --check lib/run-state.js"
   },
   "dependencies": {
     "@jsonbored/gittensory-engine": "0.1.0"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   }
 }

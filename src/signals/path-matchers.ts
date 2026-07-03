@@ -24,6 +24,71 @@ function extension(path: string): string {
   return dot > 0 ? base.slice(dot + 1) : "";
 }
 
+/**
+ * Shared "normalised parts" struct so callers (notably `classifyChangedFile`) can normalise a path
+ * once and pass the pre-computed pieces to every `isX` helper. The exported `isX(path)` functions
+ * still normalise on their own for callers that don't share a hot loop, so the public contract is
+ * unchanged — the struct is an internal fast path.
+ */
+type NormalizedPath = {
+  norm: string;
+  base: string;
+  ext: string;
+};
+
+function normalizeForMatch(path: string): NormalizedPath {
+  const norm = normalize(path);
+  const slash = norm.lastIndexOf("/");
+  const base = slash >= 0 ? norm.slice(slash + 1) : norm;
+  const dot = base.lastIndexOf(".");
+  const ext = dot > 0 ? base.slice(dot + 1) : "";
+  return { norm, base, ext };
+}
+
+function isGeneratedFileFrom(parts: NormalizedPath): boolean {
+  const { norm, base } = parts;
+  return (
+    /(^|\/)(__generated__|generated)\//.test(norm) ||
+    /\.(generated|gen)\.[^/]+$/.test(norm) ||
+    /\.pb\.(go|ts|js)$/.test(norm) ||
+    /_pb2\.pyi?$/.test(norm) ||
+    /\.g\.dart$/.test(norm) ||
+    /\.(js|jsx|ts|tsx|css)\.map$/.test(norm) ||
+    base === "worker-configuration.d.ts"
+  );
+}
+
+function isVendoredFileFrom(parts: NormalizedPath): boolean {
+  return /(^|\/)(vendor|vendored|third_party|third-party|node_modules)\//.test(parts.norm);
+}
+
+function isLockfileFrom(parts: NormalizedPath): boolean {
+  return LOCKFILE_NAMES.has(parts.base);
+}
+
+function isMinifiedFileFrom(parts: NormalizedPath): boolean {
+  return /\.min\.[a-z0-9]+$/.test(parts.norm);
+}
+
+function isDocsFileFrom(parts: NormalizedPath): boolean {
+  return /(^|\/)docs?\//.test(parts.norm) || DOCS_EXTENSIONS.has(parts.ext);
+}
+
+function isDependencyManifestFileFrom(parts: NormalizedPath): boolean {
+  return DEPENDENCY_MANIFEST_NAMES.has(parts.base);
+}
+
+function isConfigFileFrom(parts: NormalizedPath): boolean {
+  const { norm, base } = parts;
+  if (CONFIG_FILE_NAMES.has(base)) return true;
+  if (CONFIG_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))) return true;
+  if (/(^|\/)\.github\/workflows\/[^/]+\.(ya?ml)$/.test(norm)) return true;
+  if (/(^|\/)\.circleci\/config\.ya?ml$/.test(norm)) return true;
+  if (/\.(config|rc)\.[a-z0-9]+$/i.test(base)) return true;
+  // `.stylelintrc`-style: dot-prefixed name with no extension after "rc"; `custom.rc`: dotted rc extension.
+  return base.endsWith(".rc") || /^\.[^.]+rc$/i.test(base);
+}
+
 const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
   "package-lock.json",
   "npm-shrinkwrap.json",
@@ -164,42 +229,32 @@ const CONFIG_FILE_PREFIXES: readonly string[] = [
 
 /** Machine-generated output (codegen, protobuf, source maps, typegen). */
 export function isGeneratedFile(path: string): boolean {
-  const norm = normalize(path);
-  return (
-    /(^|\/)(__generated__|generated)\//.test(norm) ||
-    /\.(generated|gen)\.[^/]+$/.test(norm) ||
-    /\.pb\.(go|ts|js)$/.test(norm) ||
-    /_pb2\.pyi?$/.test(norm) ||
-    /\.g\.dart$/.test(norm) ||
-    /\.(js|jsx|ts|tsx|css)\.map$/.test(norm) ||
-    basename(norm) === "worker-configuration.d.ts"
-  );
+  return isGeneratedFileFrom(normalizeForMatch(path));
 }
 
 /** Third-party / imported code that lives in the repo but is not the contributor's work. */
 export function isVendoredFile(path: string): boolean {
-  return /(^|\/)(vendor|vendored|third_party|third-party|node_modules)\//.test(normalize(path));
+  return isVendoredFileFrom(normalizeForMatch(path));
 }
 
 /** Dependency lockfiles (resolved trees), e.g. `package-lock.json`, `go.sum`, `Cargo.lock`. */
 export function isLockfile(path: string): boolean {
-  return LOCKFILE_NAMES.has(basename(path));
+  return isLockfileFrom(normalizeForMatch(path));
 }
 
 /** Minified bundles, e.g. `app.min.js`, `styles.min.css`. */
 export function isMinifiedFile(path: string): boolean {
-  return /\.min\.[a-z0-9]+$/.test(normalize(path));
+  return isMinifiedFileFrom(normalizeForMatch(path));
 }
 
 /** Documentation files (by extension or a top-level `docs/` directory). */
 export function isDocsFile(path: string): boolean {
-  const norm = normalize(path);
-  return /(^|\/)docs?\//.test(norm) || DOCS_EXTENSIONS.has(extension(norm));
+  return isDocsFileFrom(normalizeForMatch(path));
 }
 
 /** Dependency manifests (declare dependencies), e.g. `package.json`, `go.mod`, `pyproject.toml`. */
 export function isDependencyManifestFile(path: string): boolean {
-  return DEPENDENCY_MANIFEST_NAMES.has(basename(path));
+  return isDependencyManifestFileFrom(normalizeForMatch(path));
 }
 
 /**
@@ -208,15 +263,7 @@ export function isDependencyManifestFile(path: string): boolean {
  * lower-effort than genuine source changes, so slop signals can weight them differently (#561).
  */
 export function isConfigFile(path: string): boolean {
-  const norm = normalize(path);
-  const base = basename(path);
-  if (CONFIG_FILE_NAMES.has(base)) return true;
-  if (CONFIG_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))) return true;
-  if (/(^|\/)\.github\/workflows\/[^/]+\.(ya?ml)$/.test(norm)) return true;
-  if (/(^|\/)\.circleci\/config\.ya?ml$/.test(norm)) return true;
-  if (/\.(config|rc)\.[a-z0-9]+$/i.test(base)) return true;
-  // `.stylelintrc`-style: dot-prefixed name with no extension after "rc"; `custom.rc`: dotted rc extension.
-  return base.endsWith(".rc") || /^\.[^.]+rc$/i.test(base);
+  return isConfigFileFrom(normalizeForMatch(path));
 }
 
 /**
@@ -244,16 +291,18 @@ export type ChangedFileCategory =
  * Classify a changed file into a single category. Non-substantive padding categories
  * (minified/generated/vendored) take precedence so they are never miscounted as substantive source
  * or test effort; lockfiles and dependency manifests are recognized before generic docs/source.
+ * Normalises the path once and threads the pre-computed parts through every `isX` matcher.
  */
 export function classifyChangedFile(path: string): ChangedFileCategory {
-  if (isMinifiedFile(path)) return "minified";
-  if (isGeneratedFile(path)) return "generated";
-  if (isVendoredFile(path)) return "vendored";
-  if (isLockfile(path)) return "lockfile";
-  if (isDependencyManifestFile(path)) return "dependency_manifest";
-  if (isConfigFile(path)) return "config";
+  const parts = normalizeForMatch(path);
+  if (isMinifiedFileFrom(parts)) return "minified";
+  if (isGeneratedFileFrom(parts)) return "generated";
+  if (isVendoredFileFrom(parts)) return "vendored";
+  if (isLockfileFrom(parts)) return "lockfile";
+  if (isDependencyManifestFileFrom(parts)) return "dependency_manifest";
+  if (isConfigFileFrom(parts)) return "config";
   if (isTestFile(path) || isTestPath(path)) return "test";
-  if (isDocsFile(path)) return "docs";
+  if (isDocsFileFrom(parts)) return "docs";
   if (isCodeFile(path)) return "source";
   return "other";
 }

@@ -361,3 +361,77 @@ describe("classifyChangedFile", () => {
     expect(classifyChangedFile("vendor/tsconfig.json")).toBe("vendored");
   });
 });
+
+describe("path normalization (#2109)", () => {
+  it("classifies Windows-style backslash paths identically to POSIX paths", () => {
+    expect(classifyChangedFile("src\\app.ts")).toBe("source");
+    expect(classifyChangedFile("src\\api.generated.ts")).toBe("generated");
+    expect(classifyChangedFile("frontend\\yarn.lock")).toBe("lockfile");
+    expect(classifyChangedFile("dist\\app.min.js")).toBe("minified");
+    expect(classifyChangedFile("C:\\repo\\src\\README.md")).toBe("docs");
+  });
+
+  it("classifies mixed-case paths identically (normalize is case-insensitive)", () => {
+    expect(classifyChangedFile("Package.json")).toBe("dependency_manifest");
+    expect(classifyChangedFile("YARN.LOCK")).toBe("lockfile");
+    expect(classifyChangedFile("Dockerfile")).toBe("config");
+    expect(classifyChangedFile("APP.MIN.JS")).toBe("minified");
+  });
+
+  it("classifies paths with both Windows slashes and mixed case identically", () => {
+    expect(classifyChangedFile("src\\Components\\App.TSX")).toBe("source");
+    expect(classifyChangedFile("packages\\api\\dist\\bundle.MIN.js")).toBe("minified");
+  });
+
+  it("classifies nullish and empty-string paths as 'other' (defensive)", () => {
+    expect(classifyChangedFile("")).toBe("other");
+    expect(classifyChangedFile(null as unknown as string)).toBe("other");
+    expect(classifyChangedFile(undefined as unknown as string)).toBe("other");
+  });
+
+  it("isConfigFile handles both nullish short-circuits (base === 'dockerfile' vs base.startsWith prefix)", () => {
+    expect(isConfigFile("Dockerfile")).toBe(true);
+    expect(isConfigFile("dockerfile")).toBe(true);
+    expect(isConfigFile(".env")).toBe(true);
+    expect(isConfigFile(".env.local")).toBe(true);
+    expect(isConfigFile(".stylelintrc")).toBe(true);
+    expect(isConfigFile("custom.rc")).toBe(true);
+  });
+});
+
+describe("path-matchers perf benchmark (#2109)", () => {
+  it("classifies 500 mixed paths in well under the pre-refactor budget (no correctness assertions)", () => {
+    const mixedPaths = [
+      "src/app.ts",
+      "src/components/Button.tsx",
+      "test/unit/app.test.ts",
+      "test/integration/auth.test.ts",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "vitest.config.ts",
+      "README.md",
+      "docs/architecture.md",
+      "dist/app.min.js",
+      "vendor/lib.go",
+      "src/api.generated.ts",
+      "node_modules/pkg/index.js",
+      "Dockerfile",
+      ".env.local",
+      "frontend/yarn.lock",
+      "Cargo.lock",
+      "wrangler.jsonc",
+      "src/__generated__/schema.ts",
+    ];
+    const corpus: string[] = [];
+    for (let i = 0; i < 500; i++) corpus.push(mixedPaths[i % mixedPaths.length]!);
+    const start = Date.now();
+    let sink = 0;
+    for (const path of corpus) {
+      sink += classifyChangedFile(path) === "source" ? 1 : 0;
+    }
+    const elapsedMs = Date.now() - start;
+    expect(sink).toBeGreaterThanOrEqual(0);
+    expect(elapsedMs).toBeLessThan(50);
+  });
+});

@@ -1138,15 +1138,18 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   // Moderation-rules engine (#selfhost-mod-engine): per-repo override of the global moderation config.
   const moderationGateMode = normalizeOptionalEnum(r.moderationGateMode, "settings.moderationGateMode", ["inherit", "off", "enabled"] as const, warnings);
   if (moderationGateMode !== null) out.moderationGateMode = moderationGateMode;
-  // Only set when at least one VALID rule survives normalization, same "never blank the DB-configured value
-  // via a malformed block" reasoning as autoCloseExemptLogins above -- an explicit EMPTY override (opting
-  // every rule out for this repo) is expressed by setting an empty array, which normalizeModerationRules
-  // itself returns unchanged, so this guard would also silently drop that intentional case. Guard on
-  // `r.moderationRules !== undefined` alone (not "length > 0") so an intentional empty list still applies.
+  // #gate-flagged: normalizeModerationRules returns an EMPTY rules array for two semantically different
+  // inputs -- a genuinely empty yml list (`moderationRules: []`, an intentional "opt every rule out for this
+  // repo") and a MALFORMED one (a non-array, or an array where every entry fails validation) that degrades to
+  // empty as its safe fallback. Applying the malformed case as an override would silently disable every rule
+  // for this repo instead of leaving the DB-configured value intact, so the two must be told apart by the RAW
+  // input's own shape -- not just the normalized result -- before assigning. A PARTIAL list (some valid, some
+  // invalid entries) still applies the surviving valid subset, mirroring autoCloseExemptLogins' behavior.
   if (r.moderationRules !== undefined) {
     const { rules, warnings: moderationRuleWarnings } = normalizeModerationRules(r.moderationRules);
     warnings.push(...moderationRuleWarnings);
-    out.moderationRules = rules;
+    const intentionalEmptyList = Array.isArray(r.moderationRules) && r.moderationRules.length === 0;
+    if (rules.length > 0 || intentionalEmptyList) out.moderationRules = rules;
   }
   const moderationWarningLabel = normalizeModerationLabel(r.moderationWarningLabel);
   if (moderationWarningLabel !== undefined) out.moderationWarningLabel = moderationWarningLabel;

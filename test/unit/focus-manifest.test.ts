@@ -1598,6 +1598,15 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     // distinct from an all-invalid block, which is dropped instead (see autoCloseExemptLogins above).
     const emptyOverride = resolveEffectiveSettings({ moderationRules: ["blacklist"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: [] } }));
     expect(emptyOverride.moderationRules).toEqual([]);
+    // REGRESSION (gate-flagged): an ALL-INVALID moderationRules block (every entry fails validation, so
+    // normalizeModerationRules ALSO degrades it to an empty array) must NOT be treated as the intentional
+    // empty-list case above -- it is malformed input, not a real opt-out, so the DB-configured value survives.
+    const allInvalidPreserved = resolveEffectiveSettings({ moderationRules: ["blacklist"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: ["not-a-rule", "also-not-a-rule"] as never } }));
+    expect(allInvalidPreserved.moderationRules).toEqual(["blacklist"]);
+    // REGRESSION (gate-flagged): a non-array moderationRules value (e.g. a typo'd bare string) is malformed
+    // the same way -- must not silently disable every rule for this repo either.
+    const nonArrayPreserved = resolveEffectiveSettings({ moderationRules: ["review_nag"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { moderationRules: "blacklist" as never } }));
+    expect(nonArrayPreserved.moderationRules).toEqual(["review_nag"]);
     // An invalid enum / blank label is dropped with a warning rather than silently coerced.
     const invalid = parseFocusManifest({ settings: { moderationGateMode: "sometimes" as never, moderationWarningLabel: "   " } });
     expect(invalid.settings.moderationGateMode).toBeUndefined();

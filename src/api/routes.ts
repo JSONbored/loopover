@@ -2981,8 +2981,15 @@ export function createApp() {
     const auth = c.req.header("authorization") ?? "";
     const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
-    const result = await brokerOrbToken(c.env, secret);
-    if ("error" in result) return c.json(result, result.error === "invalid_enrollment" ? 401 : 403);
+    let result: Awaited<ReturnType<typeof brokerOrbToken>>;
+    try {
+      result = await brokerOrbToken(c.env, secret);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(JSON.stringify({ level: "error", event: "orb_broker_mint_failed", message: message.slice(0, 200) }));
+      return c.json({ error: "broker_error" }, 503);
+    }
+    if ("error" in result) return c.json(result, result.error === "invalid_enrollment" ? 401 : result.error === "broker_misconfigured" ? 503 : 403);
     return c.json(result);
   });
 

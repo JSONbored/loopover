@@ -48,12 +48,23 @@ export async function issueOrbEnrollment(
   return { enrollId, secret };
 }
 
-export type BrokerResult = { token: string; installationId: number; expiresAt: string } | { error: "invalid_enrollment" | "installation_not_eligible" };
+export type BrokerResult = { token: string; installationId: number; expiresAt: string } | { error: "invalid_enrollment" | "installation_not_eligible" | "broker_misconfigured" };
 
 /** The container's token-exchange: a valid enrollment secret → a short-lived installation token for the BOUND
  *  install. installation_id is read from the enrollment row, never the caller; the install must still be
  *  registered=1 and neither suspended nor removed at mint time (the gate is re-checked, not trusted from issue). */
 export async function brokerOrbToken(env: Env, secret: string): Promise<BrokerResult> {
+  // Validate Orb App credentials up front so a misconfiguration returns a structured error (503) rather than an
+  // unhandled exception that manifests as a generic 500 to the self-hosted engine.
+  if (!env.ORB_GITHUB_APP_ID || !env.ORB_GITHUB_APP_PRIVATE_KEY) {
+    console.error(JSON.stringify({ level: "error", event: "orb_broker_misconfigured", message: "ORB_GITHUB_APP_ID or ORB_GITHUB_APP_PRIVATE_KEY is not set; broker cannot mint tokens." }));
+    return { error: "broker_misconfigured" };
+  }
+  // Warn when TOKEN_ENCRYPTION_SECRET is absent — without it, the broker cache is bypassed and every exchange hits
+  // GitHub's token endpoint, dramatically increasing exposure to throttle-induced failures.
+  if (!env.TOKEN_ENCRYPTION_SECRET) {
+    console.warn(JSON.stringify({ level: "warn", event: "orb_broker_no_encryption_key", message: "TOKEN_ENCRYPTION_SECRET is not set; broker token cache is disabled. Set this variable to enable caching and reduce GitHub throttle risk." }));
+  }
   const row = await env.DB
     .prepare("SELECT enroll_id, installation_id, state, revoked_at, cached_token_json FROM orb_enrollments WHERE secret_hash = ?")
     .bind(await hashToken(secret))

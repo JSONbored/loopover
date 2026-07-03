@@ -43,6 +43,7 @@ import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
 import {
   actionParams,
+  clearWritePermissionDenialCooldownForTest,
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
   pendingActionToPlanned,
@@ -54,6 +55,8 @@ import {
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import * as repositoriesModule from "../../src/db/repositories";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 import { MODERATION_VIOLATION_EVENT_TYPE } from "../../src/settings/moderation-rules";
 
@@ -90,6 +93,8 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       liveHeadSha: args.expectedHeadSha ?? null,
       liveState: "open",
     }));
+    clearWritePermissionDenialCooldownForTest();
+    resetMetrics();
   });
 
   it("actionParams threads expectedHeadSha for an update_branch action (and omits absent fields)", () => {
@@ -448,6 +453,93 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(mergePullRequest).not.toHaveBeenCalled();
     expect(updatePullRequestBranch).not.toHaveBeenCalled();
     expect((await auditFor(env, "merge"))?.outcome).toBe("denied");
+  });
+
+  describe("write-permission denial cooldown (#selfhost-runtime-drift)", () => {
+    async function auditCount(env: Env, actionClass: string): Promise<number> {
+      const row = await env.DB.prepare("select count(*) as c from audit_events where event_type = ?")
+        .bind(`agent.action.${actionClass}`)
+        .first<{ c: number }>();
+      return Number(row?.c ?? 0);
+    }
+
+    it("suppresses a repeated pull_requests:write denial within the cooldown window — still denied, but not re-audited", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 200, installationPermissions: { pull_requests: "read", issues: "write" } });
+
+      const first = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+      expect(first[0]).toMatchObject({ outcome: "denied", detail: "pull_requests: write not granted — maintainer must re-consent" });
+      expect(await auditCount(env, "merge")).toBe(1);
+
+      const second = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+      expect(second[0]?.outcome).toBe("denied");
+      expect(second[0]?.detail).toContain("suppressed repeat");
+      expect(await auditCount(env, "merge")).toBe(1); // no new audit row for the suppressed repeat
+      expect(mergePullRequest).not.toHaveBeenCalled();
+
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_agent_action_permission_denied_total{actionClass="merge"} 2');
+      expect(metrics).toContain('gittensory_agent_action_permission_denied_suppressed_total{actionClass="merge"} 1');
+    });
+
+    it("resumes loud auditing once the cooldown window elapses", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 201, installationPermissions: { pull_requests: "read", issues: "write" } });
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-03T00:00:00Z"));
+      try {
+        await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+        expect(await auditCount(env, "merge")).toBe(1);
+
+        vi.setSystemTime(new Date("2026-07-03T00:14:00Z")); // still inside the 15m cooldown
+        await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+        expect(await auditCount(env, "merge")).toBe(1);
+
+        vi.setSystemTime(new Date("2026-07-03T00:15:01Z")); // cooldown elapsed
+        const afterCooldown = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+        expect(afterCooldown[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
+        expect(await auditCount(env, "merge")).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("scopes the cooldown per installation/repo/action-class — a different action class is not suppressed by another's denial", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 202, installationPermissions: { pull_requests: "read", issues: "write" } });
+
+      await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+      const closeOutcome = await executeAgentMaintenanceActions(env, deniedCtx, [close]);
+
+      expect(closeOutcome[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent"); // loud, not suppressed
+      expect(await auditCount(env, "close")).toBe(1);
+    });
+
+    it("scopes the cooldown per repo — the SAME installation denied on a different repo is not suppressed", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "read" as const, issues: "write" as const };
+      await executeAgentMaintenanceActions(env, ctx({ installationId: 203, repoFullName: "owner/repo-a", installationPermissions: perms }), [merge]);
+      const otherRepo = await executeAgentMaintenanceActions(env, ctx({ installationId: 203, repoFullName: "owner/repo-b", installationPermissions: perms }), [merge]);
+
+      expect(otherRepo[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
+      expect(await auditCount(env, "merge")).toBe(2); // one audit row per repo
+    });
+
+    it("REGRESSION (gate finding): a transient audit-write failure on the FIRST denial does not arm the cooldown — the retry attempts the audit again instead of being silently suppressed", async () => {
+      const env = createTestEnv({});
+      const deniedCtx = ctx({ installationId: 204, installationPermissions: { pull_requests: "read", issues: "write" } });
+      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+
+      await expect(executeAgentMaintenanceActions(env, deniedCtx, [merge])).rejects.toThrow("D1 write error");
+      expect(await auditCount(env, "merge")).toBe(0); // the failed write never landed
+
+      auditSpy.mockRestore();
+      const retry = await executeAgentMaintenanceActions(env, deniedCtx, [merge]);
+
+      // Loud, not suppressed — the cooldown was never armed by the failed first attempt.
+      expect(retry[0]?.detail).toBe("pull_requests: write not granted — maintainer must re-consent");
+      expect(await auditCount(env, "merge")).toBe(1);
+    });
   });
 
   it("#label-close-split-brain: a coupled anti-abuse label+close pair (matching closeKind) BOTH complete when the close succeeds", async () => {

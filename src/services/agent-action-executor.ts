@@ -34,6 +34,7 @@ import {
   resolveModerationGateEnabled,
   type ModerationRuleType,
 } from "../settings/moderation-rules";
+import { incr } from "../selfhost/metrics";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
@@ -55,6 +56,42 @@ function shouldRefreshInstallationHealthAfterPrWriteFailure(installationId: numb
   if (lastAttemptMs !== undefined && nowMs - lastAttemptMs < INSTALLATION_HEALTH_REFRESH_COOLDOWN_MS) return false;
   installationHealthRefreshAttempts.set(installationId, nowMs);
   return true;
+}
+
+// A known-denied PR-write action (missing pull_requests:write) must not re-run the freshness + live-CI GitHub
+// calls and re-write an identical audit record on every sweep (#selfhost-runtime-drift) -- that burns queue/API
+// cycles on an outcome that cannot change until the maintainer re-consents (which itself only refreshes on the
+// INSTALLATION_HEALTH_REFRESH_COOLDOWN_MS cadence above, or the periodic refresh-installation-health job). A
+// bounded per-installation/repo/action-class cooldown suppresses the redundant audit write/log while still
+// counting every suppressed attempt, so the denial remains visible in metrics without flooding the audit table.
+const PR_WRITE_DENIAL_COOLDOWN_MS = 15 * 60 * 1000;
+const writePermissionDenialCooldown = new Map<string, number>();
+
+function writePermissionDenialKey(installationId: number, repoFullName: string, actionClass: AgentActionClass): string {
+  return `${installationId}:${repoFullName}:${actionClass}`;
+}
+
+/** True when this exact installation/repo/action-class was already denied for a missing write permission within
+ *  the cooldown window -- the caller should suppress the redundant audit + log, count it, and move on. A pure
+ *  read: the caller must call markWritePermissionDenialAudited AFTER the loud audit write actually succeeds, not
+ *  here -- arming the cooldown before that write lands would mean a transient audit DB failure on the first
+ *  denial permanently swallows it (the retry within the window would see the cooldown already armed and never
+ *  attempt the audit again). */
+function shouldSuppressWritePermissionDenial(key: string, nowMs: number): boolean {
+  const lastDeniedMs = writePermissionDenialCooldown.get(key);
+  return lastDeniedMs !== undefined && nowMs - lastDeniedMs < PR_WRITE_DENIAL_COOLDOWN_MS;
+}
+
+/** Arms (or refreshes) the write-permission-denial cooldown -- call ONLY after the loud audit write for this
+ *  exact denial has actually succeeded, so a failed audit write is retried on the very next pass instead of
+ *  being silently suppressed for the whole cooldown window. */
+function markWritePermissionDenialAudited(key: string, nowMs: number): void {
+  writePermissionDenialCooldown.set(key, nowMs);
+}
+
+/** Test-only: clear the module-level write-permission denial cooldown so each test starts fresh. */
+export function clearWritePermissionDenialCooldownForTest(): void {
+  writePermissionDenialCooldown.clear();
 }
 
 export type AgentActionExecutionContext = {
@@ -116,10 +153,14 @@ function coupledCloseOutcome(planned: PlannedAgentAction[], outcomes: AgentActio
 
 /**
  * Execute (or dry-run, or stage for approval) a planned auto-maintain action set on one PR. Each action runs
- * through the SAME deny-toward-safety gate stack before any GitHub call:
- *   pause (#776 kill-switch) → current autonomy → approval (auto_with_approval → #779 queue) → write-permission (#775) → mode.
+ * through the SAME deny-toward-safety gate stack:
+ *   pause (#776 kill-switch) → current autonomy → dry_run → approval (auto_with_approval → #779 queue) →
+ *   write-permission (#775, checked BEFORE any GitHub call so a known-denied write never spends freshness/live-CI
+ *   API budget) → label/close correlation → freshness → live-CI re-verification → the real mutation.
  * Only `live` mode performs a real mutation; `dry_run` records what it WOULD do. Every path writes one
- * `agent.action.<class>` audit record (#776). A failed mutation is recorded as `error`, never swallowed.
+ * `agent.action.<class>` audit record (#776) EXCEPT a write-permission denial repeated within
+ * PR_WRITE_DENIAL_COOLDOWN_MS of the last one for the same installation/repo/action-class, which is counted but
+ * not re-audited (#selfhost-runtime-drift). A failed mutation is recorded as `error`, never swallowed.
  */
 export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {
   const outcomes: AgentActionOutcome[] = [];
@@ -168,12 +209,34 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
-    // 5) #label-close-split-brain: a `label` coupled to a same-batch anti-abuse close (closeKind set) must not
-    //    post if that close already denied/errored THIS pass — `label` mutates via the Issues API and is exempt
-    //    from the write-permission gate below (step 8) that `close` is not, so without this correlation a
-    //    transient `pull_requests: write` denial could leave a PR mislabeled "closed for X" while still open.
-    //    A coupled close that is still "queued" (awaiting the SAME approval) or "completed" lets the label through
-    //    unchanged; a close with no `closeKind` match (e.g. a plain review_state_label) is unaffected.
+    // 5) Write-permission readiness: a PR-write action needs `pull_requests: write` granted. Checked here --
+    //    before the freshness/live-CI GitHub calls below -- so a known-denied action never spends that API
+    //    budget on an outcome that cannot change until the maintainer re-consents (#selfhost-runtime-drift).
+    //    `label` mutates via the Issues API (`issues: write`, always held), so it is exempt from this gate.
+    if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
+      incr("gittensory_agent_action_permission_denied_total", { actionClass: action.actionClass });
+      const cooldownKey = writePermissionDenialKey(ctx.installationId, ctx.repoFullName, action.actionClass);
+      if (shouldSuppressWritePermissionDenial(cooldownKey, Date.now())) {
+        // Already denied + audited for this exact installation/repo/action-class within the cooldown window --
+        // count it (the denial stays visible in metrics) without re-writing an identical audit record every pass.
+        incr("gittensory_agent_action_permission_denied_suppressed_total", { actionClass: action.actionClass });
+        outcomes.push({
+          actionClass: action.actionClass,
+          outcome: "denied",
+          detail: "pull_requests: write not granted — maintainer must re-consent (suppressed repeat)",
+        });
+        continue;
+      }
+      await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
+      markWritePermissionDenialAudited(cooldownKey, Date.now());
+      continue;
+    }
+    // 6) #label-close-split-brain: a `label` coupled to a same-batch anti-abuse close (closeKind set) must not
+    //    post if that close already denied/errored THIS pass — `label` is exempt from the write-permission gate
+    //    above that `close` is not, so without this correlation a transient `pull_requests: write` denial could
+    //    leave a PR mislabeled "closed for X" while still open. A coupled close that is still "queued" (awaiting
+    //    the SAME approval) or "completed" lets the label through unchanged; a close with no `closeKind` match
+    //    (e.g. a plain review_state_label) is unaffected.
     if (action.actionClass === "label" && action.closeKind) {
       const closeOutcome = coupledCloseOutcome(planned, outcomes, action.closeKind);
       if (closeOutcome === "denied" || closeOutcome === "error") {
@@ -181,7 +244,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         continue;
       }
     }
-    // 6) Freshness guard: every supported live action mutates PR state or PR-visible output, so it must still
+    // 7) Freshness guard: every supported live action mutates PR state or PR-visible output, so it must still
     //    target the reviewed, open head. This protects approval-queue replays and slow webhook jobs from
     //    force-pushes or manual closes that happen after the review was planned.
     const expectedHeadSha = action.expectedHeadSha ?? ctx.headSha ?? null;
@@ -199,7 +262,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("denied", `${pullRequestFreshnessDetail(freshness)} — action not executed`);
       continue;
     }
-    // 7) Live CI re-verification for a merge or a CI-driven heuristic close (#2128): the CI aggregate that drove
+    // 8) Live CI re-verification for a merge or a CI-driven heuristic close (#2128): the CI aggregate that drove
     //    either decision was read seconds-to-tens-of-seconds earlier, in the planning pass, and the freshness
     //    guard above only re-checks head SHA/state, not CI. GitHub's own merge endpoint enforces
     //    branch-protection REQUIRED checks server-side, but only as a backstop when a repo actually configures
@@ -237,11 +300,6 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         await audit("denied", `${staleReason} — action not executed`);
         continue;
       }
-    }
-    // 8) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
-    if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
-      await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
-      continue;
     }
     // 9) live — perform the real mutation, recording success or the error.
     try {

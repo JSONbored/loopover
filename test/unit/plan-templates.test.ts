@@ -1,0 +1,95 @@
+import { describe, expect, it } from "vitest";
+import {
+  analyzePlanTemplate,
+  buildPlanTemplate,
+  preparePlanTemplate,
+  PLAN_TEMPLATE_BUILDERS,
+  type PlanTemplateStage,
+  type RawPlanStep,
+} from "../../packages/gittensory-engine/src/plan-templates";
+import { rawPlanStepSchema } from "../../src/mcp/server";
+
+const STAGES = Object.keys(PLAN_TEMPLATE_BUILDERS) as PlanTemplateStage[];
+
+function idsOf(steps: RawPlanStep[]): string[] {
+  return steps.map((s) => s.id);
+}
+
+describe("plan-templates", () => {
+  it("exposes a builder for every declared stage", () => {
+    expect(STAGES.sort()).toEqual(["analyze", "prepare"]);
+  });
+
+  it.each(STAGES)("'%s' template round-trips through the real rawPlanStepSchema", (stage) => {
+    const steps = buildPlanTemplate(stage, { subject: "fix flaky retry" });
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(() => rawPlanStepSchema.parse(step)).not.toThrow();
+    }
+  });
+
+  it.each(STAGES)("'%s' template has unique ids and only in-plan, acyclic dependencies", (stage) => {
+    const steps = buildPlanTemplate(stage);
+    const ids = idsOf(steps);
+    expect(new Set(ids).size).toBe(ids.length);
+    const present = new Set(ids);
+    for (const step of steps) {
+      for (const dep of step.dependsOn ?? []) {
+        expect(present.has(dep)).toBe(true);
+      }
+    }
+    // A step may only depend on steps declared before it, which both proves acyclicity and gives a ready topo order.
+    const seen = new Set<string>();
+    for (const step of steps) {
+      for (const dep of step.dependsOn ?? []) expect(seen.has(dep)).toBe(true);
+      seen.add(step.id);
+    }
+  });
+
+  it("is deterministic: same context yields identical output", () => {
+    expect(analyzePlanTemplate({ subject: "x" })).toEqual(analyzePlanTemplate({ subject: "x" }));
+    expect(preparePlanTemplate()).toEqual(preparePlanTemplate());
+  });
+
+  it("weaves the subject into every title as a single clean line", () => {
+    const steps = analyzePlanTemplate({ subject: "  add\ta\nlaptop   mode  " });
+    for (const step of steps) {
+      expect(step.title).toContain(": add a laptop mode");
+      expect(step.title).not.toMatch(/[\r\n\t]/);
+    }
+  });
+
+  it("omits the subject suffix when no subject is given", () => {
+    const first = preparePlanTemplate()[0];
+    expect(first?.title).toBe("Create working branch");
+  });
+
+  it("bounds an oversized subject so every title stays within the schema's 300-char limit", () => {
+    const steps = analyzePlanTemplate({ subject: "z".repeat(5000) });
+    for (const step of steps) {
+      expect(() => rawPlanStepSchema.parse(step)).not.toThrow();
+      expect(step.title.length).toBeLessThanOrEqual(300);
+    }
+  });
+
+  it("encodes the real analyze ordering: prompt-packet depends on both feasibility and retrieval", () => {
+    const steps = analyzePlanTemplate();
+    const packet = steps.find((s) => s.id === "prompt-packet");
+    expect(packet?.dependsOn).toEqual(["feasibility-check", "rag-retrieval"]);
+  });
+
+  it("encodes the real prepare ordering: a strict branch-create -> coding-agent -> local-test chain", () => {
+    const steps = preparePlanTemplate();
+    expect(steps.map((s) => s.id)).toEqual(["branch-create", "coding-agent", "local-test"]);
+    expect(steps.find((s) => s.id === "coding-agent")?.dependsOn).toEqual(["branch-create"]);
+    expect(steps.find((s) => s.id === "local-test")?.dependsOn).toEqual(["coding-agent"]);
+  });
+
+  it("rejects an unknown stage with a clear error instead of a generic TypeError", () => {
+    expect(() => buildPlanTemplate("bogus" as PlanTemplateStage)).toThrow(/Unknown plan-template stage/);
+  });
+
+  it("exposes a frozen registry so the shared dispatch table cannot be mutated", () => {
+    expect(Object.isFrozen(PLAN_TEMPLATE_BUILDERS)).toBe(true);
+  });
+});

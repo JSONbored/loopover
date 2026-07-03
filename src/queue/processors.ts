@@ -352,6 +352,7 @@ import {
 } from "../review/inline-comments";
 import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
 import { secretLeakFinding } from "../review/safety";
+import { lockfileTamperRiskFinding } from "../review/lockfile-tamper";
 import {
   buildIssuePlanComment,
   classifyPlanCommandRequest,
@@ -430,6 +431,7 @@ import type {
   ContributorEvidenceRecord,
   ContributorRepoStatRecord,
   DetectedNotificationEvent,
+  GateRuleMode,
   GitHubWebhookPayload,
   IssueRecord,
   JobMessage,
@@ -4895,6 +4897,7 @@ export function gateCheckPolicy(
     // thresholds default to 10 files / 1000 lines (advisory.ts constants); the live counts + guardrail-hit come from
     // the per-PR sizeContext threaded by the caller.
     sizeGateMode: settings.sizeGateMode,
+    lockfileIntegrityGateMode: settings.lockfileIntegrityGateMode,
     changedFileCount: sizeContext?.changedFileCount ?? null,
     changedLineCount: sizeContext?.changedLineCount ?? null,
     guardrailHit: sizeContext?.guardrailHit ?? false,
@@ -5579,6 +5582,46 @@ export async function maybeAddSecretLeakFinding(
       JSON.stringify({
         level: "error",
         event: "secret_scan_failed",
+        repository: args.repoFullName,
+        pullNumber: args.pullNumber,
+        error: errorMessage(error),
+      }),
+    );
+  }
+}
+
+/**
+ * Lockfile-tamper-risk scan (#2563, opt-in via `lockfileIntegrityGateMode`). Scans a changed
+ * `package-lock.json`'s diff for a `resolved`/`integrity` value that changed without the corresponding
+ * `package.json` dependency version changing, or a `resolved` URL outside `registry.npmjs.org`, and on a hit
+ * appends ONE warning-severity `lockfile_tamper_risk` finding to the advisory BEFORE evaluateGateCheck runs —
+ * the gate treats that code as a blocker only when the repo has set `lockfileIntegrityGateMode: block`
+ * (rules/advisory.ts). Mode `off` (the default) skips the scan entirely so the advisory/gate stays
+ * byte-identical to today. Fail-safe: a file-load error is swallowed so it can never destabilize the gate.
+ */
+export async function maybeAddLockfileTamperFinding(
+  env: Env,
+  args: {
+    advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
+    repoFullName: string;
+    pullNumber: number;
+    lockfileIntegrityGateMode: GateRuleMode | undefined;
+    files: Awaited<ReturnType<typeof listPullRequestFiles>> | null;
+  },
+): Promise<void> {
+  if (!args.lockfileIntegrityGateMode || args.lockfileIntegrityGateMode === "off") return;
+  try {
+    const files =
+      args.files ??
+      (await listPullRequestFiles(env, args.repoFullName, args.pullNumber));
+    const finding = lockfileTamperRiskFinding(files);
+    if (finding) args.advisory.findings.push(finding);
+  } catch (error) {
+    /* v8 ignore next -- fail-safe: a file-load error never destabilizes the gate. */
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "lockfile_tamper_scan_failed",
         repository: args.repoFullName,
         pullNumber: args.pullNumber,
         error: errorMessage(error),
@@ -6674,6 +6717,16 @@ async function maybePublishPrPublicSurface(
       advisory,
       repoFullName,
       pullNumber: pr.number,
+      files: await getReviewFiles(),
+    });
+
+    // Lockfile-tamper-risk scan (#2563): opt-in via `lockfileIntegrityGateMode` (default off — the scan is
+    // skipped entirely). getReviewFiles() is memoized, so this reuses the already-loaded diff when present.
+    await maybeAddLockfileTamperFinding(env, {
+      advisory,
+      repoFullName,
+      pullNumber: pr.number,
+      lockfileIntegrityGateMode: settings.lockfileIntegrityGateMode,
       files: await getReviewFiles(),
     });
 

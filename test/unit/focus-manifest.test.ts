@@ -182,6 +182,8 @@ describe("parseFocusManifestContent", () => {
     expect(manifest.gate.aiReviewCloseConfidence).toBeNull();
     // #2552: requireFreshRebaseWindow also round-trips through the real parser.
     expect(manifest.gate.requireFreshRebaseWindowMinutes).toBe(10);
+    // #2563: gate.lockfileIntegrity also round-trips through the real parser.
+    expect(manifest.gate.lockfileIntegrityMode).toBe("off");
   });
 });
 
@@ -494,7 +496,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, profile: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
@@ -802,7 +804,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -1858,6 +1860,32 @@ describe("gate.size manual-review hold config (#gate-size)", () => {
     expect(bad.warnings.some((w) => w.includes("gate.size"))).toBe(true);
     const round = parseFocusManifest({ gate: gateConfigToJson(m.gate) });
     expect(round.gate.sizeMode).toBe("advisory");
+  });
+});
+
+describe("gate.lockfileIntegrity lockfile-tamper-risk gate config (#2563)", () => {
+  it("parses gate.lockfileIntegrity, sets present, round-trips via gateConfigToJson, and resolves into effective settings", () => {
+    const m = parseFocusManifest({ gate: { lockfileIntegrity: "block" } });
+    expect(m.gate.lockfileIntegrityMode).toBe("block");
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ lockfileIntegrity: "block" });
+    const round = parseFocusManifest({ gate: gateConfigToJson(m.gate) });
+    expect(round.gate.lockfileIntegrityMode).toBe("block");
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.lockfileIntegrityGateMode).toBe("block");
+  });
+
+  it("defaults to unset/null when omitted — byte-identical to today (off)", () => {
+    const m = parseFocusManifest({});
+    expect(m.gate.lockfileIntegrityMode).toBeNull();
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.lockfileIntegrityGateMode).toBeUndefined();
+  });
+
+  it("warns and drops an invalid mode value rather than silently coercing it", () => {
+    const m = parseFocusManifest({ gate: { lockfileIntegrity: "sometimes" as never } });
+    expect(m.gate.lockfileIntegrityMode).toBeNull();
+    expect(m.warnings.some((w) => /gate\.lockfileIntegrity/i.test(w))).toBe(true);
   });
 });
 

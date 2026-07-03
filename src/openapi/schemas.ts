@@ -597,6 +597,7 @@ export const RepositorySettingsSchema = z
     qualityGateMinScore: z.number().nullable().optional(),
     slopGateMode: z.enum(["off", "advisory", "block"]),
     sizeGateMode: z.enum(["off", "advisory", "block"]).optional(),
+    lockfileIntegrityGateMode: z.enum(["off", "advisory", "block"]).optional(),
     gateDryRun: z.boolean().optional(),
     premergeContentRecheck: z.boolean().optional(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable().optional(),

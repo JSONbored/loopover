@@ -72,6 +72,11 @@ export type GateCheckPolicy = {
    *  neutral gate → "manual" verdict, never auto-merged and never a hard failure. Defaults off; thresholds default
    *  to 10 files / 1000 lines. This is a HOLD (advisory dry-run friendly), not a close. */
   sizeGateMode?: GateRuleMode | undefined;
+  /** Lockfile-tamper-risk gate (#2563). When `block`, a `lockfile_tamper_risk` finding (produced by
+   *  review/lockfile-tamper.ts when a changed package-lock.json's resolved/integrity value changed without a
+   *  matching package.json version bump, or points off the npm registry) becomes a hard blocker. Defaults to
+   *  `off` — the finding is never produced when off, and never blocks under `advisory`. */
+  lockfileIntegrityGateMode?: GateRuleMode | undefined;
   /** Aggregate change size, threaded from the resolved file list (changedLineCount = additions + deletions). */
   changedFileCount?: number | null | undefined;
   changedLineCount?: number | null | undefined;
@@ -874,6 +879,10 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // Self-authored linked-issue gate: blocks only when the maintainer opts in with `block`. Defaults to
   // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
   if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory") === "block";
+  // Lockfile-tamper-risk gate (#2563): blocks only when the maintainer opts in with `block`. Defaults to `off`
+  // (the finding is never even produced — see maybeAddLockfileTamperFinding's mode gate in queue/processors.ts),
+  // so this branch only matters once a repo has explicitly turned the scan on.
+  if (code === "lockfile_tamper_risk") return gateMode(policy.lockfileIntegrityGateMode ?? "off") === "block";
   return false;
 }
 

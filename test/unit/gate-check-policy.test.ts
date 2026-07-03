@@ -764,6 +764,33 @@ describe("size + guardrail manual-review HOLD (#gate-size / #gate-guardrail)", (
   });
 });
 
+describe("lockfile-tamper-risk gate blocker (#2563)", () => {
+  const lockfileAdvisory = (): Advisory => ({
+    ...missingIssueAdvisory(),
+    findings: [{ code: "lockfile_tamper_risk", title: "Possible lockfile tamper risk (lodash)", severity: "warning", detail: "resolved/integrity changed without a version bump.", action: "Regenerate the lockfile." }],
+  });
+
+  it("blocks (failure) under lockfileIntegrityGateMode: block, confirmed contributor", () => {
+    const result = evaluateGateCheck(lockfileAdvisory(), { lockfileIntegrityGateMode: "block", confirmedContributor: true });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((b) => b.code)).toContain("lockfile_tamper_risk");
+  });
+
+  it("stays advisory (never blocks) under off (default/unset) or advisory mode", () => {
+    expect(evaluateGateCheck(lockfileAdvisory(), {}).conclusion).toBe("success"); // unset ⇒ off
+    expect(evaluateGateCheck(lockfileAdvisory(), { lockfileIntegrityGateMode: "off" }).conclusion).toBe("success");
+    const advisoryResult = evaluateGateCheck(lockfileAdvisory(), { lockfileIntegrityGateMode: "advisory" });
+    expect(advisoryResult.conclusion).toBe("success");
+    expect(advisoryResult.warnings.map((w) => w.code)).toContain("lockfile_tamper_risk");
+  });
+
+  it("resolveEffectiveSettings maps gate.lockfileIntegrity → lockfileIntegrityGateMode, and gateCheckPolicy threads it", () => {
+    const eff = resolveEffectiveSettings(settings({}), parseFocusManifest({ gate: { lockfileIntegrity: "block" } }));
+    expect(eff.lockfileIntegrityGateMode).toBe("block");
+    expect(gateCheckPolicy(settings({ lockfileIntegrityGateMode: "block" }), null, true).lockfileIntegrityGateMode).toBe("block");
+  });
+});
+
 describe("dry-run disposition (#gate-dryrun): would-be verdict without enforcing", () => {
   // #disposition-redesign: the dry-run shadow promotes ONLY the AI sub-gate. CLOSE is driven by AI confidence; the
   // advisory signals (linked issue, readiness/quality, slop, duplicates) can NEVER drive a would-be close.

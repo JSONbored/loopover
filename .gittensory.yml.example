@@ -143,6 +143,15 @@ gate:
   size:
     mode: off
 
+  # Lockfile-tamper-risk gate. Scans a changed package-lock.json diff for a
+  # resolved/integrity value that changed WITHOUT the same package's version
+  # changing in a changed package.json, or a resolved URL outside
+  # registry.npmjs.org — the classic supply-chain hand-edit tell. Distinct
+  # from the OSV.dev known-CVE dependency scan (a different threat model).
+  # off | advisory | block. Default: off. Config-as-code only — no DB column
+  # or dashboard toggle; this can only be set here.
+  lockfileIntegrity: off
+
   # Composite merge-readiness gate (no min score).
   # off | advisory | block. Default: off.
   mergeReadiness: off

@@ -8720,6 +8720,14 @@
             "type": "integer",
             "minimum": 0,
             "exclusiveMinimum": true
+          },
+          "lockfileIntegrityGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
           }
         },
         "required": [

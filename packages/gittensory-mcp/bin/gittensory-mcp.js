@@ -40,6 +40,7 @@ const CLI_COMMAND_SPEC = {
   "analyze-branch": [],
   preflight: [],
   "lint-pr-text": [],
+  "slop-risk": [],
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear"],
   agent: ["plan", "status", "explain", "packet"],
@@ -1404,6 +1405,7 @@ async function runCli(args) {
   if (command === "doctor") return doctor(options);
   if (command === "init-client") return initClient(options);
   if (command === "lint-pr-text") return lintPrTextCli(args.slice(1));
+  if (command === "slop-risk") return slopRiskCli(args.slice(1));
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
@@ -1477,6 +1479,67 @@ async function lintPrTextCli(args) {
   process.stdout.write(`PR text lint: ${payload.verdict} (score ${payload.score})\n`);
   process.stdout.write(`${payload.summary}\n`);
   for (const fix of payload.fixes ?? []) process.stdout.write(`- ${fix}\n`);
+}
+
+function printSlopRiskHelp() {
+  process.stdout.write(
+    [
+      "Usage: gittensory-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]",
+      "",
+      "Assess deterministic slop risk from local diff metadata and a PR description.",
+      "Mirrors the gittensory_check_slop_risk MCP tool and POST /v1/lint/slop-risk. No source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+function stringArrayOption(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function parseChangedFileSpec(raw) {
+  const [path, additions, deletions] = String(raw).split(":");
+  if (!path) throw new Error(`Invalid --changed-file value: ${raw}`);
+  const entry = { path };
+  if (additions !== undefined && additions !== "") {
+    const parsedAdditions = Number(additions);
+    if (!Number.isInteger(parsedAdditions) || parsedAdditions < 0) throw new Error(`Invalid additions in --changed-file: ${raw}`);
+    entry.additions = parsedAdditions;
+  }
+  if (deletions !== undefined && deletions !== "") {
+    const parsedDeletions = Number(deletions);
+    if (!Number.isInteger(parsedDeletions) || parsedDeletions < 0) throw new Error(`Invalid deletions in --changed-file: ${raw}`);
+    entry.deletions = parsedDeletions;
+  }
+  return entry;
+}
+
+async function slopRiskCli(args) {
+  if (!args.length || args[0] === "--help" || args[0] === "help") return printSlopRiskHelp();
+  const options = parseOptions(args);
+  let description = options.description ?? options.body;
+  const descriptionFile = options.descriptionFile ?? options.bodyFile;
+  if (descriptionFile) {
+    if (!existsSync(descriptionFile)) throw new Error(`Description file not found: ${descriptionFile}`);
+    description = readFileSync(descriptionFile, "utf8");
+  }
+  const changedFiles = stringArrayOption(options.changedFile).map(parseChangedFileSpec);
+  const tests = stringArrayOption(options.test);
+  const testFiles = stringArrayOption(options.testFile);
+  const payload = await apiPost("/v1/lint/slop-risk", {
+    ...(changedFiles.length ? { changedFiles } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(tests.length ? { tests } : {}),
+    ...(testFiles.length ? { testFiles } : {}),
+  });
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`Slop risk: ${payload.slopRisk} (${payload.band})\n`);
+  for (const finding of payload.findings ?? []) process.stdout.write(`- ${finding.title}: ${finding.detail}\n`);
 }
 
 async function decisionPackCli(options) {
@@ -1866,6 +1929,7 @@ function printHelp() {
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
+  gittensory-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
   gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
   gittensory-mcp agent status <run-id> [--json]
   gittensory-mcp agent explain <run-id> [--json]
@@ -1920,7 +1984,7 @@ Use --profile <name> or GITTENSORY_PROFILE to run login, logout, whoami, status,
 
 function parseOptions(args) {
   const options = {};
-  const repeatable = new Set(["label", "issue", "commit", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
+  const repeatable = new Set(["label", "issue", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {

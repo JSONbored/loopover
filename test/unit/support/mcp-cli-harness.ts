@@ -234,6 +234,16 @@ export async function startFixtureServer(
       response.end(JSON.stringify(lintPrTextFixture(body)));
       return;
     }
+    if (request.url === "/v1/lint/slop-risk" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as {
+        changedFiles?: Array<{ path: string; additions?: number; deletions?: number }>;
+        description?: string;
+        tests?: string[];
+        testFiles?: string[];
+      };
+      response.end(JSON.stringify(slopRiskFixture(body)));
+      return;
+    }
     // #784 maintainer controls (agent approval queue + kill-switch).
     if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "GET") {
       response.end(JSON.stringify({ repoFullName: "owner/repo", pendingActions: [{ id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" }] }));
@@ -436,5 +446,31 @@ export function lintPrTextFixture(input: { commitMessages?: string[]; prBody?: s
         evidence: missingTraceability ? "No linked issue or no-issue rationale." : `Linked issue #${input.linkedIssue}.`,
       },
     ],
+  };
+}
+
+export function slopRiskFixture(input: {
+  changedFiles?: Array<{ path: string; additions?: number; deletions?: number }>;
+  description?: string;
+  tests?: string[];
+  testFiles?: string[];
+} = {}) {
+  const changedFiles = input.changedFiles ?? [];
+  const hasCodeChange = changedFiles.some((file) => !file.path.includes(".test."));
+  const hasTestEvidence = changedFiles.some((file) => file.path.includes(".test.")) || (input.testFiles?.length ?? 0) > 0 || (input.tests?.length ?? 0) > 0;
+  const emptyDescription = !input.description?.trim();
+  const elevated = hasCodeChange && (!hasTestEvidence || emptyDescription);
+  const slopRisk = elevated ? 45 : 0;
+  const findings =
+    elevated && emptyDescription
+      ? [{ code: "empty_description", title: "Empty PR description", severity: "warning", detail: "Add a specific summary of what changed and why." }]
+      : elevated
+        ? [{ code: "missing_test_evidence", title: "Missing test evidence", severity: "warning", detail: "Add or update tests for the changed behavior." }]
+        : [];
+  return {
+    slopRisk,
+    band: slopRisk <= 0 ? "clean" : slopRisk < 25 ? "low" : slopRisk < 60 ? "elevated" : "high",
+    findings,
+    rubric: "Fixture slop rubric.",
   };
 }

@@ -42,10 +42,13 @@ describe("test evidence helpers", () => {
     expect(isTestPath("Services/OrderTests.cs")).toBe(true); // xUnit/NUnit
     expect(isTestPath("Sources/App/LoginTests.swift")).toBe(true); // XCTest
     expect(isTestPath("gradle/CartSpec.groovy")).toBe(true); // Spock
+    expect(isTestPath("src/Service/UserTest.php")).toBe(true); // PHPUnit
+    expect(isTestPath("app/Domain/PricingSpec.php")).toBe(true); // PHPSpec
     // Case-sensitive suffix: words merely ending in test/spec are not tests.
     expect(isTestPath("app/src/main/java/Latest.java")).toBe(false);
     expect(isTestPath("Services/Contest.cs")).toBe(false);
     expect(isTestPath("modules/manifest.scala")).toBe(false);
+    expect(isTestPath("app/Latest.php")).toBe(false);
     // A non-JVM extension with the same class name is unaffected by this rule.
     expect(isTestPath("lib/WidgetTest.rb")).toBe(false);
   });

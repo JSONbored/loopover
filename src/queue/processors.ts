@@ -1,5 +1,6 @@
 import {
   countOpenIssues,
+  countOpenItemsForAuthorAcrossRepos,
   countOpenPullRequests,
   getAgentCommandAnswer,
   getInstallation,
@@ -245,6 +246,7 @@ import {
   type PlannedAgentAction,
 } from "../settings/agent-actions";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
+import { resolveGlobalContributorOpenItemCap } from "../settings/global-contributor-cap";
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES } from "../db/migration-collisions";
 import { listMigrationFilenamesAtRef } from "../github/migration-tree";
 import {
@@ -2027,7 +2029,7 @@ async function runAgentMaintenancePlanAndExecute(
   // default) ⇒ this block is a no-op. A below-account-age-threshold author (#2561) gets a TIGHTER effective
   // cap (half, rounded up, minimum 1) — visibility/friction, still never a close on account age by itself
   // (the close, if any, is still tagged/reasoned as the ordinary contributor-cap close).
-  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" } | undefined;
+  let contributorCapMatch: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues"; scope?: "repository" | "install" | undefined } | undefined;
   const contributorOpenPrCap =
     isNewAccount && typeof settings.contributorOpenPrCap === "number"
       ? Math.max(1, Math.ceil(settings.contributorOpenPrCap / 2))
@@ -2053,6 +2055,22 @@ async function runAgentMaintenancePlanAndExecute(
       .map((other) => other.number);
     if (otherOverCapSiblingNumbers.length > 0) {
       await wakeOverCapSiblingPullRequests(env, deliveryId, installationId, repoFullName, otherOverCapSiblingNumbers);
+    }
+  }
+
+  // Install-wide contributor open-item cap (#2562, anti-abuse): IN ADDITION TO the per-repo cap above, not
+  // instead of it -- only evaluated when the per-repo cap didn't already match (short-circuit: no need for a
+  // second cross-repo DB read once this PR is already being closed). Off by default (resolveGlobalContributorOpenItemCap
+  // returns null when GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP is unset/invalid) ⇒ zero extra queries, zero behavior
+  // change for an install that hasn't opted in. Reuses the shared autoCloseExemptLogins list (#2463) so a
+  // maintainer-named login is exempt here exactly like the per-repo caps and review-nag cooldown.
+  if (contributorCapMatch === undefined && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
+    const globalCap = resolveGlobalContributorOpenItemCap(env);
+    if (globalCap !== null) {
+      const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, pr.authorLogin);
+      if (installOpenCount > globalCap) {
+        contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: installOpenCount, cap: globalCap, itemKind: "pull requests", scope: "install" };
+      }
     }
   }
 
@@ -3924,13 +3942,49 @@ async function maybeCloseIssueOverContributorCap(
   const { installationId, repoFullName, issue, settings } = args;
   const cap = settings.contributorOpenIssueCap;
   const authorLogin = issue.authorLogin;
-  if (typeof cap !== "number" || !authorLogin) return;
+  // Install-wide cap (#2562) is checked IN ADDITION TO the per-repo cap, so this function must still run when
+  // ONLY the global cap is configured (the per-repo cap stays optional/off, its usual default).
+  const globalCap = resolveGlobalContributorOpenItemCap(env);
+  if ((typeof cap !== "number" && globalCap === null) || !authorLogin) return;
 
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
   const authorIsOwner = authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAdmin = parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(authorLogin.toLowerCase());
   const authorIsAutomationBot = isProtectedAutomationAuthor(authorLogin);
   if (authorIsOwner || authorIsAdmin || authorIsAutomationBot) return;
+
+  // Install-wide check first (#2562): reuses the shared autoCloseExemptLogins list, same as the PR path. A
+  // match here closes THIS issue directly (unlike the per-repo cap below, there is no cross-repo sibling set to
+  // union/live-verify -- the aggregate count already covers every repo, so a single over-cap read is enough).
+  if (globalCap !== null && !isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) {
+    const installOpenCount = await countOpenItemsForAuthorAcrossRepos(env, authorLogin);
+    if (installOpenCount > globalCap) {
+      const planned = planAgentMaintenanceActions({
+        conclusion: "skipped",
+        blockerTitles: [],
+        autonomy: settings.autonomy,
+        changedPaths: [],
+        hardGuardrailGlobs: [],
+        authorIsOwner,
+        authorIsAdmin,
+        authorIsAutomationBot,
+        ciState: "unverified",
+        contributorCapMatch: { matched: true, authorLogin, openCount: installOpenCount, cap: globalCap, itemKind: "issues", scope: "install" },
+        contributorCapLabel: settings.contributorCapLabel,
+        pr: { labels: [] },
+      });
+      if (planned.length > 0) {
+        await executeIssueMaintenanceActions(
+          env,
+          { installationId, repoFullName, issueNumber: issue.number, autonomy: settings.autonomy, agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun },
+          planned,
+        );
+      }
+      return;
+    }
+  }
+
+  if (typeof cap !== "number") return;
 
   const otherOpenIssues = await listOpenIssues(env, repoFullName);
   const authorLoginLower = authorLogin.toLowerCase();

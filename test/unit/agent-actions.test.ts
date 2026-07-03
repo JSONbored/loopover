@@ -949,6 +949,23 @@ describe("per-contributor open-item cap short-circuit (#2270)", () => {
     expect(plan[1]?.closeComment).not.toContain("pull requests");
   });
 
+  it("scope 'install' (#2562) describes the cap as install-wide, not this-repository's — same closeKind/label shape", () => {
+    const plan = planAgentMaintenanceActions(
+      overCap({ contributorCapMatch: { matched: true, authorLogin: "farmer99", openCount: 5, cap: 4, itemKind: "pull requests", scope: "install" } }),
+    );
+    expect(plan[1]).toMatchObject({ actionClass: "close", closeKind: "contributor_cap" });
+    expect(plan[1]?.closeComment).toContain("@farmer99");
+    expect(plan[1]?.closeComment).toContain("5 open pull requests");
+    expect(plan[1]?.closeComment).toContain("across every repository it gates, combined) of 4");
+    expect(plan[1]?.closeComment).not.toContain("this repository's configured limit");
+  });
+
+  it("scope 'repository' (default, absent) keeps the original this-repository close-comment wording — back-compat", () => {
+    const plan = planAgentMaintenanceActions(overCap()); // overCap's base contributorCapMatch omits `scope`
+    expect(plan[1]?.closeComment).toContain("this repository's configured limit");
+    expect(plan[1]?.closeComment).not.toContain("across every repository it gates");
+  });
+
   it("uses the repo-configured contributorCapLabel, defaulting to 'over-contributor-limit' when unset", () => {
     expect(planAgentMaintenanceActions(overCap({ contributorCapLabel: "spam-cap" }))[0]).toMatchObject({ label: "spam-cap" });
     expect(DEFAULT_CONTRIBUTOR_CAP_LABEL).toBe("over-contributor-limit");

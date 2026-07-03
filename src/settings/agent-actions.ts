@@ -169,7 +169,11 @@ export type AgentActionPlanInput = {
   // so — unlike the blacklist's private-reason close — they ARE interpolated into the public close comment.
   // `itemKind` selects the close-comment noun ("pull requests" for the PR-path caller, "issues" for the
   // issue-path caller, #2270) — REQUIRED (not defaulted) so a caller can't silently mislabel the other kind.
-  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" } | undefined;
+  // `scope` (#2562) selects the close-comment's cap description: "repository" (default when absent, back-compat
+  // for every existing per-repo caller) says "this repository's configured limit"; "install" says "across every
+  // repository this install gates, combined" for the install-wide globalContributorOpenItemCap. Same closeKind
+  // ("contributor_cap") and label either way — this is a description-only distinction, not a new disposition.
+  contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues"; scope?: "repository" | "install" | undefined } | undefined;
   // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.gittensory.yml`.
   // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit").
   contributorCapLabel?: string | undefined;
@@ -307,9 +311,13 @@ function blacklistCloseMessage(): string {
 // The close comment for exceeding the per-contributor open-item cap (#2270). Unlike blacklistCloseMessage, this
 // DOES interpolate authorLogin/openCount/cap — none of that is private (the author's own login and their own
 // open-item count on a public repo are already public/derivable from GitHub itself), and stating the exact
-// numbers is the point: a deterministic, contributor-visible cap, not a silent quality-based hold.
-function contributorCapCloseMessage(authorLogin: string, openCount: number, cap: number, itemNoun: "pull requests" | "issues"): string {
-  return `Gittensory closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above this repository's configured limit of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
+// numbers is the point: a deterministic, contributor-visible cap, not a silent quality-based hold. `scope`
+// (#2562) picks the cap description: "repository" (default, back-compat for every existing per-repo caller) vs.
+// "install" for the install-wide globalContributorOpenItemCap — same message shape, closeKind, and label either
+// way, just an accurate noun phrase for where the count was aggregated.
+function contributorCapCloseMessage(authorLogin: string, openCount: number, cap: number, itemNoun: "pull requests" | "issues", scope?: "repository" | "install" | undefined): string {
+  const scopeDescription = scope === "install" ? "this install's configured limit (across every repository it gates, combined)" : "this repository's configured limit";
+  return `Gittensory closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above ${scopeDescription} of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
 }
 
 // The close comment for review-nag cooldown (#2463). DOES interpolate authorLogin/pingCount/maxPings — none of
@@ -369,7 +377,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // independently of the caller (defense-in-depth, matching the blacklist block's own redundant check above).
   const capContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
   if (input.contributorCapMatch?.matched === true && capContributor) {
-    const { authorLogin, openCount, cap, itemKind } = input.contributorCapMatch;
+    const { authorLogin, openCount, cap, itemKind, scope } = input.contributorCapMatch;
     const label = input.contributorCapLabel ?? DEFAULT_CONTRIBUTOR_CAP_LABEL;
     if (acting("label")) actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: "over the per-contributor open-item cap", label, labelOp: "add" });
     if (acting("close")) {
@@ -377,7 +385,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         actionClass: "close",
         requiresApproval: approval("close"),
         reason: "over the per-contributor open-item cap",
-        closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, itemKind)),
+        closeComment: sanitizePublicComment(contributorCapCloseMessage(authorLogin, openCount, cap, itemKind, scope)),
         closeKind: "contributor_cap",
       });
     }

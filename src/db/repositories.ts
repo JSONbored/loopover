@@ -3104,6 +3104,28 @@ export async function countOpenPullRequests(env: Env, fullName: string): Promise
   return Number(row?.count ?? 0);
 }
 
+/**
+ * Install-wide open-item count for one author (#2562, anti-abuse): SUM of this author's open PRs + open
+ * issues across EVERY repo tracked in this install's database -- deliberately NOT scoped by repoFullName,
+ * unlike countOpenPullRequests/countOpenIssues above. This is what makes the globalContributorOpenItemCap
+ * catch an actor spreading low-volume spam across several gated repos in the same self-hosted install: no
+ * single repo's own cap trips, but the aggregate does. Same-database aggregate only -- no cross-instance
+ * networking, mirroring the install-scoped singleton shape of global_contributor_blacklist. Case-insensitive
+ * login match (mirrors loginMatches/findBlacklistEntry elsewhere in this file).
+ */
+export async function countOpenItemsForAuthorAcrossRepos(env: Env, authorLogin: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [[prRow], [issueRow]] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` }).from(pullRequests).where(and(eq(pullRequests.state, "open"), loginMatches(pullRequests.authorLogin, authorLogin))),
+    db.select({ count: sql<number>`count(*)` }).from(issues).where(and(eq(issues.state, "open"), loginMatches(issues.authorLogin, authorLogin))),
+  ]);
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
+  const prCount = Number(prRow?.count ?? 0);
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
+  const issueCount = Number(issueRow?.count ?? 0);
+  return prCount + issueCount;
+}
+
 // Anti-farming (#anti-gaming-flood): how many PRs this author has SUBMITTED to this repo since `sinceIso` (ANY
 // state — open/merged/closed), so a flood that merges fast is still caught. createdAt is the row-insert time
 // (≈ when gittensory first saw the PR), a good proxy for submission time on live webhook-driven PRs.

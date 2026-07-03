@@ -80,6 +80,15 @@ declare global {
       onMerge?: import("./services/ai-review").OnMerge | undefined;
     };
     ADMIN_GITHUB_LOGINS?: string;
+    /** Install-wide contributor open-item cap (#2562, anti-abuse): the max PRs+issues a single non-owner/
+     *  admin/bot contributor may have open ACROSS EVERY repo this install gates, combined. Purely an
+     *  install-scoped aggregate over this same database (no cross-instance networking) -- catches an actor
+     *  spreading low-volume spam/farming PRs across several gated repos in one self-hosted install, which no
+     *  single repo's own contributorOpenPrCap/contributorOpenIssueCap can see. Unset/invalid (the default) = no
+     *  cap, byte-identical to today. Checked IN ADDITION TO (not instead of) the existing per-repo caps, in the
+     *  same contributor_cap short-circuit (src/settings/agent-actions.ts). A positive integer string (e.g. "20");
+     *  see src/settings/global-contributor-cap.ts for parsing. */
+    GLOBAL_CONTRIBUTOR_OPEN_ITEM_CAP?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
     /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's

@@ -2054,11 +2054,32 @@ async function runAgentMaintenancePlanAndExecute(
   // promised this reuse (auto-close-exempt.ts).
   if (typeof contributorOpenPrCap === "number" && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
     const authorLoginLower = pr.authorLogin.toLowerCase();
-    const authorOpenPrNumbers = otherOpenPullRequests
+    let otherAuthorOpenPrNumbers = otherOpenPullRequests
       .filter((other) => (other.authorLogin ?? "").toLowerCase() === authorLoginLower)
-      .map((other) => other.number)
-      .concat(pr.number)
-      .sort((a, b) => a - b);
+      .map((other) => other.number);
+    if (isNewAccount) {
+      const token = await createInstallationToken(env, installationId).catch(() => undefined);
+      // isNewAccount is only ever true after getGithubUserCreatedAt's OWN createInstallationToken call already
+      // succeeded for this exact installationId (it fails open to null/false otherwise) -- and that mint is
+      // cached (see app.ts's installationTokenCache), so THIS call almost always serves the cached token rather
+      // than re-hitting a failure. The `?? env.GITHUB_PUBLIC_TOKEN` fallback arm is exercised only in the rare
+      // window where the cached token expires between those two calls; not practically reachable from a unit
+      // test without reaching into that unrelated cache's internals. The fallback pattern itself is proven
+      // correct by the analogous, reachable contributor-issue-cap test ("falls back to GITHUB_PUBLIC_TOKEN for
+      // the sibling live-check when the installation token mint fails").
+      /* v8 ignore next -- see the comment above */
+      const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
+      const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
+      const confirmedOpen = new Set<number>();
+      await Promise.all(
+        otherAuthorOpenPrNumbers.map(async (number) => {
+          const liveState = await fetchLivePullRequestState(env, repoFullName, number, liveToken, admissionKey).catch(() => undefined);
+          if (liveState === "open") confirmedOpen.add(number);
+        }),
+      );
+      otherAuthorOpenPrNumbers = otherAuthorOpenPrNumbers.filter((number) => confirmedOpen.has(number));
+    }
+    const authorOpenPrNumbers = otherAuthorOpenPrNumbers.concat(pr.number).sort((a, b) => a - b);
     const overCapNumbers = new Set(authorOpenPrNumbers.slice(contributorOpenPrCap));
     if (overCapNumbers.has(pr.number)) {
       contributorCapMatch = { matched: true, authorLogin: pr.authorLogin, openCount: authorOpenPrNumbers.length, cap: contributorOpenPrCap, itemKind: "pull requests" };

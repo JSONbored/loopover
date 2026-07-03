@@ -8635,6 +8635,7 @@ describe("queue processors", () => {
       if (url.includes(`/pulls/${prNumber}/commits`)) return Response.json([]);
       if (url.endsWith(`/pulls/${prNumber}`) && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: prNumber, state: "closed" }); }
       if (url.endsWith(`/pulls/${prNumber}`)) return Response.json({ number: prNumber, state: "open", user: { login: "newbie" }, head: { sha: `s${prNumber}` }, mergeable_state: "clean" });
+      if (/\/pulls\/\d+$/.test(url)) return Response.json({ state: "open" });
       if (url.includes(`/commits/s${prNumber}/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes(`/commits/s${prNumber}/status`)) return Response.json({ state: "success", statuses: [] });
       if (url.includes(`/issues/${prNumber}/labels`) && method === "GET") return Response.json([]);
@@ -8683,6 +8684,59 @@ describe("queue processors", () => {
     expect(seen.labels).toContain("new-account");
     // The tightened cap (ceil(4/2)=2) is already exceeded by the 3rd PR — closed despite being under the raw cap of 4.
     expect(seen.closed).toBe(true);
+  });
+
+  it("account-age throttle (#2561): stale cached sibling PRs do not inflate the tightened cap into an auto-close", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 66, title: "Stale newbie PR", state: "open", user: { login: "newbie" }, head: { sha: "s66" }, labels: [], body: "x" });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      gateCheckMode: "enabled",
+      autonomy: { close: "auto", review_state_label: "auto" },
+      contributorOpenPrCap: 2,
+      accountAgeThresholdDays: 30,
+    });
+    const seen = { labels: [] as string[], closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/users/")) return Response.json({ login: "newbie", created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() });
+      if (url.endsWith("/pulls/66")) return Response.json({ number: 66, state: "closed" });
+      if (url.includes("/pulls/67/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/67/reviews")) return Response.json([]);
+      if (url.includes("/pulls/67/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/67") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 67, state: "closed" }); }
+      if (url.endsWith("/pulls/67")) return Response.json({ number: 67, state: "open", user: { login: "newbie" }, head: { sha: "s67" }, mergeable_state: "clean" });
+      if (url.includes("/commits/s67/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/s67/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/67/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/67/labels") && method === "POST") { seen.labels.push(...((JSON.parse(String(init?.body ?? "{}")).labels ?? []) as string[])); return Response.json([]); }
+      if (url.endsWith("/labels") && method === "POST") return Response.json({ name: "x" }, { status: 201 });
+      if (url.includes("/issues/67/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "account-age-stale-tight-cap",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 67, title: "Newbie's live PR", state: "open", user: { login: "newbie" }, head: { sha: "s67" }, labels: [], body: "x", mergeable_state: "clean" },
+      },
+    });
+
+    expect(seen.labels).toContain("new-account");
+    expect(seen.closed).toBe(false);
   });
 
   it("account-age throttle (#2561): an account OLDER than the threshold is unaffected — no label, no cap tightening", async () => {

@@ -3957,6 +3957,30 @@ async function isOpenItemRowStillLiveOpen(
   return livePr?.state === "open";
 }
 
+// A contributor can have thousands of open rows across a large install (listOpenItemsByAuthorAcrossInstall caps
+// at 2000 PRs + 2000 issues) -- an unbounded Promise.all over every one of them would fire that many concurrent
+// GitHub API calls from a single webhook, exhausting the installation's rate limit for every OTHER repo it gates
+// (security-scan finding). Mirrors the same fixed-worker-pool shape already used for GitHub fan-out elsewhere in
+// this codebase (e.g. src/github/backfill.ts's mapWithConcurrency) -- that helper is module-private there too, so
+// duplicating the small pattern locally matches the existing precedent rather than introducing a shared import.
+const GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY = 10;
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index] as T);
+      }
+    }),
+  );
+  return results;
+}
+
 async function verifiedGlobalOpenItemCount(
   env: Env,
   installationId: number,
@@ -3970,7 +3994,9 @@ async function verifiedGlobalOpenItemCount(
   const token = await createInstallationToken(env, installationId).catch(() => undefined);
   const liveToken = token ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, liveToken);
-  const confirmedOpen = await Promise.all(otherRows.map((row) => isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey)));
+  const confirmedOpen = await mapWithConcurrency(otherRows, GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY, (row) =>
+    isOpenItemRowStillLiveOpen(env, row, liveToken, admissionKey),
+  );
   return confirmedOpen.filter(Boolean).length + 1;
 }
 

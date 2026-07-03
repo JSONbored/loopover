@@ -55,23 +55,27 @@ function SelfHostingQuickstart() {
 
       <h2>2. Choose your AI provider (optional)</h2>
       <p>
-        Skip this step for a fully deterministic review (no AI). Otherwise uncomment ONE block in{" "}
-        <code>.env.selfhost.example</code> — Claude Code, Codex, or both. The self-host image
-        bundles both CLIs by default; credentials and provider choice are runtime-only.
+        Skip this step for a fully deterministic review (no AI). Otherwise uncomment ONE of the
+        three blocks below in <code>.env.selfhost.example</code> — they're mutually exclusive, each
+        sets its own <code>AI_PROVIDER</code>. The self-host image bundles both CLIs by default;
+        credentials and provider choice are runtime-only.
       </p>
       <CodeBlock
-        filename=".env"
-        code={`# Claude Code only
-AI_PROVIDER=claude-code
-CLAUDE_CODE_OAUTH_TOKEN=          # from \`claude setup-token\`
-
-# Codex only — requires the explicit unsafe-reviewer opt-in below (see Callout)
-AI_PROVIDER=codex
-GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1
-
-# Both, synthesized into one decision
-AI_PROVIDER=claude-code,codex
-AI_COMBINE=synthesis`}
+        filename=".env — Claude Code only"
+        code={`AI_PROVIDER=claude-code
+CLAUDE_CODE_OAUTH_TOKEN=          # from \`claude setup-token\``}
+      />
+      <CodeBlock
+        filename=".env — Codex only"
+        code={`AI_PROVIDER=codex
+GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1   # required opt-in; see Callout below`}
+      />
+      <CodeBlock
+        filename=".env — both, synthesized into one decision"
+        code={`AI_PROVIDER=claude-code,codex
+AI_COMBINE=synthesis
+CLAUDE_CODE_OAUTH_TOKEN=
+GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
       />
       <Callout variant="warn" title="Codex is fail-closed by default">
         Codex stores its OAuth credential in <code>auth.json</code> on the same filesystem that
@@ -103,8 +107,8 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
       <Callout variant="note" title="Building from source instead">
         Contributors and anyone customizing the Dockerfile can still build locally —{" "}
         <code>docker compose up -d --build</code> builds the <code>gittensory</code> service from
-        the checkout instead of pulling a published image. Everything else on this page (env, health
-        checks, GitHub App) is identical either way.
+        the checkout instead of pulling a published image. Everything else in this quickstart (env,
+        health checks, GitHub App) is identical either way.
       </Callout>
       <FeatureRow
         items={[
@@ -123,37 +127,6 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
           },
         ]}
       />
-
-      <h2>Defaults at a glance</h2>
-      <p>
-        Nothing below needs a flag to start; everything past the first row needs an explicit{" "}
-        <code>--profile</code> (combine freely) or an explicit <code>AI_PROVIDER</code>.
-      </p>
-      <CodeBlock
-        lang="text"
-        code={`ENABLED BY DEFAULT (no flags needed)
-  gittensory app + Redis        SQLite database, dry-run-friendly, Orb telemetry (always-on, see below)
-
-RECOMMENDED FOR PRODUCTION (opt-in)
-  --profile postgres             shared/multi-instance database (pgvector-capable)
-  --profile pgbouncer            connection pooling in front of Postgres
-  --profile caddy                automatic HTTPS via Let's Encrypt
-  --profile litestream            continuous SQLite backup to S3-compatible storage
-  --profile observability        Prometheus + Alertmanager + Loki + Grafana
-
-OPT-IN, NOT REQUIRED FOR A TRIAL INSTANCE
-  --profile qdrant                dedicated RAG vector store (else sqlite-vec/pgvector)
-  --profile ollama                local model for AI review or embeddings
-  --profile tailscale             private network sidecar
-  --profile runners               self-hosted GitHub Actions runner
-  --profile backup                scheduled backup + backup-exporter jobs
-  AI_PROVIDER=...                 off by default; reviews are deterministic-only until set`}
-      />
-      <Callout variant="safety">
-        Orb fleet-calibration telemetry (verdict, outcome, cycle time — never repo names, code, or
-        logins) is on by default with no opt-out flag once your GitHub App is configured; set{" "}
-        <code>ORB_AIR_GAP=true</code> for an air-gapped instance that sends nothing.
-      </Callout>
 
       <h2>4. Install or connect the GitHub App</h2>
       <p>
@@ -184,6 +157,38 @@ review_context_fetch_failed   # REES/RAG/grounding context failure`}
         <Link to="/docs/self-hosting-configuration">Configuration</Link> and then layer in AI, REES,
         or RAG deliberately.
       </p>
+
+      <h2>Defaults at a glance</h2>
+      <p>
+        Nothing below needs a flag to start; everything past the first row needs an explicit{" "}
+        <code>--profile</code> (combine freely) or an explicit <code>AI_PROVIDER</code>.
+      </p>
+      <CodeBlock
+        lang="text"
+        code={`ENABLED BY DEFAULT (no flags needed)
+  gittensory app + Redis        SQLite database, dry-run-friendly, Orb telemetry (see Callout below)
+
+RECOMMENDED FOR PRODUCTION (opt-in)
+  --profile postgres             shared/multi-instance database (pgvector-capable)
+  --profile pgbouncer            connection pooling in front of Postgres
+  --profile caddy                automatic HTTPS via Let's Encrypt
+  --profile litestream            continuous SQLite backup to S3-compatible storage
+  --profile observability        Prometheus + Alertmanager + Loki + Grafana
+
+OPT-IN, NOT REQUIRED FOR A TRIAL INSTANCE
+  --profile qdrant                dedicated RAG vector store (else sqlite-vec/pgvector)
+  --profile ollama                local model for AI review or embeddings
+  --profile tailscale             private network sidecar
+  --profile runners               self-hosted GitHub Actions runner
+  --profile backup                scheduled backup + backup-exporter jobs
+  AI_PROVIDER=...                 off by default; reviews are deterministic-only until set`}
+      />
+      <Callout variant="safety">
+        Orb fleet-calibration telemetry (verdict, outcome, cycle time — never repo names, code, or
+        logins) starts automatically once your GitHub App is configured — this is the self-hosting
+        contract, not a flag you turn on. The one way to disable it is the explicit air-gap flag:
+        set <code>ORB_AIR_GAP=true</code> for an instance that sends nothing.
+      </Callout>
     </DocsPage>
   );
 }

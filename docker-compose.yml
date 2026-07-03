@@ -1,5 +1,5 @@
-# Self-host for gittensory (#980). Two ways to boot the `gittensory` service — everything else on
-# this page (profiles, env, health checks) is identical either way:
+# Self-host for gittensory (#980). Two ways to boot the `gittensory` service — everything else in
+# this compose file (profiles, env, health checks) is identical either way:
 #
 #   RECOMMENDED: ./scripts/deploy-selfhost-image.sh     # pulls the published image, no local build
 #   Building from source: docker compose up --build     # for contributors / custom Dockerfile changes

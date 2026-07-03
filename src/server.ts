@@ -24,6 +24,7 @@ import {
   resolveRequiredCliProviders,
   resolveSubscriptionCliPath,
   shouldMarkAiProviderUnhealthyAtBoot,
+  subscriptionCliEnv,
 } from "./selfhost/ai";
 import {
   cookieValue,
@@ -580,11 +581,17 @@ async function main(): Promise<void> {
   // unauthenticated auth volume surfaces in /ready instead of silently inside a spawned subprocess mid-review.
   const codexProbe = codexAuthReadinessProbe(process.env, async (env) => {
     const { spawn } = await import("node:child_process");
-    return new Promise((resolve) => {
-      const child = spawn("codex", ["--version"], { env: env as NodeJS.ProcessEnv, stdio: "ignore" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    return new Promise<{ code: number | null }>((resolve) => {
+      const child = spawn("codex", ["--version"], {
+        env: subscriptionCliEnv(env) as NodeJS.ProcessEnv,
+        signal: controller.signal,
+        stdio: "ignore",
+      });
       child.on("close", (code) => resolve({ code }));
       child.on("error", () => resolve({ code: 1 }));
-    });
+    }).finally(() => clearTimeout(timeout));
   });
   if (codexProbe) {
     readinessProbes.push({

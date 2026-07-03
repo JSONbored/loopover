@@ -133,6 +133,51 @@ describe("codexAuthReadinessProbe (#GITTENSORY-C)", () => {
     await expect(probe!.check()).resolves.toBe(true);
   });
 
+  it("regression: coalesces concurrent checks and reuses the cached result", async () => {
+    let versionCalls = 0;
+    let resolveVersion: ((value: { code: number }) => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const versionStarted = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => {
+        versionCalls += 1;
+        markStarted!();
+        return new Promise<{ code: number }>((done) => {
+          resolveVersion = done;
+        });
+      },
+      async () => true,
+    );
+
+    const first = probe!.check();
+    const second = probe!.check();
+    await versionStarted;
+    resolveVersion!({ code: 0 });
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    await expect(probe!.check()).resolves.toBe(true);
+    expect(versionCalls).toBe(1);
+  });
+
+  it("rechecks after the codex readiness cache expires", async () => {
+    let versionCalls = 0;
+    const probe = codexAuthReadinessProbe(
+      { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },
+      async () => {
+        versionCalls += 1;
+        return { code: 0 };
+      },
+      async () => true,
+      0,
+    );
+
+    await expect(probe!.check()).resolves.toBe(true);
+    await expect(probe!.check()).resolves.toBe(true);
+    expect(versionCalls).toBe(2);
+  });
+
   it("reports unhealthy when codex --version exits non-zero (missing/unauthenticated auth volume)", async () => {
     const probe = codexAuthReadinessProbe(
       { GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" },

@@ -135,18 +135,37 @@ export function codexAuthReadinessProbe(
   parentEnv: Record<string, string | undefined>,
   runCodexVersion: (env: Record<string, string | undefined>) => Promise<{ code: number | null }>,
   checkAuthFile: (env: Record<string, string | undefined>) => Promise<boolean> = defaultCodexAuthFileCheck,
+  cacheMs = 30_000,
 ): ReadinessProbe | null {
   if (parentEnv.GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER !== "1") return null;
+  let cached: boolean | undefined;
+  let cachedUntil = 0;
+  let inFlight: Promise<boolean> | undefined;
+  const evaluate = async (): Promise<boolean> => {
+    const [versionOk, authFileOk] = await Promise.all([
+      runCodexVersion(parentEnv)
+        .then(({ code }) => code === 0)
+        .catch(() => false),
+      checkAuthFile(parentEnv).catch(() => false),
+    ]);
+    return versionOk && authFileOk;
+  };
   return {
     name: "codex_auth",
-    check: async () => {
-      const [versionOk, authFileOk] = await Promise.all([
-        runCodexVersion(parentEnv)
-          .then(({ code }) => code === 0)
-          .catch(() => false),
-        checkAuthFile(parentEnv).catch(() => false),
-      ]);
-      return versionOk && authFileOk;
+    check: () => {
+      const now = Date.now();
+      if (cached !== undefined && now < cachedUntil) return Promise.resolve(cached);
+      if (inFlight) return inFlight;
+      inFlight = evaluate()
+        .then((ok) => {
+          cached = ok;
+          cachedUntil = Date.now() + cacheMs;
+          return ok;
+        })
+        .finally(() => {
+          inFlight = undefined;
+        });
+      return inFlight;
     },
   };
 }

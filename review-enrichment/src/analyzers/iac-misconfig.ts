@@ -12,12 +12,14 @@ const CORS_CREDENTIALS_RE =
   /\b(?:access-control-allow-credentials|allow_credentials|credentials)\b[\s"'=:,-]*(?:true|yes|on)\b/i;
 const OPEN_INGRESS_RE =
   /\b(?:cidr_blocks|source_ranges|ipv4_cidr_blocks|cidr|ip_range|value)\b[^\n#]*0\.0\.0\.0\/0\b|\b0\.0\.0\.0\/0\b/i;
+const HOST_NETWORK_RE =
+  /\bhostNetwork\b[\s"'=:,-]*true\b|\bnetwork_mode\b[\s"'=:,-]*host\b/i;
 const PUBLIC_BUCKET_RE =
   /(?:(?:["'])?(?:bucket_)?acl(?:["'])?\s*[=:]\s*["']public-(?:read|read-write)["']|(?:["'])?public_access(?:["'])?\s*[=:]\s*true\b|(?:["'])?public(?:["'])?\s*[=:]\s*true\b|(?:["'])?block_public_(?:acls|policy)(?:["'])?\s*[=:]\s*false\b)/i;
 const SAME_SITE_NONE_RE = /\bsameSite\b[\s"'=:,-]*["']?none["']?\b/i;
 const SECURE_FALSE_RE = /\bsecure\b[\s"'=:,-]*false\b/i;
 const TLS_DISABLED_RE =
-  /\brejectUnauthorized\b[\s"'=:,-]*false\b|\bverify\s*=\s*False\b|\bssl_verify\b[\s"'=:,-]*false\b/i;
+  /\brejectUnauthorized\b[\s"'=:,-]*false\b|\bverify\s*=\s*False\b|\bssl_verify\b[\s"'=:,-]*false\b|\binsecureSkipTLSVerify\b[\s"'=:,-]*true\b|\bskipTLSVerify\b[\s"'=:,-]*true\b/i;
 const PROD_RE =
   /\b(?:NODE_ENV|ENVIRONMENT|APP_ENV)\b[\s"'=:,-]*production\b|\bproduction\s*:/i;
 const DEBUG_TRUE_RE = /\bdebug\b[\s"'=:,-]*true\b|\bDEBUG\b[\s"'=:,-]*true\b/i;
@@ -157,7 +159,7 @@ export function scanPatchForIacMisconfig(
     }
 
     if (
-      OPEN_INGRESS_RE.test(body) &&
+      (OPEN_INGRESS_RE.test(body) || HOST_NETWORK_RE.test(body)) &&
       pushFinding(findings, seen, path, newLine, "open-ingress", maxFindings)
     ) {
       return findings;

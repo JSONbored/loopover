@@ -81,7 +81,7 @@ write_manifest() {
     qdrant_file_json="\"$(json_escape "$QDRANT_MANIFEST_FILE")\""
   fi
 
-  MANIFEST_TMP="$OUT/.manifest.$$.tmp"
+  MANIFEST_TMP=$(mktemp "$OUT/.manifest.XXXXXX")
   {
     printf '{\n'
     printf '  "ts": "%s",\n' "$(json_escape "$TS")"

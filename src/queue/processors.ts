@@ -5526,6 +5526,17 @@ function markPatchLessSecretScanIncomplete<T extends { payload?: Record<string, 
   };
 }
 
+function shouldAttemptPatchLessSecretScan(
+  file: { previousFilename?: string | null | undefined },
+  status: string,
+  baseSha?: string | null | undefined,
+): boolean {
+  if (status === "removed") return false;
+  if (status === "modified") return Boolean(baseSha?.trim());
+  if (status === "renamed") return Boolean(baseSha?.trim() && file.previousFilename?.trim());
+  return status === "added";
+}
+
 export function incompletePatchLessSecretScanFinding(
   files: Awaited<ReturnType<typeof listPullRequestFiles>>,
 ): AdvisoryFinding | null {
@@ -5537,7 +5548,7 @@ export function incompletePatchLessSecretScanFinding(
     code: "secret_leak",
     severity: "critical",
     title: `Patch-less file(s) could not be fully scanned for secrets (${paths.length})`,
-    detail: `GitHub omitted inline diff for: ${paths.join(", ")}. Fetched content exceeded the ${SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS}-char scan cap, so leaked-secret verification is incomplete. Shrink the change, split the file, or ensure the diff is reviewable before merge.`,
+    detail: `GitHub omitted inline diff for: ${paths.join(", ")}. Fetched content exceeded the ${SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS}-char scan cap or could not be retrieved completely, so leaked-secret verification is incomplete. Shrink the change, split the file, or ensure the diff is reviewable before merge.`,
     action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
   };
 }
@@ -5580,44 +5591,42 @@ export async function enrichSecretScanFilesWithPatchFallback(
     files,
     SECRET_SCAN_PATCH_FALLBACK_MAX_CONCURRENT,
     async (file) => {
+      const status = file.status ?? "modified";
+      const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+      if (existingPatch || status === "removed") return file;
+      const needsFetch = shouldAttemptPatchLessSecretScan(file, status, args.baseSha);
+      if (!needsFetch) return file;
       try {
-        const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
-        if (existingPatch) return file;
-        const status = file.status ?? "modified";
-        if (status === "removed") return file;
         const headContent = await args.fetcher.getFileContent(
           file.path,
           headSha,
           SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
         );
-        if (!headContent) return file;
+        if (!headContent) return markPatchLessSecretScanIncomplete(file);
         if (isOverSecretScanContentLimit(headContent)) return markPatchLessSecretScanIncomplete(file);
         let addedLines: string[];
         if (status === "added") {
           addedLines = headContent.split("\n");
         } else if (status === "renamed") {
-          const baseSha = args.baseSha?.trim();
-          const previousPath = file.previousFilename?.trim();
-          if (!baseSha || !previousPath) return file;
+          const baseSha = args.baseSha!.trim();
+          const previousPath = file.previousFilename!.trim();
           const baseContent = await args.fetcher.getFileContent(
             previousPath,
             baseSha,
             SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
           );
-          if (!baseContent) return file;
-          if (isOverSecretScanContentLimit(baseContent)) return markPatchLessSecretScanIncomplete(file);
-          addedLines = addedLinesForSecretScan(baseContent, headContent);
-        } else if (status === "modified" && args.baseSha?.trim()) {
-          const baseContent = await args.fetcher.getFileContent(
-            file.path,
-            args.baseSha.trim(),
-            SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
-          );
-          if (!baseContent) return file;
+          if (!baseContent) return markPatchLessSecretScanIncomplete(file);
           if (isOverSecretScanContentLimit(baseContent)) return markPatchLessSecretScanIncomplete(file);
           addedLines = addedLinesForSecretScan(baseContent, headContent);
         } else {
-          return file;
+          const baseContent = await args.fetcher.getFileContent(
+            file.path,
+            args.baseSha!.trim(),
+            SECRET_SCAN_PATCH_FALLBACK_MAX_CHARS,
+          );
+          if (!baseContent) return markPatchLessSecretScanIncomplete(file);
+          if (isOverSecretScanContentLimit(baseContent)) return markPatchLessSecretScanIncomplete(file);
+          addedLines = addedLinesForSecretScan(baseContent, headContent);
         }
         if (addedLines.length === 0) return file;
         return {
@@ -5625,7 +5634,7 @@ export async function enrichSecretScanFilesWithPatchFallback(
           payload: { ...file.payload, patch: syntheticSecretScanPatch(addedLines) },
         };
       } catch {
-        return file;
+        return markPatchLessSecretScanIncomplete(file);
       }
     },
   );

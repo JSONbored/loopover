@@ -740,7 +740,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     expect(enriched[0]?.payload.patch).toBeUndefined();
   });
 
-  it("leaves a modified file unchanged when base content cannot be fetched", async () => {
+  it("marks a modified file incomplete when base content cannot be fetched", async () => {
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path !== "src/config.ts") return null;
@@ -767,6 +767,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
       fetcher,
     });
     expect(enriched[0]?.payload.patch).toBeUndefined();
+    expect(enriched[0]?.payload.secretScanIncomplete).toBe(true);
     expect(secretLeakFinding(buildSecretScanDiff(enriched))).toBeNull();
   });
 
@@ -799,7 +800,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     expect(incompletePatchLessSecretScanFinding(enriched)?.code).toBe("secret_leak");
   });
 
-  it("leaves one patch-less file unchanged when its fetch rejects without blocking siblings", async () => {
+  it("marks one patch-less file incomplete when its fetch rejects without blocking siblings", async () => {
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
         if (path === "secrets.env" && ref === "head-sha") throw new Error("transient contents api");
@@ -834,6 +835,8 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
       fetcher,
     });
     expect(enriched[0]?.payload.patch).toBeUndefined();
+    expect(enriched[0]?.payload.secretScanIncomplete).toBe(true);
+    expect(enriched[1]?.payload.patch).toContain(fakeToken);
     expect(secretLeakFinding(buildSecretScanDiff(enriched))?.code).toBe("secret_leak");
   });
 });

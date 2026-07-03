@@ -97,6 +97,7 @@ function normalizeStringList(value: unknown, field: string, warnings: string[]):
     return [];
   }
   const result: string[] = [];
+  const seen = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") {
       warnings.push(`MinerGoalSpec field "${field}" skipped a non-string entry.`);
@@ -109,7 +110,10 @@ function normalizeStringList(value: unknown, field: string, warnings: string[]):
       warnings.push(`MinerGoalSpec field "${field}" truncated an over-long entry.`);
       normalized = normalized.slice(0, MAX_ITEM_LENGTH);
     }
-    if (!result.includes(normalized)) result.push(normalized);
+    if (!seen.has(normalized)) {
+      result.push(normalized);
+      seen.add(normalized);
+    }
     if (result.length >= MAX_LIST_ITEMS) {
       warnings.push(`MinerGoalSpec field "${field}" exceeded ${MAX_LIST_ITEMS} entries; extra entries ignored.`);
       break;
@@ -149,6 +153,19 @@ function normalizePositiveInteger(value: unknown, field: string, fallback: numbe
   if (normalized >= 1) return normalized;
   warnings.push(`MinerGoalSpec field "${field}" must be >= 1 after flooring; falling back to ${fallback}.`);
   return fallback;
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (const char of value) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) continue;
+    if (codePoint <= 0x7f) bytes += 1;
+    else if (codePoint <= 0x7ff) bytes += 2;
+    else if (codePoint <= 0xffff) bytes += 3;
+    else bytes += 4;
+  }
+  return bytes;
 }
 
 function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
@@ -212,7 +229,7 @@ export function parseMinerGoalSpec(raw: unknown): ParsedMinerGoalSpec {
  */
 export function parseMinerGoalSpecContent(content: string | null | undefined): ParsedMinerGoalSpec {
   if (content === undefined || content === null || content.trim() === "") return emptyMinerGoalSpec();
-  if (content.length > MAX_MINER_GOAL_SPEC_BYTES) {
+  if (utf8ByteLength(content) > MAX_MINER_GOAL_SPEC_BYTES) {
     return emptyMinerGoalSpec([
       `MinerGoalSpec content exceeded ${MAX_MINER_GOAL_SPEC_BYTES} bytes; ignoring it and falling back to safe defaults.`,
     ]);

@@ -145,4 +145,8 @@ test("parseMinerGoalSpecContent: non-mapping parsed content and oversized conten
   const oversized = parseMinerGoalSpecContent(`wantedPaths:\n  - ${"x".repeat(40_000)}\n`);
   assert.equal(oversized.present, false);
   assert.match(oversized.warnings.join(" "), /exceeded 32768 bytes/i);
+
+  const multibyteOversized = parseMinerGoalSpecContent(`wantedPaths:\n  - ${"好".repeat(12_000)}\n`);
+  assert.equal(multibyteOversized.present, false);
+  assert.match(multibyteOversized.warnings.join(" "), /exceeded 32768 bytes/i);
 });

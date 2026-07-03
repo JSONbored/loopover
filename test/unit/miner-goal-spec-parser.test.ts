@@ -202,5 +202,11 @@ describe("MinerGoalSpec parser (#2301)", () => {
       spec: DEFAULT_MINER_GOAL_SPEC,
       warnings: ["MinerGoalSpec content exceeded 32768 bytes; ignoring it and falling back to safe defaults."],
     });
+
+    expect(parseMinerGoalSpecContent(`wantedPaths:\n  - ${"好".repeat(12_000)}\n`)).toEqual({
+      present: false,
+      spec: DEFAULT_MINER_GOAL_SPEC,
+      warnings: ["MinerGoalSpec content exceeded 32768 bytes; ignoring it and falling back to safe defaults."],
+    });
   });
 });

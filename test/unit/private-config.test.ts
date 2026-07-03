@@ -226,6 +226,14 @@ describe("parseReviewSkill (#review-skills)", () => {
     expect(parseReviewSkill("y.md", "---\nname: 'Voice Guide'\n---\nb").name).toBe("Voice Guide");
     expect(parseReviewSkill("fallback.md", '---\nname: ""\n---\nb').name).toBe("fallback");
   });
+  it("ignores a YAML inline comment on name and when, symmetric with enabled", () => {
+    // A trailing ` # …` is a YAML comment, not part of the scalar: left in, it corrupts the label and turns
+    // `when` into a glob that never matches, silently disabling the rubric.
+    expect(parseReviewSkill("sql.md", '---\nname: SQL Rubric  # the sql one\nwhen: "**/*.sql"  # only sql\n---\nBody.\n')).toEqual({ name: "SQL Rubric", when: "**/*.sql", body: "Body." });
+    // A `#` with no preceding whitespace is part of the value (real YAML), not a comment — must be preserved.
+    expect(parseReviewSkill("cs.md", '---\nname: "C# Rubric"\n---\nb').name).toBe("C# Rubric");
+    expect(parseReviewSkill("z.md", "---\nname: a#b\n---\nb").name).toBe("a#b");
+  });
 });
 
 describe("isReviewSkillEnabled (#review-skills)", () => {

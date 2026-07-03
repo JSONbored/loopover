@@ -174,11 +174,14 @@ export function parseReviewSkill(filename: string, text: string): RepoReviewSkil
   const fm = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(text);
   const head = fm?.[1] ?? "";
   const body = (fm?.[2] ?? text).trim();
-  // Strip surrounding quotes on `name` too, symmetric with `when` below — a quoted scalar
-  // (`name: "SQL Rubric"`) is ordinary YAML frontmatter, so the quotes must not survive into the label.
-  const nameRaw = /(?:^|\n)name:\s*(.+)/.exec(head)?.[1]?.trim();
+  // Drop an unquoted YAML inline comment (` # …`) before stripping surrounding quotes — symmetric with
+  // isReviewSkillEnabled. A trailing comment (`when: "**/*.sql"  # only sql`) is not part of the scalar; left in
+  // place it corrupts the label and, for `when`, produces a glob that never matches so the skill silently never
+  // fires. Also strip surrounding quotes on `name`, symmetric with `when` — a quoted scalar (`name: "SQL Rubric"`)
+  // is ordinary frontmatter, so neither the quotes nor the comment must survive into the label/glob.
+  const nameRaw = /(?:^|\n)name:\s*(.+)/.exec(head)?.[1]?.replace(/\s+#.*$/, "").trim();
   const name = (nameRaw ?? "").replace(/^["']|["']$/g, "") || filename.replace(/\.md$/i, "");
-  const whenRaw = /(?:^|\n)when:\s*(.+)/.exec(head)?.[1]?.trim();
+  const whenRaw = /(?:^|\n)when:\s*(.+)/.exec(head)?.[1]?.replace(/\s+#.*$/, "").trim();
   const when = (whenRaw ?? "always").replace(/^["']|["']$/g, "") || "always";
   return { name, when, body };
 }

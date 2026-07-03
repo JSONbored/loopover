@@ -211,12 +211,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
-          # Matches selfhost.yml's CI build (same Dockerfile, same default GHA cache scope), so a release
-          # can inherit layers selfhost.yml already built and cached for the identical commit -- without
-          # this, every release rebuilt runtime-base from scratch under QEMU emulation for arm64, the most
-          # expensive leg (#2502).
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Deliberately NO cache-from/cache-to here (#2502 tried type=gha, reverted): the GHA cache scope
+          # this would read from is the SAME one selfhost.yml's regular CI build writes to on every push/PR
+          # to this repo -- a publish/release path inheriting layers from that shared, more broadly-writable
+          # cache is a cache-poisoning vector into an officially published, public image. A cold build costs
+          # more time per release (infrequent, acceptable) in exchange for the release build never trusting
+          # any cache it didn't produce itself.
 
       - name: Finalize Sentry release
         if: steps.sentry.outputs.enabled == 'true'

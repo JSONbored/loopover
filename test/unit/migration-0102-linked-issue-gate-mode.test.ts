@@ -8,8 +8,8 @@ const MIGRATION_FILE = "0102_fix_linked_issue_gate_mode_default.sql";
 // scripts/check-schema-drift.mjs's own "replay migrations into node:sqlite" approach), so the table shape
 // this test inserts into is exactly what migration 0102 itself was written against -- not a guess. The
 // TestD1Database helper (test/helpers/d1.ts) can't be reused here: it concatenates and applies EVERY
-// migration (including 0101) up front, so the `repository_settings` table would already be empty-and-fixed
-// by the time a test could insert a "bad state" row -- there would be nothing left for 0101 to correct.
+// migration (including 0102) up front, so the `repository_settings` table would already be empty-and-fixed
+// by the time a test could insert a "bad state" row -- there would be nothing left for 0102 to correct.
 function applyMigrationsBefore(cutoffFile: string): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   const files = readdirSync("migrations")
@@ -24,8 +24,13 @@ function applyMigration(db: DatabaseSync, file: string): void {
 }
 
 // created_at/updated_at are set explicitly (not left to the column's CURRENT_TIMESTAMP default) so a
-// "touched since creation" row can be simulated deterministically: migration 0101 only flips a row whose
-// updated_at still equals its created_at (see the migration's own header comment for why).
+// "touched since creation" row can be simulated deterministically. Migration 0102 flips a row whose
+// updated_at still equals its created_at, OR whose updated_at is at/before the instant migration 0023
+// deployed (2026-06-05T20:01:39.000Z, see the migration's own header comment for why) -- so a "touched"
+// fixture must land AFTER that cutoff to exercise the "genuinely left alone" path instead of accidentally
+// also satisfying the pre-column-existence path.
+const AFTER_0023_CUTOFF = "2026-07-01T00:00:00.000Z";
+
 function insertRepositorySettingsRow(
   db: DatabaseSync,
   repoFullName: string,
@@ -38,10 +43,17 @@ function insertRepositorySettingsRow(
   ).run(repoFullName, linkedIssueGateMode, requireLinkedIssue);
   if (touchedSinceCreation) {
     db.prepare("UPDATE repository_settings SET updated_at = ? WHERE repo_full_name = ?").run(
-      "2026-02-01T00:00:00.000Z",
+      AFTER_0023_CUTOFF,
       repoFullName,
     );
   }
+}
+
+function applyMigrationsInRange(db: DatabaseSync, fromFileInclusive: string, throughFileInclusive: string): void {
+  const files = readdirSync("migrations")
+    .filter((file) => file.endsWith(".sql") && file >= fromFileInclusive && file <= throughFileInclusive)
+    .sort();
+  for (const file of files) db.exec(readFileSync(`migrations/${file}`, "utf8"));
 }
 
 function readLinkedIssueGateMode(db: DatabaseSync, repoFullName: string): string {
@@ -82,6 +94,24 @@ describe("migration 0102: fix linked_issue_gate_mode default drift (#selfhost-li
     applyMigration(db, MIGRATION_FILE);
 
     expect(readLinkedIssueGateMode(db, "acme/explicit-block-no-require")).toBe("block");
+  });
+
+  // #gate-review-2727 round 2: a row last written to BEFORE migration 0023 ran has updated_at != created_at,
+  // so it fails the "never touched" path -- but that write could not possibly have set
+  // linked_issue_gate_mode, because the column did not exist yet. Proves this via the REAL migration
+  // sequence (0023's ADD COLUMN DEFAULT 'block' backfills the pre-existing row, exactly like production),
+  // not a hand-inserted 'block' row.
+  it("repairs a row that predates the linked_issue_gate_mode column entirely, via the real migration sequence", () => {
+    const db = applyMigrationsBefore("0023_gate_quality_modes.sql");
+    db.prepare("INSERT INTO repository_settings (repo_full_name, created_at, updated_at) VALUES (?, ?, ?)").run(
+      "acme/pre-column-repo",
+      "2026-01-01T00:00:00.000Z",
+      "2026-03-01T00:00:00.000Z",
+    );
+
+    applyMigrationsInRange(db, "0023_gate_quality_modes.sql", MIGRATION_FILE);
+
+    expect(readLinkedIssueGateMode(db, "acme/pre-column-repo")).toBe("advisory");
   });
 
   it("leaves an already-advisory row unchanged", () => {

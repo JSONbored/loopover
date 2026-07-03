@@ -1670,9 +1670,9 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     // Deliberately the OPPOSITE assertion from the qualityGateMode regression above: qualityGateMode can
     // NEVER legitimately be "block" (isConfiguredGateBlocker has no branch for it), so resolveEffectiveSettings
     // unconditionally downgrades it. linkedIssueGateMode CAN legitimately be "block" -- a maintainer may
-    // explicitly opt into it -- so migration 0101's data fix (conservative: only rows with
-    // require_linked_issue=0) is the correct place to correct historically-drifted rows, not a resolver-level
-    // downgrade that would also silently defeat a real, current opt-in.
+    // explicitly opt into it -- so migration 0102's data fix (conservative: only provably-drifted rows) is
+    // the correct place to correct historically-drifted rows, not a resolver-level downgrade that would also
+    // silently defeat a real, current opt-in.
     const db = { linkedIssueGateMode: "block", requireLinkedIssue: false } as unknown as RepositorySettings;
     expect(resolveEffectiveSettings(db, parseFocusManifest(null)).linkedIssueGateMode).toBe("block");
   });

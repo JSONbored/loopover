@@ -218,13 +218,17 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding?.detail).toContain("lodash");
   });
 
-  it("counts a fully removed manifest dependency as a version change (no matching add)", () => {
+  it("still flags a changed integrity with no version bump even when the package is ALSO being dropped from package.json (#2563 gate-review follow-up)", () => {
+    // The tamper signal is now self-contained to the lockfile entry's OWN version field (see the module header
+    // comment on why this replaced the package.json cross-reference) — a package.json removal is irrelevant to
+    // it. If lodash is genuinely being dropped, its lockfile entry should be REMOVED too, not silently have its
+    // integrity swapped while the entry stays present with an unchanged version; that is exactly the suspicious
+    // shape this check exists to catch.
     const lockPatch = ['@@ -1,4 +1,4 @@', '     "node_modules/lodash": {', '-      "integrity": "sha512-oldoldold=="', '+      "integrity": "sha512-tamperedtampered=="', '     },'].join("\n");
-    // lodash is removed from package.json entirely (no corresponding "+" line) — still counts as a version
-    // change for tamper-risk purposes (the dependency's presence itself changed), so lodash is NOT flagged.
     const manifestDiff = ['@@ -10,4 +10,3 @@', '   "dependencies": {', '-    "lodash": "^4.17.20",', '     "express": "^4.18.0"'].join("\n");
     const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch), manifestPatch(manifestDiff)]);
-    expect(finding).toBeNull();
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("lodash");
   });
 
   it("collapses multiple flagged packages into one finding, capping the title list and reporting the overflow count", () => {
@@ -237,5 +241,62 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding?.title).toContain("+2 more");
     expect(finding?.detail).toContain("alpha");
     expect(finding?.detail).toContain("echo");
+  });
+
+  // #2563 gate-review follow-up: the original package.json-cross-reference signal could never see a
+  // TRANSITIVE dependency (never listed in any package.json), so it misfired on every ordinary transitive
+  // bump -- the vast majority of any real lockfile diff. The fix compares against the SAME entry's own
+  // "version" line instead, which a genuine npm install/update always bumps alongside resolved/integrity.
+  it("does NOT flag a transitive dependency bump (own version line changes, no package.json anywhere in the diff)", () => {
+    const lockPatch = [
+      '@@ -40,6 +40,6 @@',
+      '     "node_modules/send": {',
+      '-      "version": "0.18.0",',
+      '-      "resolved": "https://registry.npmjs.org/send/-/send-0.18.0.tgz",',
+      '-      "integrity": "sha512-oldoldold=="',
+      '+      "version": "0.19.0",',
+      '+      "resolved": "https://registry.npmjs.org/send/-/send-0.19.0.tgz",',
+      '+      "integrity": "sha512-newnewnew=="',
+      "     },",
+    ].join("\n");
+    // No package.json in this diff at all -- "send" is a transitive dependency of a direct dependency, never
+    // listed in any manifest, exactly the majority-case shape a real `npm update` produces.
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).toBeNull();
+  });
+
+  // #2563 gate-review follow-up: an npm workspace's own local packages have a `resolved` field that is a
+  // relative filesystem path, not a URL -- the old exact-registry-prefix check misclassified any such value
+  // as off-registry the moment it changed (i.e. on every routine workspace-member version bump).
+  it("does NOT flag a workspace-local package's relative-path resolved value as off-registry", () => {
+    const lockPatch = [
+      "@@ -2,7 +2,7 @@",
+      '     "packages/gittensory-mcp": {',
+      '-      "version": "0.6.0",',
+      '-      "resolved": "packages/gittensory-mcp",',
+      "       \"link\": true",
+      '+      "version": "0.7.0",',
+      '+      "resolved": "packages/gittensory-mcp",',
+      "       \"link\": true",
+      "     },",
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).toBeNull();
+  });
+
+  it("still flags a genuine off-registry resolved URL (an http(s) URL outside registry.npmjs.org)", () => {
+    const lockPatch = [
+      '@@ -10,4 +10,4 @@',
+      '     "node_modules/evil-pkg": {',
+      '-      "version": "1.0.0",',
+      '-      "resolved": "https://registry.npmjs.org/evil-pkg/-/evil-pkg-1.0.0.tgz",',
+      '+      "version": "1.0.0",',
+      '+      "resolved": "https://attacker.example.com/evil-pkg-1.0.0.tgz",',
+      "     },",
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("evil-pkg");
+    expect(finding?.detail).toContain("outside registry.npmjs.org");
   });
 });

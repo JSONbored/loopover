@@ -1,15 +1,31 @@
 // Lockfile-tamper-risk gate check (#2563). Deterministic scan of a changed `package-lock.json` (or another
-// `*.lock` file) diff for the classic supply-chain tell: a `resolved`/`integrity` value changed WITHOUT the
-// corresponding `package.json` dependency version changing, or a `resolved` URL that points outside the public
-// npm registry. Distinct from the OSV.dev CVE analyzer (review-enrichment/src/analyzers/lockfile-drift.ts) —
-// that flags KNOWN-CVE versions; this flags tamper/integrity-substitution regardless of whether the substituted
+// `*.lock` file) diff for the classic supply-chain tell: a `resolved`/`integrity` value changed WITHOUT that
+// SAME package-lock entry's own `"version"` field genuinely changing, or a `resolved` URL that points outside
+// the public npm registry. Distinct from the OSV.dev CVE analyzer (review-enrichment/src/analyzers/lockfile-drift.ts)
+// — that flags KNOWN-CVE versions; this flags tamper/integrity-substitution regardless of whether the substituted
 // version has a published CVE. Config-driven, off by default (see rules/advisory.ts isConfiguredGateBlocker +
 // signals/focus-manifest.ts gate.lockfileIntegrity) — this module only PRODUCES the finding; it never decides
 // whether the finding blocks.
+//
+// Why compare against the lockfile entry's OWN version rather than package.json (see #2563 gate-review
+// follow-up on #2676): every package-lock.json entry — direct AND transitive — carries its own version/
+// resolved/integrity trio, and a genuine `npm install`/`npm update` always bumps all three together for any
+// entry it touches. package.json, by contrast, only lists DIRECT dependencies, so the vast majority of lockfile
+// entries (transitive dependencies) never appear there at all; treating "package.json didn't change" as a
+// tamper signal made every ordinary transitive bump misfire. A hand-edited resolved/integrity pointing at
+// malicious content while its OWN declared version is left unchanged (to look unremarkable) is a more specific,
+// self-contained tell that doesn't require cross-referencing a different file.
 
 import type { AdvisoryFinding, PullRequestFileRecord } from "../types";
 
 const NPM_REGISTRY_HOST_RE = /^https:\/\/registry\.npmjs\.org\//i;
+
+// Only a `resolved` value that IS an http(s) URL can be judged against the registry-host allowlist. An npm
+// workspace's own local packages (e.g. this repo's `packages/gittensory-mcp`, `apps/gittensory-ui` — see
+// `"link": true` entries in package-lock.json) have a `resolved` field that's a RELATIVE FILESYSTEM PATH, not a
+// URL at all (e.g. `"packages/gittensory-mcp"`). Such a value was never resolved FROM a registry, so it can't be
+// "off-registry" — it must be exempted rather than flagged just because it fails the npmjs.org prefix check.
+const HTTP_URL_RE = /^https?:\/\//i;
 
 // Package-lock "packages" entries are keyed either `"node_modules/<pkg>"` (lockfileVersion 2/3) or a bare
 // `"<pkg>"` (lockfileVersion 1 "dependencies" tree, and yarn/pnpm equivalents keep a similar bare-name header).
@@ -57,17 +73,52 @@ type LockfileTamperCandidate = {
   package: string;
   /** True when a `resolved`/`integrity` value changed for this package block in the diff. */
   resolvedOrIntegrityChanged: boolean;
-  /** A `+resolved` URL seen for this package block that does not point at registry.npmjs.org, or null. */
+  /** True when THIS SAME package block's own `"version"` line was added and/or removed with a different value
+   *  somewhere in the diff (see versionChanged() below for the exact rule). */
+  versionChanged: boolean;
+  /** A `+resolved` URL seen for this package block that does not point at registry.npmjs.org, or null. Only
+   *  ever set for values that ARE http(s) URLs — see HTTP_URL_RE. */
   offRegistryResolvedUrl: string | null;
 };
 
-/** Parse one `package-lock.json` unified-diff patch for per-package resolved/integrity changes. Heuristic
- *  line-based scan (mirrors review-enrichment's lockfile-drift parser), not a full JSON parse — good enough to
- *  flag suspicious hunks without needing the complete (potentially huge) lockfile tree in memory. */
+type MutableCandidate = LockfileTamperCandidate & {
+  removedVersion: string | undefined;
+  addedVersion: string | undefined;
+};
+
+/** True when the `"version"` value for a package block genuinely changed within the diff: an added-only or
+ *  removed-only version line, or an added+removed pair with different values. Mirrors the same add/remove
+ *  reconciliation package.json dependency-range diffing used (before this fix, that was the ONLY signal this
+ *  module had) — applied here to the lockfile entry's own version field instead. */
+function versionChanged(removed: string | undefined, added: string | undefined): boolean {
+  if (removed === undefined && added === undefined) return false;
+  return removed !== added;
+}
+
+/** Parse one `package-lock.json` unified-diff patch for per-package resolved/integrity/version changes.
+ *  Heuristic line-based scan (mirrors review-enrichment's lockfile-drift parser), not a full JSON parse — good
+ *  enough to flag suspicious hunks without needing the complete (potentially huge) lockfile tree in memory. */
 function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandidate[] {
-  const byPackage = new Map<string, LockfileTamperCandidate>();
+  const byPackage = new Map<string, MutableCandidate>();
   let currentPackage: string | null = null;
   let sawPackagesEntry = false;
+
+  const entryFor = (pkg: string): MutableCandidate => {
+    const existing = byPackage.get(pkg);
+    if (existing) return existing;
+    const created: MutableCandidate = {
+      file: path,
+      package: pkg,
+      resolvedOrIntegrityChanged: false,
+      versionChanged: false,
+      offRegistryResolvedUrl: null,
+      removedVersion: undefined,
+      addedVersion: undefined,
+    };
+    byPackage.set(pkg, created);
+    return created;
+  };
+
   for (const line of patchLines(patch)) {
     const body = line.content.trim();
     const objectHeader = /^"([^"]+)"\s*:\s*\{/.exec(body);
@@ -89,65 +140,39 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
 
     const resolvedMatch = /^"resolved"\s*:\s*"([^"]*)"/.exec(body);
     const integrityMatch = /^"integrity"\s*:\s*"([^"]*)"/.exec(body);
+    const versionMatch = /^"version"\s*:\s*"([^"]*)"/.exec(body);
+
+    if (versionMatch) {
+      const entry = entryFor(currentPackage);
+      if (line.sign === "+") entry.addedVersion = versionMatch[1];
+      else entry.removedVersion = versionMatch[1];
+      entry.versionChanged = versionChanged(entry.removedVersion, entry.addedVersion);
+      continue;
+    }
+
     if (!resolvedMatch && !integrityMatch) continue;
 
-    const entry =
-      byPackage.get(currentPackage) ??
-      ({ file: path, package: currentPackage, resolvedOrIntegrityChanged: false, offRegistryResolvedUrl: null } satisfies LockfileTamperCandidate);
+    const entry = entryFor(currentPackage);
     entry.resolvedOrIntegrityChanged = true;
-    if (resolvedMatch && line.sign === "+" && resolvedMatch[1] && !NPM_REGISTRY_HOST_RE.test(resolvedMatch[1])) {
+    if (resolvedMatch && line.sign === "+" && resolvedMatch[1] && HTTP_URL_RE.test(resolvedMatch[1]) && !NPM_REGISTRY_HOST_RE.test(resolvedMatch[1])) {
       entry.offRegistryResolvedUrl = resolvedMatch[1];
     }
-    byPackage.set(currentPackage, entry);
   }
   return [...byPackage.values()];
-}
-
-// `"<name>": "<range>"` inside a package.json dependency block, e.g. `"lodash": "^4.17.21",`. Line-based, not a
-// full JSON parse — the same heuristic review-enrichment's dependency-scan.ts uses for the same shape.
-const PACKAGE_JSON_DEP_RE = /^"([^"]+)"\s*:\s*"([^"]+)"/;
-
-/** Package names whose declared `package.json` version range CHANGED somewhere in this PR's diff (across every
- *  changed `package.json`, any dependency block) — a `+`/`-` pair with different range strings for the same key
- *  counts as changed; a line present on only one side (add/remove of the dependency entirely) also counts. */
-function packagesWithManifestVersionChange(files: PullRequestFileRecord[]): Set<string> {
-  const changed = new Set<string>();
-  for (const file of files) {
-    if (file.path.replace(/\\/g, "/").toLowerCase().split("/").pop() !== "package.json") continue;
-    const patch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
-    if (!patch) continue;
-    const removedVersions = new Map<string, string>();
-    const addedVersions = new Map<string, string>();
-    for (const line of patchLines(patch)) {
-      if (line.sign === " ") continue;
-      const match = PACKAGE_JSON_DEP_RE.exec(line.content.trim());
-      if (!match) continue;
-      const [, name, range] = match as unknown as [string, string, string];
-      (line.sign === "+" ? addedVersions : removedVersions).set(name, range);
-    }
-    for (const [name, addedRange] of addedVersions) {
-      const removedRange = removedVersions.get(name);
-      if (removedRange === undefined || removedRange !== addedRange) changed.add(name);
-    }
-    for (const name of removedVersions.keys()) {
-      if (!addedVersions.has(name)) changed.add(name);
-    }
-  }
-  return changed;
 }
 
 const MAX_FLAGGED_PACKAGES_IN_TITLE = 3;
 
 /**
  * Scan every changed `package-lock.json` in the PR for a tamper-risk hunk: a `resolved`/`integrity` value
- * changed WITHOUT the same package's version changing in a changed `package.json`, or a `resolved` URL outside
- * `registry.npmjs.org`. Returns ONE `lockfile_tamper_risk` advisory finding on any hit, else null. Callers gate
- * this on the repo's `lockfileIntegrityGateMode` (default `off` — see rules/advisory.ts) before invoking it.
+ * changed for a lockfile entry WITHOUT that same entry's own `"version"` field genuinely changing in the diff,
+ * or a `resolved` URL outside `registry.npmjs.org`. Returns ONE `lockfile_tamper_risk` advisory finding on any
+ * hit, else null. Callers gate this on the repo's `lockfileIntegrityGateMode` (default `off` — see
+ * rules/advisory.ts) before invoking it.
  */
 export function lockfileTamperRiskFinding(files: PullRequestFileRecord[]): AdvisoryFinding | null {
   const lockfiles = files.filter((file) => isNpmLockfilePath(file.path));
   if (lockfiles.length === 0) return null;
-  const bumpedPackages = packagesWithManifestVersionChange(files);
 
   const flagged: { file: string; package: string; reason: "off_registry" | "unbumped_resolved" }[] = [];
   for (const file of lockfiles) {
@@ -156,7 +181,7 @@ export function lockfileTamperRiskFinding(files: PullRequestFileRecord[]): Advis
     for (const candidate of scanPackageLockPatch(file.path, patch)) {
       if (candidate.offRegistryResolvedUrl) {
         flagged.push({ file: candidate.file, package: candidate.package, reason: "off_registry" });
-      } else if (candidate.resolvedOrIntegrityChanged && !bumpedPackages.has(candidate.package)) {
+      } else if (candidate.resolvedOrIntegrityChanged && !candidate.versionChanged) {
         flagged.push({ file: candidate.file, package: candidate.package, reason: "unbumped_resolved" });
       }
     }

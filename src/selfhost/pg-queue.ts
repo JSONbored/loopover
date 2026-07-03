@@ -21,6 +21,8 @@ import {
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceMergeKeyPrefix,
+  jobCoalesceMergedPayload,
   jobCoalesceSupersededKeyPrefix,
   jobPriority,
   parsePositiveIntEnv,
@@ -124,6 +126,7 @@ async function retryPoolUpdateOrLeaveForReclaim(
 import { hostLoadAvg1PerCore } from "./host-pressure";
 import {
   evaluateMaintenanceAdmission,
+  isMaintenanceAdmissionGrantedUnderPressure,
   isMaintenanceJobType,
   maintenanceAdmissionDeferMs,
   resolveMaintenanceAdmissionConfig,
@@ -510,6 +513,44 @@ export function createPgQueue(
         return;
       }
     }
+    // Merge two INCREMENTAL rag-index-repo jobs for the same repo (#selfhost-maintenance-self-pin) into one
+    // pending row's UNION path set instead of piling up as separate maintenance-lane rows -- mirrors
+    // sqlite-queue.ts exactly. `absorbedByKey` shares mergeKeyPrefix's exact guard so it's provably non-null
+    // here (asserted, not defaulted); excluding it is defense-in-depth against a job_key collision, not
+    // load-bearing, though under Postgres's multi-instance concurrency it's a real (if narrow) race guard.
+    const mergeKeyPrefix = jobCoalesceMergeKeyPrefix(payload);
+    if (mergeKeyPrefix) {
+      const mergeCandidate = (
+        await pool.query(
+          `SELECT id, payload, job_key FROM ${TABLE}
+           WHERE status='pending' AND job_key IS NOT NULL AND left(job_key, $1)=$2 AND job_key<>$3
+           ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+          [mergeKeyPrefix.length, mergeKeyPrefix, absorbedByKey as string],
+        )
+      ).rows[0] as { id: string; payload: string; job_key: string } | undefined;
+      if (mergeCandidate) {
+        const mergedPayload = jobCoalesceMergedPayload(mergeCandidate.payload, payload);
+        if (mergedPayload) {
+          const mergedKey = jobCoalesceKey(mergedPayload);
+          // Guarded by status='pending' AND job_key=<the exact row this SELECT saw> so a concurrent claim or a
+          // second instance's own merge into this same row between the SELECT and here loses cleanly (rowCount
+          // 0) instead of silently overwriting whatever the winner just wrote -- multiple self-host instances
+          // can race this exact SELECT-then-UPDATE (gate finding). Falling through (not returning) on a lost
+          // race lets the normal supersede/coalesce/insert path below handle this job instead.
+          const merged = await pool.query(
+            `UPDATE ${TABLE}
+               SET payload=$1, run_after=GREATEST(run_after, $2), created_at=$3, priority=GREATEST(priority, $4), job_key=$5, last_error=NULL
+             WHERE id=$6 AND status='pending' AND job_key=$7`,
+            [mergedPayload, runAfter, now, priority, mergedKey, mergeCandidate.id, mergeCandidate.job_key],
+          );
+          if (merged.rowCount) {
+            await recordQueueMetric("gittensory_jobs_coalesced_total");
+            kickOne();
+            return;
+          }
+        }
+      }
+    }
     const supersededKeyPrefix = jobCoalesceSupersededKeyPrefix(payload);
     if (key && supersededKeyPrefix) {
       const existing = (
@@ -817,6 +858,16 @@ export function createPgQueue(
               pending_ms: Date.now() - Number(job.created_at),
             }),
           );
+        }
+        // Broader force-admitted-under-pressure signal (#selfhost-maintenance-self-pin): covers trickle_max_defer_age
+        // above PLUS maintenance_pending_high_drain (the new scoped drain escape this PR adds) under one counter,
+        // so an operator can trend "how often does pressure admission get overridden at all" without needing to
+        // sum multiple per-reason metrics.
+        if (isMaintenanceAdmissionGrantedUnderPressure(decision.reason)) {
+          incr("gittensory_jobs_maintenance_admission_granted_under_pressure_total", {
+            reason: decision.reason,
+            job_type: message.type,
+          });
         }
       }
       try {

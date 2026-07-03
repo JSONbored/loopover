@@ -890,7 +890,15 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       await executeAgentRun(env, message.runId);
       return;
     case "notify-evaluate": {
-      const deliveries = await evaluateNotificationEvent(env, message.event);
+      // Legacy payload compat: a row enqueued before the batched-events deploy (#selfhost-maintenance-self-pin)
+      // still carries the OLD singular `event` field on disk, not `events` -- a rolling deploy can process such
+      // a row after the new code ships, so normalize both shapes rather than assuming every persisted payload
+      // already matches the current type (which only the type checker, not the durable queue, enforces).
+      const legacyMessage = message as unknown as { events?: DetectedNotificationEvent[]; event?: DetectedNotificationEvent };
+      const events = Array.isArray(legacyMessage.events) ? legacyMessage.events : legacyMessage.event ? [legacyMessage.event] : [];
+      const deliveries = (
+        await mapWithConcurrency(events, NOTIFY_EVALUATE_EVENT_CONCURRENCY, (event) => evaluateNotificationEvent(env, event))
+      ).flat();
       await Promise.all(
         deliveries.map((delivery) =>
           env.JOBS.send({
@@ -4144,6 +4152,29 @@ async function countLiveOpenWithConcurrencyUntil(
   return confirmedOpenCount;
 }
 
+// A batched notify-evaluate job (#selfhost-maintenance-self-pin) can carry many events from one webhook (a
+// popular newly-opened issue can have dozens of watchers) -- an unbounded Promise.all over all of them would
+// let a single job spend as many concurrent DB/eval calls as it likes, bypassing the queue's own
+// backgroundConcurrency cap (which defaults to 1) entirely from inside one job's execution. Bounded worker-pool
+// fan-out, same shape as GLOBAL_OPEN_ITEM_LIVE_CHECK_CONCURRENCY above.
+const NOTIFY_EVALUATE_EVENT_CONCURRENCY = 5;
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index] as T);
+      }
+    }),
+  );
+  return results;
+}
+
 /**
  * Install-wide contributor open-item count, LIVE-VERIFIED (#2562 gate-review follow-up): every OTHER counted
  * item is confirmed still-open via a live GET before counting toward the cap (mirrors the existing per-repo
@@ -5022,10 +5053,8 @@ async function processGitHubWebhook(
       payload.installation?.id,
       detectNotificationEvents(eventName, payload),
     );
-    for (const notificationEvent of [
-      ...trustedReviewEvents,
-      ...issueWatchEvents,
-    ]) {
+    const notificationEvents = [...trustedReviewEvents, ...issueWatchEvents];
+    for (const notificationEvent of notificationEvents) {
       await recordAuditEvent(env, {
         eventType: "notification.event_detected",
         actor: notificationEvent.actorLogin,
@@ -5042,10 +5071,16 @@ async function processGitHubWebhook(
           deeplink: notificationEvent.deeplink,
         },
       });
+    }
+    // Batched (#selfhost-maintenance-self-pin): every event this ONE webhook delivery detected rides in a
+    // single notify-evaluate job instead of one job per event -- the audit trail above still records each
+    // event individually, so nothing about observability changes, only how many maintenance-lane rows a
+    // multi-watcher issue (or a review event landing alongside issue-watch matches) creates.
+    if (notificationEvents.length > 0) {
       await env.JOBS.send({
         type: "notify-evaluate",
         requestedBy: "webhook",
-        event: notificationEvent,
+        events: notificationEvents,
       });
     }
 

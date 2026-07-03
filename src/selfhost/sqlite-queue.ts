@@ -22,6 +22,8 @@ import {
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceMergeKeyPrefix,
+  jobCoalesceMergedPayload,
   jobCoalesceSupersededKeyPrefix,
   jobPriority,
   parsePositiveIntEnv,
@@ -40,6 +42,7 @@ import {
 import { hostLoadAvg1PerCore } from "./host-pressure";
 import {
   evaluateMaintenanceAdmission,
+  isMaintenanceAdmissionGrantedUnderPressure,
   isMaintenanceJobType,
   maintenanceAdmissionDeferMs,
   resolveMaintenanceAdmissionConfig,
@@ -289,6 +292,38 @@ export function createSqliteQueue(
         recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
         kickOne();
         return;
+      }
+    }
+    // Merge two INCREMENTAL rag-index-repo jobs for the same repo (#selfhost-maintenance-self-pin), e.g. several
+    // merged PRs touching different files in a burst, into one pending row's UNION path set instead of piling up
+    // as separate maintenance-lane rows.
+    const mergeKeyPrefix = jobCoalesceMergeKeyPrefix(payload);
+    if (mergeKeyPrefix) {
+      const prefixLength = mergeKeyPrefix.length;
+      // `absorbedByKey` shares mergeKeyPrefix's exact guard (both require an incoming path-scoped rag-index-repo
+      // message), so it's provably non-null here -- it's asserted, not defaulted, because we only reach this
+      // branch once it found no pending FULL job to absorb into; excluding that same key guards against a
+      // job_key collision, it can never actually match a row here.
+      const mergeCandidate = driver.query(
+        `SELECT id, payload FROM ${TABLE}
+         WHERE status='pending' AND job_key IS NOT NULL AND substr(job_key, 1, ?)=? AND job_key<>?
+         ORDER BY priority DESC, run_after DESC, id LIMIT 1`,
+        [prefixLength, mergeKeyPrefix, absorbedByKey as string],
+      ).rows[0] as { id: number; payload: string } | undefined;
+      if (mergeCandidate) {
+        const mergedPayload = jobCoalesceMergedPayload(mergeCandidate.payload, payload);
+        if (mergedPayload) {
+          const mergedKey = jobCoalesceKey(mergedPayload);
+          driver.query(
+            `UPDATE ${TABLE}
+               SET payload=?, run_after=max(run_after, ?), created_at=?, priority=max(priority, ?), job_key=?, last_error=NULL
+             WHERE id=?`,
+            [mergedPayload, runAfter, now, priority, mergedKey, mergeCandidate.id],
+          );
+          recordQueueMetric(driver, "gittensory_jobs_coalesced_total");
+          kickOne();
+          return;
+        }
       }
     }
     const supersededKeyPrefix = jobCoalesceSupersededKeyPrefix(payload);
@@ -586,6 +621,16 @@ export function createSqliteQueue(
               pending_ms: Date.now() - job.created_at,
             }),
           );
+        }
+        // Broader force-admitted-under-pressure signal (#selfhost-maintenance-self-pin): covers trickle_max_defer_age
+        // above PLUS maintenance_pending_high_drain (the new scoped drain escape this PR adds) under one counter,
+        // so an operator can trend "how often does pressure admission get overridden at all" without needing to
+        // sum multiple per-reason metrics.
+        if (isMaintenanceAdmissionGrantedUnderPressure(decision.reason)) {
+          incr("gittensory_jobs_maintenance_admission_granted_under_pressure_total", {
+            reason: decision.reason,
+            job_type: message.type,
+          });
         }
       }
       try {

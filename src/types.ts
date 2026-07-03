@@ -160,9 +160,13 @@ export type JobMessage =
       runId: string;
     }
   | {
+      // Batched (#selfhost-maintenance-self-pin): every notification event detected from ONE webhook delivery
+      // (a review event plus any issue-watch matches) rides in a single job, instead of one job per event --
+      // that was flooding the maintenance lane with a job per watcher on a popular newly-opened issue. Always
+      // non-empty at enqueue time (see processors.ts); the processor evaluates every event in the batch.
       type: "notify-evaluate";
       requestedBy: "webhook" | "test";
-      event: DetectedNotificationEvent;
+      events: DetectedNotificationEvent[];
     }
   | {
       type: "notify-deliver";

@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { createSqliteQueue } from "../../src/selfhost/sqlite-queue";
-import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
+import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
@@ -934,10 +934,117 @@ describe("createSqliteQueue (durable #980)", () => {
       requestedBy: "schedule",
       repoFullName: "JSONbored/gittensory",
     });
+    // The two incrementals now MERGE into one row before the full job supersedes it (#selfhost-maintenance-self-pin):
+    // 1 insert (the first incremental) + 2 coalesces (the merge, then the supersede), not 2 inserts + 1 coalesce.
     expect(q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 2,
+      gittensory_jobs_enqueued_total: 1,
+      gittensory_jobs_coalesced_total: 2,
+    });
+  });
+
+  // #selfhost-maintenance-self-pin: several merge-triggered incremental RAG jobs for the SAME repo, arriving
+  // while one is still pending, union their paths into ONE row instead of piling up as separate maintenance-lane
+  // entries -- distinct from the absorb/supersede pair above, which only ever involve a FULL job on one side.
+  it("merges two pending incremental RAG jobs for the same repo into one row's union path set", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts"],
+    }, { delaySeconds: 60 });
+
+    const rows = driver.query(
+      "SELECT payload, job_key FROM _selfhost_jobs ORDER BY id",
+      [],
+    ).rows as Array<{ payload: string; job_key: string }>;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts", "src/b.ts"],
+    });
+    expect(rows[0]?.job_key).toBe(jobCoalesceKey(rows[0]!.payload));
+    expect(q.stats()).toMatchObject({
+      gittensory_jobs_enqueued_total: 1,
       gittensory_jobs_coalesced_total: 1,
     });
+  });
+
+  it("does not merge a repo's incremental into an already-pending FULL job for that repo", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 1 });
+
+    // Absorbed by the existing FULL job (unchanged behavior), never merged into a narrower shape.
+    const rows = driver.query("SELECT payload FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string }>;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/gittensory",
+    });
+  });
+
+  it("does not merge incrementals across DIFFERENT repos", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/metagraphed",
+      paths: ["src/b.ts"],
+    }, { delaySeconds: 60 });
+
+    const rows = driver.query("SELECT payload FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string }>;
+    expect(rows).toHaveLength(2);
+  });
+
+  it("falls through to a separate row when merging would exceed the bounded path cap", async () => {
+    const driver = makeDriver();
+    const q = createSqliteQueue(driver, async () => undefined);
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: Array.from({ length: 100 }, (_, i) => `src/${i}.ts`), // already at the cap
+    }, { delaySeconds: 60 });
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/extra.ts"],
+    }, { delaySeconds: 60 });
+
+    // No merge (would be 101 paths, over the cap) -- the second send lands as its OWN row instead.
+    const rows = driver.query("SELECT payload FROM _selfhost_jobs ORDER BY id", []).rows as Array<{ payload: string }>;
+    expect(rows).toHaveLength(2);
+    expect(JSON.parse(rows[0]!.payload).paths).toHaveLength(100);
+    expect(JSON.parse(rows[1]!.payload).paths).toEqual(["src/extra.ts"]);
   });
 
   it("snapshot() reports pending/processing/dead queue depth by job type", async () => {
@@ -1039,26 +1146,36 @@ describe("createSqliteQueue (durable #980)", () => {
       [],
     ).rows as Array<{ payload: string; job_key: string }>;
 
-    expect(rows).toHaveLength(6);
+    // The third rag-index-repo send (paths: ["src/c.ts"]) now MERGES into the same-repo incremental row the
+    // first two sends already coalesced onto (#selfhost-maintenance-self-pin), instead of becoming its own row --
+    // 5 rows, not 6, and one fewer coalesce boundary than before that merge existed.
+    const mergedRagKey = jobCoalesceKey(
+      JSON.stringify({
+        type: "rag-index-repo",
+        requestedBy: "schedule",
+        repoFullName: "JSONbored/gittensory",
+        paths: ["src/a.ts", "src/b.ts", "src/c.ts"],
+      }),
+    );
+    expect(rows).toHaveLength(5);
     expect(rows.map((row) => row.job_key)).toEqual([
       "backfill-registered-repos:jsonbored/gittensory:resume:1",
       "backfill-registered-repos:jsonbored/gittensory:light:1",
       "generate-weekly-value-report:operator:7",
       "generate-weekly-value-report:public:7",
-      "rag-index-repo:jsonbored/gittensory:sha256:170cb2cfb288ab59ba4d35b2633120223c9acc6893fd5baec3465c434ad5bedf",
-      "rag-index-repo:jsonbored/gittensory:sha256:f4f9970f7a842b1b7b619cbd49f05da577a7d725ff1616ba2de8beed1ae5616f",
+      mergedRagKey,
     ]);
+    expect(JSON.parse(rows[4]!.payload).paths).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
     expect(rows.map((row) => JSON.parse(row.payload).requestedBy)).toEqual([
       "api",
       "api",
       "api",
       "api",
       "schedule",
-      "schedule",
     ]);
     expect(q.stats()).toMatchObject({
-      gittensory_jobs_enqueued_total: 6,
-      gittensory_jobs_coalesced_total: 3,
+      gittensory_jobs_enqueued_total: 5,
+      gittensory_jobs_coalesced_total: 4,
     });
   });
 
@@ -2260,6 +2377,7 @@ describe("createSqliteQueue (durable #980)", () => {
       "MAINTENANCE_ADMISSION_MAX_HOST_LOAD",
       "MAINTENANCE_ADMISSION_DEFER_MS",
       "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
+      "MAINTENANCE_ADMISSION_DRAIN_AGE_MS",
     ] as const;
     const saved: Record<string, string | undefined> = {};
 
@@ -2371,6 +2489,71 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.last_error).toContain("maintenance_pending_high");
     });
 
+    // Regression (#selfhost-maintenance-self-pin): the reported incident had a maintenance lane backed up well
+    // past the threshold with EVERY claim denied `maintenance_pending_high`, and no way for the backlog to shrink
+    // short of each job individually reaching the 4h trickle. The drain escape lets the OLDEST jobs in that same
+    // backlog through in a bounded trickle well before that.
+    it("drain-admits the oldest job in a large backlog once it has waited past the drain age, while a fresh job in the SAME backlog still defers", async () => {
+      process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000"; // 1m (parsePositiveIntEnv floor)
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      const now = Date.now();
+      for (let i = 0; i < 68; i += 1) { // mirrors the reported incident's backlog size, well over the threshold
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 0, NULL, 1)`,
+          [JSON.stringify({ type: "rollup-product-usage", requestedBy: "test" }), now + 3_600_000, now],
+        );
+      }
+      const staleCreatedAt = now - 61_000;
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify({ type: "build-contributor-evidence", requestedBy: "schedule" }), staleCreatedAt],
+      );
+      await q.binding.send(msg("notify-evaluate"));
+      await q.drain();
+      expect(started).toContain("build-contributor-evidence"); // old job in the backlog: drained
+      expect(started).not.toContain("notify-evaluate"); // fresh job in the SAME backlog: still deferred
+      const freshRow = driver.query(
+        "SELECT last_error FROM _selfhost_jobs WHERE payload LIKE '%notify-evaluate%'",
+        [],
+      ).rows[0] as { last_error: string };
+      expect(freshRow.last_error).toContain("maintenance_pending_high");
+      expect(await renderMetrics()).toContain(
+        'gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="maintenance_pending_high_drain"} 1',
+      );
+    });
+
+    it("does not drain-admit when host load is ALSO high", async () => {
+      process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000";
+      vi.mocked(hostLoadAvg1PerCore).mockReturnValue(5);
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      const now = Date.now();
+      for (let i = 0; i < 16; i += 1) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 0, NULL, 1)`,
+          [JSON.stringify({ type: "rollup-product-usage", requestedBy: "test" }), now + 3_600_000, now],
+        );
+      }
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 1)`,
+        [JSON.stringify({ type: "build-contributor-evidence", requestedBy: "schedule" }), now - 61_000],
+      );
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+      const row = driver.query(
+        "SELECT last_error FROM _selfhost_jobs WHERE payload LIKE '%build-contributor-evidence%'",
+        [],
+      ).rows[0] as { last_error: string };
+      expect(row.last_error).toContain("host_load_high");
+    });
+
     it("defers a maintenance job when host load per core exceeds the threshold", async () => {
       vi.mocked(hostLoadAvg1PerCore).mockReturnValue(5);
       const driver = makeDriver();
@@ -2412,9 +2595,9 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
       expect(started).toEqual(["build-contributor-evidence"]);
       expect(q.stats()).toMatchObject({ gittensory_jobs_maintenance_trickle_admitted_total: 1 });
-      expect(await renderMetrics()).toContain(
-        'gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1',
-      );
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
+      expect(metrics).toContain('gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
     });
 
     it("does not record a trickle-admitted metric on a normal clear-pressure admission", async () => {
@@ -2426,6 +2609,16 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(started).toEqual(["build-contributor-evidence"]);
       expect(q.stats()).not.toHaveProperty("gittensory_jobs_maintenance_trickle_admitted_total");
       expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_trickle_admitted");
+    });
+
+    it("does not record the granted-under-pressure metric for an ordinary pressure_clear admission", async () => {
+      const driver = makeDriver();
+      const started: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void started.push(typeOf(m)));
+      await q.binding.send(msg("build-contributor-evidence"));
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_granted_under_pressure_total");
     });
 
     it("pressureSignals() reports live/maintenance pending counts and oldest ages", async () => {

@@ -15368,9 +15368,10 @@ describe("queue processors", () => {
     });
     expect(JSON.stringify(detected.results[0])).not.toMatch(/trust score|wallet|hotkey|reward estimate|reviewability/i);
 
-    const evaluateJob = enqueued.find((message): message is { type: "notify-evaluate"; event: { recipientLogin: string } } => message.type === "notify-evaluate");
+    const evaluateJob = enqueued.find((message): message is { type: "notify-evaluate"; events: Array<{ recipientLogin: string }> } => message.type === "notify-evaluate");
     expect(evaluateJob).toBeDefined();
-    expect(evaluateJob!.event.recipientLogin).toBe("contributor");
+    expect(evaluateJob!.events).toHaveLength(1);
+    expect(evaluateJob!.events[0]!.recipientLogin).toBe("contributor");
   });
 
   it("skips changes-requested review notifications from reviewers without repository write permission", async () => {
@@ -15626,10 +15627,11 @@ describe("queue processors", () => {
   });
 
   it("notifies issue-watchers when a new grabbable maintainer-created issue opens (#699 path B)", async () => {
-    const enqueued: Array<{ type: string; event?: { eventType: string; recipientLogin: string; pullNumber: number } }> = [];
+    const enqueued: Array<{ type: string; events?: Array<{ eventType: string; recipientLogin: string; pullNumber: number }> }> = [];
     const env = createTestEnv({ JOBS: { async send(message: { type: string }) { enqueued.push(message); } } as unknown as Queue });
     vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
-    await upsertIssueWatchSubscription(env, { login: "watcher", repoFullName: "JSONbored/gittensory" });
+    await upsertIssueWatchSubscription(env, { login: "watcher-one", repoFullName: "JSONbored/gittensory" });
+    await upsertIssueWatchSubscription(env, { login: "watcher-two", repoFullName: "JSONbored/gittensory" });
     await upsertIssueWatchSubscription(env, { login: "maintainer", repoFullName: "JSONbored/gittensory" }); // the author — should be skipped
 
     await processJob(env, {
@@ -15644,12 +15646,17 @@ describe("queue processors", () => {
       },
     });
 
-    const watchEvents = enqueued.filter((m): m is { type: "notify-evaluate"; event: { eventType: string; recipientLogin: string; pullNumber: number } } => m.type === "notify-evaluate" && m.event?.eventType === "issue_watch_match");
-    expect(watchEvents.map((m) => m.event.recipientLogin)).toEqual(["watcher"]); // maintainer (author) skipped
-    expect(watchEvents[0]!.event.pullNumber).toBe(91);
+    // Batched (#selfhost-maintenance-self-pin): both watcher matches from this ONE webhook delivery ride in a
+    // SINGLE notify-evaluate job, not one job per watcher -- that fan-out was flooding the self-host maintenance
+    // lane with a job per watcher on a popular issue.
+    const evaluateJobs = enqueued.filter((m): m is { type: "notify-evaluate"; events: Array<{ eventType: string; recipientLogin: string; pullNumber: number }> } => m.type === "notify-evaluate");
+    expect(evaluateJobs).toHaveLength(1);
+    const watchEvents = evaluateJobs[0]!.events.filter((event) => event.eventType === "issue_watch_match");
+    expect(watchEvents.map((event) => event.recipientLogin).sort()).toEqual(["watcher-one", "watcher-two"]); // maintainer (author) skipped
+    expect(watchEvents.every((event) => event.pullNumber === 91)).toBe(true);
 
-    const detected = await env.DB.prepare("select metadata_json from audit_events where event_type = 'notification.event_detected' and target_key = ?").bind("watcher").first<{ metadata_json: string }>();
-    expect(JSON.parse(detected!.metadata_json)).toMatchObject({ eventType: "issue_watch_match", recipientLogin: "watcher", repoFullName: "JSONbored/gittensory" });
+    const detected = await env.DB.prepare("select metadata_json from audit_events where event_type = 'notification.event_detected' and target_key = ?").bind("watcher-one").first<{ metadata_json: string }>();
+    expect(JSON.parse(detected!.metadata_json)).toMatchObject({ eventType: "issue_watch_match", recipientLogin: "watcher-one", repoFullName: "JSONbored/gittensory" });
   });
 
   it("appends issue-side slop findings to the issue advisory only when slop is opted in (#533)", async () => {

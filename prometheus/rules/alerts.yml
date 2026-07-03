@@ -134,11 +134,13 @@ groups:
           runbook: "Open the Runtime Pressure & Maintenance row. If gittensory_host_load_avg1_per_core is elevated, a co-located CI runner or other host process is starving the app -- see docker-compose.yml's runner isolation guidance."
 
       - alert: GittensoryMaintenanceStarved
-        # Maintenance admission (maintenance-admission.ts) force-admits a maintenance job once it has waited
-        # MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS (default 4h) regardless of pressure -- so under correct
-        # operation this should never sit much past that trickle ceiling. A value well beyond it means
-        # either the trickle isn't triggering (a bug) or the host is so overloaded even the trickle-forced
-        # job can't be claimed/processed.
+        # Maintenance admission (maintenance-admission.ts) has TWO age escapes (#selfhost-maintenance-self-pin):
+        # a short maintenanceDrainAgeMs trickle that lets old jobs through even while `maintenance_pending_high`
+        # is breached (bounded further by the queue's own background concurrency cap), and the ultimate
+        # MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS (default 4h) force-admit that applies regardless of pressure --
+        # so under correct operation this should never sit much past that outer ceiling, and in practice the
+        # drain escape should keep it well under it. A value well beyond 4h means either an escape isn't
+        # triggering (a bug) or the host is so overloaded even a force-admitted job can't be claimed/processed.
         expr: gittensory_queue_oldest_maintenance_pending_age_seconds > 21600
         for: 15m
         labels:
@@ -146,7 +148,7 @@ groups:
         annotations:
           summary: "gittensory maintenance work has not run in over 6h"
           description: "The oldest maintenance-lane queue job has been pending for {{ $value | printf \"%.0f\" }}s, past the default trickle ceiling. Contributor evidence, RAG indexing, drift scans, and similar sweeps are stale."
-          runbook: "Check gittensory_jobs_maintenance_admission_deferred_by_reason_total for the dominant defer reason, and confirm MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS wasn't raised. Sustained host_load_high suggests the box itself (not just this app) is overloaded."
+          runbook: "Check gittensory_jobs_maintenance_admission_deferred_by_reason_total for the dominant defer reason and gittensory_jobs_maintenance_admission_granted_under_pressure_total to confirm the escapes are actually firing, and confirm MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS / MAINTENANCE_ADMISSION_DRAIN_AGE_MS weren't raised. Sustained host_load_high suggests the box itself (not just this app) is overloaded -- host_load_high also blocks the drain escape specifically, see maintenance-admission.ts."
 
   # ── GitHub API budget / queue admission pressure ──────────────────────────
   - name: gittensory-github-rate-limits

@@ -2396,6 +2396,33 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 149 },
+      "id": 137,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Maintenance Admission Granted Under Pressure (trickle/drain, #selfhost-maintenance-self-pin)",
+      "description": "A maintenance job admitted DESPITE active pressure -- the trickle (maxDeferAgeMs) or drain (maintenanceDrainAgeMs) age escapes firing. Healthy when this tracks alongside a high 'Maintenance Queue Pending' (the backlog is actively draining); zero activity here while that gauge stays high for a long stretch means the escapes aren't reaching their age thresholds yet.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (reason, job_type) (rate(gittensory_jobs_maintenance_admission_granted_under_pressure_total[5m])) or vector(0)",
+          "legendFormat": "{{reason}} {{job_type}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "30s",

@@ -18,6 +18,8 @@ import {
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
+  jobCoalesceMergeKeyPrefix,
+  jobCoalesceMergedPayload,
   jobCoalesceSupersededKeyPrefix,
   jobPriority,
   matchesGitHubRateLimitAdmissionTarget,
@@ -709,7 +711,11 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
     expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
     expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
-    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "webhook", event: { dedupKey: "review_requested:o/r#3:bob" } }))).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    expect(
+      jobCoalesceKey(
+        payload({ type: "notify-evaluate", requestedBy: "webhook", events: [{ dedupKey: "review_requested:o/r#3:bob" }] }),
+      ),
+    ).toBe("notify-evaluate:review_requested:o/r#3:bob");
     // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
     // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.
@@ -717,7 +723,50 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "test" }))).toBeNull();
     expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "test" }))).toBeNull();
     expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
-    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", event: {} }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", events: [] }))).toBeNull();
+    expect(jobCoalesceKey(payload({ type: "notify-evaluate", requestedBy: "test", events: [{}] }))).toBeNull();
+  });
+
+  it("batches a notify-evaluate job's coalesce key off the FULL sorted set of dedup keys (#selfhost-maintenance-self-pin)", () => {
+    // Order-independent: the same two events in either order produce the same key, so a redelivery with the
+    // events reordered still coalesces.
+    const forward = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: [{ dedupKey: "review_requested:o/r#3:bob" }, { dedupKey: "issue_watch_match:o/r#9:alice" }],
+      }),
+    );
+    const reversed = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: [{ dedupKey: "issue_watch_match:o/r#9:alice" }, { dedupKey: "review_requested:o/r#3:bob" }],
+      }),
+    );
+    expect(forward).toBe("notify-evaluate:issue_watch_match:o/r#9:alice,review_requested:o/r#3:bob");
+    expect(reversed).toBe(forward);
+    // A batch with even one different event gets a DIFFERENT key -- never silently merges with an unrelated batch.
+    const differentBatch = jobCoalesceKey(
+      payload({
+        type: "notify-evaluate",
+        requestedBy: "webhook",
+        events: [{ dedupKey: "review_requested:o/r#3:bob" }, { dedupKey: "issue_watch_match:o/r#9:carol" }],
+      }),
+    );
+    expect(differentBatch).not.toBe(forward);
+    // If ANY event in the batch is missing its dedup key, the whole batch is left uncoalesced (null) rather than
+    // key off a partial set that could collide with -- and silently drop the malformed event from -- an
+    // unrelated batch.
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "notify-evaluate",
+          requestedBy: "webhook",
+          events: [{ dedupKey: "review_requested:o/r#3:bob" }, {}],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("coalesces recurring maintenance jobs while preserving their semantic scope", () => {
@@ -845,6 +894,94 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "ops-alerts", requestedBy: "schedule" }))).toBe(
       "ops-alerts",
     );
+  });
+
+  describe("rag-index-repo incremental merge coalescing (#selfhost-maintenance-self-pin)", () => {
+    const incrementalA = payload({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/Gittensory",
+      paths: ["src/a.ts"],
+    });
+    const incrementalB = payload({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/Gittensory",
+      paths: ["src/b.ts"],
+    });
+    const fullJob = payload({
+      type: "rag-index-repo",
+      requestedBy: "schedule",
+      repoFullName: "JSONbored/Gittensory",
+    });
+
+    it("returns the repo-scoped prefix only for an incoming INCREMENTAL job", () => {
+      expect(jobCoalesceMergeKeyPrefix(incrementalA)).toBe("rag-index-repo:jsonbored/gittensory:");
+      expect(jobCoalesceMergeKeyPrefix(fullJob)).toBeNull(); // a full job supersedes instead — see jobCoalesceSupersededKeyPrefix
+      expect(jobCoalesceMergeKeyPrefix(payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+      expect(jobCoalesceMergeKeyPrefix(payload({ type: "rag-index-repo", requestedBy: "webhook" }))).toBeNull(); // no repo
+    });
+
+    it("unions two incremental jobs' paths, deduped and sorted, into the incoming job's shape", () => {
+      const merged = jobCoalesceMergedPayload(incrementalA, incrementalB);
+      expect(merged).not.toBeNull();
+      expect(JSON.parse(merged!)).toEqual({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+      // The merged key coalesces the SAME as a single job enqueued with the union directly.
+      expect(jobCoalesceKey(merged!)).toBe(
+        jobCoalesceKey(
+          payload({
+            type: "rag-index-repo",
+            requestedBy: "webhook",
+            repoFullName: "JSONbored/Gittensory",
+            paths: ["src/a.ts", "src/b.ts"],
+          }),
+        ),
+      );
+    });
+
+    it("dedupes an overlapping path re-merged from both sides", () => {
+      const merged = jobCoalesceMergedPayload(incrementalA, incrementalA);
+      expect(JSON.parse(merged!).paths).toEqual(["src/a.ts"]);
+    });
+
+    it("returns null when either side isn't a path-scoped rag-index-repo message", () => {
+      expect(jobCoalesceMergedPayload(fullJob, incrementalA)).toBeNull(); // existing side has no paths
+      expect(jobCoalesceMergedPayload(incrementalA, fullJob)).toBeNull(); // incoming side has no paths
+      expect(jobCoalesceMergedPayload(payload({ type: "notify-evaluate", requestedBy: "test" }), incrementalA)).toBeNull();
+      expect(jobCoalesceMergedPayload(incrementalA, payload({ type: "notify-evaluate", requestedBy: "test" }))).toBeNull();
+    });
+
+    it("does not merge past the bounded path cap -- falls back to a separate row instead of unbounded growth", () => {
+      const nearCapExisting = payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: Array.from({ length: 99 }, (_, i) => `src/${i}.ts`),
+      });
+      const twoMorePaths = payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: ["src/extra-1.ts", "src/extra-2.ts"],
+      });
+      // 99 + 2 unique = 101 > the 100 cap → refuse to merge.
+      expect(jobCoalesceMergedPayload(nearCapExisting, twoMorePaths)).toBeNull();
+      // Exactly at the cap (99 + 1 unique = 100) still merges.
+      const oneMorePath = payload({
+        type: "rag-index-repo",
+        requestedBy: "webhook",
+        repoFullName: "JSONbored/Gittensory",
+        paths: ["src/extra-1.ts"],
+      });
+      const merged = jobCoalesceMergedPayload(nearCapExisting, oneMorePath);
+      expect(merged).not.toBeNull();
+      expect(JSON.parse(merged!).paths).toHaveLength(100);
+    });
   });
 
   it("keys build-contributor-evidence by login/all, and fanned-out batches by their FIRST login (never one shared key) (#1941)", () => {

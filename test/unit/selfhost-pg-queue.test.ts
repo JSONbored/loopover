@@ -455,6 +455,150 @@ describe("createPgQueue (durable #977)", () => {
     );
   });
 
+  // #selfhost-maintenance-self-pin: mirrors selfhost-sqlite-queue.test.ts -- two pending incrementals for the
+  // same repo merge into one row's union path set instead of piling up as separate maintenance-lane rows.
+  it("merges a new incremental RAG job into an already-pending incremental for the same repo", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // absorbedByKey check: no pending FULL job for this repo
+    m.fn.mockResolvedValueOnce({
+      rows: [{ id: "existing-incremental", payload: JSON.stringify({ type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts"] }), job_key: "rag-index-repo:jsonbored/gittensory:sha256:existing" }],
+      rowCount: 1,
+    }); // merge-lookup query: an existing pending incremental for this repo
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // the guarded UPDATE wins the race — 1 row affected
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts"],
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("left(job_key, $1)=$2"),
+      ["rag-index-repo:jsonbored/gittensory:".length, "rag-index-repo:jsonbored/gittensory:", "rag-index-repo:jsonbored/gittensory:full"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET payload=$1, run_after=GREATEST"),
+      expect.arrayContaining([
+        expect.stringContaining('"paths":["src/a.ts","src/b.ts"]'),
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        expect.stringContaining("rag-index-repo:jsonbored/gittensory:sha256:"),
+        "existing-incremental",
+        "rag-index-repo:jsonbored/gittensory:sha256:existing",
+      ]),
+    );
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([expect.stringContaining('"paths":["src/b.ts"]')]),
+    );
+  });
+
+  it("REGRESSION (gate finding): a lost merge race (rowCount 0 — another instance claimed/mutated the row first) falls through to a normal insert instead of silently overwriting", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // absorbedByKey check: no pending FULL job for this repo
+    m.fn.mockResolvedValueOnce({
+      rows: [{ id: "existing-incremental", payload: JSON.stringify({ type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts"] }), job_key: "rag-index-repo:jsonbored/gittensory:sha256:existing" }],
+      rowCount: 1,
+    }); // merge-lookup query: an existing pending incremental for this repo
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // the guarded UPDATE LOSES the race — another instance already claimed/mutated this row
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/b.ts"],
+    });
+
+    // Falls through to the normal enqueue path — a fresh INSERT for this job, never a second blind UPDATE
+    // against the same (already-claimed) row.
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO"),
+      expect.arrayContaining([expect.stringContaining('"paths":["src/b.ts"]')]),
+    );
+  });
+
+  it("does not merge an incremental into an already-pending FULL job for that repo", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    // absorbedByKey's own exact-match query finds the pending full job first, so the merge query never runs.
+    m.fn.mockResolvedValueOnce({ rows: [{ id: "existing-full" }], rowCount: 1 });
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    });
+
+    expect(m.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("left(job_key, $1)=$2"),
+      expect.anything(),
+    );
+  });
+
+  it("does not merge when the merge-lookup query finds no candidate (e.g. a different repo)", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // absorbedByKey check: no pending FULL job
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // merge-lookup query: no pending incremental either
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/a.ts"],
+    });
+
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("left(job_key, $1)=$2"),
+      [36, "rag-index-repo:jsonbored/gittensory:", "rag-index-repo:jsonbored/gittensory:full"],
+    );
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([expect.stringContaining('"paths":["src/a.ts"]')]),
+    );
+  });
+
+  it("falls through to a separate row when merging would exceed the bounded path cap", async () => {
+    const m = makePool();
+    const q = createPgQueue(m.pool, async () => undefined);
+    await q.init();
+    m.fn.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // absorbedByKey check: no pending FULL job
+    m.fn.mockResolvedValueOnce({
+      rows: [{
+        id: "existing-at-cap",
+        payload: JSON.stringify({
+          type: "rag-index-repo",
+          requestedBy: "webhook",
+          repoFullName: "JSONbored/gittensory",
+          paths: Array.from({ length: 100 }, (_, i) => `src/${i}.ts`),
+        }),
+      }],
+      rowCount: 1,
+    }); // merge-lookup query: an existing pending incremental already at the cap
+
+    await q.binding.send({
+      type: "rag-index-repo",
+      requestedBy: "webhook",
+      repoFullName: "JSONbored/gittensory",
+      paths: ["src/extra.ts"],
+    });
+
+    // No merge (would be 101 paths, over the cap) -- falls through to a plain INSERT of its own row.
+    expect(m.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO _selfhost_jobs (payload"),
+      expect.arrayContaining([expect.stringContaining('"paths":["src/extra.ts"]')]),
+    );
+  });
+
   it("coalesces recurring maintenance jobs by semantic scope and preserves distinct scopes", async () => {
     const m = makePool();
     const q = createPgQueue(m.pool, async () => undefined);
@@ -2044,6 +2188,53 @@ describe("createPgQueue (durable #977)", () => {
       expect(started).not.toContain("build-contributor-evidence");
     });
 
+    // Regression (#selfhost-maintenance-self-pin): mirrors selfhost-sqlite-queue.test.ts exactly -- a large
+    // backlog (well over threshold) no longer denies EVERY job forever; a job old enough for the drain age gets
+    // admitted while a fresh job in the SAME backlog still defers.
+    it("drain-admits an old job in a large backlog once it has waited past the drain age, while a fresh job in the SAME backlog still defers", async () => {
+      const oldEnv = process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS;
+      process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000"; // 1m (parsePositiveIntEnv floor)
+      try {
+        const m = makePool();
+        m.setPressureSignals({ maintenance: { cnt: 68, oldest: now } }); // mirrors the reported incident's backlog size
+        m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim
+        m.enqueueResult({ rows: [{ ...maintenanceRow, created_at: now - 61_000 }], rowCount: 1 }); // old job: drained
+        const started: string[] = [];
+        const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+        await q.drain();
+        expect(started).toEqual(["build-contributor-evidence"]);
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="maintenance_pending_high_drain"} 1',
+        );
+      } finally {
+        if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS;
+        else process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = oldEnv;
+      }
+    });
+
+    it("does not drain-admit when host load is ALSO high", async () => {
+      const oldEnv = process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS;
+      process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = "60000";
+      vi.mocked(hostLoadAvg1PerCore).mockReturnValue(5);
+      try {
+        const m = makePool();
+        m.setPressureSignals({ maintenance: { cnt: 68, oldest: now } });
+        m.enqueueResult({ rows: [], rowCount: 0 });
+        m.enqueueResult({ rows: [{ ...maintenanceRow, created_at: now - 61_000 }], rowCount: 1 });
+        const started: string[] = [];
+        const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+        await q.drain();
+        expect(started).not.toContain("build-contributor-evidence");
+        expect(m.pool.query).toHaveBeenCalledWith(
+          expect.stringContaining("SET status='pending', run_after=GREATEST"),
+          expect.arrayContaining([expect.stringContaining("host_load_high")]),
+        );
+      } finally {
+        if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS;
+        else process.env.MAINTENANCE_ADMISSION_DRAIN_AGE_MS = oldEnv;
+      }
+    });
+
     it("defers a maintenance job when host load per core is high", async () => {
       vi.mocked(hostLoadAvg1PerCore).mockReturnValue(5);
       const m = makePool();
@@ -2070,13 +2261,24 @@ describe("createPgQueue (durable #977)", () => {
         const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
         await q.drain();
         expect(started).toEqual(["build-contributor-evidence"]);
-        expect(await renderMetrics()).toContain(
-          'gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1',
-        );
+        const metrics = await renderMetrics();
+        expect(metrics).toContain('gittensory_jobs_maintenance_trickle_admitted_by_type_total{job_type="build-contributor-evidence"} 1');
+        expect(metrics).toContain('gittensory_jobs_maintenance_admission_granted_under_pressure_total{job_type="build-contributor-evidence",reason="trickle_max_defer_age"} 1');
       } finally {
         if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS;
         else process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = oldEnv;
       }
+    });
+
+    it("does not record the granted-under-pressure metric for an ordinary pressure_clear admission", async () => {
+      const m = makePool();
+      m.enqueueResult({ rows: [], rowCount: 0 });
+      m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 });
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_granted_under_pressure_total");
     });
 
     it("pressureSignals() surfaces the live and maintenance aggregate reads", async () => {

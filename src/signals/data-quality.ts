@@ -309,7 +309,11 @@ export function buildSignalFidelity(repoCount: number, states: RepoSyncStateReco
   const rateLimitResetValues = segments.flatMap((segment) =>
     (segment.status === "rate_limited" || segment.status === "waiting_rate_limit") && segment.rateLimitResetAt && !hasEffectiveSegmentCoverage(segment) ? [segment.rateLimitResetAt] : [],
   );
-  const missingRepoCount = Math.max(repoCount - states.length, 0);
+  // Count only repos that appear in NEITHER states nor segments as missing. `qualities` is built from the
+  // states+segments union (repoNames), so a segment-only repo already contributes an (unknown) quality entry;
+  // subtracting states.length here would double-count it (once as unknown, once as missing) and could push the
+  // degraded bucket above repoCount. Mirror buildCoreSignalFidelity, which subtracts the full union length.
+  const missingRepoCount = Math.max(repoCount - repoNames.length, 0);
   const status: SignalFidelity["status"] =
     repoCount === 0 || qualities.length === 0
       ? "unknown"

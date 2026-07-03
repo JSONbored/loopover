@@ -51,6 +51,23 @@ describe("sync data quality", () => {
     });
   });
 
+  it("counts a segment-only repo (no sync state) once, not twice, in the degraded bucket", () => {
+    // A repo with crawl segment rows but no sync-state row is part of the states+segments union, so it already
+    // contributes an "unknown" quality entry; it must not ALSO be counted in missingRepoCount. Regression for the
+    // states.length vs repoNames.length divergence that let degradedRepos exceed repoCount.
+    const fidelity = buildSignalFidelity(1, [], [segment({ repoFullName: "owner/segment-only", segment: "open_issues", status: "complete" })]);
+
+    expect(fidelity).toMatchObject({
+      status: "degraded",
+      repoCount: 1,
+      completeRepos: 0,
+      degradedRepos: 1,
+      blockedRepos: 0,
+    });
+    // The bucket invariant must hold: every registered repo lands in exactly one bucket.
+    expect(fidelity.completeRepos + fidelity.degradedRepos + fidelity.blockedRepos).toBe(fidelity.repoCount);
+  });
+
   it("marks missing repo sync state as unknown at repo level", () => {
     expect(buildRepoDataQuality("owner/missing", null, [])).toMatchObject({
       status: "unknown",

@@ -25,6 +25,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_issue_quality",
   "gittensory_validate_linked_issue",
   "gittensory_check_before_start",
+  "gittensory_find_opportunities",
   "gittensory_lint_pr_text",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
@@ -126,6 +127,10 @@ describe("MCP output schema discovery", () => {
     const registryChangesProps = Object.keys((registryChanges?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(registryChangesProps).toEqual(expect.arrayContaining(["currentSnapshotId", "previousSnapshotId", "addedRepos", "removedRepos", "changedRepos", "summary"]));
     expect(registryChangesProps).not.toEqual(expect.arrayContaining(["previous", "current", "added", "removed", "changed", "warnings"]));
+
+    const opportunities = byName.get("gittensory_find_opportunities");
+    const opportunitiesProps = Object.keys((opportunities?.outputSchema?.properties ?? {}) as Record<string, unknown>);
+    expect(opportunitiesProps).toEqual(expect.arrayContaining(["source", "searchedRepositories", "candidateCount", "opportunities"]));
   });
 
   it("preserves the full tool inventory while adding output schemas", async () => {
@@ -330,6 +335,192 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(["go", "raise", "avoid"]).toContain(data.recommendation);
     expect(data.found).toBe(false);
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_find_opportunities ranks cached target issues and filters claimed or non-rankable work", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-03T00:00:00.000Z"));
+    try {
+      const env = createTestEnv();
+      await persistRegistrySnapshot(
+        env,
+        normalizeRegistryPayload(
+          { "octo/demo": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
+          { kind: "raw-github", url: "fixture://registry" },
+          "2026-07-03T00:00:00.000Z",
+        ),
+      );
+      await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+      await upsertIssueFromGitHub(env, "octo/demo", {
+        number: 1,
+        title: "Fix cache retry failure",
+        state: "open",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        labels: [{ name: "bug" }],
+        body: "Reproduction and expected behavior are available.",
+        updated_at: "2026-07-02T00:00:00.000Z",
+      });
+      await upsertIssueFromGitHub(env, "octo/demo", {
+        number: 2,
+        title: "Clarify retry question",
+        state: "open",
+        user: { login: "reporter" },
+        labels: [{ name: "question" }],
+        body: "Needs a maintainer answer before coding.",
+      });
+      await env.DB.prepare(`UPDATE issues SET payload_json = ? WHERE repo_full_name = ? AND number = ?`)
+        .bind(JSON.stringify({ body: "Needs a maintainer answer before coding.", updated_at: "not-a-date", closed_at: null }), "octo/demo", 2)
+        .run();
+      await upsertIssueFromGitHub(env, "octo/demo", {
+        number: 3,
+        title: "Already claimed retry bug",
+        state: "open",
+        user: { login: "reporter" },
+        labels: [{ name: "bug" }],
+        body: "Someone is already working on this.",
+      });
+      await upsertIssueFromGitHub(env, "octo/demo", {
+        number: 4,
+        title: "Duplicate retry report",
+        state: "open",
+        user: { login: "reporter" },
+        labels: [{ name: "duplicate" }],
+        body: "Duplicate of the other issue.",
+      });
+      await upsertPullRequestFromGitHub(env, "octo/demo", {
+        number: 9,
+        title: "Fix claimed retry bug",
+        state: "open",
+        user: { login: "contributor" },
+        labels: [],
+        body: "Closes #3",
+      });
+      const { client } = await connectTestClient(env);
+      const result = await client.callTool({
+        name: "gittensory_find_opportunities",
+        arguments: {
+          targets: [
+            { owner: "octo", repo: "demo" },
+            { owner: "octo", repo: "demo" },
+          ],
+          goalSpec: { preferredLabels: ["bug"], issueDiscoveryPolicy: "neutral" },
+          limit: 5,
+        },
+      });
+
+      expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
+      const data = result.structuredContent as { opportunities: Array<Record<string, unknown>>; searchedRepositories: number; candidateCount: number };
+      expect(data.searchedRepositories).toBe(1);
+      expect(data.candidateCount).toBe(2);
+      expect(data.opportunities.map((entry) => entry.issueNumber)).toEqual([1, 2]);
+      expect(data.opportunities[0]).toMatchObject({
+        owner: "octo",
+        repo: "demo",
+        issueNumber: 1,
+        aiPolicyAllowed: true,
+        laneFit: 1,
+      });
+      expect(data.opportunities[0]?.rankScore as number).toBeGreaterThan(data.opportunities[1]?.rankScore as number);
+      expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gittensory_find_opportunities searches cached repos, honors access filters, and handles disabled goal specs", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-03T00:00:00.000Z"));
+    try {
+      const env = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "octo/searchable,ghost/missing" });
+      await persistRegistrySnapshot(
+        env,
+        normalizeRegistryPayload(
+          {
+            "octo/searchable": { emission_share: 0.02, issue_discovery_share: 1, label_multipliers: {}, trusted_label_pipeline: false },
+            "victim/private": { emission_share: 0.02, issue_discovery_share: 0.5, label_multipliers: {}, trusted_label_pipeline: false },
+            "octo/unregistered": { emission_share: 0, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+          },
+          { kind: "raw-github", url: "fixture://registry" },
+          "2026-07-03T00:00:00.000Z",
+        ),
+      );
+      await upsertRepositoryFromGitHub(env, { name: "searchable", full_name: "octo/searchable", private: false, owner: { login: "octo" }, default_branch: "main" });
+      await upsertRepositoryFromGitHub(env, { name: "private", full_name: "victim/private", private: true, owner: { login: "victim" }, default_branch: "main" });
+      await upsertRepositoryFromGitHub(env, { name: "unregistered", full_name: "octo/unregistered", private: false, owner: { login: "octo" }, default_branch: "main" });
+      await persistRegistrySnapshot(
+        env,
+        normalizeRegistryPayload(
+          {
+            "octo/searchable": { emission_share: 0.02, issue_discovery_share: 1, label_multipliers: {}, trusted_label_pipeline: false },
+            "victim/private": { emission_share: 0.02, issue_discovery_share: 0.5, label_multipliers: {}, trusted_label_pipeline: false },
+          },
+          { kind: "raw-github", url: "fixture://registry-2" },
+          "2026-07-03T00:01:00.000Z",
+        ),
+      );
+      await upsertIssueFromGitHub(env, "octo/searchable", {
+        number: 8,
+        title: "Parser target bug",
+        state: "open",
+        user: { login: "reporter" },
+        labels: [{ name: "enhancement" }],
+        updated_at: "2026-07-01T00:00:00.000Z",
+      });
+      await upsertIssueFromGitHub(env, "octo/searchable", {
+        number: 10,
+        title: "Unrelated docs cleanup",
+        state: "open",
+        user: { login: "reporter" },
+        labels: [{ name: "documentation" }],
+        body: "This cached issue covers unrelated repository housekeeping.",
+        updated_at: "2026-07-01T00:00:00.000Z",
+      });
+      await upsertIssueFromGitHub(env, "victim/private", {
+        number: 9,
+        title: "Parser target secret",
+        state: "open",
+        user: { login: "reporter" },
+        labels: [{ name: "bug" }],
+        body: "Should not be returned to this caller.",
+        updated_at: "2026-07-01T00:00:00.000Z",
+      });
+      const { client } = await connectTestClient(env);
+      const searched = await client.callTool({
+        name: "gittensory_find_opportunities",
+        arguments: {
+          targets: [
+            { owner: "octo", repo: "unregistered" },
+            { owner: "ghost", repo: "missing" },
+          ],
+          searchQuery: "parser target",
+          goalSpec: { issueDiscoveryPolicy: "discouraged" },
+          limit: 3,
+        },
+      });
+      expect(searched.isError, JSON.stringify(searched.content)).toBeFalsy();
+      const searchedData = searched.structuredContent as { opportunities: Array<Record<string, unknown>>; candidateCount: number; warnings?: string[] };
+      expect(searchedData.candidateCount).toBe(1);
+      expect(searchedData.opportunities).toHaveLength(1);
+      expect(searchedData.opportunities[0]).toMatchObject({ owner: "octo", repo: "searchable", issueNumber: 8, aiPolicyAllowed: true });
+      expect(searchedData.opportunities[0]?.laneFit).toBe(0.35);
+      expect(searchedData.warnings?.some((warning) => /victim\/private/.test(warning))).toBe(true);
+      expect(searchedData.warnings?.some((warning) => /octo\/unregistered/.test(warning))).toBe(true);
+      expect(searchedData.warnings?.some((warning) => /ghost\/missing/.test(warning))).toBe(true);
+
+      const disabled = await client.callTool({
+        name: "gittensory_find_opportunities",
+        arguments: { targets: [{ owner: "octo", repo: "searchable" }], goalSpec: { minerEnabled: false } },
+      });
+      expect(disabled.isError).toBeFalsy();
+      expect(disabled.structuredContent).toMatchObject({ opportunities: [], searchedRepositories: 0, candidateCount: 0 });
+
+      const invalid = await client.callTool({ name: "gittensory_find_opportunities", arguments: {} });
+      expect(invalid.isError).toBe(true);
+      expect(JSON.stringify(invalid.content)).toMatch(/targets_or_search_query_required/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("gittensory_remediation_plan returns validated structured content", async () => {

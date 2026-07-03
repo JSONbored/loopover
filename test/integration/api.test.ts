@@ -4949,9 +4949,9 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_agent_get_run");
     expect(toolNames).toContain("gittensory_agent_explain_next_action");
     expect(toolNames).toContain("gittensory_agent_prepare_pr_packet");
+    expect(toolNames).toContain("gittensory_find_opportunities");
     for (const removed of [
       "gittensory_get_contributor_fit",
-      "gittensory_find_opportunities",
       "gittensory_get_contribution_strategy",
       "gittensory_explain_reward_risk",
       "gittensory_rank_next_actions",

@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import { DEFAULT_MINER_GOAL_SPEC, rankOpportunities, type MinerGoalSpec, type OpportunityRankInput } from "@jsonbored/gittensory-engine";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, isMcpActuationRepoAllowed, isMcpReadRepoAllowed, isMcpReadUnscoped, type AuthIdentity } from "../auth/security";
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
@@ -101,6 +102,7 @@ import {
   buildQueueHealth,
   buildRegistryChangeReport,
   buildRoleContext,
+  type LaneAdvice,
 } from "../signals/engine";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
@@ -125,6 +127,7 @@ import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import { loadUpstreamStatus } from "../upstream/ruleset";
+import type { IssueRecord, PullRequestRecord, RepositoryRecord } from "../types";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -132,6 +135,18 @@ type ToolPayload = {
   data: Record<string, unknown>;
 };
 type McpToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+const FIND_OPPORTUNITIES_DEFAULT_LIMIT = 10;
+const FIND_OPPORTUNITIES_MAX_LIMIT = 25;
+const FIND_OPPORTUNITIES_MAX_TARGETS = 25;
+const FIND_OPPORTUNITIES_MAX_SEARCH_REPOS = 50;
+const FIND_OPPORTUNITY_LANE_FIT: Record<LaneAdvice["lane"], number> = {
+  direct_pr: 1,
+  split: 0.9,
+  issue_discovery: 0.65,
+  inactive: 0.25,
+  unknown: 0.25,
+};
 
 function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: boolean): string {
   if (freshness === "fresh") return `Gittensory decision pack for ${login}.`;
@@ -195,6 +210,34 @@ const checkBeforeStartShape = {
   issueNumber: z.number().int().positive().optional(),
   title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
   plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+};
+
+const minerGoalSpecShape = z
+  .object({
+    minerEnabled: z.boolean().optional(),
+    wantedPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+    blockedPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+    preferredLabels: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
+    maxConcurrentClaims: z.number().int().positive().optional(),
+    issueDiscoveryPolicy: z.enum(["encouraged", "neutral", "discouraged"]).optional(),
+  })
+  .strict();
+
+const findOpportunitiesShape = {
+  targets: z
+    .array(
+      z
+        .object({
+          owner: z.string().min(1).max(100),
+          repo: z.string().min(1).max(100),
+        })
+        .strict(),
+    )
+    .max(FIND_OPPORTUNITIES_MAX_TARGETS)
+    .optional(),
+  searchQuery: z.string().min(1).max(200).optional(),
+  goalSpec: minerGoalSpecShape.optional(),
+  limit: z.number().int().min(1).max(FIND_OPPORTUNITIES_MAX_LIMIT).optional(),
 };
 
 const lintPrTextShape = {
@@ -860,6 +903,26 @@ const checkBeforeStartOutputSchema = {
   report: z.unknown().optional(),
 };
 
+const findOpportunitiesOutputSchema = {
+  source: z.literal("cached_metadata"),
+  searchedRepositories: z.number(),
+  candidateCount: z.number(),
+  opportunities: z.array(
+    z.object({
+      owner: z.string(),
+      repo: z.string(),
+      issueNumber: z.number(),
+      title: z.string(),
+      rankScore: z.number(),
+      laneFit: z.number(),
+      freshness: z.number(),
+      dupRisk: z.number(),
+      aiPolicyAllowed: z.literal(true),
+    }),
+  ),
+  warnings: z.array(z.string()).optional(),
+};
+
 const remediationPlanOutputSchema = {
   repoFullName: z.string().optional(),
   login: z.string().optional(),
@@ -999,6 +1062,144 @@ const agentExplainNextActionOutputSchema = {
   ...agentRunBundleOutputSchema,
   topAction: z.unknown().optional(),
 };
+
+type FindOpportunitiesInput = z.infer<z.ZodObject<typeof findOpportunitiesShape>>;
+type FindOpportunitiesGoalSpec = NonNullable<FindOpportunitiesInput["goalSpec"]>;
+type FindOpportunityRecord = {
+  owner: string;
+  repo: string;
+  issueNumber: number;
+  title: string;
+  rankScore: number;
+  laneFit: number;
+  freshness: number;
+  dupRisk: number;
+  aiPolicyAllowed: true;
+};
+type FindOpportunityCandidate = Omit<FindOpportunityRecord, "rankScore"> & OpportunityRankInput;
+
+function boundedOpportunityLimit(limit: number | undefined): number {
+  return Math.min(FIND_OPPORTUNITIES_MAX_LIMIT, Math.max(1, limit ?? FIND_OPPORTUNITIES_DEFAULT_LIMIT));
+}
+
+function normalizedFindOpportunityTargets(targets: FindOpportunitiesInput["targets"]): Array<{ owner: string; repo: string; fullName: string }> {
+  const seen = new Set<string>();
+  return (targets ?? []).flatMap((target) => {
+    const owner = target.owner.trim();
+    const repo = target.repo.trim();
+    const fullName = `${owner}/${repo}`;
+    const key = fullName.toLowerCase();
+    if (!owner || !repo || seen.has(key)) return [];
+    seen.add(key);
+    return [{ owner, repo, fullName }];
+  });
+}
+
+function normalizedSearchTerms(searchQuery: string | undefined): string[] {
+  return (searchQuery ?? "")
+    .toLowerCase()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+}
+
+function issueMatchesSearch(issue: IssueRecord, repo: RepositoryRecord, terms: string[]): boolean {
+  if (terms.length === 0) return true;
+  const haystack = [repo.fullName, issue.title, issue.body ?? "", ...issue.labels].join(" ").toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+function hasLabelOverlap(left: readonly string[] | undefined, right: readonly string[]): boolean {
+  const wanted = new Set((left ?? []).map((label) => label.toLowerCase()));
+  return wanted.size > 0 && right.some((label) => wanted.has(label.toLowerCase()));
+}
+
+function signal(value: number): number {
+  return Math.round(Math.min(1, Math.max(0, value)) * 10_000) / 10_000;
+}
+
+function normalizedMinerGoalSpec(goalSpec: FindOpportunitiesGoalSpec | undefined): MinerGoalSpec {
+  return {
+    minerEnabled: goalSpec?.minerEnabled ?? DEFAULT_MINER_GOAL_SPEC.minerEnabled,
+    wantedPaths: goalSpec?.wantedPaths ?? DEFAULT_MINER_GOAL_SPEC.wantedPaths,
+    blockedPaths: goalSpec?.blockedPaths ?? DEFAULT_MINER_GOAL_SPEC.blockedPaths,
+    preferredLabels: goalSpec?.preferredLabels ?? DEFAULT_MINER_GOAL_SPEC.preferredLabels,
+    maxConcurrentClaims: goalSpec?.maxConcurrentClaims ?? DEFAULT_MINER_GOAL_SPEC.maxConcurrentClaims,
+    issueDiscoveryPolicy: goalSpec?.issueDiscoveryPolicy ?? DEFAULT_MINER_GOAL_SPEC.issueDiscoveryPolicy,
+  };
+}
+
+function issueFreshness(issue: IssueRecord, nowMs: number): number {
+  const timestamp = Date.parse(String(issue.updatedAt));
+  if (!Number.isFinite(timestamp)) return 0.5;
+  const ageDays = Math.max(0, (nowMs - timestamp) / 86_400_000);
+  return signal(1 - Math.min(0.9, ageDays / 100));
+}
+
+function issueDupRisk(issue: IssueRecord, openPullRequests: PullRequestRecord[]): number {
+  const linked = issue.linkedPrs.length > 0 || openPullRequests.some((pullRequest) => pullRequest.linkedIssues.includes(issue.number));
+  if (linked) return 1;
+  return signal(openPullRequests.length / 10);
+}
+
+function issueLaneFit(repo: RepositoryRecord, issue: IssueRecord, goalSpec: MinerGoalSpec): number {
+  const lane = buildLaneAdvice(repo, repo.fullName).lane;
+  const base = FIND_OPPORTUNITY_LANE_FIT[lane];
+  const policyAdjustment = goalSpec.issueDiscoveryPolicy === "discouraged" && lane === "issue_discovery" ? -0.3 : 0;
+  const labelAdjustment = hasLabelOverlap(goalSpec.preferredLabels, issue.labels) ? 0.1 : 0;
+  return signal(base + policyAdjustment + labelAdjustment);
+}
+
+function issuePotential(issue: IssueRecord, goalSpec: MinerGoalSpec): number {
+  const maintainerAuthored = ["OWNER", "MEMBER", "COLLABORATOR"].includes((issue.authorAssociation ?? "").toUpperCase());
+  const labelBoost = hasLabelOverlap(goalSpec.preferredLabels, issue.labels) ? 0.1 : 0;
+  return signal((maintainerAuthored ? 0.95 : 0.75) + labelBoost);
+}
+
+function issueFeasibility(issue: IssueRecord): number {
+  const labels = issue.labels.map((label) => label.toLowerCase());
+  if (labels.some((label) => /duplicate|invalid|wontfix|not planned|won't fix/.test(label))) return 0;
+  if (labels.some((label) => /needs[-\s]?proof|blocked|question/.test(label))) return 0.55;
+  return 0.9;
+}
+
+function buildFindOpportunityRecord(
+  repo: RepositoryRecord,
+  issue: IssueRecord,
+  openPullRequests: PullRequestRecord[],
+  goalSpec: MinerGoalSpec,
+  nowMs: number,
+): FindOpportunityCandidate {
+  const laneFit = issueLaneFit(repo, issue, goalSpec);
+  const freshness = issueFreshness(issue, nowMs);
+  const dupRisk = issueDupRisk(issue, openPullRequests);
+  return {
+    owner: repo.owner,
+    repo: repo.name,
+    issueNumber: issue.number,
+    title: sanitizePublicComment(issue.title),
+    potential: issuePotential(issue, goalSpec),
+    feasibility: issueFeasibility(issue),
+    laneFit,
+    freshness,
+    dupRisk,
+    aiPolicyAllowed: true,
+  };
+}
+
+function toFindOpportunityRecord(candidate: FindOpportunityCandidate & { rankScore: number }): FindOpportunityRecord {
+  return {
+    owner: candidate.owner,
+    repo: candidate.repo,
+    issueNumber: candidate.issueNumber,
+    title: candidate.title,
+    rankScore: signal(candidate.rankScore),
+    laneFit: candidate.laneFit,
+    freshness: candidate.freshness,
+    dupRisk: candidate.dupRisk,
+    aiPolicyAllowed: true,
+  };
+}
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
@@ -1341,6 +1542,17 @@ export class GittensoryMcp {
         outputSchema: checkBeforeStartOutputSchema,
       },
       async (input) => this.toolResult(await this.checkBeforeStart(input)),
+    );
+
+    server.registerTool(
+      "gittensory_find_opportunities",
+      {
+        description:
+          "Find ranked contributor opportunities from cached repo and issue metadata. Metadata-only, no source upload, no GitHub writes.",
+        inputSchema: findOpportunitiesShape,
+        outputSchema: findOpportunitiesOutputSchema,
+      },
+      async (input) => this.toolResult(await this.findOpportunities(input)),
     );
 
     server.registerTool(
@@ -2028,6 +2240,83 @@ export class GittensoryMcp {
         reasons: report.reasons,
         blockers: report.blockers,
         report: report as unknown as Record<string, unknown>,
+      },
+    };
+  }
+
+  private async findOpportunities(input: FindOpportunitiesInput): Promise<ToolPayload> {
+    const targets = normalizedFindOpportunityTargets(input.targets);
+    const searchTerms = normalizedSearchTerms(input.searchQuery);
+    if (targets.length === 0 && searchTerms.length === 0) throw new Error("targets_or_search_query_required");
+
+    const limit = boundedOpportunityLimit(input.limit);
+    const goalSpec = normalizedMinerGoalSpec(input.goalSpec);
+    if (!goalSpec.minerEnabled) {
+      return {
+        summary: "Gittensory found 0 ranked opportunity/opportunities because the supplied goalSpec disables miner targeting.",
+        data: {
+          source: "cached_metadata",
+          searchedRepositories: 0,
+          candidateCount: 0,
+          opportunities: [],
+          warnings: ["goalSpec.minerEnabled is false; no repositories were scanned."],
+        },
+      };
+    }
+
+    const repositoriesByName = new Map<string, RepositoryRecord>();
+    const warnings: string[] = [];
+    for (const target of targets) {
+      const repository = await getRepository(this.env, target.fullName);
+      if (!repository) {
+        warnings.push(`Skipping ${target.fullName}: repository is not cached.`);
+        continue;
+      }
+      repositoriesByName.set(repository.fullName.toLowerCase(), repository);
+    }
+    if (searchTerms.length > 0) {
+      const searchableRepositories = (await listRepositories(this.env))
+        .filter((candidate) => candidate.isRegistered)
+        .slice(0, FIND_OPPORTUNITIES_MAX_SEARCH_REPOS);
+      for (const repository of searchableRepositories) {
+        repositoriesByName.set(repository.fullName.toLowerCase(), repository);
+      }
+    }
+
+    const candidates: FindOpportunityCandidate[] = [];
+    let searchedRepositories = 0;
+    for (const repository of repositoriesByName.values()) {
+      if (!repository.isRegistered) {
+        warnings.push(`Skipping ${repository.fullName}: repository is not registered in the local cache.`);
+        continue;
+      }
+      if (!(await this.canAccessRepo(repository.fullName))) {
+        warnings.push(`Skipping ${repository.fullName}: caller cannot access cached repository metadata.`);
+        continue;
+      }
+      searchedRepositories += 1;
+      const [issues, openPullRequests] = await Promise.all([
+        listIssueSignalSample(this.env, repository.fullName),
+        listOpenPullRequests(this.env, repository.fullName),
+      ]);
+      for (const issue of issues) {
+        if (!issueMatchesSearch(issue, repository, searchTerms)) continue;
+        const candidate = buildFindOpportunityRecord(repository, issue, openPullRequests, goalSpec, Date.now());
+        if (candidate.dupRisk >= 1) continue;
+        candidates.push(candidate);
+      }
+    }
+
+    const opportunities = rankOpportunities(candidates).filter((opportunity) => opportunity.rankScore > 0);
+    const ranked = opportunities.slice(0, limit).map(toFindOpportunityRecord);
+    return {
+      summary: `Gittensory found ${ranked.length} ranked opportunity/opportunities from cached metadata.`,
+      data: {
+        source: "cached_metadata",
+        searchedRepositories,
+        candidateCount: opportunities.length,
+        opportunities: ranked,
+        ...(warnings.length > 0 ? { warnings } : {}),
       },
     };
   }

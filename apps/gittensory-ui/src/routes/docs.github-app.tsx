@@ -8,13 +8,13 @@ const GITHUB_APP_INSTALL_URL = "https://github.com/apps/gittensory/installations
 export const Route = createFileRoute("/docs/github-app")({
   head: () => ({
     meta: [
-      { title: "GitHub App setup — Gittensory docs" },
+      { title: "GitHub App configuration — Gittensory docs" },
       {
         name: "description",
         content:
           "How the Gittensory GitHub App reviews pull requests once installed — self-hosted (recommended) or via the private managed-beta shared app. The Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
-      { property: "og:title", content: "GitHub App setup — Gittensory docs" },
+      { property: "og:title", content: "GitHub App configuration — Gittensory docs" },
       {
         property: "og:description",
         content:
@@ -31,7 +31,7 @@ function GithubApp() {
   return (
     <DocsPage
       eyebrow="Workflows"
-      title="GitHub App setup"
+      title="GitHub App configuration"
       description="Install a Gittensory GitHub App on a repo so it reviews your pull requests, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
     >
       <p>
@@ -41,16 +41,20 @@ function GithubApp() {
         managed-beta operators, the shared <code>gittensory</code> App below. Each review produces
         two surfaces: the <strong>Gittensory Orb Review Agent</strong> check run (and the advisory{" "}
         <strong>Gittensory Context</strong> check), and a single review comment posted by{" "}
-        <code>gittensory[bot]</code> that updates in place as the PR evolves. Everything on this
-        page configures that review, and applies identically whichever App you install.
+        <code>gittensory[bot]</code> that updates in place as the PR evolves. The review behavior
+        below this page's Install section (PR panel, checks, gate modes, config-as-code) applies
+        identically whichever App you install — but the App's{" "}
+        <em>install steps and required permissions differ</em>, since a self-hosted App needs write
+        access the shared App does not.
       </p>
 
       <h2>Install</h2>
       <p>
         <strong>Self-hosting is the recommended, default path.</strong> Run the review stack
         yourself, then install your own GitHub App on exactly the repos you choose using the
-        self-host setup wizard — see{" "}
-        <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>.
+        self-host setup wizard. The direct App's required permissions and events are covered in{" "}
+        <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link> — use that page's
+        checklist, not the one below, for a self-hosted install.
       </p>
       <p>
         The shared <code>gittensory</code> App is <strong>private / managed-beta only</strong> — it
@@ -76,6 +80,12 @@ function GithubApp() {
           <code>pull_request</code>, and <code>repository</code>.
         </li>
       </ol>
+      <Callout variant="note">
+        This checklist is for the shared managed-beta App only. A self-hosted App needs{" "}
+        <code>Pull requests: write</code> (not read) and <code>Checks: write</code> is mandatory,
+        not optional — see <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link> for
+        the direct App's exact permission and event list.
+      </Callout>
 
       <h2>First 10 minutes</h2>
       <ol>

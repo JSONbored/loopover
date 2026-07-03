@@ -33,7 +33,7 @@ function MaintainerInstallTrust() {
     <DocsPage
       eyebrow="Launch guide"
       title="Maintainer install and trust guide"
-      description="A maintainer-first checklist for installing the GitHub App, keeping public output safe, authorizing commands, using the browser extension, and rejecting weak Gittensory-driven PRs."
+      description="A maintainer-first checklist for self-hosting and installing a GitHub App, keeping public output safe, authorizing commands, using the browser extension, and rejecting weak Gittensory-driven PRs."
     >
       <Callout variant="safety" title="Trust posture">
         Gittensory is advisory-first. It may help you review contribution readiness, but it does not

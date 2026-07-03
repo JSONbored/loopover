@@ -256,7 +256,7 @@ test("circuit breaker: opens after threshold consecutive 500s and attaches circu
   assert.equal(diagnostics.endpointCategory, "pypi-json");
 });
 
-test("circuit breaker: recovers after the cooldown elapses", async () => {
+test("circuit breaker: recovers after the default cooldown elapses", async () => {
   mock.timers.enable({ apis: ["Date"] });
   try {
     let calls = 0;
@@ -270,7 +270,7 @@ test("circuit breaker: recovers after the cooldown elapses", async () => {
       const result = await boundedFetchText(
         "https://api.example.test/recovers",
         {
-          endpointCategory: "bundlephobia-size",
+          endpointCategory: "pypi-json",
           fetchImpl,
         },
       );
@@ -281,18 +281,72 @@ test("circuit breaker: recovers after the cooldown elapses", async () => {
     const stillOpen = await boundedFetchText(
       "https://api.example.test/recovers",
       {
-        endpointCategory: "bundlephobia-size",
+        endpointCategory: "pypi-json",
         fetchImpl,
       },
     );
     assert.equal(stillOpen.reason, "circuit_open");
     assert.equal(calls, 3);
 
-    // Advance past the 30s cooldown window.
+    // Advance past the 30s default cooldown window.
     mock.timers.tick(30_001);
 
     const recovered = await boundedFetchText(
       "https://api.example.test/recovers",
+      {
+        endpointCategory: "pypi-json",
+        fetchImpl,
+      },
+    );
+    assert.equal(recovered.ok, true);
+    assert.equal(
+      calls,
+      4,
+      "the real fetchImpl must be reached again after cooldown",
+    );
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("circuit breaker: bundlephobia-size gets a longer 60s cooldown, not the 30s default", async () => {
+  mock.timers.enable({ apis: ["Date"] });
+  try {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls <= 3) throw new Error("connection refused");
+      return new Response("{}", { status: 200 });
+    };
+
+    for (let index = 0; index < 3; index += 1) {
+      const result = await boundedFetchText(
+        "https://api.example.test/bundlephobia-recovers",
+        {
+          endpointCategory: "bundlephobia-size",
+          fetchImpl,
+        },
+      );
+      assert.equal(result.ok, false);
+    }
+    assert.equal(calls, 3);
+
+    // Advance past the 30s default — bundlephobia-size's own 60s cooldown must still be open.
+    mock.timers.tick(30_001);
+    const stillOpenAt30s = await boundedFetchText(
+      "https://api.example.test/bundlephobia-recovers",
+      {
+        endpointCategory: "bundlephobia-size",
+        fetchImpl,
+      },
+    );
+    assert.equal(stillOpenAt30s.reason, "circuit_open");
+    assert.equal(calls, 3, "the 60s category cooldown must not recover early at 30s");
+
+    // Advance the remaining 30s past the 60s category-specific cooldown.
+    mock.timers.tick(30_000);
+    const recovered = await boundedFetchText(
+      "https://api.example.test/bundlephobia-recovers",
       {
         endpointCategory: "bundlephobia-size",
         fetchImpl,
@@ -302,7 +356,7 @@ test("circuit breaker: recovers after the cooldown elapses", async () => {
     assert.equal(
       calls,
       4,
-      "the real fetchImpl must be reached again after cooldown",
+      "the real fetchImpl must be reached again after the 60s category cooldown",
     );
   } finally {
     mock.timers.reset();

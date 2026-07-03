@@ -22,11 +22,37 @@ const MIN_GZIP_BYTES = 25_000;
 // Caching prevents redundant calls that would exhaust bundlephobia's rate limit
 // when multiple enrichment requests look up the same package spec.
 const WEIGHT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+// Bounded so a long-lived process scanning many distinct pkg@version specs across PRs
+// can't grow this cache without limit (the key is attacker-influenced via manifest diffs).
+const MAX_WEIGHT_CACHE_ENTRIES = 1000;
 interface WeightCacheEntry {
   value: PackageWeight | null;
   expiresAt: number;
 }
 const weightCache = new Map<string, WeightCacheEntry>();
+
+export function resetWeightCacheForTest(): void {
+  weightCache.clear();
+}
+
+export function weightCacheSizeForTest(): number {
+  return weightCache.size;
+}
+
+function setWeightCache(cacheKey: string, entry: WeightCacheEntry): void {
+  if (weightCache.size >= MAX_WEIGHT_CACHE_ENTRIES && !weightCache.has(cacheKey)) {
+    const now = Date.now();
+    for (const [key, existing] of weightCache) {
+      if (existing.expiresAt <= now) weightCache.delete(key);
+    }
+    while (weightCache.size >= MAX_WEIGHT_CACHE_ENTRIES) {
+      const oldestKey = weightCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      weightCache.delete(oldestKey);
+    }
+  }
+  weightCache.set(cacheKey, entry);
+}
 
 const NPM_PACKAGE_RE =
   /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/;
@@ -193,7 +219,7 @@ export async function queryPackageWeight(
       // Do not cache transient failures (timeout, network_error, aborted, circuit_open,
       // call_cap) — those should be retried on the next enrichment request.
       if (response.reason === "http_error") {
-        weightCache.set(cacheKey, { value: null, expiresAt: Date.now() + WEIGHT_CACHE_TTL_MS });
+        setWeightCache(cacheKey, { value: null, expiresAt: Date.now() + WEIGHT_CACHE_TTL_MS });
       }
       return null;
     }
@@ -204,7 +230,7 @@ export async function queryPackageWeight(
       gzipSizeBytes: numberOrNull(data.gzip),
       dependencyCount: numberOrNull(data.dependencyCount),
     };
-    weightCache.set(cacheKey, { value: result, expiresAt: Date.now() + WEIGHT_CACHE_TTL_MS });
+    setWeightCache(cacheKey, { value: result, expiresAt: Date.now() + WEIGHT_CACHE_TTL_MS });
     return result;
   } catch {
     return null;

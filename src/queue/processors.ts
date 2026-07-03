@@ -5881,9 +5881,10 @@ async function maybePublishPrPublicSurface(
     previewPollAttempt?: number | undefined;
     skipAiReview?: boolean | undefined;
     // #regate-churn (req 8): an explicit manual re-gate can force a fresh AI opinion, bypassing BOTH the durable
-    // cache and the bounded non-cacheable-reuse cooldown. No current caller sets this — it exists so a future
-    // manual-trigger path (or a caller that already knows something changed) has a supported way to opt out of
-    // the reuse guards below rather than fighting them.
+    // cache and the bounded non-cacheable-reuse cooldown. Threaded from regatePullRequest's own `force` param
+    // (see the "agent-regate-pr" job's optional `force` field) — no production scheduler or webhook enqueues a
+    // job with `force` set today, so this is a supported hook for a future manual-trigger producer, not yet
+    // reachable from any automatic path.
     forceAiReview?: boolean | undefined;
     // #regate-churn (req 6/7): true when the caller ALREADY determined something besides the AI review itself
     // may need a fresh look this pass (slop evidence collection, the manifest gate, a pre-merge-check refresh, or
@@ -6682,15 +6683,31 @@ async function maybePublishPrPublicSurface(
             }).catch(() => undefined);
             incr("gittensory_regate_ai_skipped_current_total");
           } else {
-            incr("gittensory_ai_review_cache_miss_total");
-            await recordAuditEvent(env, {
-              eventType: "github_app.ai_review_cache_miss",
-              actor: author,
-              targetKey: `${repoFullName}#${pr.number}`,
-              outcome: "completed",
-              detail: "no reusable stored AI review for this head+fingerprint; running a fresh review",
-              metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
-            }).catch(() => undefined);
+            // A forced bypass is NOT a cache miss — the cache may well have had a valid, reusable entry; the
+            // caller explicitly asked to skip it. Counting it under the miss metric would make "the cache failed
+            // to serve" indistinguishable from "a caller deliberately opted out," which muddies exactly the
+            // incident-dashboard signal this whole fix exists to provide.
+            if (webhook.forceAiReview === true) {
+              incr("gittensory_ai_review_force_bypass_total");
+              await recordAuditEvent(env, {
+                eventType: "github_app.ai_review_force_bypass",
+                actor: author,
+                targetKey: `${repoFullName}#${pr.number}`,
+                outcome: "completed",
+                detail: "explicit force re-gate bypassed the AI review cache and cooldown",
+                metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+              }).catch(() => undefined);
+            } else {
+              incr("gittensory_ai_review_cache_miss_total");
+              await recordAuditEvent(env, {
+                eventType: "github_app.ai_review_cache_miss",
+                actor: author,
+                targetKey: `${repoFullName}#${pr.number}`,
+                outcome: "completed",
+                detail: "no reusable stored AI review for this head+fingerprint; running a fresh review",
+                metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+              }).catch(() => undefined);
+            }
             aiReview = await runAiReviewForAdvisory(env, {
               settings,
               advisory,

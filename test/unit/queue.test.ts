@@ -2289,7 +2289,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/60/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/60")) return Response.json({ number: 60, title: "Quiet PR", state: "open", user: { login: "contributor" }, head: { sha: "a60" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a60/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
@@ -2332,7 +2332,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/61/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/61")) return Response.json({ number: 61, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a61" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a61/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
@@ -2384,7 +2384,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/66/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/66")) return Response.json({ number: 66, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a66" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
@@ -2421,7 +2421,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/67/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/67")) return Response.json({ number: 67, title: "Quiet PR", state: "open", user: { login: "contributor" }, head: { sha: "a67" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
@@ -2437,7 +2437,8 @@ describe("queue processors", () => {
         if (
           event.eventType === "github_app.ai_review_cache_miss" ||
           event.eventType === "github_app.ai_review_non_cacheable" ||
-          event.eventType === "github_app.ai_review_cache_write_error"
+          event.eventType === "github_app.ai_review_cache_write_error" ||
+          event.eventType === "github_app.ai_review_force_bypass"
         )
           throw new Error("audit DB down");
         await originalRecordAuditEvent(auditEnv, event);
@@ -2445,6 +2446,9 @@ describe("queue processors", () => {
 
       await expect(
         processJob(env, { type: "agent-regate-pr", deliveryId: "miss-audit-fail", repoFullName: "JSONbored/gittensory", prNumber: 67, installationId: 123 }),
+      ).resolves.toBeUndefined();
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "miss-audit-fail-forced", repoFullName: "JSONbored/gittensory", prNumber: 67, installationId: 123, force: true }),
       ).resolves.toBeUndefined();
       writeSpy.mockRestore();
       auditSpy.mockRestore();
@@ -2503,7 +2507,7 @@ describe("queue processors", () => {
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 62, "a62");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/62/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/62")) return Response.json({ number: 62, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a62" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a62/status")) return Response.json({ state: "success", statuses: [] });
@@ -2553,7 +2557,7 @@ describe("queue processors", () => {
       await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 70, "a70");
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/70/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/70")) return Response.json({ number: 70, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a70" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a70/status")) return Response.json({ state: "success", statuses: [] });
@@ -2605,7 +2609,7 @@ describe("queue processors", () => {
       let checkRunCreated = false;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/69/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/69")) return Response.json({ number: 69, title: "Partially published PR", state: "open", user: { login: "contributor" }, head: { sha: "a69" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a69/status")) return Response.json({ state: "success", statuses: [] });
@@ -2655,7 +2659,7 @@ describe("queue processors", () => {
       let checkRunCreated = false;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/71/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/71")) return Response.json({ number: 71, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a71" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/commits/a71/status")) return Response.json({ state: "success", statuses: [] });
@@ -2690,7 +2694,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/63/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/63")) return Response.json({ number: 63, title: "Pushed PR", state: "open", user: { login: "contributor" }, head: { sha: liveHeadSha }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
@@ -2747,7 +2751,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/64/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/64")) return Response.json({ number: 64, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a64" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
@@ -2772,6 +2776,17 @@ describe("queue processors", () => {
       vi.setSystemTime(new Date("2026-05-28T02:01:05.000Z"));
       await processJob(env, { type: "agent-regate-pr", deliveryId: "force-3", repoFullName: "JSONbored/gittensory", prNumber: 64, installationId: 123, force: true });
       expect(aiCalls).toBe(firstRunAiCalls * 2);
+
+      // The forced bypass is recorded distinctly from a genuine cache miss — a caller opting out is not the
+      // same incident-dashboard signal as "the cache had nothing to serve."
+      const forceAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_force_bypass", "JSONbored/gittensory#64")
+        .first<{ n: number }>();
+      expect(forceAudit?.n).toBe(1);
+      const missAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_cache_miss", "JSONbored/gittensory#64")
+        .first<{ n: number }>();
+      expect(missAudit?.n).toBe(1); // only the genuine first-run miss — the forced pass is NOT double-counted here
     });
 
     it("#9: a low-activity repo's old open PR does not generate a repeated AI review on every one of many sweep ticks", async () => {
@@ -2789,7 +2804,7 @@ describe("queue processors", () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
-        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/pulls/65/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
         if (url.endsWith("/pulls/65")) return Response.json({ number: 65, title: "Old quiet PR", state: "open", user: { login: "contributor" }, head: { sha: "a65" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });

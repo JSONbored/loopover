@@ -54,6 +54,7 @@ import {
 } from "../../src/github/client";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 
 describe("GitHub backfill", () => {
@@ -5050,6 +5051,37 @@ describe("GitHub backfill", () => {
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
     });
+
+    it("classifies a bare 403 (no admin:read) as permission-denied, not a rate limit (#selfhost-runtime-pressure)", async () => {
+      resetMetrics();
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+      expect(await renderMetrics()).toContain("gittensory_github_branch_protection_permission_denied_total 1");
+    });
+
+    it("does not count a 404 (no branch protection configured) as permission-denied", async () => {
+      resetMetrics();
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+      expect(await renderMetrics()).not.toContain("gittensory_github_branch_protection_permission_denied_total");
+    });
+
+    it("does not count a genuinely rate-limited 403 (x-ratelimit-remaining: 0) as permission-denied", async () => {
+      resetMetrics();
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal(
+        "fetch",
+        async () =>
+          new Response("secondary rate limit", {
+            status: 403,
+            headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1780000000" },
+          }),
+      );
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+      expect(await renderMetrics()).not.toContain("gittensory_github_branch_protection_permission_denied_total");
+    }, 15_000);
   });
 
   describe("fetchNamedCheckRunConclusion (#2564)", () => {

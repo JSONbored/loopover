@@ -325,6 +325,12 @@ const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40
 // runs again (#audit-rate-headroom). Any PR left un-hydrated this run stays a candidate on the next page/run.
 const MERGED_PR_FILE_HYDRATION_BATCH_SIZE: Record<BackfillMode, number> = { light: 10, full: 20, resume: 20 };
 const PULL_REQUEST_FILES_FETCH_METRIC = "gittensory_github_pull_request_files_fetch_total";
+// #selfhost-runtime-pressure: a bare 403 on the branch-protection probe (no admin:read on this installation/fork,
+// the common case) is a PERMISSION/config gap, not GitHub rate-limit exhaustion -- GitHubApiError.rateLimited
+// already makes that distinction (see isRateLimitedGitHubFailure below). Counted separately from the rate-limit
+// metrics so a dashboard can tell "GitHub is throttling us" apart from "this token can't read branch protection
+// (expected for most installations/forks)" instead of a permission gap inflating an apparent rate-limit signal.
+const BRANCH_PROTECTION_PERMISSION_DENIED_METRIC = "gittensory_github_branch_protection_permission_denied_total";
 type PullRequestFilesFetchCaller = "backfill_open_pr_details" | "backfill_merged_history" | "live_review";
 // #2537: durable-cache counter for the bare PR-state read, mirroring PULL_REQUEST_FILES_FETCH_METRIC's bounded-
 // label style (no per-PR-number labels — cardinality-safe).
@@ -2338,7 +2344,10 @@ export async function fetchRequiredStatusContexts(
     `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`,
     token,
     githubRateLimitOptions(admissionKey),
-  ).catch(() => undefined);
+  ).catch((error) => {
+    recordBranchProtectionFetchFailure(error);
+    return undefined;
+  });
   if (!result) return null; // 404 / 403 (no admin:read) / error → conservative fold-all.
   const names = new Set<string>();
   for (const ctx of result.data.contexts ?? []) {
@@ -2348,6 +2357,17 @@ export async function fetchRequiredStatusContexts(
     if (typeof check?.context === "string" && check.context.trim().length > 0) names.add(check.context);
   }
   return names;
+}
+
+// A GitHubApiError's own `.rateLimited` flag (set at construction from status/retry-after/remaining/body, see
+// GitHubApiError below) is ALREADY the correct rate-limit-vs-permission classification -- this just labels the
+// permission case with its own metric instead of the fetch's `.catch` silently discarding that information.
+// A non-GitHubApiError (a network/timeout failure) and a 404 (no branch protection configured) are equally
+// "fold all checks" outcomes for the caller, but neither is a permission denial, so neither is counted here.
+function recordBranchProtectionFetchFailure(error: unknown): void {
+  if (error instanceof GitHubApiError && error.statusCode === 403 && !error.rateLimited) {
+    incr(BRANCH_PROTECTION_PERMISSION_DENIED_METRIC);
+  }
 }
 
 /**

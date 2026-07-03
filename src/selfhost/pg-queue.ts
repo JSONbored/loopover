@@ -18,6 +18,7 @@ import {
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
+  isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
   jobCoalesceSupersededKeyPrefix,
@@ -35,6 +36,15 @@ import {
   type GitHubRateLimitAdmissionTarget,
   type SelfHostQueueSnapshot,
 } from "./queue-common";
+import { hostLoadAvg1PerCore } from "./host-pressure";
+import {
+  evaluateMaintenanceAdmission,
+  isMaintenanceJobType,
+  maintenanceAdmissionDeferMs,
+  resolveMaintenanceAdmissionConfig,
+  type MaintenanceAdmissionConfig,
+  type MaintenancePressureSignals,
+} from "./maintenance-admission";
 import type { JobMessage } from "../types";
 
 const TABLE = "_selfhost_jobs";
@@ -53,6 +63,7 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
 );
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS job_key TEXT;
+ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS is_maintenance INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, run_after, priority);
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);
 CREATE TABLE IF NOT EXISTS ${STATS_TABLE} (
@@ -70,6 +81,9 @@ export interface PgDurableQueue {
   deadCount(): Promise<number>;
   stats(): Promise<Record<string, number>>;
   snapshot(): Promise<SelfHostQueueSnapshot>;
+  /** Live-vs-maintenance queue pressure, for the /metrics gauges (see server.ts) -- the SAME signals the
+   *  maintenance-admission policy itself consults at claim time. */
+  pressureSignals(): Promise<MaintenancePressureSignals>;
   /** Requeues dead-lettered jobs still under the auto-retry attempts ceiling. Called on a timer while
    *  running (see start()), and exposed directly so tests and an operator-triggered repair path don't have
    *  to wait for the real interval. Returns the number of jobs revived. */
@@ -82,6 +96,7 @@ interface JobRow {
   attempts: number;
   job_key?: string | null;
   priority: number | string;
+  created_at: number | string;
   backgroundSlotReserved?: boolean;
 }
 
@@ -122,6 +137,7 @@ export function createPgQueue(
   const activeJobIds = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let deadLetterReviveTimer: ReturnType<typeof setInterval> | null = null;
+  const maintenanceAdmissionConfig: MaintenanceAdmissionConfig = resolveMaintenanceAdmissionConfig();
 
   async function init(): Promise<void> {
     await pool.query(DDL);
@@ -139,6 +155,14 @@ export function createPgQueue(
         JSON.stringify({
           event: "selfhost_queue_job_keys_backfilled",
           count: keyBackfilled,
+        }),
+      );
+    const maintenanceFlagsBackfilled = await backfillJobMaintenanceFlags();
+    if (maintenanceFlagsBackfilled)
+      console.log(
+        JSON.stringify({
+          event: "selfhost_queue_maintenance_flags_backfilled",
+          count: maintenanceFlagsBackfilled,
         }),
       );
     const recovered = await recoverProcessingJobs();
@@ -191,6 +215,43 @@ export function createPgQueue(
       changed += 1;
     }
     return changed;
+  }
+
+  async function backfillJobMaintenanceFlags(): Promise<number> {
+    const res = await pool.query(
+      `SELECT id, payload, is_maintenance FROM ${TABLE} WHERE status IN ('pending', 'processing')`,
+    );
+    let changed = 0;
+    for (const row of res.rows as Array<{ id: string; payload: string; is_maintenance: number | string }>) {
+      const isMaintenance = isMaintenanceJobType(extractPayloadType(row.payload) ?? "") ? 1 : 0;
+      if (Number(row.is_maintenance ?? 0) === isMaintenance) continue;
+      await pool.query(`UPDATE ${TABLE} SET is_maintenance=$1 WHERE id=$2`, [isMaintenance, row.id]);
+      changed += 1;
+    }
+    return changed;
+  }
+
+  /** Cheap aggregate reads behind the maintenance-admission policy (and the observability gauges in
+   *  server.ts): how much LIVE (foreground) work is queued and how old the oldest of it is, and the same for
+   *  the MAINTENANCE lane specifically (not "all background" -- targeted jobs like backfill-repo-segment
+   *  don't count, see maintenance-admission.ts). Host load is an independent, optional signal. */
+  async function maintenancePressureSignals(now: number): Promise<MaintenancePressureSignals> {
+    const liveRes = await pool.query(
+      `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=$1`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR],
+    );
+    const maintenanceRes = await pool.query(
+      `SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest FROM ${TABLE} WHERE status IN ('pending','processing') AND is_maintenance=1`,
+    );
+    const live = liveRes.rows[0] as { cnt: string | number; oldest: string | number | null };
+    const maintenance = maintenanceRes.rows[0] as { cnt: string | number; oldest: string | number | null };
+    return {
+      livePendingCount: Number(live.cnt),
+      oldestLivePendingAgeMs: live.oldest != null ? now - Number(live.oldest) : null,
+      maintenancePendingCount: Number(maintenance.cnt),
+      oldestMaintenancePendingAgeMs: maintenance.oldest != null ? now - Number(maintenance.oldest) : null,
+      hostLoadAvg1PerCore: hostLoadAvg1PerCore(),
+    };
   }
 
   async function recoverProcessingJobs(): Promise<number> {
@@ -364,8 +425,8 @@ export function createPgQueue(
       }
     }
     await pool.query(
-      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key) VALUES ($1,'pending',0,$2,$3,$4,$5)`,
-      [payload, runAfter, now, priority, key],
+      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance) VALUES ($1,'pending',0,$2,$3,$4,$5,$6)`,
+      [payload, runAfter, now, priority, key, isMaintenanceJobType(message.type) ? 1 : 0],
     );
     await recordQueueMetric("gittensory_jobs_enqueued_total");
     kickOne();
@@ -400,7 +461,7 @@ export function createPgQueue(
           FOR UPDATE SKIP LOCKED
           LIMIT 1
        )
-       RETURNING id, payload, attempts, job_key, priority`,
+       RETURNING id, payload, attempts, job_key, priority, created_at`,
       [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
     );
     return (res.rows[0] as JobRow | undefined) ?? null;
@@ -493,6 +554,49 @@ export function createPgQueue(
           { parentTraceParent: jobTraceParent },
         );
         return true;
+      }
+      if (!isForegroundJobPriority(Number(job.priority)) && isMaintenanceJobType(message.type)) {
+        const decision = evaluateMaintenanceAdmission(
+          await maintenancePressureSignals(Date.now()),
+          maintenanceAdmissionConfig,
+          Number(job.created_at),
+          Date.now(),
+        );
+        if (!decision.admit) {
+          await withReviewSpan(
+            "selfhost.queue.maintenance_admission_deferred",
+            { "job.type": message.type, "queue.backend": "postgres", "maintenance_admission.reason": decision.reason },
+            async () => {
+              const now = Date.now();
+              const retryAfter = now + maintenanceAdmissionDeferMs(
+                maintenanceAdmissionConfig,
+                `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+              );
+              const update = await pool.query(
+                `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
+              );
+              if (update.rowCount) {
+                await recordQueueMetric("gittensory_jobs_maintenance_admission_deferred_total");
+                incr("gittensory_jobs_maintenance_admission_deferred_by_reason_total", {
+                  reason: decision.reason,
+                  job_type: message.type,
+                });
+                console.warn(
+                  JSON.stringify({
+                    level: "warn",
+                    event: "selfhost_queue_maintenance_admission_deferred",
+                    jobType: message.type,
+                    reason: decision.reason,
+                    retry_after_ms: Math.max(0, retryAfter - now),
+                  }),
+                );
+              }
+            },
+            { parentTraceParent: jobTraceParent },
+          );
+          return true;
+        }
       }
       try {
         await withReviewSpan(
@@ -722,6 +826,9 @@ export function createPgQueue(
     },
     snapshot: binding.snapshot,
     reviveDeadLetterJobs,
+    pressureSignals() {
+      return maintenancePressureSignals(Date.now());
+    },
   };
 
   async function reclaimExpiredProcessingJobs(): Promise<number> {

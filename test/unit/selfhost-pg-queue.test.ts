@@ -6,7 +6,13 @@ import { createPgQueue } from "../../src/selfhost/pg-queue";
 import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
+import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
 import type { JobMessage } from "../../src/types";
+
+// Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
+// maintenance-admission test in this file would be flaky against the real node:os signal. Default to
+// "unavailable" (null, never gates) here; individual host-load tests override the mock explicitly.
+vi.mock("../../src/selfhost/host-pressure", () => ({ hostLoadAvg1PerCore: vi.fn(() => null) }));
 
 const msg = (t: string): JobMessage => ({ type: t }) as unknown as JobMessage;
 const webhook = (sender: { login: string; type: string }, eventName = "issue_comment", action = "edited"): JobMessage =>
@@ -63,6 +69,12 @@ interface MockPool {
    *  on a specific row (rowCount 0) while another succeeds (rowCount 1). */
   setReviveUpdateRowCounts(rowCounts: number[]): void;
   setRateLimitRows(rows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }>): void;
+  /** Configures the two maintenance-admission pressure aggregate queries (live + maintenance lane). Defaults
+   *  to zero pending / null oldest in both lanes (pressure clear) until set. */
+  setPressureSignals(signals: {
+    live?: { cnt: number; oldest: number | null };
+    maintenance?: { cnt: number; oldest: number | null };
+  }): void;
 }
 
 function makePool(): MockPool {
@@ -70,8 +82,14 @@ function makePool(): MockPool {
   let deferUpdateRowCount = 1;
   const reviveUpdateRowCounts: number[] = [];
   let rateLimitRows: Array<{ admission_key?: string | null; repo_full_name?: string | null; remaining: number | string | null; reset_at: string | null; observed_at?: string | null }> = [];
+  let pressureLive: { cnt: number; oldest: number | null } = { cnt: 0, oldest: null };
+  let pressureMaintenance: { cnt: number; oldest: number | null } = { cnt: 0, oldest: null };
   const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
     const q = String(sql);
+    if (q.includes("AS cnt, MIN(created_at) AS oldest")) {
+      const signal = q.includes("is_maintenance=1") ? pressureMaintenance : pressureLive;
+      return { rows: [{ cnt: String(signal.cnt), oldest: signal.oldest }], rowCount: 1 };
+    }
     if (q.includes("FROM github_rate_limit_observations")) {
       const admissionKey = typeof params?.[0] === "string" ? params[0] : null;
       const newest = (rows: typeof rateLimitRows) =>
@@ -118,6 +136,10 @@ function makePool(): MockPool {
       reviveUpdateRowCounts.length = 0;
       reviveUpdateRowCounts.push(...rowCounts);
     },
+    setPressureSignals(signals) {
+      if (signals.live) pressureLive = signals.live;
+      if (signals.maintenance) pressureMaintenance = signals.maintenance;
+    },
     setRateLimitRows(rows) {
       rateLimitRows = rows;
     },
@@ -131,6 +153,7 @@ describe("createPgQueue (durable #977)", () => {
     vi.useRealTimers();
     resetMetrics();
     vi.restoreAllMocks();
+    vi.mocked(hostLoadAvg1PerCore).mockReturnValue(null);
   });
 
   it("init() creates the table and recovers stuck-processing jobs", async () => {
@@ -1591,5 +1614,109 @@ describe("createPgQueue (durable #977)", () => {
       ]),
     );
     expect(bindingSnapshot).toEqual(snapshot);
+  });
+
+  describe("maintenance-admission pressure gating (#selfhost-runtime-pressure)", () => {
+    const now = Date.now();
+    const maintenanceRow = { id: "m1", payload: JSON.stringify(msg("build-contributor-evidence")), attempts: 0, job_key: "build-contributor-evidence:all", priority: 0, created_at: now };
+
+    it("defers a maintenance job when live queue pressure is high", async () => {
+      const m = makePool();
+      m.setPressureSignals({ live: { cnt: 6, oldest: now } }); // default threshold is 5
+      m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim
+      m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 }); // background claim
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+
+      expect(started).not.toContain("build-contributor-evidence");
+      expect(m.pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("SET status='pending', run_after=GREATEST"),
+        expect.arrayContaining([expect.stringContaining("live_pending_high")]),
+      );
+      expect(await renderMetrics()).toContain(
+        'gittensory_jobs_maintenance_admission_deferred_by_reason_total{job_type="build-contributor-evidence",reason="live_pending_high"} 1',
+      );
+    });
+
+    it("admits a maintenance job immediately when pressure is clear", async () => {
+      const m = makePool();
+      m.enqueueResult({ rows: [], rowCount: 0 }); // empty foreground claim
+      m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 }); // background claim
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+      expect(started).toEqual(["build-contributor-evidence"]);
+    });
+
+    it("never defers a foreground job even under maintenance-triggering pressure", async () => {
+      const m = makePool();
+      m.setPressureSignals({ live: { cnt: 6, oldest: now } });
+      m.enqueueResult({
+        rows: [{ id: "w1", payload: JSON.stringify(msg("github-webhook")), attempts: 0, job_key: null, priority: 10, created_at: now }],
+        rowCount: 1,
+      });
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+      expect(started).toEqual(["github-webhook"]);
+    });
+
+    it("defers a maintenance job when the maintenance lane itself is backed up", async () => {
+      const m = makePool();
+      m.setPressureSignals({ maintenance: { cnt: 16, oldest: now } }); // default threshold is 15
+      m.enqueueResult({ rows: [], rowCount: 0 });
+      m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 });
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+    });
+
+    it("defers a maintenance job when host load per core is high", async () => {
+      vi.mocked(hostLoadAvg1PerCore).mockReturnValue(5);
+      const m = makePool();
+      m.enqueueResult({ rows: [], rowCount: 0 });
+      m.enqueueResult({ rows: [maintenanceRow], rowCount: 1 });
+      const started: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+      await q.drain();
+      expect(started).not.toContain("build-contributor-evidence");
+    });
+
+    it("force-admits via trickle once a maintenance job has waited past the max defer age", async () => {
+      const oldEnv = process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS;
+      process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = "60000"; // 1m (parsePositiveIntEnv floor)
+      try {
+        const m = makePool();
+        m.setPressureSignals({ live: { cnt: 6, oldest: now } });
+        m.enqueueResult({ rows: [], rowCount: 0 });
+        m.enqueueResult({
+          rows: [{ ...maintenanceRow, created_at: now - 61_000 }],
+          rowCount: 1,
+        });
+        const started: string[] = [];
+        const q = createPgQueue(m.pool, async (j) => void started.push(typeOf(j)));
+        await q.drain();
+        expect(started).toEqual(["build-contributor-evidence"]);
+      } finally {
+        if (oldEnv === undefined) delete process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS;
+        else process.env.MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS = oldEnv;
+      }
+    });
+
+    it("pressureSignals() surfaces the live and maintenance aggregate reads", async () => {
+      const m = makePool();
+      m.setPressureSignals({ live: { cnt: 2, oldest: now - 1_000 }, maintenance: { cnt: 4, oldest: now - 2_000 } });
+      const q = createPgQueue(m.pool, async () => undefined);
+      const signals = await q.pressureSignals();
+      expect(signals).toEqual({
+        livePendingCount: 2,
+        oldestLivePendingAgeMs: expect.any(Number),
+        maintenancePendingCount: 4,
+        oldestMaintenancePendingAgeMs: expect.any(Number),
+        hostLoadAvg1PerCore: null,
+      });
+    });
   });
 });

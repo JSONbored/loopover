@@ -19,6 +19,7 @@ import {
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
+  isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
   jobCoalesceSupersededKeyPrefix,
@@ -36,6 +37,15 @@ import {
   type GitHubRateLimitAdmissionTarget,
   type SelfHostQueueSnapshot,
 } from "./queue-common";
+import { hostLoadAvg1PerCore } from "./host-pressure";
+import {
+  evaluateMaintenanceAdmission,
+  isMaintenanceJobType,
+  maintenanceAdmissionDeferMs,
+  resolveMaintenanceAdmissionConfig,
+  type MaintenanceAdmissionConfig,
+  type MaintenancePressureSignals,
+} from "./maintenance-admission";
 import type { JobMessage } from "../types";
 
 const TABLE = "_selfhost_jobs";
@@ -72,6 +82,9 @@ export interface DurableQueue {
   deadCount(): number;
   stats(): Record<string, number>;
   snapshot(): SelfHostQueueSnapshot;
+  /** Live-vs-maintenance queue pressure, for the /metrics gauges (see server.ts) -- the SAME signals the
+   *  maintenance-admission policy itself consults at claim time. */
+  pressureSignals(): MaintenancePressureSignals;
   /** Requeues dead-lettered jobs still under the auto-retry attempts ceiling. Called on a timer while
    *  running (see start()), and exposed directly so tests and an operator-triggered repair path don't have
    *  to wait for the real interval. Returns the number of jobs revived. */
@@ -84,6 +97,7 @@ interface JobRow {
   attempts: number;
   job_key?: string | null;
   priority: number;
+  created_at: number;
   backgroundSlotReserved?: boolean;
 }
 
@@ -134,6 +148,11 @@ export function createSqliteQueue(
   } catch {
     /* column already present */
   }
+  try {
+    driver.exec(`ALTER TABLE ${TABLE} ADD COLUMN is_maintenance INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    /* column already present */
+  }
   driver.exec(CLAIM_INDEX_DDL);
   driver.exec(JOB_KEY_INDEX_DDL);
   const priorityBackfilled = backfillJobPriorities(driver);
@@ -152,6 +171,15 @@ export function createSqliteQueue(
         count: keyBackfilled,
       }),
     );
+  const maintenanceFlagsBackfilled = backfillJobMaintenanceFlags(driver);
+  if (maintenanceFlagsBackfilled)
+    console.log(
+      JSON.stringify({
+        event: "selfhost_queue_maintenance_flags_backfilled",
+        count: maintenanceFlagsBackfilled,
+      }),
+    );
+  const maintenanceAdmissionConfig: MaintenanceAdmissionConfig = resolveMaintenanceAdmissionConfig();
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = recoverProcessingJobs(driver);
   if (recovered) {
@@ -269,8 +297,8 @@ export function createSqliteQueue(
       }
     }
     driver.query(
-      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key) VALUES (?, 'pending', 0, ?, ?, ?, ?)`,
-      [payload, runAfter, now, priority, key],
+      `INSERT INTO ${TABLE} (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance) VALUES (?, 'pending', 0, ?, ?, ?, ?, ?)`,
+      [payload, runAfter, now, priority, key, isMaintenanceJobType(message.type) ? 1 : 0],
     );
     recordQueueMetric(driver, "gittensory_jobs_enqueued_total");
     kickOne();
@@ -292,7 +320,7 @@ export function createSqliteQueue(
 
   function claimNextWhere(now: number, priorityPredicate: string): JobRow | null {
     const { rows } = driver.query(
-      `SELECT id, payload, attempts, job_key, priority
+      `SELECT id, payload, attempts, job_key, priority, created_at
          FROM ${TABLE}
         WHERE status='pending' AND run_after<=? AND ${priorityPredicate}
         ORDER BY priority DESC, run_after, id
@@ -400,6 +428,49 @@ export function createSqliteQueue(
           { parentTraceParent: jobTraceParent },
         );
         return true;
+      }
+      if (!isForegroundJobPriority(job.priority) && isMaintenanceJobType(message.type)) {
+        const decision = evaluateMaintenanceAdmission(
+          maintenancePressureSignals(driver, Date.now()),
+          maintenanceAdmissionConfig,
+          job.created_at,
+          Date.now(),
+        );
+        if (!decision.admit) {
+          await withReviewSpan(
+            "selfhost.queue.maintenance_admission_deferred",
+            { "job.type": message.type, "queue.backend": "sqlite", "maintenance_admission.reason": decision.reason },
+            async () => {
+              const now = Date.now();
+              const retryAfter = now + maintenanceAdmissionDeferMs(
+                maintenanceAdmissionConfig,
+                `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+              );
+              const { changes } = driver.query(
+                `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+                [retryAfter, `maintenance admission deferred: ${decision.reason}`, job.id],
+              );
+              if (changes) {
+                recordQueueMetric(driver, "gittensory_jobs_maintenance_admission_deferred_total");
+                incr("gittensory_jobs_maintenance_admission_deferred_by_reason_total", {
+                  reason: decision.reason,
+                  job_type: message.type,
+                });
+                console.warn(
+                  JSON.stringify({
+                    level: "warn",
+                    event: "selfhost_queue_maintenance_admission_deferred",
+                    jobType: message.type,
+                    reason: decision.reason,
+                    retry_after_ms: Math.max(0, retryAfter - now),
+                  }),
+                );
+              }
+            },
+            { parentTraceParent: jobTraceParent },
+          );
+          return true;
+        }
       }
       try {
         await withReviewSpan(
@@ -634,6 +705,9 @@ export function createSqliteQueue(
     },
     snapshot: binding.snapshot,
     reviveDeadLetterJobs,
+    pressureSignals() {
+      return maintenancePressureSignals(driver, Date.now());
+    },
   };
 }
 
@@ -668,6 +742,43 @@ function backfillJobKeys(driver: SqliteDriver): number {
     changed += 1;
   }
   return changed;
+}
+
+function backfillJobMaintenanceFlags(driver: SqliteDriver): number {
+  const { rows } = driver.query(
+    `SELECT id, payload, is_maintenance FROM ${TABLE} WHERE status IN ('pending', 'processing')`,
+    [],
+  );
+  let changed = 0;
+  for (const row of rows as Array<{ id: number; payload: string; is_maintenance: number }>) {
+    const isMaintenance = isMaintenanceJobType(extractPayloadType(row.payload) ?? "") ? 1 : 0;
+    if (Number(row.is_maintenance) === isMaintenance) continue;
+    driver.query(`UPDATE ${TABLE} SET is_maintenance=? WHERE id=?`, [isMaintenance, row.id]);
+    changed += 1;
+  }
+  return changed;
+}
+
+/** Cheap aggregate reads behind the maintenance-admission policy (and the observability gauges in server.ts):
+ *  how much LIVE (foreground) work is queued and how old the oldest of it is, and the same for the
+ *  MAINTENANCE lane specifically (not "all background" -- targeted jobs like backfill-repo-segment don't
+ *  count, see maintenance-admission.ts). Host load is an independent, optional signal (see host-pressure.ts). */
+function maintenancePressureSignals(driver: SqliteDriver, now: number): MaintenancePressureSignals {
+  const live = driver.query(
+    `SELECT COUNT(*) as cnt, MIN(created_at) as oldest FROM ${TABLE} WHERE status IN ('pending','processing') AND priority>=?`,
+    [FOREGROUND_QUEUE_PRIORITY_FLOOR],
+  ).rows[0] as { cnt: number; oldest: number | null };
+  const maintenance = driver.query(
+    `SELECT COUNT(*) as cnt, MIN(created_at) as oldest FROM ${TABLE} WHERE status IN ('pending','processing') AND is_maintenance=1`,
+    [],
+  ).rows[0] as { cnt: number; oldest: number | null };
+  return {
+    livePendingCount: Number(live.cnt),
+    oldestLivePendingAgeMs: live.oldest != null ? now - Number(live.oldest) : null,
+    maintenancePendingCount: Number(maintenance.cnt),
+    oldestMaintenancePendingAgeMs: maintenance.oldest != null ? now - Number(maintenance.oldest) : null,
+    hostLoadAvg1PerCore: hostLoadAvg1PerCore(),
+  };
 }
 
 function recoverProcessingJobs(driver: SqliteDriver): number {

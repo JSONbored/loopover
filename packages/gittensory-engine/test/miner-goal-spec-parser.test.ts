@@ -85,6 +85,7 @@ test("parseMinerGoalSpec: malformed fields fall back independently with targeted
   assert.match(warningText, /wantedPaths/i);
   assert.match(warningText, /blockedPaths/i);
   assert.match(warningText, /preferredLabels/i);
+  assert.match(warningText, /blockedLabels/i);
   assert.match(warningText, /maxConcurrentClaims/i);
   assert.match(warningText, /issueDiscoveryPolicy/i);
   assert.match(warningText, /truncated an over-long entry/i);

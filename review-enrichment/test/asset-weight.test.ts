@@ -23,6 +23,11 @@ test("isBinaryAsset flags genuine binary extensions and ignores text/case", () =
   assert.equal(isBinaryAsset("photos/IMG_0001.heic"), true);
   assert.equal(isBinaryAsset("photos/scan.heif"), true);
   assert.equal(isBinaryAsset("photos/IMG_0001.HEIC"), true);
+  // Zstandard blobs are binary compressed assets (siblings of gz/bz2/xz) — only the last extension is matched,
+  // so a compound `.tar.zst` resolves to `zst`, and the match is case-insensitive.
+  assert.equal(isBinaryAsset("cache/model.zst"), true);
+  assert.equal(isBinaryAsset("dist/bundle.tar.zst"), true);
+  assert.equal(isBinaryAsset("cache/model.ZST"), true);
   // Extension match is case-insensitive.
   assert.equal(isBinaryAsset("assets/HERO.PNG"), true);
   // Text formats whose bytes are already in the diff are NOT binary assets.

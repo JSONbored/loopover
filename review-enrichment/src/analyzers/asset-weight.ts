@@ -55,6 +55,7 @@ const BINARY_EXTS = new Set([
   "7z",
   "rar",
   "xz",
+  "zst",
   "pdf",
   "psd",
   "ai",

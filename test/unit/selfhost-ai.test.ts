@@ -416,11 +416,16 @@ describe("isAiProviderHealthy (readiness streak, #2497)", () => {
     expect(isAiProviderHealthy()).toBe(false);
 
     vi.useFakeTimers();
-    await vi.advanceTimersByTimeAsync(60_001);
-    shouldFail = false;
-    await expect(route.run("openai", { prompt: "x" })).resolves.toEqual({ response: "ok" });
-    expect(isAiProviderHealthy()).toBe(true);
-    vi.useRealTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(60_001);
+      shouldFail = false;
+      await expect(route.run("openai", { prompt: "x" })).resolves.toEqual({ response: "ok" });
+      expect(isAiProviderHealthy()).toBe(true);
+    } finally {
+      // Guarantee real timers are restored even if an assertion above throws, so a failure here can't leak
+      // fake-timer state into later tests in this file/worker.
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -350,12 +350,23 @@ settings:
   # Bool. Default: true.
   typeLabelsEnabled: true
 
-  # Per-repo override of the three TYPE label NAMES. Omit any key to keep its default. Map with
-  # string values bug/feature/priority. Default: gittensor:bug / gittensor:feature / gittensor:priority.
+  # Per-repo TYPE label config: an open `category -> label name` map, not fixed to three names.
+  # `bug`/`feature`/`priority` are the built-in categories `deriveKindFromTitle` and
+  # `linkedIssueLabelPropagation` classify (default gittensor:bug / gittensor:feature /
+  # gittensor:priority, shown below as an EXAMPLE, not an engine requirement) -- omit any of the three
+  # to keep its default. Add any number of your OWN categories beyond them (they are never chosen by
+  # title-classification, only ever by a `linkedIssueLabelPropagation` mapping below, but registering
+  # the name here makes it participate in the same mutual-exclusivity cleanup). An explicit `{}` means
+  # zero configured categories for this repo -- distinct from omitting `typeLabels` entirely, which
+  # inherits whatever the dashboard/API has stored.
   # typeLabels:
   #   bug: gittensor:bug
   #   feature: gittensor:feature
   #   priority: gittensor:priority
+  #   security: area:security
+  #   docs: area:docs
+  #   dependency: area:dependency
+  #   custom: maintainer:custom
 
   # Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can select a
   # label like `gittensor:priority` -- it is NEVER inferred from a PR's title, changed files, AI
@@ -423,10 +434,12 @@ settings:
   # #label-scoping):
   #   1. Context label (`gittensorLabel`, gated by `autoLabelEnabled` above) — the base per-PR marker shown
   #      to the public surface, subject to `publicAudienceMode`/`publicSurface`/author-qualification.
-  #   2. Taxonomy/type label (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`, gated by
-  #      `typeLabelsEnabled` above) — internal triage metadata, applied independently of #1. bug/
-  #      feature come from the PR title; priority ONLY from `linkedIssueLabelPropagation` above —
-  #      never inferred from title, files, AI, or existing PR labels (#priority-linked-issue-gate).
+  #   2. Taxonomy/type labels (`typeLabels` above, gated by `typeLabelsEnabled`) — internal triage
+  #      metadata, applied independently of #1. Shown above with the gittensor:* default names, but
+  #      the category set itself is config, not fixed to three (#label-modularity): bug/feature come
+  #      from the PR title; priority (or any other category you register) ONLY from
+  #      `linkedIssueLabelPropagation` above — never inferred from title, files, AI, or existing PR
+  #      labels (#priority-linked-issue-gate).
   #   3. Autonomy-outcome labels (`gittensory:ready-to-merge` etc.) — gated by the `review_state_label`
   #      autonomy class below, advisory commentary on the bot's own verdict.
   #   4. Anti-abuse enforcement labels (blacklist/contributor-cap/review-nag) — gated by the `close`

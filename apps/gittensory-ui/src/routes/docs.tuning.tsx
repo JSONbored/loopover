@@ -406,7 +406,18 @@ function Tuning() {
         <li>
           <code>autoLabelEnabled</code> (default <code>true</code>), <code>gittensorLabel</code>{" "}
           (default <code>gittensor</code>), and <code>createMissingLabel</code> (default{" "}
-          <code>true</code>) — labeling.
+          <code>true</code>) — the base per-PR context label, shown to the public surface.
+        </li>
+        <li>
+          <code>typeLabelsEnabled</code> (default <code>true</code>) and <code>typeLabels</code> — a
+          separate, independent taxonomy label family: internal triage metadata gated by its own
+          toggle, not by <code>autoLabelEnabled</code> above. <code>typeLabels</code> is an open{" "}
+          <code>category → label name</code> map, not fixed to any specific set — the built-in{" "}
+          <code>bug</code>/<code>feature</code>/<code>priority</code> categories default to{" "}
+          <code>gittensor:bug</code>/<code>gittensor:feature</code>/<code>gittensor:priority</code>{" "}
+          (examples, not required names), and you can add any number of your own categories (e.g.{" "}
+          <code>security: area:security</code>) for your own taxonomy. An explicit{" "}
+          <code>typeLabels: {"{}"}</code> means zero configured categories for the repo.
         </li>
         <li>
           <code>includeMaintainerAuthors</code> (default <code>false</code>),{" "}

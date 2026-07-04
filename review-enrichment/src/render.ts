@@ -325,6 +325,20 @@ export function renderBrief(
           return "hardcodes a credential-shaped value into an image layer via `ENV`/`ARG`; build secrets persist in the image history";
         case "insecure-pip-index":
           return "points a package installer at a plaintext-HTTP index; dependency downloads can be intercepted";
+        case "db-ssl-disabled":
+          return "disables TLS on the database connection (`sslmode=disable`); traffic and credentials travel in plaintext";
+        case "git-ssl-no-verify":
+          return "sets `GIT_SSL_NO_VERIFY`, so Git skips TLS certificate verification for remote operations";
+        case "ssh-host-key-check-off":
+          return "sets `StrictHostKeyChecking no`, so SSH accepts an unknown host key and permits man-in-the-middle";
+        case "verify-ssl-off":
+          return "disables TLS certificate verification (`verify_ssl: false`); this permits man-in-the-middle interception";
+        case "validate-certs-off":
+          return "sets `validate_certs: no`, so the client accepts any TLS certificate (Ansible/HTTP module)";
+        case "tls-skip-verify":
+          return "sets `tls_skip_verify`/`insecure_skip_verify: true`, so TLS certificate verification is skipped";
+        case "trust-all-server-certs":
+          return "sets `TrustServerCertificate=true`, so the client trusts any database server certificate";
       }
     };
 
@@ -439,6 +453,9 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("staleBranch", findings.staleBranch));
   lines.push(...renderDescriptorSection("commitHygiene", findings.commitHygiene));
   lines.push(...renderDescriptorSection("pendingReviewRequests", findings.pendingReviewRequests));
+  lines.push(...renderDescriptorSection("testRatio", findings.testRatio));
+  lines.push(...renderDescriptorSection("migrationSafety", findings.migrationSafety));
+  lines.push(...renderDescriptorSection("looseRange", findings.looseRange));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

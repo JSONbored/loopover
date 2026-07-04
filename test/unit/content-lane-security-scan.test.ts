@@ -36,7 +36,13 @@ describe("scanForSecrets", () => {
 
   it("flags a GitLab and an npm token (parity with the PR-diff gate)", () => {
     expect(scanForSecrets("glpat-" + "aBcDeFgHiJkLmNoPqRsT").kinds).toContain("gitlab_token");
+    expect(scanForSecrets("glpat-" + "aBcDeFgHiJkLmNoPqRs-").kinds).toContain("gitlab_token");
     expect(scanForSecrets("npm_" + "a".repeat(36)).kinds).toContain("npm_token");
+  });
+
+  it("does not flag a GitLab-shaped run that continues past the expected 20-char token length", () => {
+    const overrun = "glpat-" + "aBcDeFgHiJkLmNoPqRsT" + "X"; // 21 token-alphabet chars after the prefix
+    expect(scanForSecrets(overrun).kinds).not.toContain("gitlab_token");
   });
 
   it("flags Stripe, SendGrid, and Hugging Face keys (parity with the PR-diff gate)", () => {

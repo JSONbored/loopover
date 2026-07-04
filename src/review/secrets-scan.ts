@@ -20,7 +20,7 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/ },
   { name: "slack_token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
   { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
-  { name: "gitlab_token", re: /\bglpat-[0-9A-Za-z_-]{20}\b/ },
+  { name: "gitlab_token", re: /\bglpat-[0-9A-Za-z_-]{20}(?![0-9A-Za-z_-])/ },
   { name: "npm_token", re: /\bnpm_[A-Za-z0-9]{36}\b/ },
   // Stripe live secret / restricted keys: `sk_live_` / `rk_live_` + >=24 base62.
   { name: "stripe_secret_key", re: /\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b/ },

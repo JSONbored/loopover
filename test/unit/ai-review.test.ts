@@ -22,6 +22,8 @@ const {
   synthesizeDefect,
   toPublicSafe,
   runWorkersOpinion,
+  coerceAiUsage,
+  aggregateActualUsage,
 } = __aiReviewInternals;
 
 type InlineFinding = {
@@ -865,6 +867,161 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       AI_DAILY_NEURON_BUDGET: "100000",
       AI_REVIEW_PLAN: plan as never,
     });
+
+  it("records actual self-host provider token usage on the durable per-PR audit row", async () => {
+    const env = planEnv(
+      { reviewers: [{ model: "codex" }], combine: "single" },
+      async () => ({
+        response: reviewJson({ present: false, nits: [], suggestions: [] }),
+        usage: {
+          provider: "codex",
+          model: "gpt-5.5",
+          effort: "medium",
+          inputTokens: 101.2,
+          outputTokens: 9.6,
+          costUsd: 0.03,
+        },
+      }),
+    );
+    const result = await runGittensoryAiReview(env, baseInput);
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: expect.objectContaining({
+          provider: "codex",
+          model: "gpt-5.5",
+          effort: "medium",
+          inputTokens: 101,
+          outputTokens: 10,
+          totalTokens: undefined,
+          costUsd: 0.03,
+        }),
+      }),
+    ]);
+    const row = await env.DB.prepare(
+      `select provider, effort, input_tokens, output_tokens, total_tokens, cost_usd, metadata_json
+       from ai_usage_events
+       where feature = ?
+       order by rowid desc
+       limit 1`,
+    )
+      .bind("ai_review_pr")
+      .first<{
+        provider: string | null;
+        effort: string | null;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+        cost_usd: number;
+        metadata_json: string;
+      }>();
+    expect(row).toMatchObject({
+      provider: "codex",
+      effort: "medium",
+      input_tokens: 101,
+      output_tokens: 10,
+      total_tokens: 111,
+      cost_usd: 0.03,
+    });
+    expect(JSON.parse(row?.metadata_json ?? "{}")).toMatchObject({
+      repoFullName: baseInput.repoFullName,
+      pullNumber: baseInput.prNumber,
+    });
+  });
+
+  it("normalizes usage envelopes and aggregates mixed provider totals without affecting verdicts", () => {
+    expect(coerceAiUsage(undefined)).toBeUndefined();
+    expect(coerceAiUsage({ usage: null })).toBeUndefined();
+    expect(coerceAiUsage({ usage: [] })).toBeUndefined();
+    expect(
+      coerceAiUsage({
+        usage: {
+          provider: "  claude-code ",
+          model: " claude-sonnet-4-6 ",
+          effort: " low ",
+          inputTokens: -1,
+          outputTokens: 2.4,
+          totalTokens: Number.NaN,
+          costUsd: "0.4",
+        },
+      }),
+    ).toEqual({
+      provider: "claude-code",
+      model: "claude-sonnet-4-6",
+      effort: "low",
+      inputTokens: undefined,
+      outputTokens: 2,
+      totalTokens: undefined,
+      costUsd: undefined,
+    });
+    expect(
+      coerceAiUsage({
+        usage: { provider: "   ", model: "\t", inputTokens: 3 },
+      }),
+    ).toEqual({
+      provider: undefined,
+      model: undefined,
+      effort: undefined,
+      inputTokens: 3,
+      outputTokens: undefined,
+      totalTokens: undefined,
+      costUsd: undefined,
+    });
+    expect(aggregateActualUsage([{ model: "codex", attempt: 0, status: "parsed" }])).toBeUndefined();
+    expect(
+      aggregateActualUsage([
+        {
+          model: "codex",
+          attempt: 0,
+          status: "parsed",
+          usage: { provider: "codex", model: "gpt-5.5", effort: "medium", totalTokens: 30, costUsd: 0.02 },
+        },
+        {
+          model: "claude-code",
+          attempt: 0,
+          status: "parsed",
+          usage: { provider: "claude-code", model: "claude-sonnet-4-6", effort: "medium", inputTokens: 5, outputTokens: 7, costUsd: 0.04 },
+        },
+      ]),
+    ).toEqual({
+      provider: "codex+claude-code",
+      model: "gpt-5.5+claude-sonnet-4-6",
+      effort: "medium",
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 42,
+      costUsd: 0.06,
+    });
+    expect(
+      aggregateActualUsage([
+        { model: "unknown", attempt: 0, status: "parsed", usage: {} },
+      ]),
+    ).toEqual({
+      provider: undefined,
+      model: undefined,
+      effort: undefined,
+      inputTokens: undefined,
+      outputTokens: undefined,
+      totalTokens: undefined,
+      costUsd: undefined,
+    });
+    // Each diagnostic reports only ONE side of input/output (no totalTokens), so the per-usage
+    // total falls back to `(inputTokens ?? 0) + (outputTokens ?? 0)` from BOTH directions.
+    expect(
+      aggregateActualUsage([
+        { model: "a", attempt: 0, status: "parsed", usage: { inputTokens: 10 } },
+        { model: "b", attempt: 0, status: "parsed", usage: { outputTokens: 4 } },
+      ]),
+    ).toEqual({
+      provider: undefined,
+      model: undefined,
+      effort: undefined,
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+      costUsd: undefined,
+    });
+  });
 
   it("single provider: runs ONE named reviewer and its blocker IS the decision", async () => {
     const seen: string[] = [];

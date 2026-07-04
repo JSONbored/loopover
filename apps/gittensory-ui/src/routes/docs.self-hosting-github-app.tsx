@@ -189,11 +189,37 @@ GITHUB_WEBHOOK_SECRET=<same-secret-configured-on-the-app>`}
       <CodeBlock
         filename=".env"
         code={`ORB_ENROLLMENT_SECRET=<issued-once-by-orb>
-ORB_BROKER_URL=https://gittensory-api.aethereal.dev`}
+ORB_BROKER_URL=https://gittensory-api.aethereal.dev
+ORB_RELAY_MODE=pull  # or omit for push (the default) -- see "Choosing a relay mode" below`}
+      />
+
+      <h2>Choosing a relay mode: pull vs. push</h2>
+      <p>
+        Brokered mode still needs a way for GitHub webhook events to reach your self-host through
+        the broker. <code>ORB_RELAY_MODE</code> picks how:
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "pull (recommended for NAT/tailnet — no public ingress needed)",
+            description:
+              "The container polls the broker outbound on a short interval and drains queued events -- no inbound endpoint is ever exposed, and PUBLIC_API_ORIGIN is not required. A failed registration attempt is non-fatal (logged as a warning, not an error): the drain loop keeps retrying on its own schedule and events still arrive once it succeeds.",
+          },
+          {
+            title: "push (the default — requires a stable public origin)",
+            description:
+              "The broker calls your self-host directly at PUBLIC_API_ORIGIN, which must be a real, internet-reachable, TLS-terminated URL -- the broker validates it server-side at registration time and rejects a loopback or private address outright. A failed registration is fatal: the container looks healthy but never receives an event, since there's no fallback delivery path.",
+          },
+        ]}
       />
       <Callout variant="note">
-        Brokered mode is useful when the self-host should not hold a GitHub App private key. It
-        still needs a reachable webhook path or relay mode, depending on the network setup.
+        If you're not behind a stable public ingress — a home connection, a NAT without port
+        forwarding, a tailnet-only deployment — set <code>ORB_RELAY_MODE=pull</code>. It needs no
+        DNS record, TLS certificate, or firewall rule of its own, and tolerates a transient broker
+        outage more gracefully (see the release checklist's known-warnings table below). Use push
+        only once you already have a stable, publicly reachable HTTPS origin for this instance — the
+        Direct App setup wizard, for instance, always requires one anyway, so an operator running
+        Direct App today has it available for brokered push mode too.
       </Callout>
       <Callout variant="warn" title="Brokered mode operational risks">
         Before enabling this for anyone outside a controlled managed-beta cohort, weigh: (1){" "}
@@ -240,7 +266,7 @@ ORB_BROKER_URL=https://gittensory-api.aethereal.dev`}
         See <Link to="/docs/self-hosting-troubleshooting">Troubleshooting</Link> for what a degraded
         brokered relay looks like in logs today, and{" "}
         <Link to="/docs/self-hosting-release-checklist">the beta release checklist</Link>'s
-        brokered-mode scenario for the smoke test that exercises this path.
+        brokered-mode scenario for the smoke tests that exercise both relay modes.
       </p>
 
       <h2>Webhook checks</h2>

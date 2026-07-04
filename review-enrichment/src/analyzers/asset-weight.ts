@@ -12,67 +12,13 @@ import type {
 } from "../types.js";
 import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson } from "../external-fetch.js";
+import { isBinaryFileExtension } from "./binary-extensions.js";
 
 const MAX_FINDINGS = 50; // keep the brief bounded after evaluating every changed binary candidate
 const MAX_PATH_SIZE_LOOKUPS = 50; // fallback Contents API calls when a recursive tree is truncated
 const THRESHOLD_BYTES = 100 * 1024; // flag a newly-added blob >= 100 KB, or growth >= 100 KB
 const GITHUB_API = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
-
-// Extensions that are genuinely binary (text formats like .svg/.json are excluded — their bytes are in the diff).
-const BINARY_EXTS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "bmp",
-  "tiff",
-  "tif",
-  "ico",
-  "webp",
-  "avif",
-  "heic",
-  "heif",
-  "woff",
-  "woff2",
-  "ttf",
-  "otf",
-  "eot",
-  "mp4",
-  "mov",
-  "avi",
-  "webm",
-  "mkv",
-  "mp3",
-  "wav",
-  "flac",
-  "ogg",
-  "zip",
-  "tar",
-  "gz",
-  "tgz",
-  "bz2",
-  "7z",
-  "rar",
-  "xz",
-  "zst",
-  "pdf",
-  "psd",
-  "ai",
-  "sketch",
-  "fig",
-  "xcf",
-  "exe",
-  "dll",
-  "so",
-  "dylib",
-  "bin",
-  "dat",
-  "wasm",
-  "node",
-  "jar",
-  "class",
-]);
 
 interface ScanOptions {
   signal?: AbortSignal;
@@ -89,7 +35,7 @@ const SHA_RE = /^[0-9a-fA-F]{7,64}$/;
  *  like .svg/.json are deliberately excluded — their bytes are already in the textual diff. Pure. */
 export function isBinaryAsset(path: string): boolean {
   const dot = path.lastIndexOf(".");
-  return dot >= 0 && BINARY_EXTS.has(path.slice(dot + 1).toLowerCase());
+  return dot >= 0 && isBinaryFileExtension(path.slice(dot + 1));
 }
 
 type EnrichFile = NonNullable<EnrichRequest["files"]>[number];

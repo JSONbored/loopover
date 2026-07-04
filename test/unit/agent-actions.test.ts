@@ -899,6 +899,39 @@ describe("planAgentMaintenanceActions (#778)", () => {
   });
 });
 
+describe("assign — auto-assign PR opener (#3182)", () => {
+  it("plans nothing when the assign class is not acting (default observe)", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: {}, pr: { labels: [], authorLogin: "alice" } }));
+    expect(classes(plan)).not.toContain("assign");
+  });
+
+  it("plans an assign action for the PR's opener when acting", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [], authorLogin: "alice" } }));
+    expect(plan).toContainEqual(expect.objectContaining({ actionClass: "assign", assignee: "alice", requiresApproval: false }));
+  });
+
+  it("stages for approval under auto_with_approval", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto_with_approval" }, pr: { labels: [], authorLogin: "alice" } }));
+    expect(plan).toContainEqual(expect.objectContaining({ actionClass: "assign", assignee: "alice", requiresApproval: true }));
+  });
+
+  it("plans nothing when authorLogin is absent (the several narrower callers that never populate it)", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto" }, pr: { labels: [] } }));
+    expect(classes(plan)).not.toContain("assign");
+  });
+
+  it("is independent of merge/close outcome — still plans assign on a failing verdict", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { assign: "auto" }, blockerTitles: ["x"], pr: { labels: [], authorLogin: "alice" } }));
+    expect(classes(plan)).toContain("assign");
+  });
+
+  it("is unaffected by the blacklist/cap/review-nag short-circuits not reaching this far — plans nothing for a blacklisted contributor even with assign acting", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { assign: "auto", close: "auto" }, blacklistMatch: { matched: true, reason: "test" }, pr: { labels: [], authorLogin: "alice" } }));
+    expect(classes(plan)).not.toContain("assign");
+    expect(classes(plan)).toContain("close");
+  });
+});
+
 describe("isProtectedAutomationAuthor", () => {
   it("matches the maintainer-managed automation accounts (case-insensitive)", () => {
     expect(isProtectedAutomationAuthor("github-actions[bot]")).toBe(true);

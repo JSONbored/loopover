@@ -54,6 +54,24 @@ export {
   type GateVerdictCompositeCalibrationScore,
 } from "./gate-verdict-calibration.js";
 export {
+  computePhase7CalibrationLoop,
+  computePrOutcomeCalibrationAccuracy,
+  DOCUMENTED_CALIBRATION_BASELINE,
+  evaluateAutonomyIncreaseEligibility,
+  isHistoricalReplayRunFresh,
+  renderPhase7CalibrationAuditMarkdown,
+  resolvePhase7CalibrationConfig,
+  shouldScheduleHistoricalReplayRun,
+  type CalibrationSignalSource,
+  type CalibrationSourceMetric,
+  type HistoricalReplayCalibrationInput,
+  type Phase7CalibrationConfig,
+  type Phase7CalibrationLoopResult,
+  type Phase7CalibrationManifest,
+  type PrOutcomeCalibrationInput,
+  type ReplayHarnessStatus,
+} from "./phase7-calibration-loop.js";
+export {
   computeTrackRecordSummary,
   renderTrackRecordSummaryMarkdown,
   resolveTrackRecordSummaryConfig,

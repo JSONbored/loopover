@@ -2933,8 +2933,14 @@ export async function recordAiUsageEvent(
     actor?: string | null | undefined;
     route?: string | null | undefined;
     model: string;
+    provider?: string | null | undefined;
+    effort?: string | null | undefined;
     status: string;
     estimatedNeurons: number;
+    inputTokens?: number | null | undefined;
+    outputTokens?: number | null | undefined;
+    totalTokens?: number | null | undefined;
+    costUsd?: number | null | undefined;
     detail?: string | null | undefined;
     metadata?: Record<string, unknown> | undefined;
   },
@@ -2946,8 +2952,14 @@ export async function recordAiUsageEvent(
     actor: event.actor ?? null,
     route: event.route ?? null,
     model: event.model,
+    provider: event.provider?.trim() || null,
+    effort: event.effort?.trim() || null,
     status: event.status,
     estimatedNeurons: Math.max(0, Math.round(event.estimatedNeurons)),
+    inputTokens: Math.max(0, Math.round(finiteNumber(event.inputTokens))),
+    outputTokens: Math.max(0, Math.round(finiteNumber(event.outputTokens))),
+    totalTokens: Math.max(0, Math.round(finiteNumber(event.totalTokens))),
+    costUsd: Math.max(0, finiteNumber(event.costUsd)),
     detail: event.detail ?? null,
     metadataJson: jsonString(event.metadata ?? {}),
     createdAt: nowIso(),
@@ -4017,6 +4029,47 @@ export async function listSignalSnapshots(env: Env, signalType: string, targetKe
     .orderBy(desc(signalSnapshots.generatedAt))
     .limit(100);
   return rows.map(toSignalSnapshotRecord);
+}
+
+/** Bulk variant of `listSignalSnapshots` for callers that need the LATEST snapshot per target key across many
+ *  keys in one round trip (#3202 review finding: a per-repo loop here made the daily repo-doc refresh sweep
+ *  scale linearly in DB round trips with the installed-repo count). Keyed by the exact `targetKey` string, same
+ *  casing convention as `listSignalSnapshots` -- callers that key by lowercased repo name must lowercase both
+ *  the input and the returned map's keys themselves. */
+export async function listLatestSignalSnapshotsForTargets(
+  env: Env,
+  signalType: string,
+  targetKeys: readonly string[],
+): Promise<Map<string, SignalSnapshotRecord>> {
+  const result = new Map<string, SignalSnapshotRecord>();
+  if (targetKeys.length === 0) return result;
+  const placeholders = targetKeys.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `
+      SELECT id, signal_type, target_key, repo_full_name, generated_at
+      FROM (
+        SELECT
+          id, signal_type, target_key, repo_full_name, generated_at,
+          row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, id DESC) AS snapshot_rank
+        FROM signal_snapshots
+        WHERE signal_type = ? AND target_key IN (${placeholders})
+      )
+      WHERE snapshot_rank = 1
+    `,
+  )
+    .bind(signalType, ...targetKeys)
+    .all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; generated_at: string }>();
+  for (const row of results) {
+    result.set(row.target_key, {
+      id: row.id,
+      signalType: row.signal_type,
+      targetKey: row.target_key,
+      repoFullName: row.repo_full_name,
+      payload: {},
+      generatedAt: row.generated_at,
+    });
+  }
+  return result;
 }
 
 export async function listLatestSignalSnapshotsByTarget(
@@ -6034,7 +6087,7 @@ const PRODUCT_USAGE_SENSITIVE_VALUE =
 // Compose from the canonical scrubber in redaction.ts so this surface cannot drift from the boundary;
 // it already covered /root/ and /var/, and now unifies the Windows form (also accepts `C:/Users/`).
 const PRODUCT_USAGE_LOCAL_PATH = PUBLIC_LOCAL_PATH_SCRUB_PATTERN;
-const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
+const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|orbenr_|orbsec_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
 
 function sanitizeProductUsageMetadata(value: Record<string, unknown> | null | undefined, actorRedactor: ProductUsageActorRedactor | null): Record<string, JsonValue> {

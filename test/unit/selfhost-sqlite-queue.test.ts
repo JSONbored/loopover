@@ -6,6 +6,7 @@ import { jobCoalesceKey, queueSnapshotFromBinding } from "../../src/selfhost/que
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
+import * as sentryModule from "../../src/selfhost/sentry";
 import type { JobMessage } from "../../src/types";
 
 // Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
@@ -1394,7 +1395,7 @@ describe("createSqliteQueue (durable #980)", () => {
       ]);
     });
 
-    it("repeats the ratio cycle across a longer run (6 backlog : 2 fresh -> B,B,B,F,B,B,B,F)", async () => {
+    it("repeats the ratio cycle with one plain-priority slot per fairness window", async () => {
       const driver = makeDriver();
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
@@ -1409,11 +1410,24 @@ describe("createSqliteQueue (durable #980)", () => {
         "backlog-convergence:owner/repo#2",
         "backlog-convergence:owner/repo#3",
         "fresh-1",
+        "fresh-2",
         "backlog-convergence:owner/repo#4",
         "backlog-convergence:owner/repo#5",
         "backlog-convergence:owner/repo#6",
-        "fresh-2",
       ]);
+    });
+
+    it("does not let a lower-priority classified lane starve a higher-priority manual regate", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
+      await q.binding.send({
+        ...backlogJob("owner/repo", 1),
+        deliveryId: "manual-regate:owner/repo#1:operator",
+      } as JobMessage);
+      await q.binding.send(backlogJob("owner/repo", 2));
+      await q.drain();
+      expect(seen).toEqual(["manual-regate:owner/repo#1:operator", "backlog-convergence:owner/repo#2"]);
     });
 
     it("falls through to the plain unscoped foreground claim when the preferred lane has nothing pending", async () => {
@@ -2052,6 +2066,63 @@ describe("createSqliteQueue (durable #980)", () => {
       const logged = errorSpy.mock.calls.map(([line]) => String(line));
       expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("disk I/O error"))).toBe(true);
       await q.stop();
+    });
+
+    // (#1824): dead-letter revival stopping SILENTLY is worse than one throwing tick -- a Sentry cron monitor
+    // now wraps every tick so a stopped timer shows up as a missed check-in, not silence.
+    it("wraps each revive tick in the queue-dead-letter-revive Sentry monitor", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const driver = makeDriver();
+        const q = createSqliteQueue(driver, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000); // the revive interval fires once
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
+      }
+    });
+
+    // The monitor rethrows on failure (withSentryMonitor's own contract) -- confirms that rethrow is still caught
+    // by reviveDeadLetterJobsSafely's own try/catch, so a crashing tick behaves exactly as it did before the
+    // monitor was added: logged + captured, never an uncaught exception.
+    it("still catches a revive crash after adding the Sentry monitor wrapper (no regression on #2581)", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const driver = makeDriver();
+        const realQuery = driver.query.bind(driver);
+        vi.spyOn(driver, "query").mockImplementation((sql: string, params: unknown[]) => {
+          if (sql.includes("WHERE status='dead' AND attempts<?")) throw new Error("disk I/O error");
+          return realQuery(sql, params);
+        });
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const q = createSqliteQueue(driver, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        const logged = errorSpy.mock.calls.map(([line]) => String(line));
+        expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("disk I/O error"))).toBe(true);
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
+      }
     });
   });
 

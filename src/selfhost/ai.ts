@@ -22,8 +22,10 @@ interface AiRunOptions {
   temperature?: number;
 }
 /** A chat completion (`response`) or an embedding result (`data`). Both optional: the core reads whichever it
- *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent. */
-export type AiResult = { response?: string; data?: number[][] };
+ *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent.
+ *  `usage` is best-effort local accounting for self-host operators; callers must never make review decisions
+ *  from it because provider envelopes are not uniform. */
+export type AiResult = { response?: string; data?: number[][]; usage?: AiUsage };
 export interface SelfHostAi {
   run(model: string, options: AiRunOptions): Promise<AiResult>;
 }
@@ -165,11 +167,12 @@ export function createOpenAiCompatibleAi(opts: {
         const json = (await res.json()) as { data?: Array<{ embedding: number[] }> };
         return { data: (json.data ?? []).map((d) => d.embedding) };
       }
+      const resolvedModel = resolveModel(opts.model, model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({
-          model: resolveModel(opts.model, model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL),
+          model: resolvedModel,
           messages: toMessages(options),
           max_tokens: options.max_tokens,
           temperature: options.temperature,
@@ -178,7 +181,8 @@ export function createOpenAiCompatibleAi(opts: {
       });
       if (!res.ok) throw new Error(`ai_http_${res.status}`);
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      return { response: data.choices?.[0]?.message?.content ?? "" };
+      const usage = extractCliUsage(JSON.stringify(data));
+      return { response: data.choices?.[0]?.message?.content ?? "", usage: { ...usage, model: usage.model ?? resolvedModel } };
     },
   };
 }
@@ -196,19 +200,22 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
           .map((m) => m.content)
           .join("\n\n") || undefined;
       const messages = msgs.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
+      const resolvedModel = resolveModel(opts.model, model, "claude-sonnet-4-6");
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: resolveModel(opts.model, model, "claude-sonnet-4-6"), max_tokens: options.max_tokens ?? 1024, ...(system ? { system } : {}), messages }),
+        body: JSON.stringify({ model: resolvedModel, max_tokens: options.max_tokens ?? 1024, ...(system ? { system } : {}), messages }),
         signal: AbortSignal.timeout(120_000),
       });
       if (!res.ok) throw new Error(`anthropic_http_${res.status}`);
       const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+      const usage = extractCliUsage(JSON.stringify(data));
       return {
         response: (data.content ?? [])
           .filter((c) => c.type === "text")
           .map((c) => c.text ?? "")
           .join(""),
+        usage: { ...usage, model: usage.model ?? resolvedModel },
       };
     },
   };
@@ -370,6 +377,11 @@ export type CliUsage = {
   model?: string;
 };
 
+export type AiUsage = CliUsage & {
+  provider?: string;
+  effort?: string;
+};
+
 const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
 const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;
 const TOTAL_TOKEN_KEYS = ["total_tokens", "totalTokens"] as const;
@@ -437,14 +449,20 @@ export function extractCliUsage(stdout: string): CliUsage {
   return usage;
 }
 
-function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): void {
+function cliUsageFromStdout(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
   const usage = extractCliUsage(stdout);
-  const labels = { provider, model: usage.model ?? (model || "default"), effort };
+  return { ...usage, provider, model: usage.model ?? (model || "default"), effort };
+}
+
+function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
+  const usage = cliUsageFromStdout(provider, model, effort, stdout);
+  const labels = { provider, model: usage.model, effort };
   incr("gittensory_ai_requests_total", labels);
   incr("gittensory_ai_cost_usd_total", { provider: labels.provider }, usage.costUsd ?? 0);
   if (usage.inputTokens !== undefined) incr("gittensory_ai_input_tokens_total", { ...labels, kind: "review" }, usage.inputTokens);
   if (usage.outputTokens !== undefined) incr("gittensory_ai_output_tokens_total", { ...labels, kind: "review" }, usage.outputTokens);
   if (usage.totalTokens !== undefined) incr("gittensory_ai_total_tokens_total", labels, usage.totalTokens);
+  return usage;
 }
 
 /** Claude Code's `--output-format json` exits 0 even on an API/auth error, returning {is_error:true,result:"<msg>"}.
@@ -616,7 +634,7 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}: ${redactSecrets(stderr ?? "", [token]).slice(0, 500)}`);
         const text = extractCliText(stdout);
         if (!text) throw new Error("claude_code_empty_output");
-        return { response: text };
+        return { response: text, usage: cliUsageFromStdout("claude-code", claudeModel, effort, stdoutForMetrics) };
       } catch (error) {
         logSelfHostAiProviderFailed({ provider: "claude-code", model: claudeModel, effort, timeoutMs, error, knownSecrets: token ? [token] : [] });
         throw error;
@@ -688,7 +706,7 @@ export function createCodexAi(
         }
         const text = extractCliText(stdout);
         if (!text) throw new Error("codex_empty_output");
-        return { response: text };
+        return { response: text, usage: cliUsageFromStdout("codex", codexModel, effort, stdoutForMetrics) };
       } catch (error) {
         logSelfHostAiProviderFailed({ provider: "codex", model: codexModel, effort, timeoutMs, error });
         throw error;
@@ -834,6 +852,16 @@ async function runProviderWithOtel(
       () => provider.ai.run(model, options),
     );
     aiProviderCircuits.delete(provider.name);
+    if (result.usage) {
+      return {
+        ...result,
+        usage: {
+          ...result.usage,
+          provider: result.usage.provider ?? provider.name,
+          model: result.usage.model ?? (model || "default"),
+        },
+      };
+    }
     return result;
   } catch (error) {
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;

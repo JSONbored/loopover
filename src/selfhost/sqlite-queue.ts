@@ -8,7 +8,7 @@ import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
-import { captureError } from "./sentry";
+import { captureError, withSentryMonitor } from "./sentry";
 import {
   consumingRetryDelayMs,
   deterministicJitterMs,
@@ -60,6 +60,7 @@ import {
 } from "./installation-concurrency-admission";
 import {
   AGENT_REGATE_PR_JOB_KEY_PREFIX,
+  DEFAULT_FOREGROUND_LANE_RATIO,
   backlogRepoCandidatesFromJobKeys,
   foregroundLaneForJob,
   nextForegroundLane,
@@ -334,10 +335,21 @@ export function createSqliteQueue(
    *  a transient driver/metric failure here would otherwise surface as an uncaught exception and can terminate
    *  the process (fatal when SENTRY_DSN is unset, since server.ts only installs the handler when Sentry is
    *  configured), exactly the failure mode pump()'s own try/catch above guards against for the main poll loop.
-   *  A failed revive tick just waits for the next interval, same as a failed poll tick waits for the next poll. */
-  function reviveDeadLetterJobsSafely(): void {
+   *  A failed revive tick just waits for the next interval, same as a failed poll tick waits for the next poll.
+   *
+   *  Also wrapped in a Sentry cron monitor (#1824): dead-letter revival stopping SILENTLY (the timer never fires
+   *  again) is worse than one throwing tick -- a crashed tick self-reports via captureError below, but a stopped
+   *  one reports nothing without a monitor watching for the missed check-in. withSentryMonitor rethrows on
+   *  failure so its own capture fires; the outer try/catch (this function's actual job) still guards the
+   *  setInterval callback. Async now (setInterval tolerates a Promise-returning callback the same as the
+   *  synchronous one it replaces -- see the call site). */
+  async function reviveDeadLetterJobsSafely(): Promise<void> {
     try {
-      reviveDeadLetterJobs();
+      await withSentryMonitor(
+        "queue-dead-letter-revive",
+        { jobType: "queue-dead-letter-revive" },
+        () => Promise.resolve(reviveDeadLetterJobs()),
+      );
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -587,18 +599,27 @@ export function createSqliteQueue(
   /** Claim-time backlog-vs-fresh-intake fairness (#selfhost-backlog-convergence, see queue-fairness.ts). Tries
    *  ONE lane-scoped claim before falling back to the plain unscoped foreground claim (claimNext() OR's this
    *  return value with claimNextWhere(now, "priority>=?")) -- a null here just means "no work to prefer this
-   *  cycle," never "no foreground work at all." The fairness singleton's claim_sequence always advances (best-
-   *  effort, hit or miss) so the ratio cycle keeps progressing even through empty cycles. */
+   *  cycle," never "no foreground work at all." One slot per fairness window is deliberately left unscoped, and
+   *  lane-scoped claims must beat the best unclassified foreground priority, so manual/repair work the classifier
+   *  intentionally leaves as lane `null` keeps its plain priority ordering instead of sitting behind a perpetually
+   *  non-empty classified lane. The fairness singleton's claim_sequence always advances (best-effort, hit or
+   *  miss) so the ratio cycle keeps progressing even through empty cycles. */
   function claimNextForegroundLane(now: number): JobRow | null {
     const fairness = driver.query(
       `SELECT claim_sequence, last_backlog_repo FROM ${FAIRNESS_TABLE} WHERE id='singleton'`,
       [],
     ).rows[0] as { claim_sequence: number; last_backlog_repo: string | null } | undefined;
     const sequence = fairness?.claim_sequence ?? 0;
+    const fairnessWindow = DEFAULT_FOREGROUND_LANE_RATIO.backlogPer + DEFAULT_FOREGROUND_LANE_RATIO.freshPer;
     const lane: ForegroundLane = nextForegroundLane(sequence);
     driver.query(`UPDATE ${FAIRNESS_TABLE} SET claim_sequence=claim_sequence+1 WHERE id='singleton'`, []);
+    if (sequence % (fairnessWindow + 1) === fairnessWindow) return null;
+    const unclassifiedPriority = maxDueUnclassifiedForegroundPriority(now);
+    const lanePriorityPredicate =
+      unclassifiedPriority === null ? "candidate.priority>=?" : "candidate.priority>?";
+    const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
-      const freshRow = claimNextWhere(now, "candidate.priority>=?", { sql: "candidate.foreground_lane='fresh'", params: [] });
+      const freshRow = claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
       if (freshRow) incr("gittensory_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
     }
@@ -615,15 +636,23 @@ export function createSqliteQueue(
     );
     const repo = pickBacklogRepo(candidates, fairness?.last_backlog_repo ?? null);
     if (!repo) return null;
-    const row = claimNextWhere(now, "candidate.priority>=?", {
+    const row = claimNextWhere(now, lanePriorityPredicate, {
       sql: "candidate.foreground_lane='backlog' AND candidate.job_key LIKE ?",
       params: [`agent-regate-pr:${repo}#%`],
-    });
+    }, lanePriorityFloor);
     if (row) {
       driver.query(`UPDATE ${FAIRNESS_TABLE} SET last_backlog_repo=? WHERE id='singleton'`, [repo]);
       incr("gittensory_jobs_claimed_by_lane_total", { lane: "backlog" });
     }
     return row;
+  }
+
+  function maxDueUnclassifiedForegroundPriority(now: number): number | null {
+    const row = driver.query(
+      `SELECT MAX(priority) AS priority FROM ${TABLE} WHERE status='pending' AND run_after<=? AND priority>=? AND foreground_lane IS NULL`,
+      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
+    ).rows[0] as { priority: number | null } | undefined;
+    return row?.priority === null || row?.priority === undefined ? null : Number(row.priority);
   }
 
   /** Top-N repos by backlog-convergence pending DEPTH, for the observability dashboard's per-repo backlog panel
@@ -722,6 +751,7 @@ export function createSqliteQueue(
     now: number,
     priorityPredicate: string,
     extra?: { sql: string; params: readonly unknown[] },
+    priorityFloor = FOREGROUND_QUEUE_PRIORITY_FLOOR,
   ): JobRow | null {
     const extraSql = extra ? ` AND ${extra.sql}` : "";
     const { rows } = driver.query(
@@ -736,7 +766,7 @@ export function createSqliteQueue(
           )
         ORDER BY candidate.priority DESC, candidate.claim_sort_key, candidate.run_after, candidate.id
         LIMIT 1`,
-      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR, ...(extra?.params ?? [])],
+      [now, priorityFloor, ...(extra?.params ?? [])],
     );
     const row = rows[0] as JobRow | undefined;
     if (!row) return null;
@@ -1169,7 +1199,7 @@ export function createSqliteQueue(
       // Separate, much slower interval than the poll tick above -- reviving a dead job every second would
       // recreate the retry storm this feature exists to bound. The interval itself is the cooldown between
       // auto-retry rounds for any one job.
-      deadLetterReviveTimer = setInterval(reviveDeadLetterJobsSafely, queueDeadLetterReviveIntervalMs());
+      deadLetterReviveTimer = setInterval(() => void reviveDeadLetterJobsSafely(), queueDeadLetterReviveIntervalMs());
       // Foreground-liveness sweep (#selfhost-queue-liveness): also a separate, slow interval -- see
       // foreground-liveness.ts for why a per-tick check would busy-loop under sustained rate-limit pressure.
       foregroundLivenessTimer = setInterval(releaseStaleForegroundDeferralsSafely, foregroundLivenessConfig.checkIntervalMs);

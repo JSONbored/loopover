@@ -340,6 +340,33 @@ describe("miner dashboard recommendation metadata", () => {
     expect(JSON.stringify(enriched?.rerunReasons)).not.toMatch(/\/root\/work|\/var\/log|C:\/Users\/alice|c:\\Users\\bob/);
   });
 
+  // Regression (#1825): the Orb broker's enrollment id/secret (createOpaqueToken("orbenr"/"orbsec"),
+  // src/orb/broker.ts) are bare opaque tokens with no "token"/"secret"-named field to trip elsewhere — the
+  // rerun-reason text scrubber must recognize the orbenr_/orbsec_ shape too, not just ghp_/github_pat_/gts_.
+  it("redacts orbenr_/orbsec_ Orb broker tokens from rerun reasons (#1825)", () => {
+    const fakeEnrollId = `orbenr_${"a".repeat(20)}`;
+    const fakeSecret = `orbsec_${"b".repeat(20)}`;
+    const current = decisionPack({
+      generatedAt: "2026-06-02T00:00:00.000Z",
+      topActions: [action()],
+      actionPortfolio: {
+        topActions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            actionKind: "open_new_direct_pr",
+            rerunWhen: `Rerun once the broker recovers from enrollment ${fakeEnrollId} secret ${fakeSecret}.`,
+          },
+        ],
+      },
+    });
+
+    const [enriched] = buildMinerDashboardNextActions(current);
+    const repoStateReasons = enriched?.rerunReasons.find((group) => group.group === "repo_state")?.reasons.join(" ") ?? "";
+    expect(repoStateReasons).toContain("private context");
+    expect(JSON.stringify(enriched?.rerunReasons)).not.toContain(fakeEnrollId);
+    expect(JSON.stringify(enriched?.rerunReasons)).not.toContain(fakeSecret);
+  });
+
   it("selects the previous ready decision-pack snapshot", () => {
     const current = decisionPack({ generatedAt: "2026-06-02T00:00:00.000Z" });
     const previous = decisionPack({ generatedAt: "2026-06-01T00:00:00.000Z" });

@@ -60,6 +60,16 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(fakeToken).kinds).toContain("gitlab_token");
   });
 
+  it("flags a GitLab access token whose final token character is a hyphen", () => {
+    const fakeToken = "glpat-" + "aBcDeFgHiJkLmNoPqRs-";
+    expect(scanForSecrets(`gitlab = "${fakeToken}"`).kinds).toContain("gitlab_token");
+  });
+
+  it("does not flag a GitLab-shaped run that continues past the expected 20-char token length", () => {
+    const overrun = "glpat-" + "aBcDeFgHiJkLmNoPqRsT" + "X"; // 21 token-alphabet chars after the prefix
+    expect(scanForSecrets(overrun).kinds).not.toContain("gitlab_token");
+  });
+
   it("flags an npm token", () => {
     const fakeToken = "npm_" + "a".repeat(36);
     expect(scanForSecrets(fakeToken).kinds).toContain("npm_token");

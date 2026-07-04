@@ -28,6 +28,39 @@ test("isBinaryAsset flags genuine binary extensions and ignores text/case", () =
   assert.equal(isBinaryAsset("cache/model.zst"), true);
   assert.equal(isBinaryAsset("dist/bundle.tar.zst"), true);
   assert.equal(isBinaryAsset("cache/model.ZST"), true);
+  // Serialized ML model / checkpoint weight formats are heavy binary blobs (siblings of the other binaries),
+  // and the match stays case-insensitive.
+  for (const p of [
+    "models/llama.safetensors",
+    "models/llama.gguf",
+    "models/resnet.onnx",
+    "models/model.pt",
+    "checkpoints/epoch10.pth",
+    "checkpoints/state.ckpt",
+    "models/LLAMA.SAFETENSORS",
+  ]) {
+    assert.equal(isBinaryAsset(p), true, p);
+  }
+  // Scientific / ML data artifacts and additional compression formats from the shared inventory.
+  for (const p of [
+    "data/train.h5",
+    "data/features.hdf5",
+    "models/saved_model.pb",
+    "data/embeddings.npy",
+    "data/batch.npz",
+    "warehouse/events.parquet",
+    "warehouse/snapshot.feather",
+    "lake/part-000.arrow",
+    "lake/part-000.orc",
+    "wire/msg.msgpack",
+    "cache/snapshot.lz4",
+    "dist/bundle.br",
+    "data/TRAIN.H5",
+  ]) {
+    assert.equal(isBinaryAsset(p), true, p);
+  }
+  assert.equal(isBinaryAsset("src/parquet.ts"), false);
+  assert.equal(isBinaryAsset("lib/npy_utils.py"), false);
   // Extension match is case-insensitive.
   assert.equal(isBinaryAsset("assets/HERO.PNG"), true);
   // Text formats whose bytes are already in the diff are NOT binary assets.

@@ -22,7 +22,7 @@ _TEST_PATH_RES = (
     re.compile(r"(?:^|/)[^/]+_spec\.rb$", re.IGNORECASE),  # RSpec *_spec.rb suffix
     re.compile(r"\.(?:test|spec)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$", re.IGNORECASE),  # .test/.spec.<ext>
     re.compile(r"(?:^|/)[^/]+\.(?:cy|e2e)\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$", re.IGNORECASE),  # Cypress/Playwright
-    re.compile(r"(?:^|/)\w*(?:Tests?|Spec)\.(?:java|kt|kts|scala|cs|swift|groovy)$"),  # JVM/.NET/Swift (case-sensitive)
+    re.compile(r"(?:^|/)\w*(?:Tests?|Spec)\.(?:java|kt|kts|scala|cs|swift|groovy|php)$"),  # JVM/.NET/Swift/PHP (case-sensitive)
 )
 
 

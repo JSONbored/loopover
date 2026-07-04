@@ -1923,9 +1923,8 @@ describe("queue processors", () => {
       }
     });
 
-    it("REGRESSION (#selfhost-ci-verification gate review): a required-context lookup failure never writes the fail-open aggregate through to the durable cache", async () => {
+    it("REGRESSION (#selfhost-ci-verification gate review): a swallowed branch-protection read failure never writes the fail-open aggregate through to the durable cache", async () => {
       const { env } = await seedRepoAndPr("a7");
-      const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockRejectedValue(new Error("branch protection unavailable"));
       const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
         ciState: "passed",
         hasPending: false,
@@ -1935,9 +1934,13 @@ describe("queue processors", () => {
         nonRequiredFailingDetails: [],
         ciCompletenessWarning: null,
       });
+      let branchProtectionReadable = false;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/branches/main/protection/required_status_checks")) {
+          return branchProtectionReadable ? Response.json({ contexts: ["trusted-required-ci"], checks: [] }) : new Response("forbidden", { status: 403 });
+        }
         if (url === "https://api.gittensor.io/miners") return Response.json([]);
         if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
         if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Cross-job CI cache", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
@@ -1952,8 +1955,8 @@ describe("queue processors", () => {
         await expect(
           processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-fails", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
         ).resolves.toBeUndefined();
-        expect(requiredContextsSpy).toHaveBeenCalled();
-        expect(liveCiSpy).toHaveBeenCalled();
+        const liveReadsAfterFailedLookup = liveCiSpy.mock.calls.length;
+        expect(liveReadsAfterFailedLookup).toBeGreaterThan(0);
 
         // Nothing was ever persisted under this PR's row -- ciState stays absent, not the fail-open "passed".
         const row = await getPullRequestDetailSyncState(env, "owner/agent-repo", 7);
@@ -1961,14 +1964,14 @@ describe("queue processors", () => {
 
         // A subsequent pass (required-context lookup now succeeds) still correctly misses the cache and re-fetches
         // live -- proving the earlier failed pass left no stale/poisoned entry behind for this reader either.
-        requiredContextsSpy.mockResolvedValue(null);
+        branchProtectionReadable = true;
         resetMetrics();
         await processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-recovers", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+        expect(liveCiSpy.mock.calls.length).toBeGreaterThan(liveReadsAfterFailedLookup);
         expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
-        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed" });
+        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: JSON.stringify(["trusted-required-ci"]) });
       } finally {
         liveCiSpy.mockRestore();
-        requiredContextsSpy.mockRestore();
       }
     });
 
@@ -2225,6 +2228,51 @@ describe("queue processors", () => {
     // reduceLiveCiAggregate can no longer treat it as satisfied ⇒ the aggregate correctly flips to pending,
     // proving pass 2 actually re-derived against the NEW resolved set rather than serving pass 1's stale "passed"
     // row from a durable cache keyed on the unchanged config.
+    expect(rowAfterPass2?.ciState).toBe("pending");
+  });
+
+  it("REGRESSION (#selfhost-ci-verification): the durable CI-state cache key does not collide for required context names containing spaces", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Spaced context drift", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { gate: { expectedCiContexts: ["lint"] } });
+    let requiredContextsFromBranchProtection: Array<string | null> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Spaced context drift", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/commits/a7/check-runs")) {
+        return Response.json({
+          total_count: 3,
+          check_runs: [
+            { name: "lint", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+            { name: "a b", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+            { name: "c", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+          ],
+        });
+      }
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ contexts: requiredContextsFromBranchProtection });
+      return Response.json({});
+    });
+
+    requiredContextsFromBranchProtection = ["a b", "c"];
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "spaced-contexts-before", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+    const rowAfterPass1 = await getPullRequestDetailSyncState(env, "owner/agent-repo", 7);
+    expect(rowAfterPass1?.ciState).toBe("passed");
+    const keyAfterPass1 = rowAfterPass1?.ciRequiredContextsKey ?? null;
+
+    requiredContextsFromBranchProtection = ["a", "b c"];
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "spaced-contexts-after", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+    const rowAfterPass2 = await getPullRequestDetailSyncState(env, "owner/agent-repo", 7);
+    const keyAfterPass2 = rowAfterPass2?.ciRequiredContextsKey ?? null;
+
+    expect(keyAfterPass2).not.toBe(keyAfterPass1);
     expect(rowAfterPass2?.ciState).toBe("pending");
   });
 
@@ -18029,6 +18077,44 @@ describe("queue processors", () => {
 
       expect(seen.posted).toEqual(["gittensor:feature"]);
       expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
+    });
+
+    it("cleans up an arbitrary configured custom category alongside bug/feature/priority (#label-modularity)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        // A self-host taxonomy well beyond the built-in bug/feature/priority triad (#label-modularity):
+        // `security` is a registered category with no title-classification rule of its own, so it is
+        // never CHOSEN here, but it must still be a cleanup CANDIDATE (never left dangling on a PR whose
+        // classification moved elsewhere) exactly like the built-in categories.
+        typeLabels: { bug: "gittensor:bug", feature: "gittensor:feature", priority: "gittensor:priority", security: "area:security" },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(218, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-custom-category-cleanup",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 218, title: "feat: add retry backoff", state: "open", user: { login: "renovate[bot]", type: "Bot" }, head: { sha: "sha218" }, labels: [], body: "Automated." },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:feature"]);
+      expect(seen.removed.sort()).toEqual(["area:security", "gittensor:bug", "gittensor:priority"]);
     });
 
     it("applies the type label when publicSurface: comment_only makes the base context label structurally impossible", async () => {

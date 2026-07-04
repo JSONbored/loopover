@@ -7,6 +7,7 @@ import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
+import * as sentryModule from "../../src/selfhost/sentry";
 import type { JobMessage } from "../../src/types";
 
 // Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
@@ -1180,6 +1181,57 @@ describe("createPgQueue (durable #977)", () => {
       expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
     });
 
+    it("does not let a lower-priority classified lane starve a higher-priority manual regate", async () => {
+      const claimSql: string[] = [];
+      let claimed = false;
+      const manual = {
+        type: "agent-regate-pr",
+        deliveryId: "manual-regate:owner/repo#1:operator",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        installationId: 1,
+      };
+      const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        const q = String(sql);
+        if (q.includes("UPDATE _selfhost_queue_fairness SET claim_sequence=claim_sequence+1") && q.includes("RETURNING claim_sequence, last_backlog_repo")) {
+          return { rows: [{ claim_sequence: 0, last_backlog_repo: null }], rowCount: 1 };
+        }
+        if (q.includes("SELECT MAX(priority) AS priority") && q.includes("foreground_lane IS NULL")) {
+          return { rows: [{ priority: 99 }], rowCount: 1 };
+        }
+        if (q.includes("SELECT job_key, created_at") && q.includes("foreground_lane='backlog'")) {
+          return { rows: [{ job_key: "agent-regate-pr:owner/repo#2", created_at: 1000 }], rowCount: 1 };
+        }
+        if (q.includes("UPDATE _selfhost_jobs SET status='processing'")) {
+          claimSql.push(q);
+          if (!claimed && q.includes("foreground_lane='backlog'")) {
+            expect((params as unknown[])[1]).toBe(99);
+            return { rows: [], rowCount: 0 };
+          }
+          if (!claimed && !q.includes("foreground_lane")) {
+            claimed = true;
+            return {
+              rows: [{ id: "manual-1", payload: JSON.stringify(manual), attempts: 0, job_key: "agent-regate-pr:owner/repo#1", priority: 99, created_at: 1000 }],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const seen: string[] = [];
+      const q = createPgQueue({ query: fn } as unknown as Pool, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId));
+
+      await q.init();
+      await q.drain();
+
+      expect(seen).toEqual(["manual-regate:owner/repo#1:operator"]);
+      expect(claimSql[0]).toContain("foreground_lane='backlog'");
+      expect(claimSql[0]).toContain("candidate.priority > $2");
+      expect(claimSql[1]).not.toContain("foreground_lane");
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+    });
+
     it("records the fresh-intake lane-claim counter on a successful fresh-lane claim (#selfhost-lane-observability)", async () => {
       let claimed = false; // one-shot: the row is only claimable until the first successful claim
       const fn = vi.fn().mockImplementation(async (sql: unknown) => {
@@ -2077,6 +2129,64 @@ describe("createPgQueue (durable #977)", () => {
         expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
         await q.stop();
       } finally {
+        delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+      }
+    });
+
+    // (#1824): dead-letter revival stopping SILENTLY is worse than one throwing tick -- a Sentry cron monitor
+    // now wraps every tick so a stopped timer shows up as a missed check-in, not silence.
+    it("wraps each revive tick in the queue-dead-letter-revive Sentry monitor", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const m = makePool(); // default mock returns { rows: [], rowCount: 0 } for the dead-letter SELECT -- a no-op tick
+        const q = createPgQueue(m.pool, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000); // the revive interval fires once
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
+        delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+      }
+    });
+
+    // The monitor rethrows on failure (withSentryMonitor's own contract) -- confirms that rethrow is still caught
+    // by reviveDeadLetterJobsSafely's own try/catch, so a crashing tick behaves exactly as it did before the
+    // monitor was added: logged + captured, never an unhandled rejection.
+    it("still catches a revive crash after adding the Sentry monitor wrapper (no regression on #2581)", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+          if (String(sql).includes("WHERE status='dead' AND attempts<$1")) throw new Error("connection terminated unexpectedly");
+          return { rows: [], rowCount: 0 };
+        });
+        const pool = { query: fn } as unknown as Pool;
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const q = createPgQueue(pool, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        const logged = errorSpy.mock.calls.map(([line]) => String(line));
+        expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
         delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
       }
     });

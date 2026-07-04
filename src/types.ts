@@ -225,6 +225,16 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
       repoFullName?: string;
       installationId?: number;
+    }
+  | {
+      // Scheduled repo-doc refresh (#3003, part of #2993). No `repoFullName` = fan-out: enumerate every repo
+      // with `.gittensory.yml repoDocGeneration.enabled: true` whose refresh interval has elapsed and enqueue
+      // one per-repo job each, mirroring "agent-regate-sweep"/"backlog-convergence-sweep". With `repoFullName` =
+      // refresh that one repo via openRepoDocPullRequest (the SAME function the on-demand MCP trigger calls) --
+      // no separate eligibility/diffing logic lives in the queue processor itself.
+      type: "repo-doc-refresh-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
     };
 
 export type GitHubWebhookPayload = {
@@ -728,11 +738,12 @@ export type RepositorySettings = {
    *  were gated by `autoLabelEnabled` nested inside the public-surface check). Always populated by
    *  the DB layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabelsEnabled?: boolean | undefined;
-  /** Per-repo override of the three TYPE/taxonomy label NAMES (#priority-linked-issue-gate). Defaults
-   *  to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`) in
-   *  `settings/pr-type-label.ts` — a repo can override just one name (e.g. only `priority`) and keep
-   *  the other two default. Always populated by the DB layer; optional so existing settings
-   *  fixtures/callers need not be touched. */
+  /** Per-repo override of the TYPE/taxonomy label NAMES, keyed by category (#priority-linked-issue-gate,
+   *  #label-modularity). Defaults to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/
+   *  `gittensor:priority`) in `settings/pr-type-label.ts` — a repo can override just one name (e.g. only
+   *  `priority`) and keep the others default, AND/OR add arbitrary additional categories beyond the
+   *  built-in three (e.g. `security: "area:security"`) for its own taxonomy. Always populated by the DB
+   *  layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabels?: PrTypeLabelSet | undefined;
   /** Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can ever
    *  select the configured priority label (or any other configured mapping's PR label) — never
@@ -916,13 +927,16 @@ export type RepositoryCommandAuthorizationPolicy = {
   commands: Record<string, CommandAuthorizationRole[]>;
 };
 
-/** The three per-repo-configurable TYPE/taxonomy label names (#priority-linked-issue-gate). See
- *  `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
-export type PrTypeLabelSet = {
-  bug: string;
-  feature: string;
-  priority: string;
-};
+/** Per-repo-configurable TYPE/taxonomy label NAMES, keyed by an arbitrary category name
+ *  (#label-modularity). `bug`/`feature`/`priority` are the built-in categories `deriveKindFromTitle`
+ *  and the priority-linked-issue-gate know how to CLASSIFY, but the map itself is an open
+ *  `category -> label name` record -- a self-hoster can add any number of additional categories (e.g.
+ *  `security: "area:security"`) that never get chosen by title-classification, only ever by a
+ *  configured `linkedIssueLabelPropagation` mapping (any `prLabel`, not just a `typeLabels` value, can
+ *  be propagated -- registering a category here just makes it participate in the mutual-exclusivity
+ *  cleanup `resolvePrTypeLabel` computes, i.e. it becomes eligible for automatic removal when a PR's
+ *  classification moves away from it). See `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
+export type PrTypeLabelSet = Record<string, string>;
 
 /** One linked-issue → PR label mapping (#priority-linked-issue-gate). See
  *  `LinkedIssueLabelPropagationConfig` below and `review/linked-issue-label-propagation.ts`. */
@@ -985,8 +999,10 @@ export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_appro
  *  labels (ready-to-merge / changes-requested / manual-review / migration-collision / the linked-issue
  *  pending-closure flag / the account-age new-account label) -- these are advisory signals about the bot's own
  *  verdict, not enforcement actions, and default OFF (`observe`) like every other class so a one-shot-mode repo
- *  never sees them without an explicit opt-in. */
-export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch";
+ *  never sees them without an explicit opt-in. `assign` (#3182) sets the PR's opening contributor as the GitHub
+ *  assignee -- an independent, always-safe triage action with no bearing on merge/close/approve, gated purely
+ *  on its own dial like `review_state_label`. */
+export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch" | "assign";
 
 /** Per-action-class autonomy. An unset class resolves to `observe` (deny-by-default). */
 export type AutonomyPolicy = Partial<Record<AgentActionClass, AutonomyLevel>>;

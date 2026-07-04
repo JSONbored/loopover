@@ -22,7 +22,7 @@ import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
-import { buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
+import { boundStructuredCloseReasonsForPersistence, buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
 import { errorMessage } from "../utils/json";
@@ -52,7 +52,7 @@ function boundAuditReason(detail: string): string {
 function closeReasonsForAudit(action: PlannedAgentAction): string[] | undefined {
   if (action.actionClass !== "close") return undefined;
   const rawReasons = action.closeReasons?.length ? action.closeReasons : [action.reason];
-  return rawReasons.map((reason) => boundAuditReason(reason));
+  return boundStructuredCloseReasonsForPersistence(rawReasons).map((reason) => boundAuditReason(reason));
 }
 
 // The PR-visible action classes that require an elevated GitHub App write permission. Most use
@@ -711,7 +711,7 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.reviewBody !== undefined ? { reviewBody: action.reviewBody } : {}),
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
-    ...(action.closeReasons !== undefined ? { closeReasons: action.closeReasons } : {}),
+    ...(action.closeReasons !== undefined ? { closeReasons: [...boundStructuredCloseReasonsForPersistence(action.closeReasons)] } : {}),
     ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
     ...(action.dismissStaleApproval !== undefined ? { dismissStaleApproval: action.dismissStaleApproval } : {}),
     // Round-trip closeKind so a staged close's kind survives to accept-time — without it, the close-precision

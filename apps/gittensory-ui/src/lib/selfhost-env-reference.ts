@@ -83,7 +83,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "CRON_INTERVAL_MS",
-    firstReference: "src/server.ts:916",
+    firstReference: "src/server.ts:917",
   },
   {
     name: "DATABASE_PATH",
@@ -127,7 +127,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "GITHUB_CACHE_TTL_SECONDS",
-    firstReference: "src/server.ts:508",
+    firstReference: "src/server.ts:509",
   },
   {
     name: "GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS",
@@ -247,7 +247,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ORB_BROKER_URL",
-    firstReference: "src/server.ts:965",
+    firstReference: "src/server.ts:966",
   },
   {
     name: "ORB_COLLECTOR_TOKEN",
@@ -263,7 +263,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "ORB_RELAY_MODE",
-    firstReference: "src/server.ts:967",
+    firstReference: "src/server.ts:968",
   },
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -303,7 +303,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "PORT",
-    firstReference: "src/server.ts:715",
+    firstReference: "src/server.ts:716",
   },
   {
     name: "PUBLIC_API_ORIGIN",
@@ -319,7 +319,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "QDRANT_URL",
-    firstReference: "src/server.ts:527",
+    firstReference: "src/server.ts:528",
   },
   {
     name: "QUEUE_BACKGROUND_CONCURRENCY",
@@ -343,7 +343,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "REVIEW_AUDIT_DIR",
-    firstReference: "src/server.ts:572",
+    firstReference: "src/server.ts:573",
   },
   {
     name: "SELFHOST_BUNDLE_ALL",
@@ -379,7 +379,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "SETUP_OUTPUT_PATH",
-    firstReference: "src/server.ts:832",
+    firstReference: "src/server.ts:833",
   },
   {
     name: "SLACK_WEBHOOK_URL",
@@ -409,7 +409,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CODEX_AI_MODEL` | `src/selfhost/ai.ts:81` |",
   "| `CODEX_AI_TIMEOUT_MS` | `src/selfhost/ai.ts:140` |",
   "| `CODEX_HOME` | `src/selfhost/ai.ts:302` |",
-  "| `CRON_INTERVAL_MS` | `src/server.ts:916` |",
+  "| `CRON_INTERVAL_MS` | `src/server.ts:917` |",
   "| `DATABASE_PATH` | `src/server.ts:249` |",
   "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/services/notify-discord.ts:41` |",
@@ -420,7 +420,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP` | `src/selfhost/foreground-liveness.ts:53` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts:166` |",
-  "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:508` |",
+  "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:509` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts:47` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts:34` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts:43` |",
@@ -450,11 +450,11 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `ORB_AIR_GAP` | `src/selfhost/orb-collector.ts:161` |",
   "| `ORB_ANONYMIZE` | `src/selfhost/orb-collector.ts:174` |",
   "| `ORB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
-  "| `ORB_BROKER_URL` | `src/server.ts:965` |",
+  "| `ORB_BROKER_URL` | `src/server.ts:966` |",
   "| `ORB_COLLECTOR_TOKEN` | `src/selfhost/orb-collector.ts:205` |",
   "| `ORB_COLLECTOR_URL` | `src/selfhost/orb-collector.ts:172` |",
   "| `ORB_ENROLLMENT_SECRET` | `src/selfhost/orb-collector.ts:165` |",
-  "| `ORB_RELAY_MODE` | `src/server.ts:967` |",
+  "| `ORB_RELAY_MODE` | `src/server.ts:968` |",
   "| `OTEL_EXPORTER_OTLP_ENDPOINT` | `src/selfhost/otel.ts:47` |",
   "| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `src/selfhost/otel.ts:45` |",
   "| `OTEL_SERVICE_ENVIRONMENT` | `src/selfhost/otel.ts:60` |",
@@ -464,17 +464,17 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts:76` |",
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts:713` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts:229` |",
-  "| `PORT` | `src/server.ts:715` |",
+  "| `PORT` | `src/server.ts:716` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:192` |",
   "| `QDRANT_API_KEY` | `src/selfhost/qdrant-vectorize.ts:50` |",
   "| `QDRANT_DIM` | `src/selfhost/qdrant-vectorize.ts:71` |",
-  "| `QDRANT_URL` | `src/server.ts:527` |",
+  "| `QDRANT_URL` | `src/server.ts:528` |",
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts:130` |",
   "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts:285` |",
   "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts:721` |",
   "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts:702` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts:144` |",
-  "| `REVIEW_AUDIT_DIR` | `src/server.ts:572` |",
+  "| `REVIEW_AUDIT_DIR` | `src/server.ts:573` |",
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.mjs:13` |",
   "| `SELFHOST_SERVICE` | `scripts/smoke-observability-traces.mjs:5` |",
   "| `SELFHOST_SETUP_TOKEN` | `src/selfhost/preflight.ts:186` |",
@@ -483,6 +483,6 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `SENTRY_RELEASE` | `src/selfhost/otel.ts:62` |",
   "| `SENTRY_SERVER_NAME` | `src/selfhost/sentry.ts:383` |",
   "| `SENTRY_TRACES_SAMPLE_RATE` | `src/selfhost/sentry.ts:171` |",
-  "| `SETUP_OUTPUT_PATH` | `src/server.ts:832` |",
+  "| `SETUP_OUTPUT_PATH` | `src/server.ts:833` |",
   "| `SLACK_WEBHOOK_URL` | `src/services/notify-discord.ts:173` |",
 ].join("\n");

@@ -54,6 +54,7 @@ import {
   type IssueActionExecutionContext,
 } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
+import { STRUCTURED_CLOSE_REASONS_MAX_COUNT } from "../../src/settings/agent-execution";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
@@ -129,6 +130,13 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
 
     expect(persisted).toEqual({ closeComment: "closing", closeReasons: ["CI failed", "blocker"] });
     expect(replayed).toMatchObject({ actionClass: "close", requiresApproval: false, reason: "CI failed; blocker", closeComment: "closing", closeReasons: ["CI failed", "blocker"] });
+  });
+
+  it("bounds structured closeReasons in approval-queue params", () => {
+    const closeReasons = Array.from({ length: STRUCTURED_CLOSE_REASONS_MAX_COUNT + 1 }, (_, index) => `blocker ${index}`);
+    const persisted = actionParams({ actionClass: "close", requiresApproval: true, reason: closeReasons.join("; "), closeComment: "closing", closeReasons });
+
+    expect(persisted.closeReasons).toEqual(closeReasons.slice(0, STRUCTURED_CLOSE_REASONS_MAX_COUNT));
   });
 
   it("LIVE: executes each action class via its GitHub primitive and audits completed", async () => {
@@ -216,6 +224,19 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(metadata.closeReasons[1]).toHaveLength(281);
     expect(metadata.closeReasons[1].endsWith("…")).toBe(true);
     expect(metadata.closeReasons[1].length).toBeLessThan(longReason.length);
+  });
+
+  it("bounds structured closeReasons count before storing audit metadata", async () => {
+    const env = createTestEnv({});
+    const closeReasons = Array.from({ length: STRUCTURED_CLOSE_REASONS_MAX_COUNT + 1 }, (_, index) => `blocker ${index}`);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [{ actionClass: "close", requiresApproval: false, reason: closeReasons.join("; "), closeComment: "closing", closeReasons }]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+
+    const audit = await auditFor(env, "close");
+    const metadata = JSON.parse(audit?.metadata_json ?? "{}");
+    expect(metadata.closeReasons).toEqual(closeReasons.slice(0, STRUCTURED_CLOSE_REASONS_MAX_COUNT));
+    expect(metadata.closeReasonCount).toBe(STRUCTURED_CLOSE_REASONS_MAX_COUNT);
+    expect(metadata.closeReasonsTruncated).toBeUndefined();
   });
 
   it("#label-scoping: a label action's autonomyClass (not the literal actionClass) governs the durable re-check", async () => {

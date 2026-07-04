@@ -11,6 +11,12 @@ import { isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 const PR_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["review", "request_changes", "approve", "close", "update_branch"];
 const CONTENTS_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["merge"];
 
+export const STRUCTURED_CLOSE_REASONS_MAX_COUNT = 20;
+
+export function boundStructuredCloseReasonsForPersistence<T>(closeReasons: readonly T[]): readonly T[] {
+  return closeReasons.length > STRUCTURED_CLOSE_REASONS_MAX_COUNT ? closeReasons.slice(0, STRUCTURED_CLOSE_REASONS_MAX_COUNT) : closeReasons;
+}
+
 export type AgentPermissionRequirement = { permission: string; requiredAccess: "write" };
 
 // Whether the agent actually executes an action, only logs what it WOULD do, or is halted entirely (#776).
@@ -57,7 +63,8 @@ export function buildAgentActionAudit(input: {
   reason?: string | null | undefined;
   closeReasons?: readonly string[] | null | undefined;
 }): AuditEventRecord {
-  const closeReasons = input.actionClass === "close" && input.closeReasons?.length ? [...input.closeReasons] : null;
+  const closeReasonCount = input.actionClass === "close" ? (input.closeReasons?.length ?? 0) : 0;
+  const closeReasons = closeReasonCount > 0 ? [...boundStructuredCloseReasonsForPersistence(input.closeReasons ?? [])] : null;
   return {
     eventType: `agent.action.${input.actionClass}`,
     actor: input.actor ?? null,
@@ -69,7 +76,7 @@ export function buildAgentActionAudit(input: {
       actionClass: input.actionClass,
       autonomyLevel: input.autonomyLevel,
       mode: input.mode,
-      ...(closeReasons ? { closeReasons, closeReasonCount: closeReasons.length } : {}),
+      ...(closeReasons ? { closeReasons, closeReasonCount, ...(closeReasonCount > closeReasons.length ? { closeReasonsTruncated: true } : {}) } : {}),
     },
   };
 }

@@ -4,6 +4,7 @@ import {
   agentRequiresContentsWrite,
   agentRequiresPrWrite,
   buildAgentActionAudit,
+  STRUCTURED_CLOSE_REASONS_MAX_COUNT,
   formatAgentPermissionDenial,
   isGlobalAgentPause,
   requiredAgentActionPermissions,
@@ -119,6 +120,22 @@ describe("buildAgentActionAudit", () => {
       closeReasons: [],
     });
     expect(emptyCloseAudit.metadata).not.toHaveProperty("closeReasons");
+
+    const manyCloseReasons = Array.from({ length: STRUCTURED_CLOSE_REASONS_MAX_COUNT + 1 }, (_, index) => `blocker ${index}`);
+    const truncatedCloseAudit = buildAgentActionAudit({
+      actionClass: "close",
+      autonomyLevel: "auto",
+      mode: "live",
+      outcome: "completed",
+      repoFullName: "owner/repo",
+      reason: "many blockers",
+      closeReasons: manyCloseReasons,
+    });
+    expect(truncatedCloseAudit.metadata).toMatchObject({
+      closeReasons: manyCloseReasons.slice(0, STRUCTURED_CLOSE_REASONS_MAX_COUNT),
+      closeReasonCount: manyCloseReasons.length,
+      closeReasonsTruncated: true,
+    });
   });
 });
 

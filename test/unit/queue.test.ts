@@ -1923,9 +1923,8 @@ describe("queue processors", () => {
       }
     });
 
-    it("REGRESSION (#selfhost-ci-verification gate review): a required-context lookup failure never writes the fail-open aggregate through to the durable cache", async () => {
+    it("REGRESSION (#selfhost-ci-verification gate review): a swallowed branch-protection read failure never writes the fail-open aggregate through to the durable cache", async () => {
       const { env } = await seedRepoAndPr("a7");
-      const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockRejectedValue(new Error("branch protection unavailable"));
       const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
         ciState: "passed",
         hasPending: false,
@@ -1935,9 +1934,13 @@ describe("queue processors", () => {
         nonRequiredFailingDetails: [],
         ciCompletenessWarning: null,
       });
+      let branchProtectionReadable = false;
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/branches/main/protection/required_status_checks")) {
+          return branchProtectionReadable ? Response.json({ contexts: ["trusted-required-ci"], checks: [] }) : new Response("forbidden", { status: 403 });
+        }
         if (url === "https://api.gittensor.io/miners") return Response.json([]);
         if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
         if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Cross-job CI cache", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
@@ -1952,8 +1955,8 @@ describe("queue processors", () => {
         await expect(
           processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-fails", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 }),
         ).resolves.toBeUndefined();
-        expect(requiredContextsSpy).toHaveBeenCalled();
-        expect(liveCiSpy).toHaveBeenCalled();
+        const liveReadsAfterFailedLookup = liveCiSpy.mock.calls.length;
+        expect(liveReadsAfterFailedLookup).toBeGreaterThan(0);
 
         // Nothing was ever persisted under this PR's row -- ciState stays absent, not the fail-open "passed".
         const row = await getPullRequestDetailSyncState(env, "owner/agent-repo", 7);
@@ -1961,14 +1964,14 @@ describe("queue processors", () => {
 
         // A subsequent pass (required-context lookup now succeeds) still correctly misses the cache and re-fetches
         // live -- proving the earlier failed pass left no stale/poisoned entry behind for this reader either.
-        requiredContextsSpy.mockResolvedValue(null);
+        branchProtectionReadable = true;
         resetMetrics();
         await processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-recovers", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+        expect(liveCiSpy.mock.calls.length).toBeGreaterThan(liveReadsAfterFailedLookup);
         expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
-        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed" });
+        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: "trusted-required-ci" });
       } finally {
         liveCiSpy.mockRestore();
-        requiredContextsSpy.mockRestore();
       }
     });
 

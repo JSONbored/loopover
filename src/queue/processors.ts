@@ -477,8 +477,10 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 const ISSUE_PLAN_COOLDOWN_MS = 10 * 60 * 1000;
 
+type RequiredStatusContextsLookup = { requiredContexts: Set<string> | null; resolved: boolean };
+
 interface LiveGithubFacts {
-  requiredContexts: Map<string, Promise<Set<string> | null>>;
+  requiredContexts: Map<string, Promise<RequiredStatusContextsLookup>>;
   ciAggregates: Map<string, Promise<LiveCiAggregate>>;
   mergeStates: Map<string, Promise<string | undefined>>;
 }
@@ -559,16 +561,20 @@ function cachedRequiredStatusContexts(
   token: string | undefined,
   expectedCiContexts: ReadonlyArray<string> | null | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
-): Promise<Set<string> | null> {
+): Promise<RequiredStatusContextsLookup> {
   const key = liveFactKey(repoFullName, baseRef, liveFactTokenPart(token), expectedCiContextsKeyPart(expectedCiContexts));
   const cached = facts.requiredContexts.get(key);
   if (cached) return cached;
+  let branchProtectionFetchFailed = false;
   const next = evictLiveFactOnReject(
     facts.requiredContexts,
     key,
-    fetchRequiredStatusContexts(env, repoFullName, baseRef, token, admissionKey).then((branchProtectionContexts) =>
-      mergeRequiredCiContexts(branchProtectionContexts, expectedCiContexts),
-    ),
+    fetchRequiredStatusContexts(env, repoFullName, baseRef, token, admissionKey, () => {
+      branchProtectionFetchFailed = true;
+    }).then((branchProtectionContexts) => ({
+      requiredContexts: mergeRequiredCiContexts(branchProtectionContexts, expectedCiContexts),
+      resolved: !branchProtectionFetchFailed,
+    })),
   );
   facts.requiredContexts.set(key, next);
   return next;
@@ -660,7 +666,6 @@ function fetchLiveCiAggregateWithRequiredContexts(
   // cachedFetchLiveCiAggregate (#selfhost-ci-verification) is the durable, cross-job snapshot cache sibling to
   // this request-scoped LiveGithubFacts memo -- it is only ever consulted here, on a LiveGithubFacts miss.
   return cachedRequiredStatusContexts(env, repoFullName, facts, baseRef, token, expectedCiContexts, admissionKey)
-    .then((requiredContexts) => ({ requiredContexts, resolved: true }))
     .catch(() => ({ requiredContexts: null, resolved: false }))
     .then(({ requiredContexts, resolved }) =>
       cachedFetchLiveCiAggregate(env, repoFullName, prNumber, headSha, token, requiredContexts, resolvedRequiredContextsKeyPart(requiredContexts), forceRefresh, resolved, admissionKey),
@@ -2199,7 +2204,7 @@ async function runAgentMaintenancePlanAndExecute(
   const hardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
   const [
     changedFiles,
-    requiredContexts,
+    requiredContextsLookup,
     liveMergeState,
     liveReviewDecision,
   ] = await Promise.all([
@@ -2228,6 +2233,7 @@ async function runAgentMaintenancePlanAndExecute(
     // is not re-reviewed for the same state.
     fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
+  const requiredContexts = requiredContextsLookup.requiredContexts;
   const ciAggregate = await refreshLiveCiAggregate(
     env,
     repoFullName,

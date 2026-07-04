@@ -2541,6 +2541,7 @@ export async function fetchRequiredStatusContexts(
   baseRef: string | null | undefined,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  onFetchFailure: (error: unknown) => void = () => undefined,
 ): Promise<Set<string> | null> {
   if (!baseRef) return null;
   const result = await githubJsonWithHeaders<{ contexts?: Array<string | null> | null; checks?: Array<{ context?: string | null }> | null }>(
@@ -2551,6 +2552,7 @@ export async function fetchRequiredStatusContexts(
     githubRateLimitOptions(admissionKey),
   ).catch((error) => {
     recordBranchProtectionFetchFailure(error);
+    onFetchFailure(error);
     return undefined;
   });
   if (!result) return null; // 404 / 403 (no admin:read) / error → conservative fold-all.

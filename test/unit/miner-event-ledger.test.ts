@@ -97,6 +97,13 @@ describe("gittensory-miner event ledger (#2290)", () => {
     expect(events.map((entry) => entry.type)).toEqual(["plan_built", "discovered_issue", "pr_prepared"]);
   });
 
+  it("treats a null since filter as unscoped", () => {
+    const ledger = tempLedger();
+    ledger.appendEvent({ type: "discovered_issue", payload: {} }); // seq 1
+    ledger.appendEvent({ type: "plan_built", payload: {} }); // seq 2
+    expect(ledger.readEvents({ since: null }).map((entry) => entry.seq)).toEqual([1, 2]);
+  });
+
   it("keeps a null repo filter unscoped when combined with since", () => {
     const ledger = tempLedger();
     ledger.appendEvent({ type: "discovered_issue", repoFullName: "o/a", payload: {} }); // seq 1

@@ -56,7 +56,7 @@ function normalizeOptionalRepoFullName(repoFullName) {
 
 /** Optional seq cursor for polling: omitted → undefined; otherwise a non-negative integer last-seen seq. */
 function normalizeOptionalSince(since) {
-  if (since === undefined) return undefined;
+  if (since === undefined || since === null) return undefined;
   if (typeof since !== "number" || !Number.isInteger(since) || since < 0) {
     throw new Error("invalid_since");
   }

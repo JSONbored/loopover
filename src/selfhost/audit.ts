@@ -2,6 +2,11 @@
 // operators can grep / pipe to their log aggregator (Loki, CloudWatch, Datadog, etc.) without any extra
 // setup. Written to process.stdout so it is captured by Docker's default json-file log driver and is
 // accessible via `docker compose logs gittensory`.
+//
+// NOT the durable audit_events DB table (#2908): this module is a stdout-only logger for exactly the 4 queue-
+// lifecycle events below, called only from sqlite-queue.ts/pg-queue.ts. For the actual queryable audit trail of
+// contributor-affecting decisions (review published, PR merged/closed, notification sent/failed, guardrail
+// hold, ...), see recordAuditEvent in ../db/repositories.ts.
 
 import { otelTraceLogFields } from "./otel";
 

@@ -5238,6 +5238,14 @@ type PublicSurfaceOutputFailure = {
   error: string;
 };
 
+// Intentionally writes to check_summaries only, not audit_events (#2908): this fires on every successful gate-
+// check publish, which is a very high-frequency event (every review pass, potentially several times per PR as
+// it iterates) -- check_summaries is the purpose-built, already-queryable canonical record for "when was this
+// check published and what did it conclude" (repo/PR/headSha/checkRunId/conclusion/detailsUrl), so a parallel
+// audit_events row would roughly double that table's volume for no new queryable information. The DOWNSTREAM
+// actions this verdict triggers (merge/close/hold) are already fully audited via recordNativeGateDecision and
+// agent-action-executor's audit() closure. Only the FAILURE/degraded sub-paths of the caller below are audited
+// (auditGateCheckPermissionMissing, auditPrVisibilitySkip) -- that asymmetry is deliberate, not a gap.
 async function recordPublishedGateCheckSummary(
   env: Env,
   args: {

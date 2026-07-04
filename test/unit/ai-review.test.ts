@@ -341,9 +341,12 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
   });
 
   it("repoInstructions (#review-instructions) is appended to the system prompt; absent leaves it byte-identical", async () => {
+    const optionsOf = (run: ReturnType<typeof vi.fn>): { messages?: Array<{ content?: string }>; systemAppend?: string } => {
+      const calls = run.mock.calls as unknown as Array<[unknown, { messages?: Array<{ content?: string }>; systemAppend?: string }]>;
+      return calls[0]?.[1] ?? {};
+    };
     const systemPromptOf = (run: ReturnType<typeof vi.fn>): string =>
-      (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })
-        ?.messages?.[0]?.content ?? "";
+      optionsOf(run).messages?.[0]?.content ?? "";
     const runInstr = async (repoInstructions: string | undefined) => {
       const run = vi.fn(async () => ({ response: reviewJson() }));
       const env = createTestEnv({
@@ -353,18 +356,48 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await runGittensoryAiReview(env, { ...baseInput, repoInstructions });
-      return systemPromptOf(run);
+      return { system: systemPromptOf(run), options: optionsOf(run) };
     };
     const withInstr = await runInstr("Follow our async-error conventions.");
-    expect(withInstr).toContain("REPOSITORY REVIEW INSTRUCTIONS");
-    expect(withInstr).toContain("async-error conventions");
+    expect(withInstr.system).toContain("REPOSITORY REVIEW INSTRUCTIONS");
+    expect(withInstr.system).toContain("async-error conventions");
+    expect(withInstr.options.systemAppend).toBeUndefined();
     // Absent or whitespace-only → no append (byte-identical prompt).
-    expect(await runInstr(undefined)).not.toContain(
+    expect((await runInstr(undefined)).system).not.toContain(
       "REPOSITORY REVIEW INSTRUCTIONS",
     );
-    expect(await runInstr("   ")).not.toContain(
+    expect((await runInstr("   ")).system).not.toContain(
       "REPOSITORY REVIEW INSTRUCTIONS",
     );
+  });
+
+  it("repoInstructions are passed as systemAppend only for self-host CLI reviewers (#1471)", async () => {
+    const optionsFor = async (model: string, repoInstructions: string | undefined) => {
+      const run = vi.fn(async () => ({ response: reviewJson() }));
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await runGittensoryAiReview(env, {
+        ...baseInput,
+        reviewers: [{ model }],
+        combine: "single",
+        repoInstructions,
+      });
+      const calls = run.mock.calls as unknown as Array<[unknown, { messages?: Array<{ content?: string }>; systemAppend?: string }]>;
+      return calls[0]?.[1] ?? {};
+    };
+
+    for (const model of ["claude-code", "codex"]) {
+      const options = await optionsFor(model, "Follow our async-error conventions.");
+      expect(options.systemAppend).toContain("REPOSITORY REVIEW INSTRUCTIONS");
+      expect(options.systemAppend).toContain("async-error conventions");
+      expect(options.messages?.[0]?.content).toContain(options.systemAppend);
+    }
+    expect((await optionsFor("claude-code", undefined)).systemAppend).toBeUndefined();
+    expect((await optionsFor("claude-code", "   ")).systemAppend).toBeUndefined();
   });
 
   it("the inline-findings instruction is appended to the system prompt ONLY when requested (#inline-comments)", async () => {

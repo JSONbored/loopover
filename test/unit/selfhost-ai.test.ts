@@ -80,6 +80,10 @@ type StubSpawn = (
 // the preflight itself (resolveCodexAuthPath / assertCodexAuthConfigured) is covered separately below.
 const noAuthCheck = async () => undefined;
 
+function countOccurrences(haystack: string | undefined, needle: string): number {
+  return haystack?.split(needle).length ? haystack.split(needle).length - 1 : 0;
+}
+
 describe("createOpenAiCompatibleAi (#979)", () => {
   it("POSTs to /chat/completions and returns { response }", async () => {
     const calls: Array<{ url: string; body: { model: string } }> = [];
@@ -717,12 +721,42 @@ describe("subscription CLI helpers + fail-safe", () => {
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
     expect(seen[seen.indexOf("--effort") + 1]).toBe("high");
+    expect(seen).not.toContain("--append-system-prompt");
     expect(timeout).toBe(240_000); // high → 240s (not the old fixed 120s)
     // Provider-specific overrides flow through to the argv + timeout scale.
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", CLAUDE_AI_MODEL: "claude-opus-4-8", CLAUDE_AI_EFFORT: "max" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
     expect(seen[seen.indexOf("--effort") + 1]).toBe("max");
     expect(timeout).toBe(600_000); // max → 600s, so a large max-effort review isn't SIGKILLed at 120s
+  });
+
+  it("Claude Code passes systemAppend through --append-system-prompt and strips the duplicate stdin copy (#1471)", async () => {
+    const systemAppend = "REPOSITORY REVIEW INSTRUCTIONS: Follow async-error conventions.";
+    let seen: string[] = [];
+    let capturedInput = "";
+    const cap: StubSpawn = async (_c, a, o) => {
+      seen = a;
+      capturedInput = o.input ?? "";
+      return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
+    };
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", {
+      messages: [
+        { role: "system", content: `Base system. ${systemAppend}` },
+        { role: "user", content: "Review this diff." },
+      ],
+      systemAppend,
+    });
+    expect(seen[seen.indexOf("--append-system-prompt") + 1]).toBe(systemAppend);
+    expect(capturedInput).toContain("Base system.");
+    expect(capturedInput).toContain("Review this diff.");
+    expect(capturedInput).not.toContain(systemAppend);
+
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", {
+      prompt: "Review this diff.",
+      systemAppend: "   ",
+    });
+    expect(seen).not.toContain("--append-system-prompt");
+    expect(capturedInput).toBe("Review this diff.");
   });
 
   it("chat-only CLIs reject embeds so the chain routes embeddings to an embed-capable provider (Claude review + ollama embed)", async () => {
@@ -774,6 +808,36 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CODEX_AI_MODEL).toBeUndefined();
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
     await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bad, noAuthCheck).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+  });
+
+  it("Codex prepends systemAppend to stdin once and strips an existing system copy (#1471)", async () => {
+    const systemAppend = "REPOSITORY REVIEW INSTRUCTIONS: Follow async-error conventions.";
+    let capturedInput = "";
+    const ok: StubSpawn = async (_cmd, _args, opts) => {
+      capturedInput = opts.input ?? "";
+      return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 };
+    };
+    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+      messages: [
+        { role: "system", content: `Base system. ${systemAppend}` },
+        { role: "user", content: "Review this diff." },
+      ],
+      systemAppend,
+    });
+    expect(capturedInput.startsWith("ADDITIONAL SYSTEM INSTRUCTIONS:\n")).toBe(true);
+    expect(countOccurrences(capturedInput, systemAppend)).toBe(1);
+    expect(capturedInput).toContain("Base system.");
+    expect(capturedInput).toContain("Review this diff.");
+
+    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+      messages: [
+        { role: "system", content: "Base system without the append block." },
+        { role: "user", content: "Review this diff." },
+      ],
+      systemAppend,
+    });
+    expect(countOccurrences(capturedInput, systemAppend)).toBe(1);
+    expect(capturedInput).toContain("Base system without the append block.");
   });
 
   it("drives the REAL subprocess (defaultSpawn) against a fake `claude` on PATH", async () => {

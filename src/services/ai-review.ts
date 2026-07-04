@@ -355,6 +355,13 @@ type AiRunner = {
   ) => Promise<unknown>;
 };
 
+function selfHostCliSystemAppend(model: string, systemAppend: string): string | undefined {
+  const trimmed = systemAppend.trim();
+  if (!trimmed) return undefined;
+  const [provider = ""] = model.trim().toLowerCase().split(":");
+  return provider === "claude-code" || provider === "codex" ? trimmed : undefined;
+}
+
 // Exported so the sibling AI-advisory features (e.g. the slop advisory in `./ai-slop`) share ONE budget
 // window + neuron estimator and never drift from the review path's accounting.
 export function isEnabled(value: string | undefined): boolean {
@@ -648,11 +655,17 @@ function buildSystemPrompt(input: GittensoryAiReviewInput): string {
   const pathSuffix = input.pathGuidance?.trim() ? input.pathGuidance : "";
   // `.gittensory.yml` review.instructions (#review-instructions): a repo-level maintainer brief appended to every
   // review; empty ⇒ nothing appended (byte-identical).
-  const repoInstructionsSuffix = input.repoInstructions?.trim()
-    ? ` REPOSITORY REVIEW INSTRUCTIONS (maintainer conventions for this repo — honor them unless they conflict with a real defect): ${input.repoInstructions.trim()}`
-    : "";
+  const repoInstructionsAppend = buildRepoInstructionsSystemAppend(input.repoInstructions);
+  const repoInstructionsSuffix = repoInstructionsAppend ? ` ${repoInstructionsAppend}` : "";
   const inlineSuffix = input.inlineFindings ? INLINE_FINDINGS_SUFFIX : "";
   return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${securityFocusSuffix}${pathSuffix}${repoInstructionsSuffix}${inlineSuffix}`;
+}
+
+function buildRepoInstructionsSystemAppend(repoInstructions: string | null | undefined): string {
+  const trimmed = repoInstructions?.trim();
+  return trimmed
+    ? `REPOSITORY REVIEW INSTRUCTIONS (maintainer conventions for this repo — honor them unless they conflict with a real defect): ${trimmed}`
+    : "";
 }
 
 /** One Workers-AI opinion with a per-slot reliable fallback and a 3× retry on the primary. */
@@ -664,6 +677,7 @@ async function runWorkersOpinion(
   user: string,
   maxTokens: number,
   diagnostics: AiReviewDiagnostic[] = [],
+  systemAppend = "",
 ): Promise<ReviewerOpinionOutcome> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { review: null };
@@ -685,6 +699,7 @@ async function runWorkersOpinion(
     : [primary]) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
+        const cliSystemAppend = selfHostCliSystemAppend(model, systemAppend);
         const result = await ai.run(
           model,
           {
@@ -694,6 +709,7 @@ async function runWorkersOpinion(
               { role: "system", content: system },
               { role: "user", content: user },
             ],
+            ...(cliSystemAppend ? { systemAppend: cliSystemAppend } : {}),
           },
           extra,
         );
@@ -1162,6 +1178,7 @@ export async function runGittensoryAiReview(
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
   // unchanged (byte-identical). Computed from `promptInput` so it travels with the (possibly defanged) input.
   const system = buildSystemPrompt(promptInput);
+  const repoInstructionsSystemAppend = buildRepoInstructionsSystemAppend(promptInput.repoInstructions);
   // The daily neuron budget governs FREE Workers-AI spend only. BYOK advisory calls bill the maintainer's
   // own provider account, so they are not counted here (and a BYOK advisory still runs when the free
   // budget is exhausted). Free calls = the consensus pair in block mode (always Workers AI), plus the
@@ -1286,6 +1303,7 @@ export async function runGittensoryAiReview(
       user,
       maxTokens,
       reviewDiagnostics,
+      repoInstructionsSystemAppend,
     );
     advisoryReview = outcome.review;
     if (outcome.fallbackNote) fallbackNotes.push(outcome.fallbackNote);
@@ -1311,6 +1329,7 @@ export async function runGittensoryAiReview(
               user,
               maxTokens,
               reviewDiagnostics,
+              repoInstructionsSystemAppend,
             )
           : Promise.resolve<ReviewerOpinionOutcome>({ review: advisoryReview }),
         runWorkersOpinion(
@@ -1321,6 +1340,7 @@ export async function runGittensoryAiReview(
           user,
           maxTokens,
           reviewDiagnostics,
+          repoInstructionsSystemAppend,
         ),
       ]);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
@@ -1345,6 +1365,7 @@ export async function runGittensoryAiReview(
             user,
             maxTokens,
             reviewDiagnostics,
+            repoInstructionsSystemAppend,
           )
         : ({ review: advisoryReview } as ReviewerOpinionOutcome);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);

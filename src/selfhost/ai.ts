@@ -16,6 +16,7 @@ import { delimiter } from "node:path";
 interface AiRunOptions {
   messages?: Array<{ role: string; content: string }>;
   prompt?: string;
+  systemAppend?: string;
   text?: string[]; // embedding input — the core's embedTexts passes { text: string[] }
   max_tokens?: number;
   temperature?: number;
@@ -30,6 +31,33 @@ export interface SelfHostAi {
 function toMessages(options: AiRunOptions): Array<{ role: string; content: string }> {
   if (Array.isArray(options.messages)) return options.messages;
   return [{ role: "user", content: String(options.prompt ?? "") }];
+}
+
+function normalizedSystemAppend(options: AiRunOptions): string | undefined {
+  const trimmed = options.systemAppend?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function stripSystemAppend(content: string, systemAppend: string): string {
+  const index = content.indexOf(systemAppend);
+  if (index < 0) return content;
+  return `${content.slice(0, index)}${content.slice(index + systemAppend.length)}`.trimEnd();
+}
+
+function toCliPrompt(options: AiRunOptions, systemAppend: string | undefined): string {
+  return toMessages(options)
+    .map((message) =>
+      systemAppend && message.role === "system"
+        ? stripSystemAppend(message.content, systemAppend)
+        : message.content,
+    )
+    .join("\n\n");
+}
+
+function prependCodexSystemAppend(prompt: string, systemAppend: string | undefined): string {
+  return systemAppend
+    ? `ADDITIONAL SYSTEM INSTRUCTIONS:\n${systemAppend}\n\n${prompt}`
+    : prompt;
 }
 
 /** The core passes a Workers-AI model id (e.g. "@cf/meta/llama-3.1-8b-instruct-fp8-fast") that is meaningless
@@ -565,12 +593,15 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       try {
         if (!token) throw new Error("claude_code_no_oauth_token");
         const env = subscriptionCliEnv(parentEnv, { CLAUDE_CODE_OAUTH_TOKEN: token });
-        const prompt = toMessages(options).map((m) => m.content).join("\n\n");
+        const systemAppend = normalizedSystemAppend(options);
+        const prompt = toCliPrompt(options, systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
+        const args = ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"];
+        if (systemAppend) args.push("--append-system-prompt", systemAppend);
         attempted = true;
         const { stdout, code, stderr, timedOut } = await spawn(
           "claude",
-          ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"],
+          args,
           { env, input: prompt, timeoutMs, cwd: await isolatedCliCwd() },
         );
         stdoutForMetrics = stdout;
@@ -619,7 +650,8 @@ export function createCodexAi(
         assertCodexCredentialIsolation(parentEnv);
         await authCheckImpl(parentEnv);
         const env = codexCliEnv(parentEnv);
-        const prompt = toMessages(options).map((m) => m.content).join("\n\n");
+        const systemAppend = normalizedSystemAppend(options);
+        const prompt = prependCodexSystemAppend(toCliPrompt(options, systemAppend), systemAppend);
         const spawn = spawnImpl ?? (await defaultSpawn());
         const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
         if (codexModel) args.push("--model", codexModel);

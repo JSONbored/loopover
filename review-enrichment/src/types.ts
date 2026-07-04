@@ -406,7 +406,7 @@ export interface TestRatioFinding {
 export interface MigrationSafetyFinding {
   file: string;
   line: number;
-  kind: "drop" | "rename" | "not-null-no-default" | "blocking-rewrite";
+  kind: "drop" | "rename" | "not-null-no-default" | "blocking-rewrite" | "truncate" | "set-not-null" | "blocking-index";
 }
 
 /** A newly-added/changed npm dependency whose version specifier is dangerously loose — a wildcard, the

@@ -125,8 +125,10 @@ async function listEngagedProjectScopes(env: Env): Promise<{ holdonly: string[];
       const [prefix, ...rest] = row.key.split(":");
       const project = rest.join(":");
       if (!project || project === "global") continue;
+      // The SQL WHERE clause above only ever matches a "holdonly:" or "closehold:" key, so prefix can never be
+      // anything else here — a plain else (not another === check) so there is no unreachable branch to cover.
       if (prefix === "holdonly") holdonly.push(project);
-      else if (prefix === "closehold") closehold.push(project);
+      else closehold.push(project);
     }
     return { holdonly, closehold };
   } catch (error) {

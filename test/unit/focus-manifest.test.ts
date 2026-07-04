@@ -1962,6 +1962,50 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.typeLabels).toEqual(db.typeLabels); // malformed manifest value never blanks the DB-persisted override
   });
 
+  describe("arbitrary custom typeLabels categories (#label-modularity)", () => {
+    it("wires an arbitrary custom category through the sparse override, additively alongside the DB-persisted built-ins", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } });
+      expect(parsed.settings.typeLabels).toEqual({ security: "area:security" });
+      expect(parsed.warnings).toEqual([]);
+
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
+      expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", security: "area:security" });
+    });
+
+    it("does not unexpectedly reset unrelated categories when a sparse override only adds a new one (invariant: sparse overrides layer correctly)", () => {
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", docs: "area:docs" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
+      // `docs` was never named by the override, so it survives untouched alongside the newly-added `security`.
+      expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", docs: "area:docs", security: "area:security" });
+    });
+  });
+
+  describe("explicit typeLabels: {} (#label-modularity)", () => {
+    it("parses a literal empty settings.typeLabels object to null, distinct from a sparse override with zero surviving keys", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: {} } });
+      expect(parsed.settings.typeLabels).toBeNull();
+      expect(parsed.warnings).toEqual([]);
+    });
+
+    it("resolveEffectiveSettings replaces the DB-persisted set wholesale with an empty set for an explicit typeLabels: {}", () => {
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: {} } }));
+      expect(eff.typeLabels).toEqual({});
+    });
+
+    it("still leaves the DB value untouched when a sparse override's only named key fails validation (contrast with explicit {})", () => {
+      // Same net {} shape as the explicit-empty case above at the parse step, but arising from a NAMED,
+      // invalid key rather than a literal `{}` -- must NOT replace the DB value (see the malformed-value
+      // test above), unlike the deliberate `typeLabels: {}` case immediately above.
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: 42 } } });
+      expect(parsed.settings.typeLabels).toEqual({});
+      const eff = resolveEffectiveSettings(db, parsed);
+      expect(eff.typeLabels).toEqual(db.typeLabels);
+    });
+  });
+
   it("wires settings.linkedIssueLabelPropagation into the manifest parser and lets a per-repo override win over the DB value (#priority-linked-issue-gate)", () => {
     const config = {
       enabled: true,

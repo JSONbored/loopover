@@ -628,7 +628,9 @@ export const RepositorySettingsSchema = z
     closeOwnerAuthors: z.boolean(),
     autoLabelEnabled: z.boolean(),
     typeLabelsEnabled: z.boolean(),
-    typeLabels: z.object({ bug: z.string(), feature: z.string(), priority: z.string() }).optional(),
+    // Open `category -> label name` record (#label-modularity): bug/feature/priority are the built-in
+    // categories, but a self-hoster may register any number of additional ones (e.g. `security`).
+    typeLabels: z.record(z.string(), z.string()).optional(),
     linkedIssueLabelPropagation: z
       .object({
         enabled: z.boolean(),

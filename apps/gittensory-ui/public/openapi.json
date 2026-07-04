@@ -9019,22 +9019,9 @@
           },
           "typeLabels": {
             "type": "object",
-            "properties": {
-              "bug": {
-                "type": "string"
-              },
-              "feature": {
-                "type": "string"
-              },
-              "priority": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "bug",
-              "feature",
-              "priority"
-            ]
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "linkedIssueLabelPropagation": {
             "type": "object",

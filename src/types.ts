@@ -738,11 +738,12 @@ export type RepositorySettings = {
    *  were gated by `autoLabelEnabled` nested inside the public-surface check). Always populated by
    *  the DB layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabelsEnabled?: boolean | undefined;
-  /** Per-repo override of the three TYPE/taxonomy label NAMES (#priority-linked-issue-gate). Defaults
-   *  to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/`gittensor:priority`) in
-   *  `settings/pr-type-label.ts` — a repo can override just one name (e.g. only `priority`) and keep
-   *  the other two default. Always populated by the DB layer; optional so existing settings
-   *  fixtures/callers need not be touched. */
+  /** Per-repo override of the TYPE/taxonomy label NAMES, keyed by category (#priority-linked-issue-gate,
+   *  #label-modularity). Defaults to `DEFAULT_TYPE_LABELS` (`gittensor:bug`/`gittensor:feature`/
+   *  `gittensor:priority`) in `settings/pr-type-label.ts` — a repo can override just one name (e.g. only
+   *  `priority`) and keep the others default, AND/OR add arbitrary additional categories beyond the
+   *  built-in three (e.g. `security: "area:security"`) for its own taxonomy. Always populated by the DB
+   *  layer; optional so existing settings fixtures/callers need not be touched. */
   typeLabels?: PrTypeLabelSet | undefined;
   /** Linked-issue label propagation (#priority-linked-issue-gate): the ONLY mechanism that can ever
    *  select the configured priority label (or any other configured mapping's PR label) — never
@@ -926,13 +927,16 @@ export type RepositoryCommandAuthorizationPolicy = {
   commands: Record<string, CommandAuthorizationRole[]>;
 };
 
-/** The three per-repo-configurable TYPE/taxonomy label names (#priority-linked-issue-gate). See
- *  `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
-export type PrTypeLabelSet = {
-  bug: string;
-  feature: string;
-  priority: string;
-};
+/** Per-repo-configurable TYPE/taxonomy label NAMES, keyed by an arbitrary category name
+ *  (#label-modularity). `bug`/`feature`/`priority` are the built-in categories `deriveKindFromTitle`
+ *  and the priority-linked-issue-gate know how to CLASSIFY, but the map itself is an open
+ *  `category -> label name` record -- a self-hoster can add any number of additional categories (e.g.
+ *  `security: "area:security"`) that never get chosen by title-classification, only ever by a
+ *  configured `linkedIssueLabelPropagation` mapping (any `prLabel`, not just a `typeLabels` value, can
+ *  be propagated -- registering a category here just makes it participate in the mutual-exclusivity
+ *  cleanup `resolvePrTypeLabel` computes, i.e. it becomes eligible for automatic removal when a PR's
+ *  classification moves away from it). See `resolvePrTypeLabel` in `settings/pr-type-label.ts`. */
+export type PrTypeLabelSet = Record<string, string>;
 
 /** One linked-issue → PR label mapping (#priority-linked-issue-gate). See
  *  `LinkedIssueLabelPropagationConfig` below and `review/linked-issue-label-propagation.ts`. */

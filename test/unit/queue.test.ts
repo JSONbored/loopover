@@ -18078,6 +18078,44 @@ describe("queue processors", () => {
       expect(seen.removed.sort()).toEqual(["gittensor:bug", "gittensor:priority"]);
     });
 
+    it("cleans up an arbitrary configured custom category alongside bug/feature/priority (#label-modularity)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+      await upsertRepositorySettings(env, {
+        repoFullName: "JSONbored/gittensory",
+        commentMode: "off",
+        publicSurface: "label_only",
+        autoLabelEnabled: true,
+        createMissingLabel: false,
+        checkRunMode: "off",
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "off",
+        aiReviewMode: "off",
+        // A self-host taxonomy well beyond the built-in bug/feature/priority triad (#label-modularity):
+        // `security` is a registered category with no title-classification rule of its own, so it is
+        // never CHOSEN here, but it must still be a cleanup CANDIDATE (never left dangling on a PR whose
+        // classification moved elsewhere) exactly like the built-in categories.
+        typeLabels: { bug: "gittensor:bug", feature: "gittensor:feature", priority: "gittensor:priority", security: "area:security" },
+      });
+      const seen = { posted: [] as string[], removed: [] as string[], checkRunCreated: false };
+      stubTypeLabelFetch(218, seen);
+
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "type-label-custom-category-cleanup",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 218, title: "feat: add retry backoff", state: "open", user: { login: "renovate[bot]", type: "Bot" }, head: { sha: "sha218" }, labels: [], body: "Automated." },
+        },
+      });
+
+      expect(seen.posted).toEqual(["gittensor:feature"]);
+      expect(seen.removed.sort()).toEqual(["area:security", "gittensor:bug", "gittensor:priority"]);
+    });
+
     it("applies the type label when publicSurface: comment_only makes the base context label structurally impossible", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

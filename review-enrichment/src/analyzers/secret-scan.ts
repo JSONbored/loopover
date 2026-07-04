@@ -194,9 +194,9 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
-    // Mapbox secret access token: `sk.eyJ` JWT-shaped token (distinct from Stripe `sk_live_` / `sk_test_`).
+    // Mapbox secret access token: `sk.eyJ` + base64url body (distinct from Stripe `sk_live_` / `sk_test_`).
     kind: "mapbox_secret_token",
-    re: /\bsk\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])/,
+    re: /\bsk\.eyJ[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])/,
     confidence: "high",
   },
   {

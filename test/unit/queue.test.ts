@@ -2767,6 +2767,172 @@ describe("queue processors", () => {
       ]);
     });
 
+    it("REGRESSION (#2947): still skips the republish when no pending check was posted this pass (gate permission missing)", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 72, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a72" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 72, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await putCachedAiReview(env, "JSONbored/gittensory", 72, "a72", "block", {
+        notes: "Looks fine.",
+        reviewerCount: 1,
+        cacheable: true,
+        metadata: {
+          inputFingerprint: await aiReviewCacheInputFingerprint({
+            title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
+            profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
+            features: { grounding: false, rag: false, enrichment: false, reputation: false },
+          }),
+        },
+      });
+      await upsertCheckSummary(env, { id: "gate-72", repoFullName: "JSONbored/gittensory", pullNumber: 72, headSha: "a72", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 72, "a72");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/72/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/72")) return Response.json({ number: 72, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a72" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a72/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        // The pending gate check-run POST fails with a permission error, so pendingGateCheckRunId stays
+        // undefined for the whole pass -- the "still-in-flight from THIS pass" refresh in the skip guard
+        // must never fire without a pending check id to refresh.
+        if (url.includes("/check-runs") && init?.method === "POST") {
+          return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+        }
+        if (url.includes("/check-runs")) return Response.json({ check_runs: [] });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "surface-skip-no-pending", repoFullName: "JSONbored/gittensory", prNumber: 72, installationId: 123 });
+
+      const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.public_surface_publish_skipped_current", "JSONbored/gittensory#72")
+        .first<{ n: number }>();
+      expect(skipAudit?.n).toBe(1);
+      const publishedAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.pr_public_surface_published", "JSONbored/gittensory#72")
+        .first<{ n: number }>();
+      expect(publishedAudit?.n).toBe(0); // still proven redundant up-front, even with no pending check id to refresh
+    });
+
+    it("REGRESSION (#2947): falls through to a full republish when this pass's own pending check does not finalize as published", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 73, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a73" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 73, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await putCachedAiReview(env, "JSONbored/gittensory", 73, "a73", "block", {
+        notes: "Looks fine.",
+        reviewerCount: 1,
+        cacheable: true,
+        metadata: {
+          inputFingerprint: await aiReviewCacheInputFingerprint({
+            title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
+            profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
+            features: { grounding: false, rag: false, enrichment: false, reputation: false },
+          }),
+        },
+      });
+      await upsertCheckSummary(env, { id: "gate-73", repoFullName: "JSONbored/gittensory", pullNumber: 73, headSha: "a73", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 73, "a73");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/73/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/73")) return Response.json({ number: 73, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a73" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a73/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        // The initial pending check-run POST succeeds (pendingGateCheckRunId gets set), but every
+        // subsequent PATCH to finalize it -- both this pass's refresh attempt AND any fallthrough publish
+        // attempt -- fails with a permission error, so the refresh never resolves as "published".
+        if (url.includes("/check-runs") && init?.method === "POST") return Response.json({ id: 7301 });
+        if (url.includes("/check-runs/7301") && init?.method === "PATCH") {
+          return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+        }
+        if (url.includes("/check-runs")) return Response.json({ check_runs: [] });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "surface-skip-refresh-not-published", repoFullName: "JSONbored/gittensory", prNumber: 73, installationId: 123 });
+
+      // The skip guard did NOT prove the surface redundant -- it must fall through to the normal publish
+      // path rather than silently returning early, even though the refresh attempt itself failed.
+      const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.public_surface_publish_skipped_current", "JSONbored/gittensory#73")
+        .first<{ n: number }>();
+      expect(skipAudit?.n).toBe(0);
+    });
+
+    it("REGRESSION (#2947): swallows a failing check-summary write on the skip-guard's own refresh, still returning the gate evaluation", async () => {
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 74, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a74" }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 74, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await putCachedAiReview(env, "JSONbored/gittensory", 74, "a74", "block", {
+        notes: "Looks fine.",
+        reviewerCount: 1,
+        cacheable: true,
+        metadata: {
+          inputFingerprint: await aiReviewCacheInputFingerprint({
+            title: "Current PR", mode: "block", byok: false, provider: null, model: null, aiReviewAllAuthors: false,
+            aiReviewCloseConfidence: undefined, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, gatePack: "oss-anti-slop", reviewerPlan: env.AI_REVIEW_PLAN, selfHostProviderConfig: null, baseSha: null,
+            reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = true;", additions: 1, deletions: 0 }],
+            profile: null, securityFocus: false, inlineComments: false, pathInstructions: [], pathGuidance: "", repoInstructions: null, excludePaths: [], changedPaths: ["src/a.ts"],
+            features: { grounding: false, rag: false, enrichment: false, reputation: false },
+          }),
+        },
+      });
+      await upsertCheckSummary(env, { id: "gate-74", repoFullName: "JSONbored/gittensory", pullNumber: 74, headSha: "a74", name: "Gittensory Orb Review Agent", status: "completed", conclusion: "success", payload: {} });
+      await repositoriesModule.markPullRequestSurfacePublished(env, "JSONbored/gittensory", 74, "a74");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/74/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+        if (url.endsWith("/pulls/74")) return Response.json({ number: 74, title: "Current PR", state: "open", user: { login: "contributor" }, head: { sha: "a74" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a74/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        if (url.includes("/check-runs") && init?.method === "POST") return Response.json({ id: 7401 });
+        if (url.includes("/check-runs/7401") && init?.method === "PATCH") return Response.json({ id: 7401 });
+        if (url.includes("/check-runs")) return Response.json({ check_runs: [] });
+        return Response.json({});
+      });
+      const upsertSpy = vi.spyOn(repositoriesModule, "upsertCheckSummary").mockRejectedValueOnce(new Error("check_summaries write failed"));
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "surface-skip-summary-write-fails", repoFullName: "JSONbored/gittensory", prNumber: 74, installationId: 123 }),
+      ).resolves.toBeUndefined();
+
+      const skipAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.public_surface_publish_skipped_current", "JSONbored/gittensory#74")
+        .first<{ n: number }>();
+      expect(skipAudit?.n).toBe(1); // the check-summary write failure is swallowed; the redundant-surface skip still completes
+      upsertSpy.mockRestore();
+    });
+
     it("swallows a failing publish-skip audit write without throwing", async () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),

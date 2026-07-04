@@ -200,6 +200,10 @@ const MULTI_TENANT_SUFFIXES = [
   "firebaseapp.com",
   "readthedocs.io",
   "gitbook.io",
+  // More multi-tenant PaaS hosts where each subdomain is a different party (peers of
+  // herokuapp.com/onrender.com): Azure App Service and Fly.io.
+  "azurewebsites.net",
+  "fly.dev",
 ];
 
 /** Heuristic registrable domain (eTLD+1 ≈ last two labels, with known multi-tenant suffixes kept one

@@ -677,6 +677,10 @@ describe("registry-logic branch coverage (gap-filling)", () => {
   it("registrableDomain takes the deepest tenant label under a multi-tenant suffix", () => {
     // tenant is the LAST label before the suffix (a.b.github.io → b.github.io).
     expect(registrableDomain("https://a.b.github.io/x")).toBe("b.github.io");
+    // Azure App Service + Fly.io are multi-tenant too: distinct tenants must not
+    // collapse to the bare suffix (else two unrelated apps satisfy the same claim).
+    expect(registrableDomain("https://alice.azurewebsites.net/x")).toBe("alice.azurewebsites.net");
+    expect(registrableDomain("https://bob.fly.dev/")).toBe("bob.fly.dev");
   });
   it("registrableDomain returns a two-label apex directly (parts.length <= 2 branch)", () => {
     expect(registrableDomain("https://example.com")).toBe("example.com");

@@ -274,11 +274,8 @@ import {
   QUEUE_TREND_HISTORY_DAYS,
 } from "../services/queue-trends";
 import {
-  buildUpstreamRulesetSnapshot,
-  detectAndPersistUpstreamDrift,
   fileUpstreamDriftIssues,
   refreshUpstreamDrift,
-  refreshUpstreamSourceSnapshots,
 } from "../upstream/ruleset";
 import {
   buildFreshnessSloReport,
@@ -833,15 +830,6 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "refresh-scoring-model":
       await refreshScoringModelSnapshot(env);
-      return;
-    case "refresh-upstream-sources":
-      await refreshUpstreamSourceSnapshots(env);
-      return;
-    case "build-upstream-ruleset":
-      await buildUpstreamRulesetSnapshot(env);
-      return;
-    case "detect-upstream-drift":
-      await detectAndPersistUpstreamDrift(env);
       return;
     case "refresh-upstream-drift":
       await refreshUpstreamDrift(env);

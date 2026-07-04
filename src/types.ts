@@ -91,18 +91,6 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      type: "refresh-upstream-sources";
-      requestedBy: "schedule" | "api" | "test";
-    }
-  | {
-      type: "build-upstream-ruleset";
-      requestedBy: "schedule" | "api" | "test";
-    }
-  | {
-      type: "detect-upstream-drift";
-      requestedBy: "schedule" | "api" | "test";
-    }
-  | {
       type: "refresh-upstream-drift";
       requestedBy: "schedule" | "api" | "test";
     }

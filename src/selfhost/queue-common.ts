@@ -57,9 +57,6 @@ const GITHUB_BUDGET_BACKGROUND_TYPES = new Set<string>([
   "backfill-registered-repos",
   "backfill-repo-segment",
   "backfill-pr-details",
-  "refresh-upstream-sources",
-  "build-upstream-ruleset",
-  "detect-upstream-drift",
   "refresh-upstream-drift",
   "file-upstream-drift-issues",
   "build-contributor-evidence",
@@ -805,9 +802,6 @@ export function jobCoalesceKey(payload: string): string | null {
       case "refresh-registry":
       case "refresh-installation-health":
       case "refresh-scoring-model":
-      case "refresh-upstream-sources":
-      case "build-upstream-ruleset":
-      case "detect-upstream-drift":
       case "refresh-upstream-drift":
       case "file-upstream-drift-issues":
       case "repair-data-fidelity":

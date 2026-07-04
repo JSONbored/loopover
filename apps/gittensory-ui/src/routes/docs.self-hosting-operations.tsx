@@ -131,12 +131,203 @@ docker compose --profile postgres --profile observability --profile backup up -d
         watching for.
       </p>
 
-      <h2>Docker resource hygiene</h2>
+      <h2>Resource profiles</h2>
       <p>
-        Every service in <code>docker-compose.yml</code> caps its own container logs (10MB × 3
-        rotated files) out of the box, so log growth alone won&apos;t fill your disk. Unused Docker
-        images and build cache are a separate, larger disk-growth vector on a host that rebuilds or
-        pulls images repeatedly over months — Docker does not reclaim either automatically.
+        <strong>Measured</strong> rows below come from a real production instance running the full
+        profile set (<code>qdrant</code> + <code>redis</code> + <code>observability</code> +{" "}
+        <code>backup</code> + <code>postgres</code> + <code>ollama</code>) at steady state —
+        <code>docker stats</code> and <code>docker system df</code> snapshots, not a lab benchmark.
+        <strong> Estimated</strong> rows are reasoned from that same baseline plus each
+        service&apos;s declared <code>deploy.resources.limits</code> and image size in{" "}
+        <code>docker-compose.yml</code> — they have not been measured directly and could be off,
+        especially for CPU under real load. Treat estimates as a starting point for capacity
+        planning, not a guarantee.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-token-sm">
+          <thead>
+            <tr className="border-hairline text-left text-token-xs text-muted-foreground">
+              <th className="py-2 pr-4 font-medium">Profile</th>
+              <th className="py-2 pr-4 font-medium">CPU (steady state)</th>
+              <th className="py-2 pr-4 font-medium">Memory (steady state)</th>
+              <th className="py-2 font-medium">Basis</th>
+            </tr>
+          </thead>
+          <tbody className="divide-hairline">
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                Minimal — app + <code>redis</code> only (no profile flags)
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">~3% of one core</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">~400–600MiB</td>
+              <td className="py-2 align-top text-muted-foreground">
+                Estimated: app + redis measured in isolation from the full-profile snapshot (app
+                2.6% CPU / 365MiB; redis is idle-light and its 512MiB limit is never approached in
+                the full-profile run either).
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                + <code>--profile postgres</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                +14% of one core (highest single-service CPU consumer)
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">+~200MiB</td>
+              <td className="py-2 align-top text-muted-foreground">
+                Measured: 14.24% CPU / 196MiB of its 2GiB limit — comfortable headroom on memory,
+                but the largest CPU line item in the whole stack.
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                + <code>--profile qdrant</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">Low single-digit %</td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Well under its 2GiB limit
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Measured (part of the full-profile snapshot's "everything else" low-CPU, under-limit
+                group). Grows with RAG corpus size — expect this to climb on installs with many
+                indexed repos.
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                + <code>--profile observability</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Low single-digit % per service, except Grafana/Tempo below
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Grafana ~305MiB (60% of 512MiB); Tempo ~209MiB (20% of 1GiB); Prometheus/Loki/
+                Alertmanager/Promtail/otel-collector each well under their limits
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Measured. Grafana is the closest any service comes to its ceiling in production —
+                worth watching if you add many custom dashboards or panels, but not currently a
+                problem (40% headroom remains).
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                + <code>--profile ollama</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Near-zero idle; spikes hard during inference
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Model-dependent, up to its 8GiB limit
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Estimated. Not part of the live production profile mix (that instance uses{" "}
+                <code>AI_PROVIDER=codex</code>, not Ollama) — the 8GiB default limit is sized for a
+                single loaded 7–8B quantized model per the compose comment, not measured against a
+                running model. Idle Ollama with no model pulled is cheap; a loaded model can
+                legitimately approach the limit, which is why it has the largest default ceiling in
+                the file.
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                + <code>--profile backup</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Near-zero except during runs
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Low, bursts during dump/restore
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Measured as part of the full-profile snapshot (no dedicated resource limit is set
+                for <code>backup</code>/<code>backup-exporter</code> — both are short-lived or
+                idle-polling processes, not sustained consumers).
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                + <code>--profile runners</code>
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Unbounded by default — can starve the app under CI load
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">Unbounded by default</td>
+              <td className="py-2 align-top text-muted-foreground">
+                Estimated, and explicitly a known risk, not a guess about typical usage: the{" "}
+                <code>runner</code> service ships with no CPU/memory limit at all. Production
+                experience already documented in <code>docker-compose.override.yml.example</code>{" "}
+                found 3 uncapped runner containers starving the app for CPU on an 8-vCPU box under
+                real CI load — see that file for the <code>cpu_shares</code>/<code>cpus</code>{" "}
+                mitigation before co-locating runners with the review stack.
+              </td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 align-top">
+                Full profile set (<code>qdrant</code> + <code>redis</code> +{" "}
+                <code>observability</code> + <code>backup</code> + <code>postgres</code> +{" "}
+                <code>ollama</code>, no active inference, no runners)
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                Postgres (~14%) dominates; everything else low single-digit %
+              </td>
+              <td className="py-2 pr-4 align-top text-muted-foreground">
+                No service near its limit except Grafana (~60%)
+              </td>
+              <td className="py-2 align-top text-muted-foreground">
+                Measured, in full, on a real production instance.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Disk</h3>
+      <p>
+        Measured on the same production instance: 48GB of 151GB used on the host root volume (32%)
+        at steady state. <code>docker system df</code> breakdown:
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "Images",
+            description: "22.59GB total, 19.24GB (85%) reclaimable via prune.",
+          },
+          {
+            title: "Volumes",
+            description:
+              "20.57GB total, 5.4GB (26%) reclaimable — this is real application state (databases, vector index, backups), so most of it is never pruned.",
+          },
+          {
+            title: "Build cache",
+            description: "6.39GB total, 3.55GB (56%) reclaimable.",
+          },
+        ]}
+      />
+      <p>
+        The reclaimable image and build-cache space here is{" "}
+        <strong>expected steady state, not a leak</strong> — this instance runs{" "}
+        <code>scripts/deploy-selfhost-prebuilt.sh</code>, which rebuilds the image from the current
+        git checkout on every deploy and intentionally keeps prior layers around in the build cache
+        for faster rebuilds. The <code>gittensory-docker-safe-prune</code> systemd timer (below)
+        already runs daily against this exact instance and reclaims it on a schedule, so this is not
+        a number to chase down manually.
+      </p>
+
+      <h3>When a compose default might need to change</h3>
+      <p>
+        Every <code>deploy.resources.limits.memory</code> in <code>docker-compose.yml</code> is
+        operator-overridable via <code>.env</code> (see the <code>*_MEM_LIMIT</code> variables in{" "}
+        <code>.env.example</code>). Against the measured full-profile data above, none of the
+        current defaults look miscalibrated enough to change: nothing sits consistently near its
+        limit in a way that risks an OOM kill under normal load (Grafana&apos;s ~60% is the closest
+        and still has real headroom), and nothing is so oversized relative to plausible usage that
+        it should be lowered — including Ollama&apos;s comparatively large 8GiB ceiling, which is
+        sized for holding one quantized model in memory, not idle overhead. The one real gap is{" "}
+        <code>--profile runners</code>, which ships with no limit at all; that is a known,
+        documented tradeoff (see the table above and{" "}
+        <code>docker-compose.override.yml.example</code>) rather than an oversight, since the right
+        ceiling depends entirely on the host's core count and how many runner replicas you run.
       </p>
       <p>
         Install the provided host-level timer to reclaim both on a schedule (anything unused for

@@ -65,6 +65,21 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
     expect(scanForSecrets(fakeToken).kinds).toContain("npm_token");
   });
 
+  it("flags a Stripe live secret key", () => {
+    const fakeToken = "sk_live_" + "a".repeat(24);
+    expect(scanForSecrets(fakeToken).kinds).toContain("stripe_secret_key");
+  });
+
+  it("flags a SendGrid API key", () => {
+    const fakeToken = "SG." + "a".repeat(22) + "." + "b".repeat(43);
+    expect(scanForSecrets(fakeToken).kinds).toContain("sendgrid_key");
+  });
+
+  it("flags a Hugging Face access token", () => {
+    const fakeToken = "hf_" + "a".repeat(34);
+    expect(scanForSecrets(fakeToken).kinds).toContain("huggingface_token");
+  });
+
   it("flags a JWT", () => {
     const fakeJwt = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     expect(scanForSecrets(fakeJwt).kinds).toContain("jwt");

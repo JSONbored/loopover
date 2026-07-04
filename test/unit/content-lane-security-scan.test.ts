@@ -39,6 +39,12 @@ describe("scanForSecrets", () => {
     expect(scanForSecrets("npm_" + "a".repeat(36)).kinds).toContain("npm_token");
   });
 
+  it("flags Stripe, SendGrid, and Hugging Face keys (parity with the PR-diff gate)", () => {
+    expect(scanForSecrets("sk_live_" + "a".repeat(24)).kinds).toContain("stripe_secret_key");
+    expect(scanForSecrets("SG." + "a".repeat(22) + "." + "b".repeat(43)).kinds).toContain("sendgrid_key");
+    expect(scanForSecrets("hf_" + "a".repeat(34)).kinds).toContain("huggingface_token");
+  });
+
   it("flags a generic secret/password/token assignment with a high-entropy value", () => {
     expect(scanForSecrets(`secret = "${GENERIC_VALUE}"`).kinds).toContain("generic_secret_assignment");
     expect(scanForSecrets(`api_key: '${GENERIC_VALUE}'`).kinds).toContain("generic_secret_assignment");
@@ -191,6 +197,9 @@ describe("secret-scan parity with the PR-diff gate (secrets-scan.ts)", () => {
     ["aws_access_key", "AKIA" + "ABCDEFGHIJKLMNOP"],
     ["private_key_block", "-----BEGIN OPENSSH " + "PRIVATE KEY-----"],
     ["google_api_key", "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"],
+    ["stripe_secret_key", "sk_live_" + "a".repeat(24)],
+    ["sendgrid_key", "SG." + "a".repeat(22) + "." + "b".repeat(43)],
+    ["huggingface_token", "hf_" + "a".repeat(34)],
     ["jwt", jwt],
     ["generic_secret_assignment", `secret = "${GENERIC_VALUE}"`],
     ["benign prose", "just normal documentation prose"],

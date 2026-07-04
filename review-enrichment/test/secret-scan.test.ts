@@ -14,9 +14,14 @@ const hunk = (lines) => `@@ -1,0 +1,${lines.length} @@\n${lines.map((l) => `+${l
 const awsKeyFragmentA = "AKIA" + "IOSFODNN7"; // 13 chars — too short alone to match \bAKIA[0-9A-Z]{16}\b
 const awsKeyFragmentB = "EXAMPLE"; // matches no RULES pattern alone
 const fakeAwsKey = awsKeyFragmentA + awsKeyFragmentB;
-const fakeStripeKey = ["sk_live_", "abcdefghijklmnop1234567890"].join("");
+const fakeStripeKey = ["sk_live_", "abcdefghijklmnop1234567890"].join(""); // sk_live_ + 26 base62
+const fakeSendgridKey = ["SG.", "a".repeat(22), ".", "b".repeat(43)].join("");
+const fakeHuggingfaceToken = "hf_" + "a".repeat(34);
 const fakeGitlabToken = "glpat-" + "aBcDeFgHiJkLmNoPqRsT"; // 20 chars after the prefix
 const fakeNpmToken = "npm_" + "a".repeat(36);
+// A high-entropy value that matches NO format-specific rule, so it only trips the
+// generic keyword-assignment rule (built from fragments, never a contiguous literal).
+const fakeGenericValue = "aK9xQ2mZw7Ln" + "4Rv8Pt3Bh6Tc";
 
 test("scanPatch flags a single-line AWS access key with high confidence", () => {
   const findings = scanPatch("src/config.ts", hunk([`const key = "${fakeAwsKey}";`]));
@@ -47,8 +52,29 @@ test("scanPatch flags an npm token with high confidence", () => {
   assert.equal(findings[0].confidence, "high");
 });
 
-test("scanPatch flags a generic secret assignment", () => {
+test("scanPatch flags a Stripe live secret key with high confidence", () => {
   const findings = scanPatch("src/config.ts", hunk([`const apiKey = "${fakeStripeKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "stripe_secret_key");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch flags a SendGrid API key with high confidence", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const sg = "${fakeSendgridKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "sendgrid_key");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch flags a Hugging Face access token with high confidence", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const hfToken = "${fakeHuggingfaceToken}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "huggingface_token");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch flags a generic secret assignment", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const apiKey = "${fakeGenericValue}";`]));
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "generic_secret_assignment");
   assert.equal(findings[0].confidence, "medium");

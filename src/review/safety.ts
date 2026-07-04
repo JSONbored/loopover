@@ -31,6 +31,9 @@ const HARD_SECRET_KINDS = new Set([
   "google_api_key",
   "gitlab_token",
   "npm_token",
+  "stripe_secret_key",
+  "sendgrid_key",
+  "huggingface_token",
   "jwt",
   "generic_secret_assignment",
 ]);

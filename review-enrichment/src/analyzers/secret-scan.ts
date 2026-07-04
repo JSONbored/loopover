@@ -43,6 +43,24 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Stripe live secret / restricted key: `sk_live_` / `rk_live_` + >=24 base62.
+    kind: "stripe_secret_key",
+    re: /\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b/,
+    confidence: "high",
+  },
+  {
+    // SendGrid API key: `SG.` + 22-char id + `.` + 43-char secret (base64url).
+    kind: "sendgrid_key",
+    re: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/,
+    confidence: "high",
+  },
+  {
+    // Hugging Face user access token: `hf_` + 34 base62 chars.
+    kind: "huggingface_token",
+    re: /\bhf_[A-Za-z0-9]{34}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

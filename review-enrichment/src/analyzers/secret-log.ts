@@ -10,9 +10,11 @@ const MAX_FINDINGS = 25; // keep the brief bounded
 const MAX_LINE_CHARS = 2000; // skip pathologically long lines (defensive)
 
 // All matchers below are FLAT alternations (no group is itself quantified), so each is linear-time — the analyzer
-// can never be the DoS class it sits beside (#1503). Logging / stdout sinks:
+// can never be the DoS class it sits beside (#1503). Logging / stdout sinks. `dir`/`table` are included because
+// `console.dir(obj)` and `console.table(data)` dump an object/collection straight to stdout — the same egress path
+// as `console.log`, and a common way sensitive request/session data leaks into logs.
 const SINK_RE =
-  /\b(?:console|logger|log|winston|pino|bunyan)\s*\.\s*(?:log|info|warn|error|debug|trace|fatal|verbose|silly)\s*\(|\bprocess\s*\.\s*std(?:out|err)\s*\.\s*write\s*\(/;
+  /\b(?:console|logger|log|winston|pino|bunyan)\s*\.\s*(?:log|info|warn|error|debug|trace|fatal|verbose|silly|dir|table)\s*\(|\bprocess\s*\.\s*std(?:out|err)\s*\.\s*write\s*\(/;
 
 // Sensitive names, matched only against CODE (after string messages are stripped) so a hit means the value is
 // actually referenced, not merely named in a log message.

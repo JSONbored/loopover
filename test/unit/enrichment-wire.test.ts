@@ -615,6 +615,12 @@ describe("resolveReesAnalyzers", () => {
     warnSpy.mockRestore();
   });
 
+  it("accepts blameLink as a configured analyzer subset", () => {
+    expect(
+      resolveReesAnalyzers(env({ REES_ANALYZERS: "blameLink" })),
+    ).toEqual(["blameLink"]);
+  });
+
   it("accepts docCommentDrift as a configured analyzer subset", () => {
     expect(
       resolveReesAnalyzers(env({ REES_ANALYZERS: "docCommentDrift" })),
@@ -626,7 +632,7 @@ describe("resolveReesAnalyzers", () => {
       resolveReesAnalyzers(
         env({
           REES_ANALYZERS:
-            "dependency,lockfileDrift,secret,license,installScript,heavyDependency,actionPin,eol,redos,provenance,codeowners,secretLog,assetWeight,typosquat,commitSignature,iacMisconfig,nativeBuild,history,docCommentDrift",
+            "dependency,lockfileDrift,secret,license,installScript,heavyDependency,actionPin,eol,redos,provenance,codeowners,secretLog,assetWeight,typosquat,commitSignature,iacMisconfig,nativeBuild,history,docCommentDrift,duplication,churnHotspot,blameLink,approvalIntegrity,ciCheckSignals,undocumentedExport",
         }),
       ),
     ).toEqual([
@@ -649,6 +655,12 @@ describe("resolveReesAnalyzers", () => {
       "nativeBuild",
       "history",
       "docCommentDrift",
+      "duplication",
+      "churnHotspot",
+      "blameLink",
+      "approvalIntegrity",
+      "ciCheckSignals",
+      "undocumentedExport",
     ]);
   });
 

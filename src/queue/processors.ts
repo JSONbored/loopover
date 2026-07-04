@@ -1865,18 +1865,25 @@ export function precisionBreakerDowngradeDirections(planned: PlannedAgentAction[
 }
 
 /** PURE: the bounded `{actionClass, blockerClass}` label pair for the `gittensory_agent_disposition_total`
- *  counter (#terminal-outcome-audit), derived from the FINAL post-breaker plan and the gate's own blocker
+ *  counter (#terminal-outcome-audit), derived from the FINAL post-breaker plan and the gate's own blocker/hold
  *  codes -- never from free text. `actionClass` is "merge"/"close" when the final plan still contains that
  *  action, else "hold" (guardrail, owner-exemption, migration-collision, not-yet-mergeable, breaker-downgraded,
- *  or any other bucket that produces no merge/close action). `blockerClass` is the first gate-blocker code, or
- *  "none" when the gate reported none (a clean PR held for a non-blocker reason, e.g. CI still pending). */
-export function agentDispositionLabels(breakerOnPlan: PlannedAgentAction[], gateBlockerCodes: string[]): { actionClass: "merge" | "close" | "hold"; blockerClass: string } {
+ *  or any other bucket that produces no merge/close action). `blockerClass` is the first gate-blocker code
+ *  (a `failure` conclusion); when the gate reported none, it falls back to `holdReasonCode` -- the bounded
+ *  reason class for a `neutral` conclusion (guardrail_hold/oversized_pr/ai_review_inconclusive/etc., see
+ *  `neutralHoldReasonCode`) -- so a real, nameable hold is never flattened to the same "none" bucket as a
+ *  merge-ready PR waiting on nothing more than pending CI. */
+export function agentDispositionLabels(
+  breakerOnPlan: PlannedAgentAction[],
+  gateBlockerCodes: string[],
+  holdReasonCode: string | null,
+): { actionClass: "merge" | "close" | "hold"; blockerClass: string } {
   const actionClass = breakerOnPlan.some((action) => action.actionClass === "merge")
     ? "merge"
     : breakerOnPlan.some((action) => action.actionClass === "close")
       ? "close"
       : "hold";
-  return { actionClass, blockerClass: gateBlockerCodes[0] ?? "none" };
+  return { actionClass, blockerClass: gateBlockerCodes[0] ?? holdReasonCode ?? "none" };
 }
 
 /**
@@ -2400,8 +2407,11 @@ async function runAgentMaintenancePlanAndExecute(
   // BEFORE the early return so an empty breakerOnPlan (the most common hold shape: nothing was ever planned)
   // still increments. autonomy_level reports the class most directly relevant to the recorded action_class --
   // `close` for a hold, since "autonomy.close is auto but this PR still holds" is the exact symptom this
-  // metric exists to make visible without hand-querying review_audit.
-  const disposition = agentDispositionLabels(breakerOnPlan, gate.blockers.map((blocker) => blocker.code));
+  // metric exists to make visible without hand-querying review_audit. `gate.blockers` is always empty for a
+  // `neutral` conclusion (see evaluateGateCheckCore) -- neutralHoldReasonCode recovers the real, nameable hold
+  // reason from `gate.warnings` in that case, so a guardrail/size/manifest-blocked hold doesn't flatten to the
+  // same "none" bucket as a merge-ready PR waiting on nothing more than pending CI.
+  const disposition = agentDispositionLabels(breakerOnPlan, gate.blockers.map((blocker) => blocker.code), neutralHoldReasonCode(gate));
   incr("gittensory_agent_disposition_total", {
     repo: repoFullName,
     action_class: disposition.actionClass,
@@ -2467,6 +2477,10 @@ async function runAgentMaintenancePlanAndExecute(
         moderationWarningLabel: settings.moderationWarningLabel,
         moderationBannedLabel: settings.moderationBannedLabel,
       },
+      // #selfhost-ci-verification: the executor's own final pre-mutation live-CI re-check (immediately before a
+      // merge or a CI-driven close) must honor the same configured expectedCiContexts this plan was evaluated
+      // against, or the two can disagree on ciState.
+      expectedCiContexts: settings.expectedCiContexts,
     },
     breakerOnPlan,
   );

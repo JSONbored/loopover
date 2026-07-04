@@ -374,6 +374,23 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
+  // REGRESSION (gate-flagged gap, #selfhost-ci-verification): the planning pass evaluates settings.expectedCiContexts,
+  // but this final pre-mutation re-check used to always pass `undefined` for requiredContexts (fold-all mode) --
+  // a maintainer-configured repo could see the plan and its own execution-time re-check disagree on ciState.
+  it("threads ctx.expectedCiContexts into the live CI re-check's requiredContexts argument", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ expectedCiContexts: ["build", "test"] }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "sha7", expect.any(String), new Set(["build", "test"]), expect.any(String));
+  });
+
+  it("passes null (fold-all) requiredContexts when ctx.expectedCiContexts is unset — unchanged pre-existing behavior", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [merge]);
+    expect(outcomes[0]?.outcome).toBe("completed");
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "sha7", expect.any(String), null, expect.any(String));
+  });
+
   it("the live CI re-check fails open on a token-mint error — it is defense-in-depth, not the primary gate (#2128)", async () => {
     const env = createTestEnv({});
     vi.mocked(createInstallationToken).mockRejectedValueOnce(new Error("mint failed"));

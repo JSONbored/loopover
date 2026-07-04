@@ -50,6 +50,7 @@ import { ensurePullRequestLabel } from "../../src/github/labels";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../../src/github/backfill";
 import { resolveLinkedIssueHardRule } from "../../src/review/linked-issue-hard-rules";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import { decidePendingAgentAction } from "../../src/services/agent-approval-queue";
 import {
@@ -491,6 +492,25 @@ describe("agent approval queue (#779)", () => {
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
     expect(audit?.outcome).toBe("denied");
     expect(audit?.detail).toContain("live CI is no longer passing (now: failed)");
+  });
+
+  // REGRESSION (gate-flagged gap, #selfhost-ci-verification): this accept-time re-check used to always pass
+  // `undefined` for requiredContexts (fold-all mode), even for a repo with settings.expectedCiContexts
+  // configured -- so this re-check could disagree with the plan it is meant to validate.
+  it("threads the repo's settings.expectedCiContexts into the accept-time live CI re-check", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    // expectedCiContexts (#selfhost-ci-verification) is config-as-code only, resolved from the repo's focus
+    // manifest (.gittensory.yml gate.expectedCiContexts) — not a repository_settings DB column.
+    await upsertRepoFocusManifest(env, "owner/repo", { gate: { expectedCiContexts: ["build", "test"] } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+
+    expect(result.status).toBe("accepted");
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build", "test"]), expect.any(String));
   });
 
   it("accept supersedes a staged merge when live CI has since turned pending, not just failed (#2126)", async () => {

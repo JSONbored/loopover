@@ -16,7 +16,7 @@ import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
-import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../github/backfill";
+import { fetchLiveCiAggregate, mergeRequiredCiContexts, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
@@ -129,6 +129,14 @@ export type AgentActionExecutionContext = {
   // executor via getGlobalModerationConfig -- a single extra DB read only on the rare path where a
   // moderation-tracked close actually completed, not threaded through every caller.
   moderationSettings?: ModerationContextSettings | undefined;
+  // settings.expectedCiContexts (#selfhost-ci-verification), resolved by the CALLER (same "the executor has no
+  // settings access" shape as the fields above): the final pre-mutation live-CI re-verification (step 8 below)
+  // must honor the SAME configured-required-contexts view the planning pass already evaluated against, or a
+  // maintainer-configured expectedCiContexts repo could see the plan and its own execution-time re-check
+  // disagree on ciState (e.g. a still-in-progress NON-required check reading "pending" here when the plan's
+  // required-only view was already clean). Absent/undefined ⇒ fold-all mode, unchanged from before this field
+  // existed.
+  expectedCiContexts?: ReadonlyArray<string> | null | undefined;
 };
 
 export type ModerationContextSettings = {
@@ -298,7 +306,10 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     if (action.actionClass === "merge" || (action.actionClass === "close" && action.closeRequiresCiState === "failed") || isAmbiguousLegacyHeuristicClose) {
       const ciToken = await createInstallationToken(env, ctx.installationId).catch(() => undefined);
       const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
-      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, undefined, admissionKey);
+      // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
+      // configured expectedCiContexts (or null/fold-all when unset), matching the "no branch protection" arm of
+      // the planning pass's own merge (mergeRequiredCiContexts is pure and already exported for that call site).
+      const liveCi = await fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, mergeRequiredCiContexts(null, ctx.expectedCiContexts), admissionKey);
       // The planner itself only ever stages a merge when ciState === "passed" exactly (reviewGood in
       // agent-actions.ts; "pending" short-circuits to no actions at all upstream) -- the live re-check must
       // require the SAME exact state, not just "not failed". Otherwise a check that regressed to pending or

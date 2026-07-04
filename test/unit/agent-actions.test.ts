@@ -913,6 +913,20 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
     expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
   });
 
+  // The "CONCRETE_EVIDENCE_BLOCKER_CODES parity" describe block below already proves surface_lane_reject and
+  // manifest_missing_tests are still hand-typed correctly against their producers; these two exercise them
+  // through the actual planAgentMaintenanceActions call, mirroring the direct per-code test secret_leak already
+  // has (gate-flagged gap: they were previously only covered generically via Set-membership, never individually).
+  it("a registry surface-lane rejection (surface_lane_reject) is concrete evidence via gateBlockerCodes", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["surface_lane_reject"], blockerTitles: ["Registry entry rejected by its surface lane"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
+  it("missing required manifest tests (manifest_missing_tests) is concrete evidence via gateBlockerCodes", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["manifest_missing_tests"], blockerTitles: ["Manifest change is missing required tests"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+  });
+
   it("a dual-model AI CONSENSUS defect (ai_consensus_defect) is deliberately NOT concrete — two models agreeing is still a judgment call, not deterministic evidence (gate review finding, round 2)", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_consensus_defect"], blockerTitles: ["AI review found a defect"], pr: { labels: [] } }));
     expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });

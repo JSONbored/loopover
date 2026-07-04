@@ -93,30 +93,45 @@ describe("precisionBreakerDowngradeDirections — bounded-cardinality breaker-do
 
 describe("agentDispositionLabels — bounded {actionClass, blockerClass} for gittensory_agent_disposition_total (#terminal-outcome-audit)", () => {
   it("actionClass is 'merge' when the final plan still contains a merge action", () => {
-    expect(agentDispositionLabels([mergeAction], [])).toEqual({ actionClass: "merge", blockerClass: "none" });
+    expect(agentDispositionLabels([mergeAction], [], null)).toEqual({ actionClass: "merge", blockerClass: "none" });
   });
 
   it("actionClass is 'close' when the final plan still contains a close action (and no merge)", () => {
-    expect(agentDispositionLabels([heuristicClose], [])).toEqual({ actionClass: "close", blockerClass: "none" });
+    expect(agentDispositionLabels([heuristicClose], [], null)).toEqual({ actionClass: "close", blockerClass: "none" });
   });
 
   it("actionClass is 'hold' when the final plan has neither a merge nor a close action (the previously-silent bucket)", () => {
-    expect(agentDispositionLabels([changesLabel], [])).toEqual({ actionClass: "hold", blockerClass: "none" });
+    expect(agentDispositionLabels([changesLabel], [], null)).toEqual({ actionClass: "hold", blockerClass: "none" });
   });
 
   it("actionClass is 'hold' for a genuinely EMPTY plan (nothing was ever planned — the most common real hold shape)", () => {
-    expect(agentDispositionLabels([], [])).toEqual({ actionClass: "hold", blockerClass: "none" });
+    expect(agentDispositionLabels([], [], null)).toEqual({ actionClass: "hold", blockerClass: "none" });
   });
 
   it("blockerClass is the first gate-blocker code when the gate reported one", () => {
-    expect(agentDispositionLabels([], ["secret_leak", "duplicate_pr_risk"])).toEqual({ actionClass: "hold", blockerClass: "secret_leak" });
+    expect(agentDispositionLabels([], ["secret_leak", "duplicate_pr_risk"], null)).toEqual({ actionClass: "hold", blockerClass: "secret_leak" });
   });
 
   it("blockerClass is 'none' for a clean PR held for a non-blocker reason (e.g. CI still pending)", () => {
-    expect(agentDispositionLabels([], [])).toEqual({ actionClass: "hold", blockerClass: "none" });
+    expect(agentDispositionLabels([], [], null)).toEqual({ actionClass: "hold", blockerClass: "none" });
+  });
+
+  // REGRESSION (gate-flagged gap): gate.blockers is always [] for a `neutral` conclusion (guardrail/size/
+  // manifest-blocked/AI-inconclusive holds all report through `warnings`, never `blockers`), so a real, nameable
+  // hold used to flatten to blockerClass: "none" -- indistinguishable from a clean PR waiting on pending CI.
+  it("blockerClass falls back to holdReasonCode when the gate reported no blockers (a neutral-conclusion hold)", () => {
+    expect(agentDispositionLabels([], [], "guardrail_hold")).toEqual({ actionClass: "hold", blockerClass: "guardrail_hold" });
+  });
+
+  it("blockerClass prefers a real gate-blocker code over holdReasonCode when both are somehow present", () => {
+    expect(agentDispositionLabels([], ["secret_leak"], "guardrail_hold")).toEqual({ actionClass: "hold", blockerClass: "secret_leak" });
+  });
+
+  it("blockerClass is 'none' only when BOTH gateBlockerCodes and holdReasonCode are empty/null", () => {
+    expect(agentDispositionLabels([], [], null)).toEqual({ actionClass: "hold", blockerClass: "none" });
   });
 
   it("prefers 'merge' over 'close' when (hypothetically) both are present in the final plan", () => {
-    expect(agentDispositionLabels([mergeAction, heuristicClose], []).actionClass).toBe("merge");
+    expect(agentDispositionLabels([mergeAction, heuristicClose], [], null).actionClass).toBe("merge");
   });
 });

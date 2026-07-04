@@ -6,7 +6,7 @@ import { executeAgentMaintenanceActions, pendingActionToPlanned } from "./agent-
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, type PlannedAgentAction } from "../settings/agent-actions";
 import { findBlacklistEntry } from "../settings/contributor-blacklist";
 import { isCloseHoldOnly, isHoldOnly } from "../review/outcomes-wire";
-import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision } from "../github/backfill";
+import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestReviewDecision, mergeRequiredCiContexts } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
@@ -183,7 +183,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     // out of decidePendingAgentAction. A settled-rejected check is treated the same as "nothing concerning
     // found" -- exactly what each function's own internal fail-safe catch already resolves to on success.
     const [ciResult, mergeableResult, reviewResult] = await Promise.allSettled([
-      fetchLiveCiAggregate(env, pending.repoFullName, pr.headSha, token, undefined, admissionKey),
+      // mergeRequiredCiContexts(null, ...) -- no live branch-protection re-fetch here, just the maintainer's own
+      // configured expectedCiContexts (or null/fold-all when unset), so this accept-time re-check honors the
+      // same required-contexts view the original plan was evaluated against (#selfhost-ci-verification).
+      fetchLiveCiAggregate(env, pending.repoFullName, pr.headSha, token, mergeRequiredCiContexts(null, settings.expectedCiContexts), admissionKey),
       fetchLivePullRequestMergeState(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
       fetchLivePullRequestReviewDecision(env, pending.repoFullName, pending.pullNumber, token, admissionKey),
     ]);
@@ -298,6 +301,10 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // approval (close autonomy = auto_with_approval), so the accept-replay path needs this resolved the
       // same way the live webhook path does (src/queue/processors.ts) for the cancel hook to fire here too.
       contributorCapCancelCi: settings.contributorCapCancelCi ?? env.CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT === "true",
+      // #selfhost-ci-verification: the executor's OWN final pre-mutation live-CI re-check (step 8 of
+      // executeAgentMaintenanceActions) needs the same configured expectedCiContexts this accept-time
+      // re-check (above) and the original plan were both evaluated against.
+      expectedCiContexts: settings.expectedCiContexts,
     },
     plan,
   );

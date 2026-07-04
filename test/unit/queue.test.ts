@@ -19617,6 +19617,46 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="close",autonomy_level="auto",blocker_class="missing_linked_issue"} 1');
   });
 
+  // REGRESSION (gate-flagged gap, #terminal-outcome-audit): a PR that touches a guardrail-protected path (e.g.
+  // .github/workflows/**) is otherwise clean, so the gate lands on conclusion:"neutral" via guardrailHit --
+  // gate.blockers is empty for that conclusion (see evaluateGateCheckCore), so before this fix the disposition
+  // metric's blocker_class silently read "none", indistinguishable from a clean PR held on nothing more than
+  // pending CI. neutralHoldReasonCode recovers the real reason from gate.warnings instead.
+  it("a guardrail-path hold (neutral gate conclusion) records blocker_class=guardrail_hold, not 'none'", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", close: "auto" }, linkedIssueGateMode: "off" });
+    const seen = { closed: false, merged: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/61/files")) return Response.json([{ filename: ".github/workflows/ci.yml", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+  x: 1" }]);
+      if (url.includes("/pulls/61/reviews")) return Response.json([]);
+      if (url.includes("/pulls/61/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/61/merge") && method === "PUT") { seen.merged = true; return Response.json({ merged: true }); }
+      if (url.endsWith("/pulls/61") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.state === "closed") seen.closed = true;
+        return Response.json({ number: 61, state: body.state ?? "open" });
+      }
+      if (url.endsWith("/pulls/61")) return Response.json({ number: 61, state: "open", user: { login: "contributor" }, head: { sha: "conv61" }, mergeable_state: "clean" });
+      if (url.includes("/commits/conv61/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      if (url.includes("/commits/conv61/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/61/labels")) return Response.json([]);
+      if (url.includes("/issues/61/comments")) return Response.json([]);
+      return Response.json({});
+    });
+    resetMetrics();
+
+    await processJob(env, { type: "github-webhook", deliveryId: "conv-guardrail", eventName: "pull_request", payload: prPayload({ number: 61, head: { sha: "conv61" }, body: "no linked issue needed" }) });
+
+    expect(seen.merged).toBe(false);
+    expect(seen.closed).toBe(false);
+    expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="hold",autonomy_level="auto",blocker_class="guardrail_hold"} 1');
+  });
+
   it("reviewCheckMode: disabled still auto-closes a blocked contributor PR via the general heuristic-close path (#2852)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await setupAutoActionRepo(env, { autonomy: { close: "auto" }, reviewCheckMode: "disabled" });

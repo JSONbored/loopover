@@ -1515,11 +1515,14 @@ export function buildContributorFit(
 ): ContributorFit {
   const opportunities = buildContributorOpportunities(profile, repositories, issues, pullRequests, bounties, issueQualityByRepo);
   const languageSet = new Set(profile.github.topLanguages.map((language) => language.toLowerCase()));
-  const syncByRepo = new Map(repoSyncStates.map((state) => [state.repoFullName, state]));
+  // Key by lowercased repo name: sync-state repoFullName (GitHub-canonical) and the registered repo.fullName
+  // can differ in case, and every other repo-keyed map in this module folds case for the same reason. Without
+  // it, a case mismatch misses the language lookup and emits a spurious no_language_fit.
+  const syncByRepo = new Map(repoSyncStates.map((state) => [state.repoFullName.toLowerCase(), state]));
   const languageFit = repositories
     .filter((repo) => repo.isRegistered)
     .map((repo) => {
-      const language = syncByRepo.get(repo.fullName)?.primaryLanguage ?? null;
+      const language = syncByRepo.get(repo.fullName.toLowerCase())?.primaryLanguage ?? null;
       return {
         repoFullName: repo.fullName,
         language,

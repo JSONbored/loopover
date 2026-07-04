@@ -562,6 +562,31 @@ describe("v2 signal builders", () => {
     expect(fit.repoStats[0]).toMatchObject({ mergedPullRequests: 1 });
   });
 
+  it("resolves language fit when the registered repo name and the synced repo name differ in case", () => {
+    const mixedCaseRepo: RepositoryRecord = {
+      fullName: "Acme/Widget",
+      owner: "Acme",
+      name: "Widget",
+      isInstalled: true,
+      isRegistered: true,
+      isPrivate: false,
+      defaultBranch: "main",
+      registryConfig: { repo: "Acme/Widget", emissionShare: 0.01, issueDiscoveryShare: 0, labelMultipliers: {}, trustedLabelPipeline: false, maintainerCut: 0, raw: {} },
+    };
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const fit = buildContributorFit(
+      profile,
+      [mixedCaseRepo],
+      [],
+      [],
+      // GitHub-canonical lowercase repo name — differs in case from the registered repo.fullName above.
+      [{ repoFullName: "acme/widget", status: "success", sourceKind: "github", primaryLanguage: "TypeScript", openIssuesCount: 0, openPullRequestsCount: 0, recentMergedPullRequestsCount: 0, warnings: [] }],
+      [],
+    );
+    expect(fit.languageFit[0]).toMatchObject({ repoFullName: "Acme/Widget", language: "TypeScript", match: true });
+    expect(fit.findings.some((finding) => finding.code === "no_language_fit")).toBe(false);
+  });
+
   it("preflights local diffs without source content", () => {
     const result = buildLocalDiffPreflightResult(
       {

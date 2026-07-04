@@ -17,21 +17,34 @@ const MAX_NPM_VERSION_JSON_BYTES = 256 * 1024;
 const MAX_PYPI_VERSION_JSON_BYTES = 2 * 1024 * 1024;
 const INSTALL_HOOKS = ["preinstall", "install", "postinstall"];
 // Tokens in an install-lifecycle script that indicate a native toolchain runs on install.
-const NATIVE_TOOL_RE = /\b(node-gyp|node-pre-gyp|prebuild|prebuild-install|cmake-js|node-addon-api|nan)\b/;
+const NATIVE_TOOL_RE =
+  /\b(node-gyp|node-pre-gyp|prebuild|prebuild-install|cmake-js|node-addon-api|nan)\b/;
 // Tokens that mean prebuilt binaries are DOWNLOADED (compile only as a fallback for an unmatched platform/ABI).
-const PREBUILT_TOOL_RE = /\b(node-pre-gyp|prebuild-install)\b/;
+// `node-gyp-build` is included: it already matches NATIVE_TOOL_RE via `\bnode-gyp\b`, and like
+// `node-pre-gyp` / `prebuild-install` it downloads a prebuild when one exists for the platform/ABI.
+const PREBUILT_TOOL_RE = /\b(node-pre-gyp|prebuild-install|node-gyp-build)\b/;
 
-const NPM_PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/;
+const NPM_PACKAGE_RE =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/;
 const PYPI_PACKAGE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
-const SEMVER_RE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const SEMVER_RE =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 // PyPI versions are PEP 440, not semver: `1.0`, `24.1`, `1.0rc1`, `1.0.post1`, `1!2.0`. Validate only that the
 // string is non-empty and URL-path-safe (it goes into the version JSON URL) rather than imposing semver.
 const PYPI_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+!-]{0,63}$/;
 
 /** Is this dependency change one we can query a registry for (supported ecosystem + URL-safe name/version)? */
-function isQueryable(change: { ecosystem: string; package: string; to: string }): boolean {
-  if (change.ecosystem === "npm") return NPM_PACKAGE_RE.test(change.package) && SEMVER_RE.test(change.to);
-  if (change.ecosystem === "PyPI") return PYPI_PACKAGE_RE.test(change.package) && PYPI_VERSION_RE.test(change.to);
+function isQueryable(change: {
+  ecosystem: string;
+  package: string;
+  to: string;
+}): boolean {
+  if (change.ecosystem === "npm")
+    return NPM_PACKAGE_RE.test(change.package) && SEMVER_RE.test(change.to);
+  if (change.ecosystem === "PyPI")
+    return (
+      PYPI_PACKAGE_RE.test(change.package) && PYPI_VERSION_RE.test(change.to)
+    );
   return false;
 }
 
@@ -79,19 +92,21 @@ function isNpmPackumentMeta(
   const versions = (data as NpmPackumentMeta).versions;
   return Boolean(
     versions &&
-      typeof versions === "object" &&
-      hasNpmPackumentMarker(data) &&
-      !hasNpmVersionMeta(data),
+    typeof versions === "object" &&
+    hasNpmPackumentMarker(data) &&
+    !hasNpmVersionMeta(data),
   );
 }
 
-function hasNpmPackumentMarker(data: NpmVersionMeta | NpmPackumentMeta): boolean {
+function hasNpmPackumentMarker(
+  data: NpmVersionMeta | NpmPackumentMeta,
+): boolean {
   // Exact version metadata can contain a package-owned `versions` field; packuments also carry package-level markers.
   const time = (data as NpmPackumentMeta).time;
   const distTags = (data as NpmPackumentMeta)["dist-tags"];
   return Boolean(
     (time && typeof time === "object") ||
-      (distTags && typeof distTags === "object"),
+    (distTags && typeof distTags === "object"),
   );
 }
 
@@ -107,11 +122,16 @@ function npmVersionMeta(
 
 /** Pure: does this npm version compile a native addon on install? Returns a reason (+ whether a prebuilt fallback
  *  exists), or null. Signals: `gypfile: true`, or an install/preinstall/postinstall script that runs a native tool. */
-export function npmNativeBuild(meta: NpmVersionMeta): { reason: string; prebuiltFallback: boolean } | null {
-  const installScript = INSTALL_HOOKS.map((hook) => meta.scripts?.[hook] ?? "").join(" ");
+export function npmNativeBuild(
+  meta: NpmVersionMeta,
+): { reason: string; prebuiltFallback: boolean } | null {
+  const installScript = INSTALL_HOOKS.map(
+    (hook) => meta.scripts?.[hook] ?? "",
+  ).join(" ");
   const isNative = meta.gypfile === true || NATIVE_TOOL_RE.test(installScript);
   if (!isNative) return null;
-  const prebuiltFallback = Boolean(meta.binary) || PREBUILT_TOOL_RE.test(installScript);
+  const prebuiltFallback =
+    Boolean(meta.binary) || PREBUILT_TOOL_RE.test(installScript);
   const reason = prebuiltFallback
     ? "ships a native addon with prebuilt binaries — compiles from source only when no prebuilt matches the platform/Node ABI"
     : "compiles a native addon (node-gyp) on install — cold-CI build cost and a cross-platform breakage source";
@@ -177,7 +197,9 @@ export async function scanNativeBuild(
         options,
         "npm-version",
         MAX_NPM_VERSION_JSON_BYTES,
-      )) as (NpmVersionMeta | { versions?: Record<string, NpmVersionMeta> }) | null;
+      )) as
+        | (NpmVersionMeta | { versions?: Record<string, NpmVersionMeta> })
+        | null;
       const meta = npmVersionMeta(data, change.to);
       const native = meta && npmNativeBuild(meta);
       if (native) {
@@ -205,7 +227,8 @@ export async function scanNativeBuild(
           package: change.package,
           version: change.to,
           kind: "sdist-only",
-          reason: "no prebuilt wheel for this version — pip compiles from source (sdist) on install",
+          reason:
+            "no prebuilt wheel for this version — pip compiles from source (sdist) on install",
         });
       }
     }

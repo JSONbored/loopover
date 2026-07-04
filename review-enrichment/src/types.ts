@@ -420,6 +420,15 @@ export interface LooseRangeFinding {
   kind: "wildcard" | "latest" | "unbounded-gte" | "bare";
 }
 
+/** A non-inclusive term a PR added in an identifier or comment, with the suggested neutral replacement
+ *  (#2031, part of #1499). Reports the location, the matched term, and the suggestion only. */
+export interface TerminologyFinding {
+  file: string;
+  line: number;
+  term: string;
+  suggestion: string;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -453,6 +462,7 @@ export interface BriefFindings {
   testRatio?: TestRatioFinding[];
   migrationSafety?: MigrationSafetyFinding[];
   looseRange?: LooseRangeFinding[];
+  terminology?: TerminologyFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

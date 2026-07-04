@@ -456,6 +456,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("testRatio", findings.testRatio));
   lines.push(...renderDescriptorSection("migrationSafety", findings.migrationSafety));
   lines.push(...renderDescriptorSection("looseRange", findings.looseRange));
+  lines.push(...renderDescriptorSection("terminology", findings.terminology));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

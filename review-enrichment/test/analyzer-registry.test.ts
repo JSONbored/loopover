@@ -41,6 +41,7 @@ const EXPECTED_ANALYZERS = [
   "testRatio",
   "migrationSafety",
   "looseRange",
+  "terminology",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

@@ -27,6 +27,7 @@ import { scanStaleBranch } from "./stale-branch.js";
 import { scanTestRatio } from "./test-ratio.js";
 import { scanMigrationSafety } from "./migration-safety.js";
 import { scanLooseRanges } from "./loose-range.js";
+import { scanTerminology } from "./terminology.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -793,6 +794,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanLooseRanges(req, signal),
+  }),
+  descriptor({
+    name: "terminology",
+    title: "Non-inclusive terminology",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags non-inclusive terms newly added in identifiers or comments (whitelist/blacklist, master/slave) and suggests the neutral replacement.",
+      looksAt: "Added lines in any changed file, tokenized on camelCase/snake_case/word boundaries.",
+      reports: "File, line, the matched term, and the suggested replacement.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Token-based matching avoids substring false positives (masterclass/postmaster are never flagged), and URLs are skipped. The term→suggestion table is a bounded in-file policy.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Non-inclusive terminology (suggested neutral replacements)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.term)} → ${helpers.safeCodeSpan(item.suggestion)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanTerminology(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

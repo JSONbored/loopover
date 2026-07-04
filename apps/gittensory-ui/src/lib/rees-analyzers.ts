@@ -796,6 +796,29 @@ export const REES_ANALYZERS = [
         "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install.",
     },
   },
+  {
+    name: "terminology",
+    title: "Non-inclusive terminology",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags non-inclusive terms newly added in identifiers or comments (whitelist/blacklist, master/slave) and suggests the neutral replacement.",
+      looksAt:
+        "Added lines in any changed file, tokenized on camelCase/snake_case/word boundaries.",
+      reports: "File, line, the matched term, and the suggested replacement.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Token-based matching avoids substring false positives (masterclass/postmaster are never flagged), and URLs are skipped. The term→suggestion table is a bounded in-file policy.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

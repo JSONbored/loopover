@@ -933,6 +933,7 @@ describe("agent approval queue (#779)", () => {
 
   it("actionParams extracts only the field for the action class", () => {
     expect(actionParams({ actionClass: "label", requiresApproval: false, reason: "x", label: "L" })).toEqual({ label: "L" });
+    expect(actionParams({ actionClass: "label", autonomyClass: "review_state_label", requiresApproval: false, reason: "x", label: "L" })).toEqual({ autonomyClass: "review_state_label", label: "L" });
     expect(actionParams({ actionClass: "request_changes", requiresApproval: false, reason: "x", reviewBody: "B" })).toEqual({ reviewBody: "B" });
     expect(actionParams({ actionClass: "merge", requiresApproval: false, reason: "x", mergeMethod: "rebase" })).toEqual({ mergeMethod: "rebase" });
     expect(actionParams({ actionClass: "close", requiresApproval: false, reason: "x", closeComment: "C" })).toEqual({ closeComment: "C" });

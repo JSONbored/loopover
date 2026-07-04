@@ -105,6 +105,16 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(actionParams(merge)).toEqual({ mergeMethod: "squash" });
   });
 
+  it("#label-scoping: actionParams preserves autonomyClass so pending replay re-checks the original scope", () => {
+    const scopedLabel: PlannedAgentAction = { actionClass: "label", autonomyClass: "close", requiresApproval: true, reason: "blacklisted contributor", label: "slop", labelOp: "add" };
+
+    const persisted = actionParams(scopedLabel);
+    const replayed = pendingActionToPlanned({ actionClass: "label", params: persisted, reason: scopedLabel.reason });
+
+    expect(persisted).toEqual({ autonomyClass: "close", label: "slop", labelOp: "add" });
+    expect(replayed).toMatchObject({ actionClass: "label", autonomyClass: "close", requiresApproval: false, reason: "blacklisted contributor", label: "slop", labelOp: "add" });
+  });
+
   it("LIVE: executes each action class via its GitHub primitive and audits completed", async () => {
     const env = createTestEnv({});
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, requestChanges, approve, merge, close, updateBranch]);

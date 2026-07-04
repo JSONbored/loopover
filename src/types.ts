@@ -984,6 +984,10 @@ export type AutoMaintainPolicy = {
 /** The payload needed to execute a staged action when a maintainer accepts it (#779). Only the field for the
  *  action's class is set, mirroring PlannedAgentAction. */
 export type AgentPendingActionParams = {
+  // #label-scoping: a staged `label` action can be governed by a narrower purpose class (for example `close`
+  // for enforcement metadata, or `review_state_label` for disposition labels). Persist it so accept-time replay
+  // re-checks the same autonomy class that authorized staging, not the generic label dial.
+  autonomyClass?: AgentActionClass;
   label?: string;
   // Flag-then-close double-check: whether a `label` action ADDs (default/absent) or REMOVEs its label, plus an
   // optional comment posted alongside the label mutation. Persisted so a staged label action replays faithfully.

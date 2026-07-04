@@ -687,6 +687,7 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
 /** The execute-time payload of a planned action, persisted so the approval queue (#779) can run it on accept. */
 export function actionParams(action: PlannedAgentAction): AgentPendingActionParams {
   return {
+    ...(action.autonomyClass !== undefined ? { autonomyClass: action.autonomyClass } : {}),
     ...(action.label !== undefined ? { label: action.label } : {}),
     ...(action.labelOp !== undefined ? { labelOp: action.labelOp } : {}),
     ...(action.comment !== undefined ? { comment: action.comment } : {}),

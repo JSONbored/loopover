@@ -295,7 +295,10 @@ describe("buildFocusManifestGuidance", () => {
 
   it("ignores legacy blockedPaths for review guidance and manual holds", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["migrations/0099_x.sql"] });
-    expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_malformed");
+    // FULL_MANIFEST.blockedPaths includes "migrations/", which would have matched this changed path and
+    // produced a manifest_blocked_path finding before blockedPaths was retired -- proving that code is gone
+    // is the whole point of this test, not the unrelated manifest_malformed code from the test above.
+    expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_blocked_path");
     expect(guidance.publicNextSteps.join(" ")).not.toMatch(/blocked|guarded/i);
     expect(guidance.summary).toMatch(/outside the wanted areas/i);
   });

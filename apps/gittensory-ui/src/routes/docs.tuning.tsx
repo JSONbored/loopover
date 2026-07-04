@@ -248,8 +248,9 @@ function Tuning() {
         </li>
         <li>
           <code>gate.manifestPolicy</code> — when <code>block</code>, the manifest's declared policy
-          (required linked issue and test expectations) becomes an enforceable blocker. Manual-review
-          path holds use <code>settings.hardGuardrailGlobs</code> instead. Default <code>off</code>.
+          (required linked issue and test expectations) becomes an enforceable blocker.
+          Manual-review path holds use <code>settings.hardGuardrailGlobs</code> instead. Default{" "}
+          <code>off</code>.
         </li>
         <li>
           <code>gate.firstTimeContributorGrace</code> — when <code>true</code>, softens a would-be

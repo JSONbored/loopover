@@ -59,18 +59,25 @@ function recognizedFieldsFor(text: string | null | undefined): string[] {
   );
 }
 
+// Fields retired from TOP_LEVEL_FIELDS that still warrant a migration-specific warning (rather than the
+// generic "unknown field" message) pointing operators at their replacement mechanism.
+const RETIRED_FIELD_MIGRATION_WARNINGS: Record<string, string> = {
+  blockedPaths: "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
+};
+
 function unknownTopLevelWarnings(text: string | null | undefined): string[] {
   const raw = text ?? "";
   const trimmed = raw.trim();
   if (!trimmed || isOversize(raw)) return [];
   const parsed = parseTopLevelObject(trimmed);
   if (parsed === null) return [];
-  const unknown = Object.keys(parsed)
-    .filter((key) => !TOP_LEVEL_FIELD_SET.has(key))
-    .map(formatFieldName);
-  return unknown.length > 0
-    ? [`Manifest contains unknown top-level field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`]
-    : [];
+  const keys = Object.keys(parsed).filter((key) => !TOP_LEVEL_FIELD_SET.has(key));
+  const retiredWarnings = keys.filter((key) => key in RETIRED_FIELD_MIGRATION_WARNINGS).map((key) => RETIRED_FIELD_MIGRATION_WARNINGS[key]!);
+  const unknown = keys.filter((key) => !(key in RETIRED_FIELD_MIGRATION_WARNINGS)).map(formatFieldName);
+  return [
+    ...retiredWarnings,
+    ...(unknown.length > 0 ? [`Manifest contains unknown top-level field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`] : []),
+  ];
 }
 
 function parseCanonicalTopLevelObject(text: string | null | undefined): Record<string, unknown> | null {

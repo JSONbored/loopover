@@ -55,12 +55,21 @@ contentLane:
     expect(JSON.stringify(result)).not.toContain("operator-only");
   });
 
-  it("flags legacy blockedPaths as an unknown top-level field", () => {
+  it("flags legacy blockedPaths with a migration-specific warning, not the generic unknown-field message", () => {
     const result = lintManifestText("wantedPaths: [src/]\nblockedPaths: [dist/]\n");
 
     expect(result.ok).toBe(false);
     expect(result.recognizedFields).toEqual(["wantedPaths"]);
-    expect(result.warnings).toEqual(["Manifest contains unknown top-level field: blockedPaths."]);
+    expect(result.warnings).toEqual(["blockedPaths is retired; use settings.hardGuardrailGlobs for path holds."]);
+  });
+
+  it("flags legacy blockedPaths AND an unrelated unknown field with separate, distinct warnings", () => {
+    const result = lintManifestText("wantedPaths: [src/]\nblockedPaths: [dist/]\nunknownSecretKey: [x]\n");
+
+    expect(result.warnings).toEqual([
+      "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
+      "Manifest contains unknown top-level field: unknownSecretKey.",
+    ]);
   });
 
   it("flags empty or fieldless manifests as not ok", () => {

@@ -230,8 +230,8 @@ function HowReviewsWork() {
         </li>
         <li>
           <code>guardrail_hold</code> — the PR touches a path listed in{" "}
-          <code>settings.hardGuardrailGlobs</code>. This is a manual-review hold, not an
-          auto-close reason.
+          <code>settings.hardGuardrailGlobs</code>. This is a manual-review hold, not an auto-close
+          reason.
         </li>
         <li>
           <code>manifest_missing_tests</code> — code changed but the expected test paths (

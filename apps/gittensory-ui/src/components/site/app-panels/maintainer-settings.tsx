@@ -766,9 +766,9 @@ function FocusManifestEditor({ base }: { base: string | null }) {
         <FileCog className="size-4" /> Focus manifest (config-as-code)
       </h3>
       <p className="mt-1 text-token-2xs text-muted-foreground">
-        The repo&apos;s maintainer focus policy as JSON — wanted paths, linked-issue policy,
-        test expectations, and gate overrides. Mirrors{" "}
-        <code className="font-mono">.gittensory.yml</code>.
+        The repo&apos;s maintainer focus policy as JSON — wanted paths, linked-issue policy, test
+        expectations, and gate overrides. Mirrors <code className="font-mono">.gittensory.yml</code>
+        .
       </p>
       <textarea
         value={loading ? "Loading…" : text}

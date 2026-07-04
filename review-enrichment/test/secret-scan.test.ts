@@ -396,3 +396,49 @@ test("scanPatch does not flag a Mailgun-shaped key with an invalid body characte
   const findings = scanPatch("src/config.ts", hunk([`const mg = "${invalid}";`]));
   assert.equal(findings.length, 0);
 });
+
+test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
+  const cases = [
+    ["google_oauth_client_secret", "GOCSPX-" + b62(28)],
+    ["stripe_webhook_secret", "whsec_" + b62(32)],
+    ["databricks_pat", "dapi" + hex(32)],
+    ["telegram_bot_token", "1234567890" + ":" + b62(35)],
+    ["rubygems_api_key", "rubygems_" + hex(48)],
+    ["terraform_cloud_token", b62(14) + ".atlasv1." + b62(60)],
+    ["planetscale_password", "pscale_pw_" + b62(32)],
+    ["planetscale_token", "pscale_tkn_" + b62(32)],
+    ["prefect_api_key", "pnu_" + b62(36)],
+    ["vault_service_token", "hvs." + b62(24)],
+    ["mailchimp_api_key", hex(32) + "-us12"],
+    ["slack_webhook_url", "https://hooks.slack.com/services/T" + b62(8) + "/B" + b62(8) + "/" + b62(24)],
+    ["airtable_pat", "pat" + b62(14) + "." + hex(64)],
+    ["gitlab_pipeline_trigger_token", "glptt-" + hex(40)],
+    ["gitlab_runner_token", "glrt-" + b62(20)],
+    ["shippo_api_token", "shippo_live_" + hex(40)],
+    ["flyio_token", "fo1_" + b62(43)],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-miss variants of the new SaaS/cloud credential formats", () => {
+  // One char short of the fixed length (or missing a required disambiguator) must produce no finding.
+  const nearMisses = [
+    "GOCSPX-" + b62(27),
+    "dapi" + hex(31),
+    "rubygems_" + hex(47),
+    "pnu_" + b62(35),
+    hex(32) + "-us", // Mailchimp shape without the datacenter digits
+    "glptt-" + hex(39),
+    "fo1_" + b62(42),
+    "airtable_" + b62(20), // no Airtable pat<id>.<hex> shape
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

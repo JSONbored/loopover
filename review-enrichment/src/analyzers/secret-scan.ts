@@ -170,6 +170,108 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
+    kind: "google_oauth_client_secret",
+    re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,
+    confidence: "high",
+  },
+  {
+    // Stripe webhook signing secret: `whsec_` + >=32 base62.
+    kind: "stripe_webhook_secret",
+    re: /\bwhsec_[A-Za-z0-9]{32,}\b/,
+    confidence: "high",
+  },
+  {
+    // Databricks personal access token: `dapi` + 32 hex.
+    kind: "databricks_pat",
+    re: /\bdapi[0-9a-f]{32}\b/,
+    confidence: "high",
+  },
+  {
+    // Telegram bot token: an 8-10 digit bot id, `:`, then 35 base64url chars.
+    kind: "telegram_bot_token",
+    re: /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/,
+    confidence: "high",
+  },
+  {
+    // RubyGems API key: `rubygems_` + 48 hex.
+    kind: "rubygems_api_key",
+    re: /\brubygems_[a-f0-9]{48}\b/,
+    confidence: "high",
+  },
+  {
+    // Terraform Cloud/Enterprise API token: 14 base62 + the `.atlasv1.` marker + >=60 base62/._- body.
+    kind: "terraform_cloud_token",
+    re: /\b[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9._-]{60,}/,
+    confidence: "high",
+  },
+  {
+    // PlanetScale database password: `pscale_pw_` + >=32 base62/._- (may end in `-`/`_`/`.`, so lookahead terminator).
+    kind: "planetscale_password",
+    re: /\bpscale_pw_[A-Za-z0-9._-]{32,}(?![A-Za-z0-9._-])/,
+    confidence: "high",
+  },
+  {
+    // PlanetScale service token: `pscale_tkn_` + >=32 base62/._- (lookahead terminator).
+    kind: "planetscale_token",
+    re: /\bpscale_tkn_[A-Za-z0-9._-]{32,}(?![A-Za-z0-9._-])/,
+    confidence: "high",
+  },
+  {
+    // Prefect Cloud API key: `pnu_` + 36 base62.
+    kind: "prefect_api_key",
+    re: /\bpnu_[A-Za-z0-9]{36}\b/,
+    confidence: "high",
+  },
+  {
+    // HashiCorp Vault service (`hvs.`) or batch (`hvb.`) token + >=24 base64url (lookahead terminator).
+    kind: "vault_service_token",
+    re: /\bhv[sb]\.[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Mailchimp API key: 32 hex + `-us` + a 1-2 digit datacenter suffix (the suffix disambiguates it from a bare hash).
+    kind: "mailchimp_api_key",
+    re: /\b[0-9a-f]{32}-us[0-9]{1,2}\b/,
+    confidence: "high",
+  },
+  {
+    // Slack incoming-webhook URL (hooks.slack.com/services/T…/B…/…): a postable message-egress secret endpoint.
+    kind: "slack_webhook_url",
+    re: /\bhttps:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_]{8,}\/B[A-Za-z0-9_]{8,}\/[A-Za-z0-9_]{24}\b/,
+    confidence: "high",
+  },
+  {
+    // Airtable personal access token: `pat` + 14 base62 + `.` + 64 hex.
+    kind: "airtable_pat",
+    re: /\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // GitLab pipeline trigger token: `glptt-` + 40 hex.
+    kind: "gitlab_pipeline_trigger_token",
+    re: /\bglptt-[0-9a-f]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // GitLab runner authentication token: `glrt-` + 20 base64url (distinct from the `glpat-` personal token above).
+    kind: "gitlab_runner_token",
+    re: /\bglrt-[0-9A-Za-z_-]{20}\b/,
+    confidence: "high",
+  },
+  {
+    // Shippo API token: `shippo_live_`/`shippo_test_` + 40 hex.
+    kind: "shippo_api_token",
+    re: /\bshippo_(?:live|test)_[a-f0-9]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // Fly.io API token: `fo1_` + 43 base64url.
+    kind: "flyio_token",
+    re: /\bfo1_[A-Za-z0-9_-]{43}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

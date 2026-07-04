@@ -96,7 +96,10 @@ export function scanPatchForIacMisconfig(
     // Skip pre-hunk preamble; inside a hunk `+++x`/`+++ x` is added content, not a header.
     if (!inHunk) continue;
     if (!line.startsWith("+")) {
-      if (!line.startsWith("-")) newLine++;
+      // A `\ No newline at end of file` marker is not a content line, so it must not advance the
+      // new-file line counter — otherwise every finding after it is reported one line too high. Mirrors
+      // the sibling analyzers (e.g. undocumented-export.ts) that already skip `\`-prefixed markers.
+      if (!line.startsWith("-") && !line.startsWith("\\")) newLine++;
       continue;
     }
 

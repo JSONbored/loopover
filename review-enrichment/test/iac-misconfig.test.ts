@@ -151,3 +151,23 @@ test("scanPatchForIacMisconfig aborts when the signal is aborted", () => {
     /analyzer_aborted/,
   );
 });
+
+test("scanPatchForIacMisconfig keeps line numbers correct across a no-newline marker", () => {
+  // A dotenv file with no trailing newline (very common) gets a `\ No newline at end of file` marker
+  // mid-hunk. The marker must not shift the new-file line counter, so NODE_TLS_REJECT_UNAUTHORIZED=0 is
+  // reported at line 2, not line 3.
+  const findings = scanPatchForIacMisconfig(
+    ".env.production",
+    [
+      "@@ -1,1 +1,2 @@",
+      "-FOO=bar",
+      "\\ No newline at end of file",
+      "+FOO=bar",
+      "+NODE_TLS_REJECT_UNAUTHORIZED=0",
+      "\\ No newline at end of file",
+    ].join("\n"),
+  );
+  assert.deepEqual(findings, [
+    { file: ".env.production", line: 2, kind: "tls-verification-disabled" },
+  ]);
+});

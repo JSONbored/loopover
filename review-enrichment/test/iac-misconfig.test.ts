@@ -86,6 +86,52 @@ test("scanPatchForIacMisconfig does not flag NODE_TLS_REJECT_UNAUTHORIZED when T
   );
 });
 
+test("scanPatchForIacMisconfig flags PYTHONHTTPSVERIFY=0 and GIT_SSL_NO_VERIFY truthy as disabled TLS", () => {
+  // Canonical per-runtime env vars that globally disable TLS certificate verification.
+  const python = scanPatchForIacMisconfig(
+    ".env",
+    ["@@ -1,0 +2,1 @@", "+PYTHONHTTPSVERIFY=0"].join("\n"),
+  );
+  assert.deepEqual(python, [
+    { file: ".env", line: 2, kind: "tls-verification-disabled" },
+  ]);
+
+  const git = scanPatchForIacMisconfig(
+    "Dockerfile",
+    ["@@ -1,0 +4,1 @@", "+ENV GIT_SSL_NO_VERIFY true"].join("\n"),
+  );
+  assert.deepEqual(git, [
+    { file: "Dockerfile", line: 4, kind: "tls-verification-disabled" },
+  ]);
+
+  const gitNumeric = scanPatchForIacMisconfig(
+    "ci.yaml",
+    ["@@ -1,0 +6,1 @@", '+  GIT_SSL_NO_VERIFY: "1"'].join("\n"),
+  );
+  assert.deepEqual(gitNumeric, [
+    { file: "ci.yaml", line: 6, kind: "tls-verification-disabled" },
+  ]);
+});
+
+test("scanPatchForIacMisconfig does not flag Python/Git TLS env vars when verification stays on", () => {
+  // Opposite polarities: PYTHONHTTPSVERIFY=1 keeps verification on; GIT_SSL_NO_VERIFY=false/0 means "verify".
+  assert.deepEqual(
+    scanPatchForIacMisconfig(".env", "@@ -1,0 +1,1 @@\n+PYTHONHTTPSVERIFY=1"),
+    [],
+  );
+  assert.deepEqual(
+    scanPatchForIacMisconfig(
+      ".env",
+      "@@ -1,0 +1,1 @@\n+GIT_SSL_NO_VERIFY=false",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    scanPatchForIacMisconfig(".env", "@@ -1,0 +1,1 @@\n+GIT_SSL_NO_VERIFY=0"),
+    [],
+  );
+});
+
 test("scanPatchForIacMisconfig ignores unchanged lines and honors maxFindings", () => {
   assert.deepEqual(
     scanPatchForIacMisconfig(

@@ -221,7 +221,19 @@ export interface IacMisconfigFinding {
     | "insecure-cookie"
     | "tls-verification-disabled"
     | "prod-debug"
-    | "hardcoded-service-url";
+    | "hardcoded-service-url"
+    | "privileged-container"
+    | "privilege-escalation"
+    | "host-pid-namespace"
+    | "host-ipc-namespace"
+    | "run-as-root"
+    | "run-as-root-uid"
+    | "writable-root-filesystem"
+    | "unmasked-proc-mount"
+    | "unencrypted-storage"
+    | "publicly-accessible-database"
+    | "imdsv1-allowed"
+    | "world-writable-permissions";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
@@ -333,6 +345,14 @@ export type CiCheckSignalFinding =
   | { checkName: string; kind: "retried-after-failure"; failedAttempts: number }
   | { checkName: string; kind: "long-running-check"; durationMinutes: number };
 
+/** A PR whose head is significantly behind the repo's CURRENT default branch, read from structured GitHub repo
+ *  (`default_branch`) and compare (`behind_by`) API fields only — never diff/file content. A branch far behind
+ *  is more likely to hide a subtle semantic conflict a clean `mergeable` check alone would miss. */
+export interface StaleBranchFinding {
+  defaultBranch: string;
+  behindBy: number;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -360,6 +380,7 @@ export interface BriefFindings {
   approvalIntegrity?: ApprovalIntegrityFinding[];
   ciCheckSignals?: CiCheckSignalFinding[];
   undocumentedExport?: UndocumentedExportFinding[];
+  staleBranch?: StaleBranchFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

@@ -626,7 +626,7 @@ describe("resolveReesAnalyzers", () => {
       resolveReesAnalyzers(
         env({
           REES_ANALYZERS:
-            "dependency,lockfileDrift,secret,license,installScript,heavyDependency,actionPin,eol,redos,provenance,codeowners,secretLog,assetWeight,typosquat,commitSignature,iacMisconfig,nativeBuild,history,docCommentDrift,duplication,churnHotspot,blameLink,approvalIntegrity,ciCheckSignals,undocumentedExport",
+            "dependency,lockfileDrift,secret,license,installScript,heavyDependency,actionPin,eol,redos,provenance,codeowners,secretLog,assetWeight,typosquat,commitSignature,iacMisconfig,nativeBuild,history,docCommentDrift,duplication,churnHotspot,blameLink,approvalIntegrity,ciCheckSignals,undocumentedExport,staleBranch",
         }),
       ),
     ).toEqual([
@@ -655,6 +655,7 @@ describe("resolveReesAnalyzers", () => {
       "approvalIntegrity",
       "ciCheckSignals",
       "undocumentedExport",
+      "staleBranch",
     ]);
   });
 

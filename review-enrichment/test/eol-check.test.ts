@@ -44,6 +44,17 @@ test("extractVersionPins reads .nvmrc and go.mod pins", () => {
   ]);
 });
 
+test("extractVersionPins reads go.mod toolchain directives", () => {
+  // Go 1.21+ `toolchain go1.22.0` pins the toolchain independently of the `go` language line.
+  assert.deepEqual(
+    extractVersionPins([added("go.mod", "go 1.21", "toolchain go1.22.0")]),
+    [
+      { file: "go.mod", product: "go", version: "1.21" },
+      { file: "go.mod", product: "go", version: "1.22.0" },
+    ],
+  );
+});
+
 test("extractVersionPins reads .node-version pins like .nvmrc", () => {
   // nodenv/asdf use `.node-version` with the same leading-version format as `.nvmrc`.
   assert.deepEqual(extractVersionPins([added(".node-version", "20.11.0")]), [
@@ -69,6 +80,27 @@ test("extractVersionPins reads .php-version pins as PHP", () => {
   // phpenv/asdf use `.php-version` with the same leading-version format.
   assert.deepEqual(extractVersionPins([added(".php-version", "8.2.0")]), [
     { file: ".php-version", product: "php", version: "8.2.0" },
+  ]);
+});
+
+test("extractVersionPins reads .go-version pins as Go", () => {
+  // goenv/asdf use `.go-version` with the same leading-version format.
+  assert.deepEqual(extractVersionPins([added(".go-version", "1.22.0")]), [
+    { file: ".go-version", product: "go", version: "1.22.0" },
+  ]);
+});
+
+test("extractVersionPins reads .rust-version pins as Rust", () => {
+  // rustup/asdf use `.rust-version` with the same leading-version format.
+  assert.deepEqual(extractVersionPins([added(".rust-version", "1.75.0")]), [
+    { file: ".rust-version", product: "rust", version: "1.75.0" },
+  ]);
+});
+
+test("extractVersionPins reads .java-version pins as oracle-jdk", () => {
+  // jenv/asdf use `.java-version`; endoflife.date tracks Oracle JDK release cycles.
+  assert.deepEqual(extractVersionPins([added(".java-version", "21.0.2")]), [
+    { file: ".java-version", product: "oracle-jdk", version: "21.0.2" },
   ]);
 });
 

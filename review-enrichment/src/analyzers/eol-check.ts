@@ -104,10 +104,28 @@ export function extractVersionPins(
         // phpenv/asdf pin file — same leading-version format, product is PHP.
         const version = leadingVersion(line);
         if (version) pins.push({ file: file.path, product: "php", version });
+      } else if (base === ".go-version") {
+        // goenv/asdf pin file — same leading-version format, product is Go.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "go", version });
+      } else if (base === ".rust-version") {
+        // rustup/asdf pin file — same leading-version format, product is Rust.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "rust", version });
+      } else if (base === ".java-version") {
+        // jenv/asdf pin file — same leading-version format; endoflife.date slug is `oracle-jdk`.
+        const version = leadingVersion(line);
+        if (version)
+          pins.push({ file: file.path, product: "oracle-jdk", version });
       } else if (base === "go.mod") {
+        // Module language version (`go 1.21`) and optional toolchain pin (`toolchain go1.22.0`).
         const match = /^go\s+(\d+\.\d+)/.exec(line);
         if (match)
           pins.push({ file: file.path, product: "go", version: match[1]! });
+        // `toolchain go1.22.0` — no space after `go`; capture full leading version (may include patch).
+        const toolchain = /^toolchain\s+go(\d+(?:\.\d+)*)/.exec(line);
+        if (toolchain)
+          pins.push({ file: file.path, product: "go", version: toolchain[1]! });
       }
     }
   }

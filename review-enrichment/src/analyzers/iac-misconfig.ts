@@ -19,12 +19,35 @@ const PUBLIC_BUCKET_RE =
 const SAME_SITE_NONE_RE = /\bsameSite\b[\s"'=:,-]*["']?none["']?\b/i;
 const SECURE_FALSE_RE = /\bsecure\b[\s"'=:,-]*false\b/i;
 const TLS_DISABLED_RE =
-  /\brejectUnauthorized\b[\s"'=:,-]*false\b|\bverify\s*=\s*False\b|\bssl_verify\b[\s"'=:,-]*false\b|\binsecureSkipTLSVerify\b[\s"'=:,-]*true\b|\bskipTLSVerify\b[\s"'=:,-]*true\b|\bNODE_TLS_REJECT_UNAUTHORIZED\b[\s"'=:,-]*["']?0\b/i;
+  /\brejectUnauthorized\b[\s"'=:,-]*false\b|\bverify\s*=\s*False\b|\bssl_verify\b[\s"'=:,-]*false\b|\binsecureSkipTLSVerify\b[\s"'=:,-]*true\b|\bskipTLSVerify\b[\s"'=:,-]*true\b|\bNODE_TLS_REJECT_UNAUTHORIZED\b[\s"'=:,-]*["']?0\b|\bPYTHONHTTPSVERIFY\b[\s"'=:,-]*["']?0\b/i;
 const PROD_RE =
   /\b(?:NODE_ENV|ENVIRONMENT|APP_ENV)\b[\s"'=:,-]*production\b|\bproduction\s*:/i;
 const DEBUG_TRUE_RE = /\bdebug\b[\s"'=:,-]*true\b|\bDEBUG\b[\s"'=:,-]*true\b/i;
 const HARDCODED_URL_RE =
   /\b(?:[A-Z][A-Z0-9_]*(?:URL|URI|ENDPOINT)|(?:api|base|service|backend|frontend|server|webhook)[_-]?(?:url|uri|endpoint)|baseUrl)\b[\s"'=:,-]*https?:\/\/[^\s"',#}]+/i;
+
+// Container securityContext / Kubernetes Pod Security Standards (restricted profile). Each matches a single
+// `key: <insecure-value>` line; the secure value (e.g. `privileged: false`) never matches. `\bprivileged\b`
+// deliberately does NOT fire on the safe `unprivileged: true` (word boundary fails after the `un` prefix).
+const PRIVILEGED_RE = /\bprivileged\b[\s"'=:,-]*true\b/i;
+const PRIVILEGE_ESCALATION_RE = /\ballowPrivilegeEscalation\b[\s"'=:,-]*true\b/i;
+const HOST_PID_RE = /\bhostPID\b[\s"'=:,-]*true\b/i;
+const HOST_IPC_RE = /\bhostIPC\b[\s"'=:,-]*true\b/i;
+const RUN_AS_ROOT_RE = /\brunAsNonRoot\b[\s"'=:,-]*false\b/i;
+// `runAsUser: 0` is root. The separators are zero-width-optional, so a non-zero uid like `runAsUser: 1000`
+// cannot match (the value must begin with a `0` immediately after the separators).
+const RUN_AS_UID_ZERO_RE = /\brunAsUser\b[\s"'=:,-]*0\b/i;
+const WRITABLE_ROOTFS_RE = /\breadOnlyRootFilesystem\b[\s"'=:,-]*false\b/i;
+const UNMASKED_PROC_RE = /\bprocMount\b[\s"'=:,-]*["']?Unmasked\b/i;
+
+// Cloud / Terraform resource hardening. `\b(?:storage_encrypted|encrypted)\b` matches the standalone
+// `encrypted` key and the `storage_encrypted` key, but never the `_encrypted` tail of an unrelated identifier.
+const UNENCRYPTED_STORAGE_RE = /\b(?:storage_encrypted|encrypted)\b[\s"'=:,-]*false\b/i;
+const PUBLIC_DB_RE = /\bpublicly_accessible\b[\s"'=:,-]*true\b/i;
+const IMDS_V1_RE = /\bhttp_tokens\b[\s"'=:,-]*["']?optional\b/i;
+// World-writable `0777`/`777` via `chmod`, a `mode:`/`file_mode` assignment. A leading sticky/setuid digit
+// (`chmod 1777`) does not match because the value must begin at the optional `0` then `777`.
+const WORLD_WRITABLE_RE = /\b(?:chmod\s+|(?:file_)?mode[\s"'=:,-]*["']?)0?777\b/i;
 
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
@@ -194,6 +217,99 @@ export function scanPatchForIacMisconfig(
         path,
         newLine,
         "hardcoded-service-url",
+        maxFindings,
+      )
+    ) {
+      return findings;
+    }
+    if (
+      PRIVILEGED_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "privileged-container", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      PRIVILEGE_ESCALATION_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "privilege-escalation", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HOST_PID_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "host-pid-namespace", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HOST_IPC_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "host-ipc-namespace", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      RUN_AS_ROOT_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "run-as-root", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      RUN_AS_UID_ZERO_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "run-as-root-uid", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      WRITABLE_ROOTFS_RE.test(body) &&
+      pushFinding(
+        findings,
+        seen,
+        path,
+        newLine,
+        "writable-root-filesystem",
+        maxFindings,
+      )
+    ) {
+      return findings;
+    }
+    if (
+      UNMASKED_PROC_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "unmasked-proc-mount", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      UNENCRYPTED_STORAGE_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "unencrypted-storage", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      PUBLIC_DB_RE.test(body) &&
+      pushFinding(
+        findings,
+        seen,
+        path,
+        newLine,
+        "publicly-accessible-database",
+        maxFindings,
+      )
+    ) {
+      return findings;
+    }
+    if (
+      IMDS_V1_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "imdsv1-allowed", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      WORLD_WRITABLE_RE.test(body) &&
+      pushFinding(
+        findings,
+        seen,
+        path,
+        newLine,
+        "world-writable-permissions",
         maxFindings,
       )
     ) {

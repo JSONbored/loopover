@@ -51,9 +51,10 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
-    // Stripe live secret / restricted key: `sk_live_` / `rk_live_` + >=24 base62.
+    // Stripe secret / restricted key: `sk_`/`rk_` + `live` or `test` + >=24 base62.
+    // Test-mode keys (`sk_test_` / `rk_test_`) are still credentials and must not be committed.
     kind: "stripe_secret_key",
-    re: /\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b/,
+    re: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{24,}\b/,
     confidence: "high",
   },
   {
@@ -76,6 +77,13 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // OpenAI project-scoped API key: `sk-proj-` + base64url body. Distinct from Anthropic `sk-ant-`
+    // and Stripe `sk_live_`/`sk_test_`. Negative-lookahead terminator for bodies ending in `-`/`_`.
+    kind: "openai_project_key",
+    re: /\bsk-proj-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // DigitalOcean personal access token: `dop_v1_` + 64 hex chars (case-insensitive).
     kind: "digitalocean_token",
     re: /\bdop_v1_[a-f0-9]{64}\b/i,
@@ -85,6 +93,80 @@ const RULES: Rule[] = [
     // Shopify Admin API access token (`shpat_`) or app shared secret (`shpss_`) + 32 hex chars.
     kind: "shopify_token",
     re: /\bshp(?:at|ss)_[a-f0-9]{32}\b/i,
+    confidence: "high",
+  },
+  {
+    // Postman API key: `PMAK-` + 24 hex + `-` + 34 hex.
+    kind: "postman_api_key",
+    re: /\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}\b/,
+    confidence: "high",
+  },
+  {
+    // Doppler personal token: `dp.pt.` + 43 base62.
+    kind: "doppler_token",
+    re: /\bdp\.pt\.[A-Za-z0-9]{43}\b/,
+    confidence: "high",
+  },
+  {
+    // Linear API key: `lin_api_` + 40 base62.
+    kind: "linear_api_key",
+    re: /\blin_api_[A-Za-z0-9]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // New Relic user API key: `NRAK-` + 27 base62 (distinct from the NRJS-/NRII- license/ingest keys).
+    kind: "newrelic_user_key",
+    re: /\bNRAK-[A-Za-z0-9]{27}\b/,
+    confidence: "high",
+  },
+  {
+    // PyPI upload token: `pypi-` + the fixed `AgEIcHlwaS5vcmc` macaroon marker + base64url body. No
+    // trailing \b — the base64url body may end in `-`/`_`.
+    kind: "pypi_upload_token",
+    re: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}/,
+    confidence: "high",
+  },
+  {
+    // Grafana service-account token: `glsa_` + 32 base62 + `_` + 8-hex checksum.
+    kind: "grafana_service_account_token",
+    re: /\bglsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8}\b/,
+    confidence: "high",
+  },
+  {
+    // Dynatrace token: `dt0c01.` + 24 + `.` + 64, uppercase-alnum, three-part fixed shape.
+    kind: "dynatrace_token",
+    re: /\bdt0c01\.[A-Z0-9]{24}\.[A-Z0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // age (Filippo Valsorda) secret key: `AGE-SECRET-KEY-1` + 58 uppercase Bech32 chars.
+    kind: "age_secret_key",
+    re: /\bAGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}\b/,
+    confidence: "high",
+  },
+  {
+    // Clojars deploy token: `CLOJARS_` + 60 base62.
+    kind: "clojars_token",
+    re: /\bCLOJARS_[A-Za-z0-9]{60}\b/,
+    confidence: "high",
+  },
+  {
+    // Square access/OAuth token: `sq0` + 3-letter type + `-` + 22-43 base64url. Lookahead terminator
+    // since the body can end in `-`/`_`.
+    kind: "square_token",
+    re: /\bsq0[a-z]{3}-[A-Za-z0-9_-]{22,43}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Notion internal integration secret: `secret_` + 43 base62 chars (50 chars total).
+    kind: "notion_integration_secret",
+    re: /\bsecret_[A-Za-z0-9]{43}\b/,
+    confidence: "high",
+  },
+  {
+    // Mailgun private API key: `key-` + 32 alphanumeric chars.
+    kind: "mailgun_api_key",
+    re: /\bkey-[0-9A-Za-z]{32}\b/,
     confidence: "high",
   },
   {

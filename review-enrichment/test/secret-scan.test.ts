@@ -19,6 +19,8 @@ const fakeSendgridKey = ["SG.", "a".repeat(22), ".", "b".repeat(43)].join("");
 const fakeHuggingfaceToken = "hf_" + "a".repeat(34);
 // Anthropic keys are `sk-ant-` + a long base64url body (fragments only — never a contiguous literal in source).
 const fakeAnthropicKey = ["sk-ant-", "api03-", "a".repeat(20)].join("");
+// OpenAI project-scoped key: `sk-proj-` + base64url body (fragments only — never a contiguous literal).
+const fakeOpenAiProjKey = ["sk-proj-", "T3BlbkFJ", "a".repeat(20)].join("");
 const fakeGitlabToken = "glpat-" + "aBcDeFgHiJkLmNoPqRsT"; // 20 chars after the prefix
 const fakeNpmToken = "npm_" + "a".repeat(36);
 // GitHub fine-grained PAT: `github_pat_` + 82 base62/underscore chars (fragments only — never a contiguous
@@ -276,4 +278,121 @@ test("scanPatch does not flag a truncated Shopify token", () => {
   // Body must be exactly 32 hex chars.
   const short = ["shpat_", "a".repeat(16)].join("");
   assert.equal(scanPatch("src/config.ts", hunk([`const shop = "${short}";`])).length, 0);
+});
+
+// Fixtures assembled at run time (never a contiguous secret literal in source) so push protection stays quiet.
+// `const c = "..."` uses a variable name that the generic keyword-assignment rule ignores, so each string can
+// only match its own format-specific rule — the assertion of exactly one finding is meaningful.
+const hex = (n) => "a".repeat(n);
+const b62 = (n) => "A".repeat(n);
+
+test("scanPatch flags additional high-confidence cloud/SaaS credential formats", () => {
+  const cases = [
+    ["postman_api_key", "PMAK-" + hex(24) + "-" + hex(34)],
+    ["doppler_token", "dp.pt." + b62(43)],
+    ["linear_api_key", "lin_api_" + b62(40)],
+    ["newrelic_user_key", "NRAK-" + b62(27)],
+    ["pypi_upload_token", "pypi-" + "AgEIcHlwaS5vcmc" + b62(50)],
+    ["grafana_service_account_token", "glsa_" + b62(32) + "_" + hex(8)],
+    ["dynatrace_token", "dt0c01." + b62(24) + "." + b62(64)],
+    ["age_secret_key", "AGE-SECRET-KEY-1" + "Q".repeat(58)],
+    ["clojars_token", "CLOJARS_" + b62(60)],
+    ["square_token", "sq0atp-" + hex(22)],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-miss tokens with the wrong length as the new credential kinds", () => {
+  // Each is one char short of its rule's fixed length, plus a bare 40-hex blob (a SHA-1-shaped value that
+  // must NOT be mistaken for lin_api_'s 40-char body without the prefix).
+  const nearMisses = [
+    "lin_api_" + b62(39),
+    "CLOJARS_" + b62(59),
+    "NRAK-" + b62(26),
+    "PMAK-" + hex(24) + "-" + hex(33),
+    hex(40),
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});
+
+test("scanPatch flags Stripe test-mode secret and restricted keys", () => {
+  // `sk_test_` / `rk_test_` are still credentials — the prior rule only matched `*_live_*`.
+  const skTest = ["sk_test_", "abcdefghijklmnop1234567890"].join("");
+  const rkTest = ["rk_test_", "abcdefghijklmnop1234567890"].join("");
+  const skFindings = scanPatch("src/config.ts", hunk([`const key = "${skTest}";`]));
+  assert.equal(skFindings.length, 1);
+  assert.equal(skFindings[0].kind, "stripe_secret_key");
+  assert.equal(skFindings[0].confidence, "high");
+  const rkFindings = scanPatch("src/config.ts", hunk([`const key = "${rkTest}";`]));
+  assert.equal(rkFindings.length, 1);
+  assert.equal(rkFindings[0].kind, "stripe_secret_key");
+});
+
+test("scanPatch still flags Stripe live-mode keys", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const key = "${fakeStripeKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "stripe_secret_key");
+});
+
+test("scanPatch flags an OpenAI project API key with high confidence", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const key = "${fakeOpenAiProjKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "openai_project_key");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch flags an OpenAI project key whose final body character is a hyphen", () => {
+  const key = fakeOpenAiProjKey + "-";
+  const findings = scanPatch("src/config.ts", hunk([`const key = "${key}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "openai_project_key");
+});
+
+test("scanPatch does not classify Anthropic sk-ant- keys as OpenAI project keys", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const key = "${fakeAnthropicKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "anthropic_api_key");
+});
+
+test("scanPatch flags a Notion internal integration secret with high confidence", () => {
+  const fakeNotionSecret = "secret_" + "a".repeat(43);
+  const findings = scanPatch("src/config.ts", hunk([`const notion = "${fakeNotionSecret}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "notion_integration_secret");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch does not flag a truncated Notion integration secret", () => {
+  const truncated = "secret_" + "a".repeat(42);
+  const findings = scanPatch("src/config.ts", hunk([`const notion = "${truncated}";`]));
+  assert.equal(findings.length, 0);
+});
+
+test("scanPatch flags a Mailgun API key with high confidence", () => {
+  // Real Mailgun private keys use a 32-char alphanumeric body, not hex-only.
+  const fakeMailgunKey = ["key-", "3ax6xnjp29jd6fds4gc373sgvjxteol0"].join("");
+  const findings = scanPatch("src/config.ts", hunk([`const mg = "${fakeMailgunKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "mailgun_api_key");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch does not flag a truncated Mailgun API key", () => {
+  const truncated = "key-" + "a".repeat(31);
+  const findings = scanPatch("src/config.ts", hunk([`const mg = "${truncated}";`]));
+  assert.equal(findings.length, 0);
+});
+
+test("scanPatch does not flag a Mailgun-shaped key with an invalid body character", () => {
+  const invalid = "key-" + "a".repeat(31) + "_";
+  const findings = scanPatch("src/config.ts", hunk([`const mg = "${invalid}";`]));
+  assert.equal(findings.length, 0);
 });

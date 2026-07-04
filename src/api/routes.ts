@@ -2116,6 +2116,8 @@ export function createApp() {
 
   app.get("/v1/repos/:owner/:repo/intelligence", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    if (identity?.kind === "static" && identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
     return c.json(await buildRepoIntelligenceResponse(c.env, fullName));
   });
 

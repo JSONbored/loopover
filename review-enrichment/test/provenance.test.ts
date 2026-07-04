@@ -51,3 +51,24 @@ test("classifyAddedFile flags committed ML checkpoint files as binary artifacts"
   assert.equal(classifyAddedFile("src/model.pt.ts"), null);
   assert.equal(classifyAddedFile("lib/onnx.ts"), null);
 });
+
+test("classifyAddedFile flags committed scientific data and columnar artifacts as binary", () => {
+  for (const path of [
+    "data/train.h5",
+    "data/features.hdf5",
+    "models/saved_model.pb",
+    "data/embeddings.npy",
+    "data/batch.npz",
+    "warehouse/events.parquet",
+    "warehouse/snapshot.feather",
+    "lake/part-000.arrow",
+    "lake/part-000.orc",
+    "wire/msg.msgpack",
+    "cache/snapshot.lz4",
+    "dist/bundle.br",
+  ]) {
+    assert.equal(classifyAddedFile(path), "binary", path);
+  }
+  assert.equal(classifyAddedFile("src/parquet.ts"), null);
+  assert.equal(classifyAddedFile("lib/npy_utils.py"), null);
+});

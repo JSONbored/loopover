@@ -3142,11 +3142,10 @@ describe("createPgQueue (durable #977)", () => {
       else process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = oldLimit;
     });
 
-    // backfill-repo-segment (not agent-regate-sweep) is used as the background fixture throughout: unlike every
-    // other GITHUB_BUDGET_BACKGROUND_TYPES member, agent-regate-sweep's OWN row priority (8, PRIORITY_BY_TYPE)
-    // equals FOREGROUND_QUEUE_PRIORITY_FLOOR, so it is ALSO foreground-priority and therefore already exempt from
-    // this policy via the isForegroundJobPriority guard -- a genuinely background-priority (0) type is needed to
-    // actually exercise the limiter.
+    // backfill-repo-segment is used as the background fixture throughout these general-behavior cases;
+    // agent-regate-sweep gets its own dedicated regression test below (#selfhost-installation-concurrency-sweep-gap)
+    // because its row priority (8, PRIORITY_BY_TYPE) equals FOREGROUND_QUEUE_PRIORITY_FLOOR (also 8) -- a priority-
+    // based exclusion guard would have silently exempted it, which is exactly the gap that test guards against.
 
     it("a second concurrent background job for the SAME installation is deferred at the limit", async () => {
       process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
@@ -3182,6 +3181,49 @@ describe("createPgQueue (durable #977)", () => {
         );
         expect(await renderMetrics()).toContain(
           'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
+        );
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    // Regression (#selfhost-installation-concurrency-sweep-gap): agent-regate-sweep's own row priority (8,
+    // PRIORITY_BY_TYPE) equals FOREGROUND_QUEUE_PRIORITY_FLOOR (also 8), so a priority-based exclusion guard
+    // (`isForegroundJobPriority(job.priority) ? null : ...`) would classify it as foreground and silently exempt
+    // it from this policy entirely -- exactly the background sweep/backfill fan-out this limiter exists to bound.
+    // installationConcurrencyKeyForJob must exclude ONLY agent-regate-pr by type, not by priority, so sweep jobs
+    // are still admission-checked like every other GITHUB_BUDGET_BACKGROUND_TYPES member.
+    it("a second concurrent agent-regate-sweep job for the SAME installation is deferred at the limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const m = makePool();
+      m.enqueueJob("1", { type: "agent-regate-sweep", installationId: 42 }, 0, "sweep:42:a");
+      m.enqueueJob("2", { type: "agent-regate-sweep", installationId: 42 }, 0, null);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createPgQueue(
+        m.pool,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.init();
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        expect(m.pool.query).toHaveBeenCalledWith(
+          expect.stringContaining("SET status='pending', run_after=GREATEST"),
+          expect.arrayContaining([expect.stringContaining("installation concurrency admission deferred: concurrency_high")]),
+        );
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="agent-regate-sweep",reason="concurrency_high"} 1',
         );
       } finally {
         release();

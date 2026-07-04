@@ -1179,16 +1179,12 @@ export function createPgQueue(
       }
       // Per-installation GitHub-fetch concurrency admission (#selfhost-installation-concurrency), the last-mile
       // gate: only reached by a job that already passed rate-limit admission and (if applicable) maintenance-
-      // lane admission above, immediately before it actually claims a dispatch slot. Explicitly excludes
-      // foreground-priority jobs (mirrors the maintenance-admission guard above) -- isGitHubBudgetBackgroundJob
-      // (which installationConcurrencyKeyForJob is built on) answers "does this job draw GitHub rate-limit
-      // BUDGET", which is also true for a live (non-sweep, non-manual) agent-regate-pr job; that job is still
-      // FOREGROUND priority and must never be deferred by this policy, so the exclusion is a separate, explicit
-      // check here rather than folded into the key resolver itself. installationConcurrencyKey is null for
-      // background jobs whose payload carries no resolvable installationId too -- those fall through unaffected.
-      const installationConcurrencyKey = isForegroundJobPriority(Number(job.priority))
-        ? null
-        : installationConcurrencyKeyForJob(message);
+      // lane admission above, immediately before it actually claims a dispatch slot. installationConcurrencyKeyForJob
+      // already excludes the truly-foreground agent-regate-pr job type by construction (not by priority -- see its
+      // own doc comment for why agent-regate-sweep's priority-8/floor-8 collision rules out a priority-based
+      // guard here). installationConcurrencyKey is null for background jobs whose payload carries no resolvable
+      // installationId too -- those fall through unaffected.
+      const installationConcurrencyKey = installationConcurrencyKeyForJob(message);
       if (installationConcurrencyKey) {
         const decision = evaluateInstallationConcurrencyAdmission(
           installationConcurrencyConfig,

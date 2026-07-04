@@ -406,13 +406,16 @@ export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRa
 // THIS job under, or null when the job either makes no GitHub calls isGitHubBudgetBackgroundJob cares about, or
 // carries no resolvable installationId. Reusing githubRateLimitAdmissionKeyForJob (rather than inventing a
 // second key function) keeps the rate-limit-admission key and the concurrency-admission key for the same job
-// always identical by construction. NOTE: isGitHubBudgetBackgroundJob is true for a live (non-sweep, non-manual)
+// always identical by construction. isGitHubBudgetBackgroundJob is true for a live (non-sweep, non-manual)
 // agent-regate-pr job too, since that job DOES draw GitHub rate-limit budget under this key -- but that job is
-// still FOREGROUND priority. This function deliberately does NOT filter foreground jobs out itself (it answers
-// "what key would this job's GitHub calls draw against", not "should a background-only policy apply to it") --
-// the caller (pg-queue.ts/sqlite-queue.ts) is responsible for its own `!isForegroundJobPriority(...)` guard
-// before ever calling this, exactly mirroring how isMaintenanceJobType is similarly guarded at its own call site.
+// still FOREGROUND priority (AGENT_REGATE_PRIORITY, 9) and must never be deferred by this policy, so it is
+// excluded here BY TYPE. This is deliberately NOT a priority-based exclusion (e.g. `!isForegroundJobPriority`):
+// agent-regate-sweep's own row priority (8, PRIORITY_BY_TYPE) collides with FOREGROUND_QUEUE_PRIORITY_FLOOR
+// (also 8), so a priority-floor guard would silently exempt sweep fan-out too -- exactly the background job this
+// policy exists to bound (#selfhost-installation-concurrency-sweep-gap). Filtering by type instead of priority
+// keeps this key resolver correct regardless of how any job type's priority is tuned in the future.
 export function installationConcurrencyKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
+  if (message.type === "agent-regate-pr") return null;
   return isGitHubBudgetBackgroundJob(message) ? githubRateLimitAdmissionKeyForJob(message) : null;
 }
 

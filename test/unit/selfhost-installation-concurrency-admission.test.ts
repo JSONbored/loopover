@@ -205,13 +205,14 @@ describe("installationConcurrencyKeyForJob", () => {
     expect(installationConcurrencyKeyForJob(foregroundWebhook)).toBeNull();
   });
 
-  // REGRESSION (caught while writing this test): isGitHubBudgetBackgroundJob is true for a live (non-sweep,
-  // non-manual) agent-regate-pr job too -- it DOES draw GitHub rate-limit budget under this key -- so this
-  // pure resolver correctly returns a non-null key here. The "foreground jobs are never gated by this policy"
-  // guarantee lives at the pg-queue.ts/sqlite-queue.ts call site (an explicit !isForegroundJobPriority(...)
-  // guard before this function is ever called), NOT inside this key resolver -- see the queue backend tests.
-  it("returns the admission key for a foreground agent-regate-pr job (it DOES draw budget under this key -- foreground exclusion happens at the call site, not here)", () => {
-    expect(installationConcurrencyKeyForJob(foregroundRegate)).toBe("installation:42");
+  // #selfhost-installation-concurrency-sweep-gap: isGitHubBudgetBackgroundJob is true for a live (non-sweep,
+  // non-manual) agent-regate-pr job too -- it DOES draw GitHub rate-limit budget under this key -- but that job
+  // is still FOREGROUND priority (9) and must never be deferred by this policy. The exclusion is applied here,
+  // BY TYPE, rather than by priority at the queue-backend call site: agent-regate-sweep's own row priority (8)
+  // collides with FOREGROUND_QUEUE_PRIORITY_FLOOR (also 8), so a priority-based guard at the call site would
+  // have silently exempted sweep fan-out too -- exactly the background job this policy exists to bound.
+  it("returns null for a foreground agent-regate-pr job (excluded by type, not by priority)", () => {
+    expect(installationConcurrencyKeyForJob(foregroundRegate)).toBeNull();
   });
 
   it("returns the admission key for a GITHUB_BUDGET_BACKGROUND_TYPES job carrying installationId", () => {

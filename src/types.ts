@@ -225,6 +225,16 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
       repoFullName?: string;
       installationId?: number;
+    }
+  | {
+      // Scheduled repo-doc refresh (#3003, part of #2993). No `repoFullName` = fan-out: enumerate every repo
+      // with `.gittensory.yml repoDocGeneration.enabled: true` whose refresh interval has elapsed and enqueue
+      // one per-repo job each, mirroring "agent-regate-sweep"/"backlog-convergence-sweep". With `repoFullName` =
+      // refresh that one repo via openRepoDocPullRequest (the SAME function the on-demand MCP trigger calls) --
+      // no separate eligibility/diffing logic lives in the queue processor itself.
+      type: "repo-doc-refresh-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
     };
 
 export type GitHubWebhookPayload = {

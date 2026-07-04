@@ -527,7 +527,7 @@ describe("compileFocusManifestPolicy", () => {
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
-      repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false },
+      repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1269,12 +1269,12 @@ describe("parseFocusManifest gate config", () => {
   describe("repoDocGeneration: (#3002, repo-doc generation config-as-code surface)", () => {
     it("defaults to fully disabled and absent when the key is omitted, and does not make the manifest present on its own", () => {
       const m = parseFocusManifest({});
-      expect(m.repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false });
+      expect(m.repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
       expect(m.present).toBe(false);
     });
 
     it("treats an explicit null the same as an omitted key", () => {
-      expect(parseFocusManifest({ repoDocGeneration: null }).repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false });
+      expect(parseFocusManifest({ repoDocGeneration: null }).repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
     });
 
     it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
@@ -1286,9 +1286,9 @@ describe("parseFocusManifest gate config", () => {
       expect(asArray.warnings.some((w) => /"repoDocGeneration" must be a mapping/.test(w))).toBe(true);
     });
 
-    it("parses enabled: true and defaults scope/allowOverwriteExisting, making the manifest present", () => {
+    it("parses enabled: true and defaults scope/allowOverwriteExisting/refreshIntervalDays, making the manifest present", () => {
       const m = parseFocusManifest({ repoDocGeneration: { enabled: true } });
-      expect(m.repoDocGeneration).toEqual({ present: true, enabled: true, scope: ["agents"], allowOverwriteExisting: false });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: true, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
       expect(m.present).toBe(true);
     });
 
@@ -1300,7 +1300,24 @@ describe("parseFocusManifest gate config", () => {
 
     it("parses allowOverwriteExisting independently of enabled", () => {
       const m = parseFocusManifest({ repoDocGeneration: { enabled: false, allowOverwriteExisting: true } });
-      expect(m.repoDocGeneration).toEqual({ present: true, enabled: false, scope: ["agents"], allowOverwriteExisting: true });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: false, scope: ["agents"], allowOverwriteExisting: true, refreshIntervalDays: 7 });
+    });
+
+    it("parses a valid refreshIntervalDays and defaults to 7 (weekly) when omitted", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 3 } });
+      expect(m.repoDocGeneration.refreshIntervalDays).toBe(3);
+      const defaulted = parseFocusManifest({ repoDocGeneration: { enabled: true } });
+      expect(defaulted.repoDocGeneration.refreshIntervalDays).toBe(7);
+    });
+
+    it("warns and defaults refreshIntervalDays to 7 when the value is not a positive whole number", () => {
+      const zero = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 0 } });
+      expect(zero.repoDocGeneration.refreshIntervalDays).toBe(7);
+      expect(zero.warnings.some((w) => /repoDocGeneration\.refreshIntervalDays/.test(w))).toBe(true);
+      const fractional = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 2.5 } });
+      expect(fractional.repoDocGeneration.refreshIntervalDays).toBe(7);
+      const negative = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: -1 } });
+      expect(negative.repoDocGeneration.refreshIntervalDays).toBe(7);
     });
 
     it("accepts an explicit multi-entry scope list", () => {

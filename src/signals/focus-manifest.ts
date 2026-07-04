@@ -169,6 +169,11 @@ export type FocusManifestRepoDocGenerationConfig = {
   enabled: boolean;
   scope: FocusManifestRepoDocGenerationScope[];
   allowOverwriteExisting: boolean;
+  /** How many days must elapse between scheduled refresh attempts for this repo (#3003). Default 7 (weekly).
+   *  Purely a rate-limiting knob on the SCHEDULED sweep -- it never affects correctness, since
+   *  openRepoDocPullRequest's own no-change short-circuit already prevents a redundant PR regardless of how
+   *  often it's invoked; this just avoids re-checking a stable repo more often than the operator wants. */
+  refreshIntervalDays: number;
 };
 
 /**
@@ -452,11 +457,14 @@ const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {
   validatorId: null,
 };
 
+const DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS = 7;
+
 const EMPTY_REPO_DOC_GENERATION_CONFIG: FocusManifestRepoDocGenerationConfig = {
   present: false,
   enabled: false,
   scope: ["agents"],
   allowOverwriteExisting: false,
+  refreshIntervalDays: DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -996,14 +1004,15 @@ function parseRepoDocGenerationConfig(value: JsonValue | undefined, warnings: st
   const enabled = normalizeOptionalBoolean(record.enabled, "repoDocGeneration.enabled", warnings) ?? false;
   const allowOverwriteExisting = normalizeOptionalBoolean(record.allowOverwriteExisting, "repoDocGeneration.allowOverwriteExisting", warnings) ?? false;
   const scope = parseRepoDocGenerationScope(record.scope, warnings);
-  return { present: true, enabled, scope, allowOverwriteExisting };
+  const refreshIntervalDays = normalizeOptionalPositiveInteger(record.refreshIntervalDays, "repoDocGeneration.refreshIntervalDays", warnings) ?? DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS;
+  return { present: true, enabled, scope, allowOverwriteExisting, refreshIntervalDays };
 }
 
 /** Serialize a repoDocGeneration config back into the parse-compatible shape so a cached snapshot round-trips
  *  through {@link parseRepoDocGenerationConfig} unchanged. Returns null when nothing is configured. */
 export function repoDocGenerationConfigToJson(config: FocusManifestRepoDocGenerationConfig): JsonValue {
   if (!config.present) return null;
-  return { enabled: config.enabled, scope: config.scope, allowOverwriteExisting: config.allowOverwriteExisting };
+  return { enabled: config.enabled, scope: config.scope, allowOverwriteExisting: config.allowOverwriteExisting, refreshIntervalDays: config.refreshIntervalDays };
 }
 
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {

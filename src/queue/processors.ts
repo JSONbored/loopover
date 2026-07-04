@@ -353,9 +353,12 @@ import {
 } from "../signals/focus-manifest";
 import {
   loadRepoFocusManifest,
+  loadRepoFocusManifests,
   loadRepoReviewContext,
 } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
+import { getLastRepoDocRefreshAttemptedAt, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
+import { isRepoDocRefreshDue } from "../review/repo-doc-refresh-schedule";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
   hasPublicReviewAssessment,
@@ -976,6 +979,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         return;
       }
       await sweepRepoBacklogConvergence(env, message.repoFullName, message.requestedBy);
+      return;
+    case "repo-doc-refresh-sweep":
+      if (!message.repoFullName && message.requestedBy !== "test") {
+        await fanOutRepoDocRefreshSweepJobs(env, message.requestedBy);
+        return;
+      }
+      if (message.repoFullName) await performRepoDocRefresh(env, message.repoFullName);
       return;
     case "agent-regate-pr":
       // One bounded re-gate unit fanned out by the sweep (#audit-sweep-fanout): re-review + stamp a single PR.
@@ -1701,6 +1711,39 @@ async function fanOutBacklogConvergenceSweepJobs(
     eventType: "agent.sweep.backlog_convergence.fanout",
     outcome: "queued",
     metadata: { repoCount: configured.length, requestedBy },
+  });
+}
+
+// Repo-doc refresh sweep (#3003, part of #2993): enumerate every installed repo, bulk-load their
+// .gittensory.yml manifests, and enqueue one per-repo job for each repo that (a) has
+// repoDocGeneration.enabled: true and (b) is due per its own refreshIntervalDays (default weekly). No atomic
+// fan-out dedup (unlike agent-regate-sweep) -- this runs once a day, not every tick, so a burst of overlapping
+// fan-outs is not a realistic risk. Eligibility/scope/diffing itself lives entirely inside
+// openRepoDocPullRequest (via performRepoDocRefresh) -- this fan-out is purely an enumeration + rate-limiting
+// optimization so a stable repo isn't re-checked more often than its own configured interval.
+async function fanOutRepoDocRefreshSweepJobs(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
+  const now = nowIso();
+  const repoFullNames = (await listRepositories(env)).map((repo) => repo.fullName);
+  const manifests = await loadRepoFocusManifests(env, repoFullNames);
+  const due: string[] = [];
+  for (const repoFullName of repoFullNames) {
+    const manifest = manifests.get(repoFullName.toLowerCase());
+    if (!manifest?.repoDocGeneration.enabled) continue;
+    const lastAttemptedAt = await getLastRepoDocRefreshAttemptedAt(env, repoFullName);
+    if (!isRepoDocRefreshDue(lastAttemptedAt, manifest.repoDocGeneration.refreshIntervalDays, now)) continue;
+    due.push(repoFullName);
+  }
+  await Promise.all(
+    due.map((repoFullName, index) => {
+      const message: JobMessage = { type: "repo-doc-refresh-sweep", requestedBy, repoFullName };
+      const delaySeconds = Math.min(index * 10, 600);
+      return delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "repo_doc.refresh.fanout",
+    outcome: "queued",
+    metadata: { repoCount: due.length, requestedBy },
   });
 }
 

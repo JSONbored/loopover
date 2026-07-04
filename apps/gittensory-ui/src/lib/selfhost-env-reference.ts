@@ -99,7 +99,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "FOREGROUND_LIVENESS_ENABLED",
-    firstReference: "src/selfhost/foreground-liveness.ts:34",
+    firstReference: "src/selfhost/foreground-liveness.ts:41",
   },
   {
     name: "GITHUB_APP_ID",
@@ -337,7 +337,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/selfhost/discord-notify.ts:31` |",
   "| `DISCORD_WEBHOOK_URL` | `src/selfhost/discord-notify.ts:40` |",
-  "| `FOREGROUND_LIVENESS_ENABLED` | `src/selfhost/foreground-liveness.ts:34` |",
+  "| `FOREGROUND_LIVENESS_ENABLED` | `src/selfhost/foreground-liveness.ts:41` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts:166` |",
   "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:493` |",

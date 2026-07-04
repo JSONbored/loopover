@@ -5849,6 +5849,7 @@ function normalizeProductUsageRole(value: string): ProductUsageRole | null {
     case "maintainer":
     case "maintainers":
     case "reviewer":
+    case "reviewers":
       return "maintainer";
     case "owner":
     case "owners":

@@ -731,6 +731,27 @@ describe("product usage events", () => {
     expect(JSON.stringify(result.rollups[0])).not.toMatch(/multi-role-actor|reviewer-actor|none-actor|invalid-role-actor|public-surface-actor|fixed-test-salt/i);
   });
 
+  it("buckets the plural 'reviewers' role as maintainer, like every other role's plural", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const day = "2026-06-16";
+    // Every other role accepts its plural (miners/owners/operators/contributors/maintainers); "reviewers"
+    // is a maintainer synonym and must bucket the same, not fall through to "unknown".
+    await recordProductUsageEvent(env, {
+      surface: "control_panel",
+      eventName: "command_previewed",
+      actor: "reviewers-actor",
+      outcome: "success",
+      metadata: { roles: ["reviewers"] },
+      occurredAt: `${day}T01:00:00.000Z`,
+    });
+
+    const result = await rollupProductUsageDaily(env, { day, nowIso: `${day}T23:00:00.000Z` });
+
+    expect(result.rollups[0]?.byRole).toEqual(
+      expect.arrayContaining([{ role: "maintainer", count: 1, activeActors: 1, activeRepos: 0 }]),
+    );
+  });
+
   it("builds role activation and coarse retention rollups without exposing actors", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
     const day = "2026-06-10";

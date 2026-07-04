@@ -258,3 +258,22 @@ test("scanPatch does not flag a truncated DigitalOcean token", () => {
   const short = ["dop_v1_", "a".repeat(32)].join("");
   assert.equal(scanPatch("src/config.ts", hunk([`const doCred = "${short}";`])).length, 0);
 });
+
+test("scanPatch flags Shopify Admin API and shared-secret tokens", () => {
+  // `shpat_` (Admin API access) and `shpss_` (app shared secret) + 32 hex chars.
+  const admin = ["shpat_", "a".repeat(32)].join("");
+  const shared = ["shpss_", "b".repeat(32)].join("");
+  const adminFindings = scanPatch("src/config.ts", hunk([`const shopify = "${admin}";`]));
+  assert.equal(adminFindings.length, 1);
+  assert.equal(adminFindings[0].kind, "shopify_token");
+  assert.equal(adminFindings[0].confidence, "high");
+  const sharedFindings = scanPatch("src/config.ts", hunk([`const shopify = "${shared}";`]));
+  assert.equal(sharedFindings.length, 1);
+  assert.equal(sharedFindings[0].kind, "shopify_token");
+});
+
+test("scanPatch does not flag a truncated Shopify token", () => {
+  // Body must be exactly 32 hex chars.
+  const short = ["shpat_", "a".repeat(16)].join("");
+  assert.equal(scanPatch("src/config.ts", hunk([`const shop = "${short}";`])).length, 0);
+});

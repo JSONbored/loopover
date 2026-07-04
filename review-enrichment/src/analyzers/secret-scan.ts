@@ -82,6 +82,12 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Shopify Admin API access token (`shpat_`) or app shared secret (`shpss_`) + 32 hex chars.
+    kind: "shopify_token",
+    re: /\bshp(?:at|ss)_[a-f0-9]{32}\b/i,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

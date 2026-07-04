@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   extractVersionPins,
   isDockerfile,
+  parseToolVersionLine,
 } from "../dist/analyzers/eol-check.js";
 
 function added(path: string, ...lines: string[]) {
@@ -109,6 +110,69 @@ test("extractVersionPins reads .terraform-version pins as Terraform", () => {
   assert.deepEqual(extractVersionPins([added(".terraform-version", "1.5.7")]), [
     { file: ".terraform-version", product: "terraform", version: "1.5.7" },
   ]);
+});
+
+test("extractVersionPins reads .elixir-version and .kotlin-version pins", () => {
+  assert.deepEqual(extractVersionPins([added(".elixir-version", "1.16.2")]), [
+    { file: ".elixir-version", product: "elixir", version: "1.16.2" },
+  ]);
+  assert.deepEqual(extractVersionPins([added(".kotlin-version", "2.0.21")]), [
+    { file: ".kotlin-version", product: "kotlin", version: "2.0.21" },
+  ]);
+});
+
+test("parseToolVersionLine maps asdf plugin names to endoflife.date products", () => {
+  assert.deepEqual(parseToolVersionLine("python 3.11.0"), {
+    product: "python",
+    version: "3.11.0",
+  });
+  assert.deepEqual(parseToolVersionLine("nodejs 20.11.0"), {
+    product: "nodejs",
+    version: "20.11.0",
+  });
+  // Common asdf aliases.
+  assert.deepEqual(parseToolVersionLine("node 18.17.0"), {
+    product: "nodejs",
+    version: "18.17.0",
+  });
+  assert.deepEqual(parseToolVersionLine("golang 1.22.0"), {
+    product: "go",
+    version: "1.22.0",
+  });
+  assert.deepEqual(parseToolVersionLine("java 21.0.2"), {
+    product: "oracle-jdk",
+    version: "21.0.2",
+  });
+  // Optional trailing system column is ignored.
+  assert.deepEqual(parseToolVersionLine("ruby 3.2.2 linux"), {
+    product: "ruby",
+    version: "3.2.2",
+  });
+  // Comments and unknown tools are skipped.
+  assert.equal(parseToolVersionLine("# python 3.10.0"), null);
+  assert.equal(parseToolVersionLine("unknown-tool 1.2.3"), null);
+  assert.equal(parseToolVersionLine(""), null);
+});
+
+test("extractVersionPins reads multi-tool .tool-versions pins from added lines", () => {
+  assert.deepEqual(
+    extractVersionPins([
+      added(
+        ".tool-versions",
+        "python 3.11.0",
+        "nodejs 20.11.0",
+        "# elixir 1.15.0",
+        "terraform 1.5.7",
+        "kotlin 2.0.21",
+      ),
+    ]),
+    [
+      { file: ".tool-versions", product: "python", version: "3.11.0" },
+      { file: ".tool-versions", product: "nodejs", version: "20.11.0" },
+      { file: ".tool-versions", product: "terraform", version: "1.5.7" },
+      { file: ".tool-versions", product: "kotlin", version: "2.0.21" },
+    ],
+  );
 });
 
 test("extractVersionPins ignores removed/context lines and files with no patch", () => {

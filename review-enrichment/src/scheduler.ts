@@ -416,6 +416,9 @@ function isRuntimePinPath(path: string): boolean {
     basename === ".rust-version" ||
     basename === ".java-version" ||
     basename === ".terraform-version" ||
+    basename === ".elixir-version" ||
+    basename === ".kotlin-version" ||
+    basename === ".tool-versions" ||
     basename === "go.mod"
   );
 }

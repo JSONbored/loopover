@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
+import { runClaimsCli } from "../lib/claim-ledger-cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
@@ -35,6 +36,10 @@ if (cliArgs[0] === "manage" && cliArgs[1] === "status") {
 
 if (cliArgs[0] === "queue") {
   process.exit(runQueueCli(cliArgs[1], cliArgs.slice(2)));
+}
+
+if (cliArgs[0] === "claims") {
+  process.exit(runClaimsCli(cliArgs[1], cliArgs.slice(2)));
 }
 
 if (cliArgs[0] === "ledger") {

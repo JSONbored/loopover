@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
+// #module-cycle-regression: forces the SAME module-load cycle that broke once (scoring/model.ts ->
+// db/repositories.ts -> agent-actions.ts -> rules/advisory.ts -> scoring/preview.ts -> scoring/model.ts) to
+// actually manifest in this test file's own module graph, not just incidentally in other suites. Importing
+// agent-actions.ts alone (above) never exercises the OTHER direction of the cycle -- this import does.
+import { DEFAULT_ISSUE_DISCOVERY_SHARE } from "../../src/scoring/model";
 
 function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateCheckConclusion }): AgentActionPlanInput {
   return {
@@ -952,12 +957,28 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
   // closeKind or array position), the same "kept deterministic + dropped heuristic" shape that
   // precisionBreakerDowngradeDirections (test/unit/precision-breakers-chain.test.ts) must also get right.
   it("downgradeCloseToHold's predicate discriminates on closeConcreteEvidence alone: a non-concrete heuristic close is downgraded even alongside a KEPT concrete one", () => {
-    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "secret leaked", closeKind: "heuristic", closeConcreteEvidence: true };
+    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "hard blocker", closeKind: "heuristic", closeConcreteEvidence: true };
     const ambiguousClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "verdict failed", closeKind: "heuristic", closeConcreteEvidence: false };
     const held = downgradeCloseToHold([concreteClose, ambiguousClose], true);
     expect(held.some((a) => a === concreteClose)).toBe(true);
     expect(held.some((a) => a === ambiguousClose)).toBe(false);
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(true);
+  });
+});
+
+// #module-cycle-regression: agent-actions.ts imports AI_JUDGMENT_BLOCKER_CODES from rules/advisory.ts, which
+// sits inside a real module-load cycle (scoring/model.ts -> db/repositories.ts -> agent-actions.ts ->
+// rules/advisory.ts -> scoring/preview.ts -> scoring/model.ts) -- exactly the cycle a top-level array-literal
+// spread of another module's export previously broke with a genuine "X is not iterable" failure. This test
+// (combined with the scoring/model.ts import at the top of this file, which forces BOTH directions of the
+// cycle into this file's own module graph) proves the import stays safe: it is only ever read inside a
+// function body (hasConcreteCloseEvidence), never at module-eval time, so it resolves correctly regardless of
+// which side of the cycle initializes first.
+describe("module-load cycle safety (#module-cycle-regression)", () => {
+  it("agent-actions.ts and scoring/model.ts load together without throwing, and the AI-judgment exclusion actually works", () => {
+    expect(DEFAULT_ISSUE_DISCOVERY_SHARE).toBe(0.5);
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_consensus_defect"], blockerTitles: ["x"], pr: { labels: [] } }));
+    expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeConcreteEvidence: false });
   });
 });
 
@@ -983,9 +1004,14 @@ describe("CONCRETE_EVIDENCE_BLOCKER_CODES parity — hand-typed literals still m
     { code: "self_authored_linked_issue", file: "src/rules/advisory.ts" },
   ];
 
-  it.each(HAND_TYPED_CODES_AND_PRODUCERS)("$code still appears as a literal in its producer ($file)", ({ code, file }) => {
+  // Requires the actual producer shape (a `code: "..."` finding property, or a `SOME_CONST = "..."` exported
+  // code constant) immediately before the literal -- not just the bare string anywhere in the file, which a
+  // stale comment mentioning the code (with no real producer left) could satisfy just as easily.
+  const CODE_ASSIGNMENT_PATTERN = (code: string) => new RegExp(`(?:code:\\s*|=\\s*)"${code}"`);
+
+  it.each(HAND_TYPED_CODES_AND_PRODUCERS)("$code is still produced (not merely mentioned) in its producer ($file)", ({ code, file }) => {
     const source = readFileSync(file, "utf8");
-    expect(source).toContain(`"${code}"`);
+    expect(source).toMatch(CODE_ASSIGNMENT_PATTERN(code));
   });
 });
 

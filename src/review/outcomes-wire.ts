@@ -127,6 +127,9 @@ async function listEngagedProjectScopes(env: Env): Promise<{ holdonly: string[];
       if (!project || project === "global") continue;
       // The SQL WHERE clause above only ever matches a "holdonly:" or "closehold:" key, so prefix can never be
       // anything else here — a plain else (not another === check) so there is no unreachable branch to cover.
+      // If the WHERE clause ever grows a third prefix, this must go back to an explicit `else if (prefix ===
+      // "closehold")` (with a new branch/test for the resulting default case) so an unrecognized prefix is
+      // never silently miscategorized as closehold.
       if (prefix === "holdonly") holdonly.push(project);
       else closehold.push(project);
     }

@@ -268,7 +268,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   });
 
   it("REGRESSION (#hard-blockers-not-ai-judgment): closeConcreteEvidence round-trips through the persist/replay round trip so a staged concrete-evidence close still bypasses the close-precision breaker at accept-time", () => {
-    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: true, reason: "leaked secret", closeComment: "closing", closeKind: "heuristic", closeConcreteEvidence: true };
+    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: true, reason: "hard blocker", closeComment: "closing", closeKind: "heuristic", closeConcreteEvidence: true };
     const persisted = actionParams(concreteClose);
     expect(persisted.closeConcreteEvidence).toBe(true);
     const replayed = pendingActionToPlanned({ actionClass: "close", params: persisted, reason: concreteClose.reason });

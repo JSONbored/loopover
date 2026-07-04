@@ -65,7 +65,7 @@ describe("precisionBreakerDowngradeDirections — bounded-cardinality breaker-do
   });
 
   it("empty when closeHoldOnly is engaged but the only close present is concrete-evidence-exempt (not actually downgraded)", () => {
-    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "leaked secret", closeKind: "heuristic", closeConcreteEvidence: true };
+    const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "hard blocker", closeKind: "heuristic", closeConcreteEvidence: true };
     const planned = [concreteClose];
     expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, false, true))).toEqual([]);
   });

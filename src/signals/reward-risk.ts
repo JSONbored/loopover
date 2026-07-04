@@ -834,16 +834,34 @@ function opportunityCompetitionFactor(highRiskDuplicateClusters: number, openPul
 function opportunityFreshnessFactor(issues: IssueRecord[]): number {
   const openIssues = issues.filter((issue) => issue.state === "open");
   if (openIssues.length === 0) return 0;
-  const mostRecentAgeDays = Math.min(...openIssues.map((issue) => issueAgeDays(issue.updatedAt ?? issue.createdAt)));
+  let mostRecentAgeDays = Number.POSITIVE_INFINITY;
+  for (const issue of openIssues) {
+    const ageDays = issueAgeDays(pickIssueTimestamp(issue));
+    if (ageDays < mostRecentAgeDays) mostRecentAgeDays = ageDays;
+  }
   // Freshness decays exponentially: ~1.0 at 0 days, ~0.6 at 7 days, ~0.2 at 30 days, ~0.05 at 90 days.
   return round(clamp(Math.exp(-mostRecentAgeDays / 20), 0.05, 1));
 }
 
-function issueAgeDays(value: string | null | undefined): number {
-  if (!value) return 0;
+function isParseableIssueTimestamp(value: string): boolean {
+  return Number.isFinite(Date.parse(value));
+}
+
+function pickIssueTimestamp(issue: IssueRecord): string | null {
+  const updated = typeof issue.updatedAt === "string" ? issue.updatedAt.trim() : "";
+  if (updated && isParseableIssueTimestamp(updated)) return updated;
+
+  const created = typeof issue.createdAt === "string" ? issue.createdAt.trim() : "";
+  if (created && isParseableIssueTimestamp(created)) return created;
+
+  return null;
+}
+
+/** Unknown/unparseable timestamps floor freshness (parity with gittensory-engine opportunity-freshness.ts). */
+function issueAgeDays(value: string | null): number {
+  if (!value) return Number.POSITIVE_INFINITY;
   const parsed = Date.parse(value);
-  /* v8 ignore next -- Invalid provider timestamps normalize to fresh; stale timestamp handling is covered by signal tests. */
-  if (!Number.isFinite(parsed)) return 0;
+  if (!Number.isFinite(parsed)) return Number.POSITIVE_INFINITY;
   return Math.floor((Date.now() - parsed) / 86_400_000);
 }
 

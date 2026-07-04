@@ -1981,10 +1981,18 @@ describe("signal coverage edge cases", () => {
     const withClosed = buildRepoRewardRisk({ ...base, issues: [closedIssue], pullRequests: [] });
     expect(withClosed.rewardUpside.opportunityFactors.freshnessFactor).toBe(0);
 
-    // Issue with null dates → treated as fresh (conservative fallback)
+    // Issue with null dates → unknown age floors to minimum freshness (parity with gittensory-engine)
     const noDateIssue = issue(collab.fullName, 23, "Undated request", { updatedAt: null, createdAt: null });
     const withNoDate = buildRepoRewardRisk({ ...base, issues: [noDateIssue], pullRequests: [] });
-    expect(withNoDate.rewardUpside.opportunityFactors.freshnessFactor).toBeGreaterThan(0);
+    expect(withNoDate.rewardUpside.opportunityFactors.freshnessFactor).toBeLessThanOrEqual(0.05);
+
+    // Malformed updatedAt falls back to createdAt before scoring age
+    const fallbackIssue = issue(collab.fullName, 24, "Fallback timestamp", {
+      updatedAt: "not-a-date",
+      createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    });
+    const withFallback = buildRepoRewardRisk({ ...base, issues: [fallbackIssue], pullRequests: [] });
+    expect(withFallback.rewardUpside.opportunityFactors.freshnessFactor).toBeGreaterThan(0.7);
   });
 
   it("eligibilityGap: surfaces repos within 1–5 PR cleanups of threshold, excludes zero-cleanup and out-of-range repos", () => {

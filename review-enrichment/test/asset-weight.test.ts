@@ -10,13 +10,28 @@ import {
 
 test("isBinaryAsset flags genuine binary extensions and ignores text/case", () => {
   // Genuine binary assets (image / font / media / archive / native binary).
-  for (const p of ["ui/logo.png", "fonts/Inter.woff2", "media/demo.mp4", "vendor/lib.wasm", "dist/app.zip"]) {
+  for (const p of [
+    "ui/logo.png",
+    "fonts/Inter.woff2",
+    "media/demo.mp4",
+    "vendor/lib.wasm",
+    "dist/app.zip",
+  ]) {
     assert.equal(isBinaryAsset(p), true, p);
   }
+  // Apple HEIC/HEIF photos are binary image assets (siblings of webp/avif) — their bytes are not in the textual diff.
+  assert.equal(isBinaryAsset("photos/IMG_0001.heic"), true);
+  assert.equal(isBinaryAsset("photos/scan.heif"), true);
+  assert.equal(isBinaryAsset("photos/IMG_0001.HEIC"), true);
   // Extension match is case-insensitive.
   assert.equal(isBinaryAsset("assets/HERO.PNG"), true);
   // Text formats whose bytes are already in the diff are NOT binary assets.
-  for (const p of ["icons/logo.svg", "data/config.json", "src/index.ts", "README.md"]) {
+  for (const p of [
+    "icons/logo.svg",
+    "data/config.json",
+    "src/index.ts",
+    "README.md",
+  ]) {
     assert.equal(isBinaryAsset(p), false, p);
   }
   // A path with no extension, or a dotfile with no real extension after the dot, is not a binary asset.
@@ -25,9 +40,22 @@ test("isBinaryAsset flags genuine binary extensions and ignores text/case", () =
 });
 
 test("basePathForGrowth resolves the base-side path per file status", () => {
-  assert.equal(basePathForGrowth({ path: "a.png", status: "modified" }), "a.png");
-  assert.equal(basePathForGrowth({ path: "a.png", status: "changed" }), "a.png");
-  assert.equal(basePathForGrowth({ path: "new.png", previousPath: "old.png", status: "renamed" }), "old.png");
+  assert.equal(
+    basePathForGrowth({ path: "a.png", status: "modified" }),
+    "a.png",
+  );
+  assert.equal(
+    basePathForGrowth({ path: "a.png", status: "changed" }),
+    "a.png",
+  );
+  assert.equal(
+    basePathForGrowth({
+      path: "new.png",
+      previousPath: "old.png",
+      status: "renamed",
+    }),
+    "old.png",
+  );
   // A rename with no previousPath has no comparable base.
   assert.equal(basePathForGrowth({ path: "new.png", status: "renamed" }), null);
   // Added/removed files have no base size to grow from.

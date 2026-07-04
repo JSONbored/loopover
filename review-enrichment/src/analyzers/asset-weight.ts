@@ -31,6 +31,8 @@ const BINARY_EXTS = new Set([
   "ico",
   "webp",
   "avif",
+  "heic",
+  "heif",
   "woff",
   "woff2",
   "ttf",
@@ -134,8 +136,10 @@ async function fetchGithubJson<T>(
     diagnostics: options.diagnostics,
     phase: "asset-weight",
     subcall: endpointCategory,
-    maxBytes: endpointCategory === "github-trees" ? 4 * 1024 * 1024 : 256 * 1024,
-    maxCallsPerCategory: endpointCategory === "github-contents" ? MAX_PATH_SIZE_LOOKUPS : 2,
+    maxBytes:
+      endpointCategory === "github-trees" ? 4 * 1024 * 1024 : 256 * 1024,
+    maxCallsPerCategory:
+      endpointCategory === "github-contents" ? MAX_PATH_SIZE_LOOKUPS : 2,
   };
   const response = options.analysis
     ? await options.analysis.fetchJson<T>(url, fetchOptions)
@@ -204,14 +208,9 @@ async function fetchPathSizes(
     const encodedPath = encodeRepoPath(path);
     if (!encodedPath) continue;
     const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}?ref=${encodeURIComponent(sha)}`;
-    const json = await fetchGithubJson<{ type?: string; size?: number } | unknown[]>(
-      url,
-      token,
-      fetchImpl,
-      signal,
-      options,
-      "github-contents",
-    );
+    const json = await fetchGithubJson<
+      { type?: string; size?: number } | unknown[]
+    >(url, token, fetchImpl, signal, options, "github-contents");
     if (!json) continue;
     if (!Array.isArray(json) && typeof json.size === "number") {
       sizes.set(path, json.size);
@@ -230,9 +229,26 @@ async function fetchRelevantSizes(
   signal: AbortSignal | undefined,
   options: ScanOptions,
 ): Promise<Map<string, number>> {
-  const tree = await fetchTreeSizes(owner, repo, sha, token, fetchImpl, signal, options);
+  const tree = await fetchTreeSizes(
+    owner,
+    repo,
+    sha,
+    token,
+    fetchImpl,
+    signal,
+    options,
+  );
   if (!tree.truncated) return tree.sizes;
-  return fetchPathSizes(owner, repo, sha, token, paths, fetchImpl, signal, options);
+  return fetchPathSizes(
+    owner,
+    repo,
+    sha,
+    token,
+    paths,
+    fetchImpl,
+    signal,
+    options,
+  );
 }
 
 /** Analyzer entrypoint: flag heavy binary assets the PR adds or grows past the threshold. Pure size arithmetic over
@@ -271,11 +287,11 @@ export async function scanAssetWeight(
           repo.repo,
           req.baseSha,
           token,
-      basePaths,
-      fetchImpl,
-      options.signal,
-      options,
-    )
+          basePaths,
+          fetchImpl,
+          options.signal,
+          options,
+        )
       : new Map<string, number>();
 
   const findings: AssetWeightFinding[] = [];

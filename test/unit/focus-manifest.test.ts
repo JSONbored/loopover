@@ -17,6 +17,7 @@ import {
   resolveReviewPreMergeChecks,
   composeRepoReviewContext,
   resolveReviewPromptOverrides,
+  repoDocGenerationConfigToJson,
   reviewConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
@@ -526,6 +527,7 @@ describe("compileFocusManifestPolicy", () => {
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
+      repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1262,6 +1264,75 @@ describe("parseFocusManifest gate config", () => {
     expect(contentLaneConfigToJson(parseFocusManifest(null).contentLane)).toBeNull();
     const m = parseFocusManifest({ contentLane: { entryFileGlob: "registry/*.json", collectionField: "items" } });
     expect(contentLaneConfigToJson(m.contentLane)).toEqual({ entryFileGlob: "registry/*.json", collectionField: "items" });
+  });
+
+  describe("repoDocGeneration: (#3002, repo-doc generation config-as-code surface)", () => {
+    it("defaults to fully disabled and absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ repoDocGeneration: null }).repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ repoDocGeneration: "nope" as never });
+      expect(asString.repoDocGeneration.present).toBe(false);
+      expect(asString.warnings.some((w) => /"repoDocGeneration" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ repoDocGeneration: ["nope"] as never });
+      expect(asArray.repoDocGeneration.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"repoDocGeneration" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true and defaults scope/allowOverwriteExisting, making the manifest present", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true } });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: true, scope: ["agents"], allowOverwriteExisting: false });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: "yes" as unknown as boolean } });
+      expect(m.repoDocGeneration.enabled).toBe(false);
+      expect(m.warnings.some((w) => /repoDocGeneration\.enabled/.test(w))).toBe(true);
+    });
+
+    it("parses allowOverwriteExisting independently of enabled", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: false, allowOverwriteExisting: true } });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: false, scope: ["agents"], allowOverwriteExisting: true });
+    });
+
+    it("accepts an explicit multi-entry scope list", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: ["agents", "skills"] } });
+      expect(m.repoDocGeneration.scope).toEqual(["agents", "skills"]);
+    });
+
+    it("respects an explicitly empty scope list as 'nothing in scope', rather than defaulting it back to [\"agents\"]", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: [] } });
+      expect(m.repoDocGeneration.scope).toEqual([]);
+    });
+
+    it("filters out unrecognized scope entries with a warning, keeping the valid ones", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { scope: ["agents", "bogus"] } });
+      expect(m.repoDocGeneration.scope).toEqual(["agents"]);
+      expect(m.warnings.some((w) => /repoDocGeneration\.scope.*unrecognized entry "bogus"/.test(w))).toBe(true);
+    });
+
+    it("falls back to the default scope (not an empty one) when scope is a non-list type", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: "agents" as unknown as string[] } });
+      expect(m.repoDocGeneration.scope).toEqual(["agents"]);
+      expect(m.warnings.some((w) => /repoDocGeneration\.scope.*must be a list/.test(w))).toBe(true);
+    });
+
+    it("round-trips through repoDocGenerationConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, scope: ["agents", "skills"], allowOverwriteExisting: true } });
+      expect(parseFocusManifest({ repoDocGeneration: repoDocGenerationConfigToJson(m.repoDocGeneration) }).repoDocGeneration).toEqual(m.repoDocGeneration);
+    });
+
+    it("repoDocGenerationConfigToJson returns null for an absent config", () => {
+      expect(repoDocGenerationConfigToJson(parseFocusManifest(null).repoDocGeneration)).toBeNull();
+    });
   });
 
   it("parses aiReviewAllAuthors from the settings: block (generic override)", () => {

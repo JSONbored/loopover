@@ -149,6 +149,28 @@ export type FocusManifestContentLaneConfig = {
   validatorId: string | null;
 };
 
+/** Which generated-file types the repo-doc generation roadmap (#2993) is allowed to touch for a repo.
+ *  "agents" covers AGENTS.md/CLAUDE.md (#3000/#3004); "skills" covers generated Claude Code/Codex skill
+ *  files once that generator lands (#3001) -- listed here now so a maintainer can opt in ahead of time. */
+export type FocusManifestRepoDocGenerationScope = "agents" | "skills";
+
+/**
+ * Per-repo opt-in for the repo-doc generation roadmap (#2993/#3002), declared as code under
+ * `repoDocGeneration:`. Purely a `.gittensory.yml` surface -- there is no DB-backed dashboard counterpart,
+ * so precedence is simply "the manifest value, or the default below when unset" (no DB layer to overlay).
+ * Defaults to fully disabled: a repo with no `repoDocGeneration:` block, or an explicit `enabled: false`,
+ * is never touched by the generator. `allowOverwriteExisting` is a SEPARATE opt-in specifically for a repo
+ * that already has a hand-maintained AGENTS.md/CLAUDE.md (no recognizable generated-content marker block,
+ * per generated-doc-refresh.ts's `manual-review-required` outcome) -- without it, that repo is left alone
+ * rather than proposed for a wholesale overwrite, even when `enabled` is true.
+ */
+export type FocusManifestRepoDocGenerationConfig = {
+  present: boolean;
+  enabled: boolean;
+  scope: FocusManifestRepoDocGenerationScope[];
+  allowOverwriteExisting: boolean;
+};
+
 /**
  * Generic repository-settings override declared in `.gittensory.yml` under `settings:`. A partial of
  * {@link RepositorySettings} — every behaviour a maintainer can toggle in the dashboard can be set here
@@ -336,6 +358,7 @@ export type FocusManifest = {
   review: FocusManifestReviewConfig;
   features: FocusManifestFeaturesConfig;
   contentLane: FocusManifestContentLaneConfig;
+  repoDocGeneration: FocusManifestRepoDocGenerationConfig;
   warnings: string[];
 };
 
@@ -429,6 +452,13 @@ const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {
   validatorId: null,
 };
 
+const EMPTY_REPO_DOC_GENERATION_CONFIG: FocusManifestRepoDocGenerationConfig = {
+  present: false,
+  enabled: false,
+  scope: ["agents"],
+  allowOverwriteExisting: false,
+};
+
 const EMPTY_MANIFEST: FocusManifest = {
   present: false,
   source: "none",
@@ -444,6 +474,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
+  repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
   warnings: [],
 };
 
@@ -473,6 +504,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
+    repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
   };
 }
 
@@ -925,6 +957,53 @@ export function contentLaneConfigToJson(contentLane: FocusManifestContentLaneCon
   if (contentLane.duplicateKeyFields.length > 0) out.duplicateKeyFields = contentLane.duplicateKeyFields;
   if (contentLane.validatorId !== null) out.validatorId = contentLane.validatorId;
   return out;
+}
+
+const REPO_DOC_GENERATION_SCOPES: readonly FocusManifestRepoDocGenerationScope[] = ["agents", "skills"];
+
+/** `undefined`/`null` (key omitted) falls back to the default scope; a non-list value is a genuine type error
+ *  and ALSO falls back to the default (rather than emptying it out, which would silently disable an otherwise
+ *  `enabled: true` config); an actual list -- even an explicitly empty one, or one where every entry is
+ *  invalid -- is respected as "nothing in scope", since that is a deliberate, well-typed value. */
+function parseRepoDocGenerationScope(value: JsonValue | undefined, warnings: string[]): FocusManifestRepoDocGenerationScope[] {
+  if (value === undefined || value === null) return [...EMPTY_REPO_DOC_GENERATION_CONFIG.scope];
+  if (!Array.isArray(value)) {
+    warnings.push('Manifest field "repoDocGeneration.scope" must be a list; falling back to the default scope.');
+    return [...EMPTY_REPO_DOC_GENERATION_CONFIG.scope];
+  }
+  const raw = normalizeStringList(value, "repoDocGeneration.scope", warnings);
+  return raw.filter((entry): entry is FocusManifestRepoDocGenerationScope => {
+    if ((REPO_DOC_GENERATION_SCOPES as readonly string[]).includes(entry)) return true;
+    warnings.push(`Manifest field "repoDocGeneration.scope" has an unrecognized entry "${entry}"; ignoring it.`);
+    return false;
+  });
+}
+
+/**
+ * Parse the optional `repoDocGeneration:` mapping (#3002). Unlike `gate:`/`settings:`, every field here has a
+ * concrete default rather than a null "unconfigured" sentinel -- there is no DB layer to overlay onto, so the
+ * parsed value (or the default, when a key is omitted) IS the effective value. An explicitly empty `scope: []`
+ * is honored as "nothing in scope" (not coerced back to the default); only an OMITTED `scope` key falls back to
+ * `["agents"]`, mirroring how `undefined`/`null` mean "unset" everywhere else in this file.
+ */
+function parseRepoDocGenerationConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestRepoDocGenerationConfig {
+  if (value === undefined || value === null) return { ...EMPTY_REPO_DOC_GENERATION_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "repoDocGeneration" must be a mapping; ignoring it.');
+    return { ...EMPTY_REPO_DOC_GENERATION_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "repoDocGeneration.enabled", warnings) ?? false;
+  const allowOverwriteExisting = normalizeOptionalBoolean(record.allowOverwriteExisting, "repoDocGeneration.allowOverwriteExisting", warnings) ?? false;
+  const scope = parseRepoDocGenerationScope(record.scope, warnings);
+  return { present: true, enabled, scope, allowOverwriteExisting };
+}
+
+/** Serialize a repoDocGeneration config back into the parse-compatible shape so a cached snapshot round-trips
+ *  through {@link parseRepoDocGenerationConfig} unchanged. Returns null when nothing is configured. */
+export function repoDocGenerationConfigToJson(config: FocusManifestRepoDocGenerationConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled, scope: config.scope, allowOverwriteExisting: config.allowOverwriteExisting };
 }
 
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {
@@ -1769,6 +1848,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     review: parseReviewConfig(record.review, warnings),
     features: parseFeaturesConfig(record.features, warnings),
     contentLane: parseContentLaneConfig(record.contentLane, warnings),
+    repoDocGeneration: parseRepoDocGenerationConfig(record.repoDocGeneration, warnings),
     warnings,
   };
   if (
@@ -1783,7 +1863,8 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     Object.keys(manifest.settings).length === 0 &&
     !manifest.review.present &&
     !manifest.features.present &&
-    !manifest.contentLane.present
+    !manifest.contentLane.present &&
+    !manifest.repoDocGeneration.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;

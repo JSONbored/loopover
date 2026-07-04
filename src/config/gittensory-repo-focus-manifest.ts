@@ -59,6 +59,13 @@ gate:
 #     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad (Change scope) |
 #     openPrQueue: false                                # validationEvidence (Validation posture) | openPrQueue (Contributor workload) | contributorContext | gateResult
 
+# Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let Gittensory open a
+# PR generating AGENTS.md/CLAUDE.md from this repo's own profile.
+# repoDocGeneration:
+#   enabled: true                   # default false — must be explicitly turned on per repo
+#   scope: [agents]                 # agents | skills — which generated file types are in play
+#   allowOverwriteExisting: false   # required before Gittensory will touch an existing hand-maintained file
+
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.
   - Focused control-panel UI changes are welcome when they use live API data or honest empty/error states and tie to safety, release readiness, or operator-facing analytics.

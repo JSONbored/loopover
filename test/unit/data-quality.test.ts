@@ -563,6 +563,22 @@ describe("sync data quality", () => {
     });
   });
 
+  it("counts a not_modified merged-PR history segment as full historical coverage", () => {
+    const segments = [
+      segment({ segment: "metadata", fetchedCount: 1, expectedCount: 1 }),
+      segment({ segment: "labels", fetchedCount: 2, expectedCount: 2 }),
+      segment({ segment: "open_issues", fetchedCount: 2911, expectedCount: 2911 }),
+      segment({ segment: "open_pull_requests", fetchedCount: 167, expectedCount: 167 }),
+      segment({ segment: "pull_request_files", fetchedCount: 167, expectedCount: 167 }),
+      segment({ segment: "pull_request_reviews", fetchedCount: 167, expectedCount: 167 }),
+      segment({ segment: "check_summaries", fetchedCount: 167, expectedCount: 167 }),
+      // A 304 re-sync: nothing new merged, so the persisted rows are the full merged-PR history.
+      segment({ segment: "recent_merged_pull_requests", status: "not_modified", fetchedCount: 6411, expectedCount: 6411 }),
+    ];
+
+    expect(buildCoreSignalFidelity(1, [repoState()], segments, [totals()], []).historyCoverage).toBe("full");
+  });
+
   it("keeps core fidelity complete when rate-limited required segments have last complete coverage", () => {
     const segments = [
       segment({ segment: "metadata", fetchedCount: 1, expectedCount: 1 }),

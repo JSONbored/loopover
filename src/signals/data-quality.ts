@@ -230,7 +230,16 @@ export function buildCoreSignalFidelity(
     const requiredSegments = repoSegments.filter((segment) => REQUIRED_OPEN_SEGMENTS.has(segment.segment));
     const historySegment = repoSegments.find((segment) => segment.segment === "recent_merged_pull_requests");
     if ((historySegment?.fetchedCount ?? 0) > 0) hasHistoricalSample = true;
-    if (!historySegment || !repoTotals || historySegment.status !== "complete" || historySegment.fetchedCount < repoTotals.mergedPullRequestsTotal) hasFullHistory = false;
+    // A `not_modified` (HTTP 304) merged-PR history segment is fully synced — its persisted rows are the
+    // complete history — so it counts as full history just like `complete`, mirroring isFreshSegmentStatus
+    // in backfill.ts. Treating only `complete` here wrongly downgrades an unchanged repo to "sampled".
+    if (
+      !historySegment ||
+      !repoTotals ||
+      (historySegment.status !== "complete" && historySegment.status !== "not_modified") ||
+      historySegment.fetchedCount < repoTotals.mergedPullRequestsTotal
+    )
+      hasFullHistory = false;
 
     const repoWaiting = requiredSegments.some((segment) => {
       const expected = expectedForRequiredSegment(segment, repoTotals);

@@ -703,6 +703,11 @@ services:
       - gittensory-backups:/backups
       - ./scripts/backup.sh:/backup.sh:ro
       - ./scripts/verify-backup.sh:/verify-backup.sh:ro
+      # Shared url_decode/pgpass_escape helpers (#2910), sourced by both scripts above via
+      # `. "$(dirname "$0")/selfhost-pg-url.sh"` -- must be mounted at container root alongside them so that
+      # dirname-relative resolution finds it at /selfhost-pg-url.sh, the same way it finds
+      # scripts/selfhost-pg-url.sh when either script is run directly from a repo checkout.
+      - ./scripts/selfhost-pg-url.sh:/selfhost-pg-url.sh:ro
     # `docker compose run --rm backup sh /backup.sh` (or /verify-backup.sh) REPLACES `command:`, not
     # `entrypoint:`, so the package install must live in the entrypoint or an on-demand run gets a bare
     # container with no pg_restore/sqlite3/psql. The entrypoint installs packages once, then `exec "$@"`

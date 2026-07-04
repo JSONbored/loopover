@@ -272,6 +272,102 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Dropbox short-lived access token: `sl.` + 130-152 base64url chars.
+    kind: "dropbox_token",
+    re: /\bsl\.[A-Za-z0-9_-]{130,152}\b/,
+    confidence: "high",
+  },
+  {
+    // JFrog Artifactory API key: `AKCp8` + >=69 base62 (lookahead terminator — the body has no fixed end).
+    kind: "jfrog_api_key",
+    re: /\bAKCp8[A-Za-z0-9]{69,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Duffel API token: `duffel_test_`/`duffel_live_` + 43 base64url.
+    kind: "duffel_token",
+    re: /\bduffel_(?:test|live)_[A-Za-z0-9_-]{43}\b/,
+    confidence: "high",
+  },
+  {
+    // EasyPost API key: `EZAK` (production) / `EZTK` (test) + 54 base62.
+    kind: "easypost_key",
+    re: /\bEZ[AT]K[A-Za-z0-9]{54}\b/,
+    confidence: "high",
+  },
+  {
+    // Frame.io developer token: `fio-u-` + 64 base64url.
+    kind: "frameio_token",
+    re: /\bfio-u-[A-Za-z0-9_-]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Contentful personal access token: `CFPAT-` + 43 base64url.
+    kind: "contentful_token",
+    re: /\bCFPAT-[A-Za-z0-9_-]{43}\b/,
+    confidence: "high",
+  },
+  {
+    // SonarQube token: `sqa_`/`sqp_`/`squ_` (analysis/project/user) + 40 hex.
+    kind: "sonarqube_token",
+    re: /\bsq[apu]_[a-f0-9]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // Pulumi access token: `pul-` + 40 hex.
+    kind: "pulumi_token",
+    re: /\bpul-[a-f0-9]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // Adafruit IO key: `aio_` + 28 base62.
+    kind: "adafruit_io_key",
+    re: /\baio_[A-Za-z0-9]{28}\b/,
+    confidence: "high",
+  },
+  {
+    // ReadMe API key: `rdme_` + >=70 lowercase-hex-ish body (lookahead terminator).
+    kind: "readme_api_key",
+    re: /\brdme_[a-z0-9]{70,}(?![a-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Typeform personal access token: `tfp_` + >=40 base62/._- (lookahead terminator).
+    kind: "typeform_token",
+    re: /\btfp_[A-Za-z0-9._-]{40,}(?![A-Za-z0-9._-])/,
+    confidence: "high",
+  },
+  {
+    // Sentry DSN: an ingest URL embedding a 32-hex public key against a *.sentry.io host + project id.
+    kind: "sentry_dsn",
+    re: /\bhttps:\/\/[a-f0-9]{32}@[a-z0-9.-]*sentry\.io\/[0-9]+\b/,
+    confidence: "high",
+  },
+  {
+    // New Relic license/ingest key: 40 hex with the `NRAL` suffix (distinct from the `NRAK-` user key above).
+    kind: "newrelic_license_key",
+    re: /\b[a-f0-9]{40}NRAL\b/,
+    confidence: "high",
+  },
+  {
+    // Replicate API token: `r8_` + 37 base62.
+    kind: "replicate_token",
+    re: /\br8_[A-Za-z0-9]{37}\b/,
+    confidence: "high",
+  },
+  {
+    // Groq API key: `gsk_` + 52 base62.
+    kind: "groq_api_key",
+    re: /\bgsk_[A-Za-z0-9]{52}\b/,
+    confidence: "high",
+  },
+  {
+    // Perplexity API key: `pplx-` + >=40 base62 (lookahead terminator).
+    kind: "perplexity_api_key",
+    re: /\bpplx-[A-Za-z0-9]{40,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

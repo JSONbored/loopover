@@ -61,6 +61,13 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Anthropic API key: `sk-ant-` prefix + base64url body (e.g. `sk-ant-api03-…`).
+    // Distinct from Stripe's `sk_live_` / `rk_live_` (underscore) and OpenAI's bare `sk-` keys.
+    kind: "anthropic_api_key",
+    re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",
@@ -114,7 +121,12 @@ export function scanPatch(path: string, patch: string): SecretFinding[] {
       let matched = false;
       for (const rule of RULES) {
         if (rule.re.test(content)) {
-          findings.push({ file: path, line: newLine, kind: rule.kind, confidence: rule.confidence });
+          findings.push({
+            file: path,
+            line: newLine,
+            kind: rule.kind,
+            confidence: rule.confidence,
+          });
           matched = true;
           break; // one finding per line — first (most specific) rule wins
         }
@@ -124,12 +136,21 @@ export function scanPatch(path: string, patch: string): SecretFinding[] {
       // common "two sequential variable assignments" shape. Skipped once this line already matched on its own.
       const lastPrevious = previousLiterals.at(-1);
       const firstCurrent = currentLiterals[0];
-      if (!matched && lastPrevious !== undefined && firstCurrent !== undefined) {
+      if (
+        !matched &&
+        lastPrevious !== undefined &&
+        firstCurrent !== undefined
+      ) {
         const joined = lastPrevious + firstCurrent;
         for (const rule of RULES) {
           if (rule.re.test(joined)) {
             // "medium" regardless of the rule's own confidence — a joined pair is a heuristic, not a direct match.
-            findings.push({ file: path, line: newLine, kind: rule.kind, confidence: "medium" });
+            findings.push({
+              file: path,
+              line: newLine,
+              kind: rule.kind,
+              confidence: "medium",
+            });
             break;
           }
         }

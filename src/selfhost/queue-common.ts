@@ -201,8 +201,22 @@ export async function queueSnapshotFromBinding(binding: Queue): Promise<SelfHost
 
 export type DeadLetterQueuePage = { items: DeadLetterJob[]; total: number };
 
-/** Null on Cloudflare (the real Queue binding has neither method) or any binding that hasn't wired the
- *  dead-letter admin surface -- callers 501 in that case rather than pretending the DLQ is simply empty. */
+function isDeadLetterJob(value: unknown): value is DeadLetterJob {
+  if (!value || typeof value !== "object") return false;
+  const job = value as Partial<DeadLetterJob>;
+  return (
+    typeof job.id === "number" &&
+    typeof job.jobType === "string" &&
+    typeof job.attempts === "number" &&
+    (job.lastError === null || typeof job.lastError === "string") &&
+    typeof job.createdAtMs === "number" &&
+    (job.deadAtMs === null || typeof job.deadAtMs === "number")
+  );
+}
+
+/** Null on Cloudflare (the real Queue binding has neither method), any binding that hasn't wired the
+ *  dead-letter admin surface, or a binding that returned a malformed row -- callers 501 in every case rather
+ *  than pretending the DLQ is simply empty or serving an unvalidated shape as if it were trustworthy. */
 export async function queueDeadLetterPageFromBinding(
   binding: Queue,
   limit: number,
@@ -214,6 +228,7 @@ export async function queueDeadLetterPageFromBinding(
     Promise.resolve(admin.listDeadLetterJobs(limit, offset)),
     Promise.resolve(admin.deadCount()),
   ]);
+  if (!items.every(isDeadLetterJob) || typeof total !== "number") return null;
   return { items, total };
 }
 

@@ -49,7 +49,10 @@ export function normalizeDeadLetterQueuePage(data: unknown): DeadLetterQueuePage
     typeof raw.limit !== "number" ||
     typeof raw.offset !== "number" ||
     typeof raw.total !== "number" ||
-    !Array.isArray(raw.items)
+    !Array.isArray(raw.items) ||
+    // A malformed item means the response itself is untrustworthy -- filtering it out silently would render
+    // a corrupted backend response as a plausible partial/empty queue instead of surfacing the corruption.
+    !raw.items.every(isDeadLetterQueueItem)
   ) {
     return null;
   }
@@ -58,7 +61,7 @@ export function normalizeDeadLetterQueuePage(data: unknown): DeadLetterQueuePage
     limit: raw.limit,
     offset: raw.offset,
     total: raw.total,
-    items: raw.items.filter(isDeadLetterQueueItem),
+    items: raw.items,
   };
 }
 

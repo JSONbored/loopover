@@ -16100,7 +16100,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Live app API response",
+            "description": "Paginated dead-letter jobs for the self-host queue backend",
             "content": {
               "application/json": {
                 "schema": {
@@ -16112,8 +16112,17 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid query"
+          },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role (operator only)"
+          },
+          "501": {
+            "description": "This deployment's queue backend does not expose dead-letter admin (e.g. Cloudflare)"
           }
         },
         "security": [
@@ -16122,6 +16131,28 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "25"
+            },
+            "required": false,
+            "description": "Maximum rows to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "0"
+            },
+            "required": false,
+            "description": "Pagination offset, floored to 0.",
+            "name": "offset",
+            "in": "query"
           }
         ]
       }

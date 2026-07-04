@@ -720,7 +720,6 @@ export function buildOpenApiSpec() {
     "/v1/app/miner-dashboard",
     "/v1/app/maintainer-dashboard",
     "/v1/app/operator-dashboard",
-    "/v1/app/selfhost/queue/dead",
     "/v1/app/commands",
     "/v1/app/commands/usefulness",
     "/v1/app/digest",
@@ -736,6 +735,29 @@ export function buildOpenApiSpec() {
       },
     });
   }
+  registry.registerPath({
+    method: "get",
+    path: "/v1/app/selfhost/queue/dead",
+    request: {
+      query: z.object({
+        limit: z.string().optional().openapi({
+          param: { description: "Maximum rows to return, clamped from 1 to 100." },
+          example: "25",
+        }),
+        offset: z.string().optional().openapi({
+          param: { description: "Pagination offset, floored to 0." },
+          example: "0",
+        }),
+      }),
+    },
+    responses: {
+      200: { description: "Paginated dead-letter jobs for the self-host queue backend", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Invalid query" },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role (operator only)" },
+      501: { description: "This deployment's queue backend does not expose dead-letter admin (e.g. Cloudflare)" },
+    },
+  });
   registry.registerPath({
     method: "get",
     path: "/v1/app/analytics/weekly-value-report",

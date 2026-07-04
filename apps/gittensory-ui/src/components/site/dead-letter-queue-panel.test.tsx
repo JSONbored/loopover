@@ -49,12 +49,17 @@ describe("dead-letter queue panel model", () => {
     expect(normalizeDeadLetterQueuePage(SAMPLE_PAGE)).toEqual(SAMPLE_PAGE);
     expect(normalizeDeadLetterQueuePage(null)).toBeNull();
     expect(normalizeDeadLetterQueuePage({ generatedAt: "x" })).toBeNull();
+    // A single malformed item makes the WHOLE response untrustworthy -- it must reject to null (an error
+    // state), not silently filter the bad item and render a plausible-looking partial/empty queue.
     expect(
       normalizeDeadLetterQueuePage({
         ...SAMPLE_PAGE,
         items: [SAMPLE_PAGE.items[0], null, "bad", { id: "not-a-number" }],
       }),
-    ).toMatchObject({ items: [SAMPLE_PAGE.items[0]] });
+    ).toBeNull();
+    expect(
+      normalizeDeadLetterQueuePage({ ...SAMPLE_PAGE, items: [{ id: "not-a-number" }] }),
+    ).toBeNull();
   });
 
   it("formats a null death/creation timestamp as an em dash, and a real one as a non-empty string", () => {

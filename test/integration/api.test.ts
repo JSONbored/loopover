@@ -5749,7 +5749,6 @@ describe("api routes", () => {
     });
 
     await upsertRepoFocusManifest(env, "entrius/allways-ui", {
-      blockedPaths: ["dist/"],
       linkedIssuePolicy: "optional",
       issueDiscoveryPolicy: "discouraged",
       maintainerNotes: [
@@ -5767,14 +5766,12 @@ describe("api routes", () => {
         previewOnly: true,
         present: true,
         publicWarnings: expect.arrayContaining([
-          expect.objectContaining({ code: "blocked_work_without_wanted_scope" }),
+          expect.objectContaining({ code: "contribution_scope_unclear" }),
           expect.objectContaining({ code: "linked_issue_policy_mismatch" }),
           expect.objectContaining({ code: "validation_expectations_missing" }),
         ]),
       },
-      warnings: expect.arrayContaining([
-        expect.stringContaining("Blocked work lacks a positive lane"),
-      ]),
+      warnings: expect.arrayContaining([expect.stringContaining("Contribution scope is unclear")]),
     });
     expect(policyPayload.policyReadiness).not.toHaveProperty("ownerContext");
     expect(JSON.stringify(policyPayload.policyReadiness.publicWarnings)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
@@ -6292,7 +6289,6 @@ describe("api routes", () => {
         headers: internalHeaders(env),
         body: JSON.stringify({
           wantedPaths: ["src/"],
-          blockedPaths: ["dist/"],
           preferredLabels: ["bug"],
           linkedIssuePolicy: "required",
           issueDiscoveryPolicy: "discouraged",
@@ -6315,7 +6311,6 @@ describe("api routes", () => {
         present: true,
         source: "api_record",
         wantedPaths: ["src/"],
-        blockedPaths: ["dist/"],
         maintainerNotes: [privateNote],
       },
       policy: {
@@ -6328,7 +6323,7 @@ describe("api routes", () => {
               id: "direct-pr",
               preference: "preferred",
               preferredPaths: ["src/"],
-              discouragedPaths: ["dist/"],
+              discouragedPaths: [],
               validationExpectations: ["Run npm run test:ci."],
               publicNotes: ["Prefer small, focused PRs."],
             }),
@@ -6336,7 +6331,7 @@ describe("api routes", () => {
               id: "issue-discovery",
               preference: "discouraged",
               preferredPaths: [],
-              discouragedPaths: ["dist/"],
+              discouragedPaths: [],
             }),
           ],
           labelPolicy: { preferredLabels: ["bug"], required: true },

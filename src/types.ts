@@ -639,8 +639,9 @@ export type RepositorySettings = {
   premergeContentRecheck?: boolean | undefined;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;
-  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (blocked paths,
-   *  required-linked-issue, test expectations) becomes an enforceable review-agent blocker. An
+  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (required-linked
+   *  issue and test expectations) becomes an enforceable review-agent blocker. Path-based manual-review holds
+   *  are configured separately through `settings.hardGuardrailGlobs`. An
    *  INDEPENDENT dimension, deliberately not folded into the merge-readiness composite. Default `off` — opt-in. */
   manifestPolicyGateMode: GateRuleMode;
   /** Self-authored linked-issue gate. When `block`, the gate closes a PR where the contributor also

@@ -42,7 +42,6 @@ const NEUTRAL_HOLD_REASON_CODES = [
   "ai_review_inconclusive",
   "oversized_pr",
   "guardrail_hold",
-  "manifest_blocked_path",
   "repo_not_registered",
   "repo_not_seen",
   "pr_not_cached",
@@ -87,8 +86,8 @@ const PARITY_WINDOW_DAYS = 90;
  *                                                  keeps the parity SAFETY metric honest: a shadow 'hold' is
  *                                                  never the dangerous "shadow merges where authoritative
  *                                                  wouldn't" direction.
- *   • 'neutral'                        → 'hold'  — a REAL, deliberate decision (a guardrail/size/manifest-blocked
- *                                                  hold, or an AI-inconclusive fail-closed hold): the gate chose
+ *   • 'neutral'                        → 'hold'  — a REAL, deliberate decision (a guardrail/size hold, or an
+ *                                                  AI-inconclusive fail-closed hold): the gate chose
  *                                                  to hold this PR for a human rather than pass it automatically.
  *                                                  This is exactly as terminal, from an observability standpoint,
  *                                                  as a 'failure' hold (#terminal-outcome-audit) -- recording it

@@ -115,8 +115,9 @@ function HowReviewsWork() {
         </li>
         <li>
           <strong>Manifest-policy gate</strong> (<code>manifestPolicyGateMode</code>, default{" "}
-          <code>off</code>) — when <code>block</code>, the repo's declared policy (blocked paths,
-          required linked issue, test expectations) becomes enforceable.
+          <code>off</code>) — when <code>block</code>, the repo's declared policy (required linked
+          issue and test expectations) becomes enforceable. Manual-review path holds are controlled
+          separately by <code>settings.hardGuardrailGlobs</code>.
         </li>
       </ul>
       <p>
@@ -228,9 +229,9 @@ function HowReviewsWork() {
           reviewer reads it.
         </li>
         <li>
-          <code>manifest_blocked_path</code> — the PR touches a path listed in the repo's{" "}
-          <code>blockedPaths</code>. Enforceable when <code>manifestPolicy</code> is{" "}
-          <code>block</code>.
+          <code>guardrail_hold</code> — the PR touches a path listed in{" "}
+          <code>settings.hardGuardrailGlobs</code>. This is a manual-review hold, not an
+          auto-close reason.
         </li>
         <li>
           <code>manifest_missing_tests</code> — code changed but the expected test paths (

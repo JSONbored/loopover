@@ -43,8 +43,6 @@ describe("Gittensory repo focus manifest", () => {
     expect(manifest.wantedPaths).toContain("src/");
     expect(manifest.wantedPaths).toContain("review-enrichment/");
     expect(manifest.wantedPaths).toContain("apps/gittensory-ui/");
-    expect(manifest.blockedPaths).toContain("site/");
-    expect(manifest.blockedPaths).not.toContain("apps/gittensory-ui/");
     expect(manifest.issueDiscoveryPolicy).toBe("discouraged");
 
     const policy = compileFocusManifestPolicy(manifest);
@@ -61,14 +59,14 @@ describe("Gittensory repo focus manifest", () => {
     expect(manifest.warnings.join(" ")).toMatch(/not valid YAML/i);
   });
 
-  it("blocked path fixture flags retired static-site surfaces", () => {
+  it("retired static-site surfaces no longer create manifest path holds", () => {
     const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const guidance = buildFocusManifestGuidance({
       manifest,
       changedPaths: ["site/docs/index.html"],
     });
-    expect(guidance.findings.some((finding) => finding.code === "manifest_blocked_path")).toBe(true);
-    expect(guidance.summary).toMatch(/blocked area/i);
+    expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_malformed");
+    expect(guidance.summary).toMatch(/outside the wanted areas/i);
   });
 
   it("focused control-panel UI changes align with wanted paths", () => {
@@ -78,17 +76,17 @@ describe("Gittensory repo focus manifest", () => {
       changedPaths: ["apps/gittensory-ui/src/routes/app.operator.tsx"],
     });
     expect(guidance.findings.some((finding) => finding.code === "manifest_preferred_path")).toBe(true);
-    expect(guidance.findings.some((finding) => finding.code === "manifest_blocked_path")).toBe(false);
   });
 
-  it("recommendation influence prefers in-scope backend and UI paths separately from blocked surfaces", () => {
+  it("recommendation influence prefers in-scope backend and UI paths without legacy blocked surfaces", () => {
     const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const backend = buildFocusManifestGuidance({ manifest, changedPaths: ["src/api/routes.ts"] });
     const controlPanel = buildFocusManifestGuidance({ manifest, changedPaths: ["apps/gittensory-ui/src/app.tsx"] });
     const retiredSite = buildFocusManifestGuidance({ manifest, changedPaths: ["site/index.html"] });
     expect(backend.findings.some((finding) => finding.code === "manifest_preferred_path")).toBe(true);
     expect(controlPanel.findings.some((finding) => finding.code === "manifest_preferred_path")).toBe(true);
-    expect(retiredSite.findings.some((finding) => finding.code === "manifest_blocked_path")).toBe(true);
+    expect(retiredSite.findings.map((finding) => finding.code)).not.toContain("manifest_malformed");
+    expect(retiredSite.summary).toMatch(/outside the wanted areas/i);
   });
 
   it("public/private boundary regression keeps maintainer notes out of public guidance", () => {
@@ -107,14 +105,14 @@ describe("Gittensory repo focus manifest", () => {
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toContain("packages/");
     expect(manifest.wantedPaths).toContain("apps/gittensory-ui/");
-    expect(manifest.blockedPaths).toContain("site/");
   });
 
-  it("flags lovable-only and CNAME paths as blocked surfaces", () => {
+  it("does not treat legacy lovable-only and CNAME paths as manifest holds", () => {
     const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     for (const changedPath of ["CNAME", "vendor/lovable/widget.ts"]) {
       const guidance = buildFocusManifestGuidance({ manifest, changedPaths: [changedPath] });
-      expect(guidance.findings.some((finding) => finding.code === "manifest_blocked_path")).toBe(true);
+      expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_malformed");
+      expect(guidance.summary).toMatch(/outside the wanted areas/i);
     }
   });
 

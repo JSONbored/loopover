@@ -362,8 +362,7 @@ function manifestSummary(decision: DashboardRecord | undefined): string | undefi
   const linkedIssuePolicy = stringValue(manifest, "linkedIssuePolicy") ?? "unknown";
   const issueDiscoveryPolicy = stringValue(manifest, "issueDiscoveryPolicy") ?? "unknown";
   const wantedPathCount = numberValue(manifest, "wantedPathCount") ?? 0;
-  const blockedPathCount = numberValue(manifest, "blockedPathCount") ?? 0;
-  return `${linkedIssuePolicy}/${issueDiscoveryPolicy}/${wantedPathCount} wanted/${blockedPathCount} blocked`;
+  return `${linkedIssuePolicy}/${issueDiscoveryPolicy}/${wantedPathCount} wanted`;
 }
 
 function recordArray(value: unknown): DashboardRecord[] {

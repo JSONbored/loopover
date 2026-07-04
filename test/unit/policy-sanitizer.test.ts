@@ -373,10 +373,11 @@ describe("compileFocusManifestPolicy — public-safe output boundaries", () => {
     expect(policy.publicSafe.readinessWarnings).toEqual([]);
   });
 
-  it("emits a readiness warning for blocked-only manifests with no wanted scope", () => {
+  it("treats legacy blocked-only manifests as absent", () => {
     const manifest = parseFocusManifest({ blockedPaths: ["migrations/"], wantedPaths: [], preferredLabels: [], testExpectations: [] });
     const policy = compileFocusManifestPolicy("JSONbored/gittensory", manifest, { generatedAt: FIXED_DATE });
-    expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/blocks work areas.*does not define wanted|pair blocked areas/i);
+    expect(policy.present).toBe(false);
+    expect(policy.publicSafe.readinessWarnings).toEqual([]);
     expect(JSON.stringify(policy.publicSafe)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
   });
 

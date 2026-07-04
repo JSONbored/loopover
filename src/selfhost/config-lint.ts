@@ -4,7 +4,6 @@ import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../signals/
 const TOP_LEVEL_FIELDS = [
   "source",
   "wantedPaths",
-  "blockedPaths",
   "preferredLabels",
   "linkedIssuePolicy",
   "testExpectations",

@@ -336,23 +336,22 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.conclusion).toBe("neutral");
   });
 
-  it("predicts a manifest path-policy HOLD when a changed path hits a blocked glob and manifestPolicy:block (#12)", () => {
+  it("ignores legacy blockedPaths even when manifestPolicy:block is enabled (#12)", () => {
     const result = verdict({
       gate: { manifestPolicy: "block" },
       manifestExtra: { blockedPaths: ["dist/**"] },
       changedPaths: ["dist/bundle.js"],
     });
-    expect(result.conclusion).toBe("neutral");
+    expect(result.conclusion).toBe("success");
     expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
-    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(true);
+    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
     // The note no longer disclaims path-policy once paths are supplied, but slop stays disclaimed.
     expect(result.note).not.toContain("Provide the PR's changed paths");
     expect(result.note.toLowerCase()).toContain("slop");
   });
 
-  it("manifestPolicy:advisory does NOT block on a blocked path (parity with the live advisory gate) (#12)", () => {
-    // The blocked-path finding is critical, so under advisory mode it neither blocks nor surfaces as a warning —
-    // exactly how the live gate treats it. The meaningful parity is that advisory never fails the prediction.
+  it("manifestPolicy:advisory does NOT block on legacy blockedPaths (parity with the live advisory gate) (#12)", () => {
+    // Path holds are configured through settings.hardGuardrailGlobs, not manifest blockedPaths.
     const result = verdict({
       gate: { manifestPolicy: "advisory" },
       manifestExtra: { blockedPaths: ["dist/**"] },
@@ -362,7 +361,7 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
   });
 
-  it("manifestPolicy:off (default) emits NO manifest finding even when a blocked path is touched", () => {
+  it("manifestPolicy:off (default) emits NO manifest finding for legacy blockedPaths", () => {
     const result = verdict({
       gate: { manifestPolicy: "off" },
       manifestExtra: { blockedPaths: ["dist/**"] },
@@ -372,9 +371,9 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
   });
 
-  it("ignores non-policy guidance findings (e.g. off-focus) — only the three enforceable policy codes are threaded (#12)", () => {
+  it("ignores non-policy guidance findings (e.g. off-focus) — only enforceable policy codes are threaded (#12)", () => {
     // The path isn't blocked but it's outside the wanted areas → guidance emits the NON-policy `manifest_off_focus`.
-    // The predictor must skip it (only manifest_blocked_path / _linked_issue_required / _missing_tests are gateable).
+    // The predictor must skip it (only linked-issue-required / missing-tests are gateable).
     const result = verdict({
       gate: { manifestPolicy: "block" },
       manifestExtra: { wantedPaths: ["src/**"] },

@@ -238,7 +238,7 @@ export function buildPredictedGateVerdict(args: {
       testFileCount: changedPaths.filter((path) => isTestPath(path)).length,
       passedValidationCount: 0,
     });
-    const policyCodes = new Set(["manifest_blocked_path", "manifest_linked_issue_required", "manifest_missing_tests"]);
+    const policyCodes = new Set(["manifest_linked_issue_required", "manifest_missing_tests"]);
     for (const finding of guidance.findings) {
       if (!policyCodes.has(finding.code)) continue;
       advisory.findings.push({

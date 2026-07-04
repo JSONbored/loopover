@@ -43,7 +43,6 @@ describe("parseFocusManifest", () => {
       present: true,
       source: "repo_file",
       wantedPaths: ["src/", "packages/*/lib"],
-      blockedPaths: ["migrations/", "infra/secrets.tf"],
       preferredLabels: ["bug", "good first issue"],
       linkedIssuePolicy: "required",
       issueDiscoveryPolicy: "discouraged",
@@ -77,7 +76,6 @@ describe("parseFocusManifest", () => {
       issueDiscoveryPolicy: 7,
     });
     expect(manifest.wantedPaths).toEqual([]);
-    expect(manifest.blockedPaths).toEqual(["ok"]);
     expect(manifest.preferredLabels[0]).toHaveLength(300);
     expect(manifest.linkedIssuePolicy).toBe("optional");
     expect(manifest.issueDiscoveryPolicy).toBe("neutral");
@@ -140,7 +138,6 @@ describe("parseFocusManifestContent", () => {
     const manifest = parseFocusManifestContent(JSON.stringify(FULL_MANIFEST));
     expect(manifest.present).toBe(true);
     expect(manifest.source).toBe("repo_file");
-    expect(manifest.blockedPaths).toContain("migrations/");
   });
 
   it("warns instead of throwing on malformed JSON", () => {
@@ -161,7 +158,6 @@ describe("parseFocusManifestContent", () => {
     const manifest = parseFocusManifestContent("wantedPaths:\n  - src/\nblockedPaths:\n  - dist/\n", "repo_file");
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toEqual(["src/"]);
-    expect(manifest.blockedPaths).toEqual(["dist/"]);
   });
 
   it("warns instead of throwing on malformed YAML", () => {
@@ -297,13 +293,11 @@ describe("buildFocusManifestGuidance", () => {
     expect(guidance.publicNextSteps).toEqual([]);
   });
 
-  it("flags a critical blocked-path finding and public next step", () => {
+  it("ignores legacy blockedPaths for review guidance and manual holds", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["migrations/0099_x.sql"] });
-    const blocked = guidance.findings.find((finding) => finding.code === "manifest_blocked_path");
-    expect(blocked?.severity).toBe("critical");
-    expect(guidance.matchedBlockedPaths).toEqual(["migrations/"]);
-    expect(guidance.publicNextSteps.join(" ")).toMatch(/maintainer-blocked/i);
-    expect(guidance.summary).toMatch(/blocked area/i);
+    expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_malformed");
+    expect(guidance.publicNextSteps.join(" ")).not.toMatch(/blocked|guarded/i);
+    expect(guidance.summary).toMatch(/outside the wanted areas/i);
   });
 
   it("recommends preferred paths when the change is in a wanted area", () => {
@@ -461,10 +455,10 @@ describe("compileFocusManifestPolicy", () => {
     expect(policy.publicSafe.issueDiscoveryPolicy).toBe("encouraged");
   });
 
-  it("handles a manifest with only blockedPaths set", () => {
+  it("treats legacy blockedPaths-only manifests as absent", () => {
     const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ blockedPaths: ["infra/"] }), opts);
-    expect(policy.present).toBe(true);
-    expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/blocked area|pair blocked/i);
+    expect(policy.present).toBe(false);
+    expect(policy.publicSafe.readinessWarnings).toEqual([]);
   });
 
   it("emits a readiness warning when no wanted paths or preferred labels are declared", () => {
@@ -472,7 +466,7 @@ describe("compileFocusManifestPolicy", () => {
     expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/does not define wanted paths|contribution scope may be unclear/i);
   });
 
-  it("emits a readiness warning when blocked paths exist but no wanted paths are declared", () => {
+  it("emits a readiness warning when linked issue policy exists but no wanted paths are declared", () => {
     const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ linkedIssuePolicy: "required" }), opts);
     expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/does not define wanted paths|contribution scope/i);
   });
@@ -509,7 +503,6 @@ describe("compileFocusManifestPolicy", () => {
       present: true,
       source: "api_record",
       wantedPaths: ["src/"],
-      blockedPaths: [],
       preferredLabels: [],
       linkedIssuePolicy: "optional",
       testExpectations: [],
@@ -652,10 +645,10 @@ describe("deriveContributionLanes", () => {
     expect(lanes.issueEntryGuidance).toContain("Issues must be linked to a PR before it is opened.");
   });
 
-  it("includes blocked paths in discouragedEntryPaths and PR entry guidance", () => {
+  it("ignores legacy blocked paths in discouragedEntryPaths and PR entry guidance", () => {
     const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], blockedPaths: ["migrations/", "infra/secrets.tf"] }));
-    expect(lanes.discouragedEntryPaths).toEqual(["migrations/", "infra/secrets.tf"]);
-    expect(lanes.prEntryGuidance.join(" ")).toMatch(/migrations\/.*infra\/secrets\.tf|infra\/secrets\.tf.*migrations\//);
+    expect(lanes.discouragedEntryPaths).toEqual([]);
+    expect(lanes.prEntryGuidance.join(" ")).not.toMatch(/migrations\/|infra\/secrets\.tf/);
   });
 
   it("includes preferred labels in PR entry guidance", () => {
@@ -717,7 +710,7 @@ describe("deriveContributionLanes", () => {
     expect(lanes.directPrLane).toBe("preferred");
     expect(lanes.issueDiscoveryLane).toBe("discouraged");
     expect(lanes.preferredEntryPaths).toContain("src/");
-    expect(lanes.discouragedEntryPaths).toContain("migrations/");
+    expect(lanes.discouragedEntryPaths).toEqual([]);
     expect(lanes.validationExpectations).toContain("Link a tracked issue before opening a PR.");
     expect(lanes.validationExpectations).toContain("unit tests for new branches");
     expect(lanes.issueEntryGuidance.join(" ")).toMatch(/discourages/i);

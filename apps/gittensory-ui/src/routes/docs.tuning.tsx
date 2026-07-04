@@ -248,8 +248,8 @@ function Tuning() {
         </li>
         <li>
           <code>gate.manifestPolicy</code> — when <code>block</code>, the manifest's declared policy
-          (blocked paths, required linked issue, test expectations) becomes an enforceable blocker.
-          Default <code>off</code>.
+          (required linked issue and test expectations) becomes an enforceable blocker. Manual-review
+          path holds use <code>settings.hardGuardrailGlobs</code> instead. Default <code>off</code>.
         </li>
         <li>
           <code>gate.firstTimeContributorGrace</code> — when <code>true</code>, softens a would-be
@@ -294,20 +294,15 @@ function Tuning() {
 
       <h2>Guardrails and scope</h2>
       <p>
-        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and guardrails.
-        These feed the deterministic findings (such as <code>manifest_blocked_path</code> and{" "}
-        <code>manifest_missing_tests</code>) and — when <code>gate.manifestPolicy: block</code> —
-        can become enforceable blockers.
+        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and validation
+        expectations. These feed deterministic findings such as <code>manifest_missing_tests</code>{" "}
+        and — when <code>gate.manifestPolicy: block</code> — can become enforceable blockers. Manual
+        path holds are configured only through <code>settings.hardGuardrailGlobs</code>.
       </p>
       <ul>
         <li>
           <code>wantedPaths</code> — globs for work areas you want; PRs touching these are
           preferred. Default <code>[]</code>.
-        </li>
-        <li>
-          <code>blockedPaths</code> — globs off-limits to contributors. Touching one yields a{" "}
-          <code>manifest_blocked_path</code> finding, enforceable when{" "}
-          <code>gate.manifestPolicy: block</code>. Default <code>[]</code>.
         </li>
         <li>
           <code>preferredLabels</code> — labels you prefer on incoming PRs; a missing one is
@@ -388,18 +383,15 @@ function Tuning() {
 
       <h2>Example .gittensory.yml</h2>
       <p>
-        A worked manifest: focus and guardrails up top, a refined gate, BYOK AI review, and a few
+        A worked manifest: focus and validation up top, a refined gate, BYOK AI review, and a few
         dashboard-equivalent overrides.
       </p>
       <CodeBlock
         filename=".gittensory.yml"
         lang="yaml"
-        code={`# Focus / guardrails
+        code={`# Focus / validation
 wantedPaths:
   - "src/**"
-blockedPaths:
-  - "vendor/**"
-  - ".github/workflows/**"
 testExpectations:
   - "tests/**"
 linkedIssuePolicy: preferred

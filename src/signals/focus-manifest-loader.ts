@@ -272,7 +272,6 @@ function manifestToJson(manifest: FocusManifest): Record<string, JsonValue> {
   return {
     source: manifest.source,
     wantedPaths: manifest.wantedPaths,
-    blockedPaths: manifest.blockedPaths,
     preferredLabels: manifest.preferredLabels,
     linkedIssuePolicy: manifest.linkedIssuePolicy,
     testExpectations: manifest.testExpectations,

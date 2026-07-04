@@ -6443,7 +6443,7 @@ describe("queue processors", () => {
     expect(rcAudit).toBeFalsy();
   });
 
-  it("auto-maintain (#778): uses the full gate verdict so manifest-policy blockers cannot be merged", async () => {
+  it("auto-maintain (#778): uses hard guardrails so guarded paths cannot be merged", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -6472,7 +6472,7 @@ describe("queue processors", () => {
       agentDryRun: true,
     });
     await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
-    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { gate: { manifestPolicy: "block" }, blockedPaths: ["migrations/**"] });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { hardGuardrailGlobs: ["migrations/**"] } });
     await upsertPullRequestFile(env, {
       repoFullName: "JSONbored/gittensory",
       pullNumber: 48,
@@ -6495,7 +6495,7 @@ describe("queue processors", () => {
 
     await processJob(env, {
       type: "github-webhook",
-      deliveryId: "auto-maintain-manifest-block",
+      deliveryId: "auto-maintain-hard-guardrail",
       eventName: "pull_request",
       payload: {
         action: "opened",
@@ -6516,7 +6516,7 @@ describe("queue processors", () => {
     });
 
     const mergeCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge").first<{ n: number }>();
-    expect(mergeCount?.n).toBe(0); // the manifest-policy blocker prevents the auto-merge (the key assertion)
+    expect(mergeCount?.n).toBe(0); // the hard guardrail prevents the auto-merge (the key assertion)
     // The bot never posts a formal request_changes. With close NOT at an acting level here, the blocked PR is
     // simply not merged (no blocking review); with close acting it would be closed.
     const rcAudit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.request_changes").first<{ outcome: string }>();

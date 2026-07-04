@@ -60,10 +60,10 @@ describe("MCP gittensory_predict_gate", () => {
     expect(JSON.stringify(result.content)).toContain("Too big");
   });
 
-  it("predicts the focus-manifest path policy when changedPaths are supplied (#11-13/#18)", async () => {
+  it("ignores legacy focus-manifest blockedPaths when changedPaths are supplied (#11-13/#18)", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
-    // Public config: oss-anti-slop (no account needed), manifest path policy in block mode, dist/** blocked.
+    // Public config: oss-anti-slop (no account needed), manifest policy in block mode, legacy dist/** blocked.
     // Stored as a PUBLIC repo_file manifest — predict_gate reads only public config (#selfhost-app-id / #1405).
     await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "oss-anti-slop", manifestPolicy: "block" }, blockedPaths: ["dist/**"] }, "repo_file");
     const client = await connect(env);
@@ -74,9 +74,9 @@ describe("MCP gittensory_predict_gate", () => {
     });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { conclusion: string; blockers: Array<{ code: string }>; warnings: Array<{ code: string }>; note: string };
-    expect(data.conclusion).toBe("neutral");
+    expect(data.conclusion).toBe("success");
     expect(data.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
-    expect(data.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(true);
+    expect(data.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
     // With paths supplied the note drops the "provide changed paths" disclaimer but still disclaims slop.
     expect(data.note).not.toContain("Provide the PR's changed paths");
     expect(data.note.toLowerCase()).toContain("slop");

@@ -41,7 +41,6 @@ function source(overrides: Partial<PrBodyDraftSource> = {}): PrBodyDraftSource {
       linkedIssuePolicy: "optional",
       issueDiscoveryPolicy: "neutral",
       matchedWantedPaths: [],
-      matchedBlockedPaths: [],
       preferredLabelHits: [],
       findings: [],
       publicNextSteps: [],

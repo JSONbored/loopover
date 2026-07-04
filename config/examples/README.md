@@ -52,7 +52,7 @@ per-repo file overlaid onto the global default:
 - **Nested mappings** (`gate`, `settings`, `review`, `features`, `contentLane`, and their own
   nested blocks like `gate.readiness` or `gate.aiReview`) merge **key by key**. A per-repo file
   only needs to mention the keys it wants to change; everything else is inherited from global.
-- **Arrays** (`wantedPaths`, `blockedPaths`, `preferredLabels`, `testExpectations`,
+- **Arrays** (`wantedPaths`, `preferredLabels`, `testExpectations`,
   `review.pathInstructions`, `review.excludePaths`, `contentLane.duplicateKeyFields`, etc.)
   **replace wholesale** — a per-repo array is never concatenated with the global one.
 - An **explicit `null`** at a key in the per-repo file always overrides the global value there.
@@ -195,7 +195,7 @@ array-replace overlay semantics above) — it does not merge with it.
   admin exemption logins, autonomy dials, model/effort overrides, and anything else you don't want
   a contributor reading and gaming.
 - **Public `.gittensory.yml`** (repo root, contributor-visible): work-area guidance
-  (`wantedPaths`/`blockedPaths`), test expectations, and review-panel presentation — nothing here
+  (`wantedPaths`), test expectations, and review-panel presentation — nothing here
   should describe your private enforcement strategy.
 
 ## Safety

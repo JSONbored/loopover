@@ -1561,7 +1561,7 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
 
-  it("treats a maintainer-blocked path as a branch-quality blocker", () => {
+  it("ignores legacy focus-manifest blockedPaths during branch-quality analysis", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
         login: "oktofeesh1",
@@ -1580,9 +1580,9 @@ describe("local branch analysis", () => {
       scoringProfile,
     });
 
-    expect(analysis.manifestGuidance.matchedBlockedPaths).toEqual(["migrations/"]);
-    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "manifest_blocked_path", severity: "critical" })]));
-    expect(analysis.branchQualityBlockers).toEqual(expect.arrayContaining([expect.stringContaining("maintainer-blocked area")]));
+    expect(analysis.manifestGuidance.present).toBe(false);
+    expect(analysis.localFindings.map((finding) => finding.code)).not.toContain("manifest_blocked_path");
+    expect(analysis.branchQualityBlockers.join(" ")).not.toMatch(/maintainer-blocked|blocked path|guarded path/i);
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
 

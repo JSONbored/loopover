@@ -13,7 +13,6 @@ export type RepoPolicyReadinessWarningCode =
   | "focus_policy_missing"
   | "focus_policy_needs_review"
   | "contribution_scope_unclear"
-  | "blocked_work_without_wanted_scope"
   | "direct_pr_policy_unclear"
   | "linked_issue_policy_mismatch"
   | "issue_discovery_policy_mismatch"
@@ -43,7 +42,6 @@ export type RepoPolicyReadinessReport = {
     privateNoteCount: number;
     manifestWarningCount: number;
     wantedPathCount: number;
-    blockedPathCount: number;
     validationExpectationCount: number;
     queueLevel: QueueHealth["level"];
     contributorIntakeLevel: ContributorIntakeHealth["level"];
@@ -107,16 +105,6 @@ export function buildRepoPolicyReadiness(input: RepoPolicyReadinessInput): RepoP
       });
     }
 
-    if (manifest.blockedPaths.length > 0 && manifest.wantedPaths.length === 0) {
-      candidates.push({
-        code: "blocked_work_without_wanted_scope",
-        category: "contribution_flow",
-        severity: "warning",
-        title: "Blocked work lacks a positive lane",
-        detail: "The focus manifest blocks work areas but does not define wanted paths.",
-        action: "Pair blocked areas with wanted work areas so contributors know where to focus.",
-      });
-    }
 
     if (input.lane.lane === "direct_pr" && manifest.linkedIssuePolicy === "optional" && !input.settings.requireLinkedIssue) {
       candidates.push({
@@ -224,7 +212,6 @@ export function buildRepoPolicyReadiness(input: RepoPolicyReadinessInput): RepoP
       privateNoteCount: manifest?.maintainerNotes.length ?? 0,
       manifestWarningCount: manifest?.warnings.length ?? 0,
       wantedPathCount: manifest?.wantedPaths.length ?? 0,
-      blockedPathCount: manifest?.blockedPaths.length ?? 0,
       validationExpectationCount: manifest?.testExpectations.length ?? 0,
       queueLevel: input.queueHealth.level,
       contributorIntakeLevel: input.contributorIntakeHealth.level,

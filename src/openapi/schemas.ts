@@ -2304,7 +2304,6 @@ export const LocalBranchAnalysisSchema = z
       linkedIssuePolicy: z.enum(["required", "preferred", "optional"]),
       issueDiscoveryPolicy: z.enum(["encouraged", "neutral", "discouraged"]),
       matchedWantedPaths: z.array(z.string()),
-      matchedBlockedPaths: z.array(z.string()),
       preferredLabelHits: z.array(z.string()),
       findings: z.array(z.object({ code: z.string(), severity: z.enum(["info", "warning", "critical"]), title: z.string(), detail: z.string(), action: z.string().optional() })),
       publicNextSteps: z.array(z.string()),

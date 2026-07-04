@@ -6266,12 +6266,6 @@
                   "type": "string"
                 }
               },
-              "matchedBlockedPaths": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
               "preferredLabelHits": {
                 "type": "array",
                 "items": {
@@ -6334,7 +6328,6 @@
               "linkedIssuePolicy",
               "issueDiscoveryPolicy",
               "matchedWantedPaths",
-              "matchedBlockedPaths",
               "preferredLabelHits",
               "findings",
               "publicNextSteps",

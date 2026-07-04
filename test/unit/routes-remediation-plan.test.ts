@@ -103,7 +103,7 @@ describe("remediation-plan route", () => {
     const app = createApp();
     const env = createTestEnv();
     await seedRepo(env, "miner", "demo", 301);
-    await upsertRepoFocusManifest(env, "miner/demo", { wantedPaths: ["src/"], blockedPaths: ["dist/"] });
+    await upsertRepoFocusManifest(env, "miner/demo", { wantedPaths: ["src/"], preferredLabels: ["bug"] });
     const response = await app.request(
       PATH,
       {

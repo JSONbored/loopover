@@ -314,15 +314,15 @@ const MAX_PATH_INSTRUCTIONS = 50;
 
 /**
  * Normalized maintainer focus manifest. Repo owners declare which work areas are wanted,
- * blocked, or preferred so Gittensory guidance can explain why a path is encouraged or
- * discouraged. `maintainerNotes` are private review context and must never reach a public
+ * preferred, and how PRs should present validation. Path-based manual review is intentionally
+ * not part of this manifest anymore; use `settings.hardGuardrailGlobs` for that single
+ * authoritative control. `maintainerNotes` are private review context and must never reach a public
  * GitHub surface; `publicNotes` are explicitly opted into public output by the maintainer.
  */
 export type FocusManifest = {
   present: boolean;
   source: FocusManifestSource;
   wantedPaths: string[];
-  blockedPaths: string[];
   preferredLabels: string[];
   linkedIssuePolicy: FocusManifestLinkedIssuePolicy;
   testExpectations: string[];
@@ -339,7 +339,6 @@ export type FocusManifest = {
 
 export type FocusManifestFinding = {
   code:
-    | "manifest_blocked_path"
     | "manifest_off_focus"
     | "manifest_preferred_path"
     | "manifest_missing_preferred_label"
@@ -360,7 +359,6 @@ export type FocusManifestGuidance = {
   linkedIssuePolicy: FocusManifestLinkedIssuePolicy;
   issueDiscoveryPolicy: FocusManifestIssueDiscoveryPolicy;
   matchedWantedPaths: string[];
-  matchedBlockedPaths: string[];
   preferredLabelHits: string[];
   findings: FocusManifestFinding[];
   publicNextSteps: string[];
@@ -433,7 +431,6 @@ const EMPTY_MANIFEST: FocusManifest = {
   present: false,
   source: "none",
   wantedPaths: [],
-  blockedPaths: [],
   preferredLabels: [],
   linkedIssuePolicy: "optional",
   testExpectations: [],
@@ -1718,7 +1715,6 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     present: true,
     source: normalizeSource(source, record.source, warnings),
     wantedPaths: normalizeStringList(record.wantedPaths, "wantedPaths", warnings),
-    blockedPaths: normalizeStringList(record.blockedPaths, "blockedPaths", warnings),
     preferredLabels: normalizeStringList(record.preferredLabels, "preferredLabels", warnings),
     linkedIssuePolicy: normalizeEnum(record.linkedIssuePolicy, "linkedIssuePolicy", ["required", "preferred", "optional"] as const, "optional", warnings),
     testExpectations: normalizeStringList(record.testExpectations, "testExpectations", warnings),
@@ -1734,7 +1730,6 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
   };
   if (
     manifest.wantedPaths.length === 0 &&
-    manifest.blockedPaths.length === 0 &&
     manifest.preferredLabels.length === 0 &&
     manifest.testExpectations.length === 0 &&
     manifest.maintainerNotes.length === 0 &&
@@ -1892,7 +1887,6 @@ export function buildFocusManifestGuidance(args: {
   const testFileCount = Math.max(0, args.testFileCount ?? 0);
   const passedValidationCount = Math.max(0, args.passedValidationCount ?? 0);
 
-  const matchedBlockedPaths = matchedPatterns(changedPaths, manifest.blockedPaths);
   const matchedWantedPaths = matchedPatterns(changedPaths, manifest.wantedPaths);
   const preferredLabelHits = manifest.preferredLabels.filter((label) => labels.includes(label.toLowerCase()));
 
@@ -1909,7 +1903,6 @@ export function buildFocusManifestGuidance(args: {
       linkedIssuePolicy: manifest.linkedIssuePolicy,
       issueDiscoveryPolicy: manifest.issueDiscoveryPolicy,
       matchedWantedPaths: [],
-      matchedBlockedPaths: [],
       preferredLabelHits: [],
       findings,
       publicNextSteps: [],
@@ -1918,16 +1911,7 @@ export function buildFocusManifestGuidance(args: {
     };
   }
 
-  if (matchedBlockedPaths.length > 0) {
-    findings.push({
-      code: "manifest_blocked_path",
-      severity: "critical",
-      title: "Change touches a maintainer-blocked area",
-      detail: `Changed paths match maintainer-blocked patterns: ${matchedBlockedPaths.slice(0, 5).join(", ")}.`,
-      action: "Move this work out of the maintainer-blocked area or confirm with the maintainer before opening a PR.",
-    });
-    publicNextSteps.push("Avoid the maintainer-blocked areas this branch currently touches; confirm scope with the maintainer first.");
-  } else if (manifest.wantedPaths.length > 0 && matchedWantedPaths.length === 0 && changedPaths.length > 0) {
+  if (manifest.wantedPaths.length > 0 && matchedWantedPaths.length === 0 && changedPaths.length > 0) {
     findings.push({
       code: "manifest_off_focus",
       severity: "warning",
@@ -2010,17 +1994,15 @@ export function buildFocusManifestGuidance(args: {
     linkedIssuePolicy: manifest.linkedIssuePolicy,
     issueDiscoveryPolicy: manifest.issueDiscoveryPolicy,
     matchedWantedPaths,
-    matchedBlockedPaths,
     preferredLabelHits,
     findings,
     publicNextSteps: safeNextSteps,
     warnings: manifest.warnings,
-    summary: summarize(manifest, matchedBlockedPaths, matchedWantedPaths),
+    summary: summarize(manifest, matchedWantedPaths),
   };
 }
 
-function summarize(manifest: FocusManifest, blocked: string[], wanted: string[]): string {
-  if (blocked.length > 0) return "Maintainer focus manifest: change touches a blocked area.";
+function summarize(manifest: FocusManifest, wanted: string[]): string {
   if (wanted.length > 0) return "Maintainer focus manifest: change aligns with a wanted area.";
   if (manifest.wantedPaths.length > 0) return "Maintainer focus manifest: change is outside the wanted areas.";
   return "Maintainer focus manifest applied with no path-specific verdict.";
@@ -2149,9 +2131,6 @@ function buildPolicyEntryGuidance(manifest: FocusManifest): string[] {
   if (manifest.wantedPaths.length > 0) {
     guidance.push(`Focus changes on maintainer-wanted areas: ${manifest.wantedPaths.slice(0, 5).join(", ")}.`);
   }
-  if (manifest.blockedPaths.length > 0) {
-    guidance.push(`Avoid maintainer-blocked areas: ${manifest.blockedPaths.slice(0, 5).join(", ")}.`);
-  }
   if (manifest.linkedIssuePolicy === "required") guidance.push("Link a tracked issue before opening a pull request.");
   else if (manifest.linkedIssuePolicy === "preferred") guidance.push("Linking a tracked issue is preferred before opening a pull request.");
   if (manifest.preferredLabels.length > 0) {
@@ -2175,7 +2154,6 @@ function buildPolicyContributionLanes(manifest: FocusManifest): FocusManifestPol
 
   const lanes: FocusManifestPolicyContributionLane[] = [];
   const safeWantedPaths = manifest.wantedPaths.filter(isFocusManifestPublicSafe);
-  const safeBlockedPaths = manifest.blockedPaths.filter(isFocusManifestPublicSafe);
   const safeTestExpectations = manifest.testExpectations.filter(isFocusManifestPublicSafe);
 
   // Derive the public preference only from public-safe signals: use the SAME filtered list that surfaces in
@@ -2198,7 +2176,7 @@ function buildPolicyContributionLanes(manifest: FocusManifest): FocusManifestPol
           ? "Contribute changes in maintainer-wanted areas with required validation evidence."
           : "Direct pull requests are accepted when they stay inside maintainer-wanted scope.",
     preferredPaths: safeWantedPaths,
-    discouragedPaths: safeBlockedPaths,
+    discouragedPaths: [],
     validationExpectations: safeTestExpectations,
     publicNotes: manifest.publicNotes.filter(isFocusManifestPublicSafe),
   });
@@ -2219,7 +2197,7 @@ function buildPolicyContributionLanes(manifest: FocusManifest): FocusManifestPol
           ? "The maintainer has indicated this repo prefers direct fixes over new issue reports."
           : "Issue discovery is optional; confirm maintainer scope before filing new issues.",
     preferredPaths: [],
-    discouragedPaths: safeBlockedPaths,
+    discouragedPaths: [],
     validationExpectations: [],
     publicNotes: [],
   });
@@ -2235,9 +2213,6 @@ function buildPolicyReadinessWarnings(manifest: FocusManifest): string[] {
   }
   if (manifest.testExpectations.length === 0) {
     warnings.push("Focus manifest does not define validation expectations; contributors may not know what tests to run.");
-  }
-  if (manifest.blockedPaths.length > 0 && manifest.wantedPaths.length === 0) {
-    warnings.push("Focus manifest blocks work areas but does not define wanted paths; pair blocked areas with a positive lane.");
   }
   return warnings.filter(isFocusManifestPublicSafe);
 }
@@ -2287,7 +2262,6 @@ export function deriveContributionLanes(manifest: FocusManifest): ContributionLa
   }
 
   const safeWanted = manifest.wantedPaths.filter(isFocusManifestPublicSafe);
-  const safeBlocked = manifest.blockedPaths.filter(isFocusManifestPublicSafe);
   const safePublicNotes = manifest.publicNotes.filter(isFocusManifestPublicSafe);
 
   const validationExpectations: string[] = [];
@@ -2300,7 +2274,6 @@ export function deriveContributionLanes(manifest: FocusManifest): ContributionLa
   const directPrLane: ContributionLanePreference =
     manifest.issueDiscoveryPolicy === "encouraged" ? "discouraged"
     : safeWanted.length > 0 ? "preferred"
-    : safeBlocked.length > 0 ? "discouraged"
     : "neutral";
 
   const issueDiscoveryLane: ContributionLanePreference =
@@ -2323,9 +2296,6 @@ export function deriveContributionLanes(manifest: FocusManifest): ContributionLa
   const prEntryGuidance: string[] = [];
   if (safeWanted.length > 0) {
     prEntryGuidance.push(`Focus changes on maintainer-wanted areas: ${manifest.wantedPaths.slice(0, 5).join(", ")}.`);
-  }
-  if (safeBlocked.length > 0) {
-    prEntryGuidance.push(`Avoid maintainer-blocked areas: ${manifest.blockedPaths.slice(0, 5).join(", ")}.`);
   }
   if (manifest.preferredLabels.length > 0) {
     const safeLabels = manifest.preferredLabels.filter(isFocusManifestPublicSafe);
@@ -2366,7 +2336,7 @@ export function deriveContributionLanes(manifest: FocusManifest): ContributionLa
     directPrLane,
     issueDiscoveryLane,
     preferredEntryPaths: safeWanted,
-    discouragedEntryPaths: safeBlocked,
+    discouragedEntryPaths: [],
     validationExpectations,
     issueEntryGuidance: issueEntryGuidance.filter(isFocusManifestPublicSafe),
     prEntryGuidance: safeprEntryGuidance,

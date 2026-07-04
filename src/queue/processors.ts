@@ -727,11 +727,6 @@ const PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES: Partial<
     Pick<AdvisoryFinding, "detail" | "action">
   >
 > = {
-  manifest_blocked_path: {
-    detail: "Changed paths match maintainer-blocked areas.",
-    action:
-      "Move this work out of the maintainer-blocked area or confirm with the maintainer before opening a PR.",
-  },
   manifest_missing_tests: {
     detail: "Maintainer test expectations are not satisfied by this PR.",
     action:

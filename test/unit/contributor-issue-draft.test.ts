@@ -25,7 +25,6 @@ const FORBIDDEN = /wallet|hotkey|raw trust score|payout|reward estimate|farming|
 const GITTENSORY_MANIFEST = parseFocusManifestContent(
   JSON.stringify({
     wantedPaths: ["src/", "apps/gittensory-ui/", "packages/gittensory-mcp/"],
-    blockedPaths: ["site/", "CNAME", "**/lovable/**"],
     testExpectations: ["npm run test:ci"],
     publicNotes: ["Stay advisory."],
     linkedIssuePolicy: "required",
@@ -167,7 +166,6 @@ describe("contributor issue drafts", () => {
     const manifest = {
       ...GITTENSORY_MANIFEST,
       wantedPaths: ["src/unique-path-119/"],
-      blockedPaths: [],
       testExpectations: ["npm run test:ci"],
     };
     const repo = { fullName: "JSONbored/gittensory", isRegistered: true } as never;
@@ -425,7 +423,7 @@ describe("contributor issue drafts", () => {
       upstreamDriftWarnings: [],
     };
     const manifest = parseFocusManifestContent(
-      '{"wantedPaths":["src/"],"blockedPaths":["dist/"],"testExpectations":["npm run test:ci"],"issueDiscoveryPolicy":"discouraged","linkedIssuePolicy":"optional"}',
+      '{"wantedPaths":["src/"],"testExpectations":["npm run test:ci"],"issueDiscoveryPolicy":"discouraged","linkedIssuePolicy":"optional"}',
       "repo_file",
     );
     const candidates = buildContributorIssueDraftCandidates({ ...base, focusManifest: manifest });

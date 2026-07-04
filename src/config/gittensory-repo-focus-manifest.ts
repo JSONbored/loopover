@@ -18,11 +18,6 @@ wantedPaths:
   - wrangler.jsonc
   - apps/gittensory-ui/
 
-blockedPaths:
-  - site/
-  - CNAME
-  - "**/lovable/**"
-
 preferredLabels:
   - bug
   - enhancement

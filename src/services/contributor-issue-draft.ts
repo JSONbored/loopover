@@ -486,7 +486,7 @@ function wantedPathCandidate(repoFullName: string, wantedPath: string, openIssue
         "Keep maintainerNotes private; use publicNotes only when explicitly opted in.",
       ],
       acceptanceCriteria: [
-        `The change materially improves ${wantedPath} without expanding into blocked areas.`,
+        `The change materially improves ${wantedPath} without expanding beyond the requested scope.`,
         "Manifest-guided guidance and tests stay aligned.",
       ],
       testingRequirements: buildContributorIssueDraftTestingRequirements(manifest),

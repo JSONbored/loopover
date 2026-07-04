@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { openRepoDocPullRequest } from "../../src/github/repo-doc-pr";
-import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as repoDocRenderModule from "../../src/review/repo-doc-render";
 import { renderRepoDocContent } from "../../src/review/repo-doc-render";
+import { renderRepoSkillContent, repoSkillFilePath } from "../../src/review/repo-skill-render";
 import { extractRepoProfile } from "../../src/review/repo-profile";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
@@ -42,6 +43,16 @@ async function seedInstalledRepo(env: ReturnType<typeof createTestEnv>, options:
 // true here (the common case for these tests) while letting callers override scope/allowOverwriteExisting.
 async function seedRepoDocGenerationConfig(env: ReturnType<typeof createTestEnv>, repoFullName: string, overrides: { enabled?: boolean; scope?: string[]; allowOverwriteExisting?: boolean } = {}): Promise<void> {
   await upsertRepoFocusManifest(env, repoFullName, { repoDocGeneration: { enabled: true, ...overrides } });
+}
+
+// #3001: shouldGenerateRepoSkill needs 2 of 3 named signals. Seeds a strict linked-issue rule (settings +
+// manifest) and 2 CI workflow files -- both in the SAME upsertRepoFocusManifest call as repoDocGeneration, since
+// a second separate call would replace rather than merge with the first.
+async function seedSkillTriggerRepo(env: ReturnType<typeof createTestEnv>, repoFullName: string, scope: string[] = ["agents", "skills"], overrides: { allowOverwriteExisting?: boolean } = {}): Promise<void> {
+  await upsertRepositorySettings(env, { repoFullName, requireLinkedIssue: true });
+  await upsertRepoFocusManifest(env, repoFullName, { linkedIssuePolicy: "required", repoDocGeneration: { enabled: true, scope, ...overrides } });
+  await seedChunk(env, ".github/workflows/ci.yml", "name: CI\non: push\n");
+  await seedChunk(env, ".github/workflows/lint.yml", "name: Lint\non: push\n");
 }
 
 // A fetch stub matching every candidate raw-content URL loadRepoFocusManifest's live fetcher tries when there is
@@ -395,6 +406,200 @@ describe("openRepoDocPullRequest (#3000)", () => {
     expect(agentsEntry?.content).toContain("An appendix the maintainer added.");
     expect(agentsEntry?.content).toContain("Lint: `npm run lint`");
     expect(agentsEntry?.content).not.toContain("an older lint command");
+  });
+
+  it("#3001: does not include a skill file when scope excludes \"skills\", even if the trigger would fire", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedSkillTriggerRepo(env, REPO, ["agents"]);
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/") && method === "GET") return new Response("not found", { status: 404 });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 81, html_url: "https://github.com/owner/widgets/pull/81" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: true, reused: false, pullNumber: 81, url: "https://github.com/owner/widgets/pull/81", claudeMode: "symlink" });
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    expect((treeCall?.body.tree as Array<{ path: string }>).map((entry) => entry.path)).toEqual(["AGENTS.md", "CLAUDE.md"]);
+    expect(calls.some((c) => c.url.includes("SKILL.md"))).toBe(false);
+  });
+
+  it("#3001: does not include a skill file when scope includes \"skills\" but the trigger condition is not met", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO, { scope: ["agents", "skills"] });
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/") && method === "GET") return new Response("not found", { status: 404 });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 82, html_url: "https://github.com/owner/widgets/pull/82" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result.opened).toBe(true);
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    expect((treeCall?.body.tree as Array<{ path: string }>).map((entry) => entry.path)).toEqual(["AGENTS.md", "CLAUDE.md"]);
+  });
+
+  it("#3001: adds a first-run skill file to the SAME tree/commit/PR as AGENTS.md when the trigger fires and scope includes \"skills\"", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedSkillTriggerRepo(env, REPO);
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/") && method === "GET") return new Response("not found", { status: 404 });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 83, html_url: "https://github.com/owner/widgets/pull/83" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: true, reused: false, pullNumber: 83, url: "https://github.com/owner/widgets/pull/83", claudeMode: "symlink" });
+
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    const tree = treeCall?.body.tree as Array<{ path: string; mode: string; content: string }>;
+    expect(tree.map((entry) => entry.path)).toEqual(["AGENTS.md", "CLAUDE.md", repoSkillFilePath(REPO)]);
+    const skillEntry = tree.find((entry) => entry.path === repoSkillFilePath(REPO));
+    expect(skillEntry?.mode).toBe("100644");
+    expect(skillEntry?.content).toContain("name: contributing-to-widgets");
+
+    const prCall = calls.find((c) => c.url.endsWith("/repos/owner/widgets/pulls") && c.method === "POST");
+    expect(prCall?.body.body as string).toContain(repoSkillFilePath(REPO));
+  });
+
+  it("#3001: opens a PR for a skill-only change even when AGENTS.md itself is unchanged", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedSkillTriggerRepo(env, REPO);
+    const profile = await extractRepoProfile(env, REPO);
+    const currentAgentsContent = renderRepoDocContent(profile)!;
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/AGENTS.md") && method === "GET") return Response.json({ content: base64Utf8(currentAgentsContent), encoding: "base64" });
+      if (url.includes("/contents/") && method === "GET") return new Response("not found", { status: 404 });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 84, html_url: "https://github.com/owner/widgets/pull/84" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result.opened).toBe(true);
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    const tree = treeCall?.body.tree as Array<{ path: string; content: string }>;
+    expect(tree.map((entry) => entry.path)).toEqual(["AGENTS.md", "CLAUDE.md", repoSkillFilePath(REPO)]);
+    // AGENTS.md's own content is reused byte-for-byte (no-change on that side), only the skill file is new.
+    expect(tree.find((entry) => entry.path === "AGENTS.md")?.content).toBe(currentAgentsContent);
+  });
+
+  it("#3001: reports overall no-change when BOTH AGENTS.md and the skill file already match the last generated content", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedSkillTriggerRepo(env, REPO);
+    const profile = await extractRepoProfile(env, REPO);
+    const currentAgentsContent = renderRepoDocContent(profile)!;
+    const currentSkillContent = renderRepoSkillContent(profile)!;
+    let wroteAnything = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/AGENTS.md") && method === "GET") return Response.json({ content: base64Utf8(currentAgentsContent), encoding: "base64" });
+      if (url.includes("/contents/") && method === "GET") return Response.json({ content: base64Utf8(currentSkillContent), encoding: "base64" });
+      if (method === "POST") wroteAnything = true;
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: false, reason: "no meaningful change since the last generated AGENTS.md" });
+    expect(wroteAnything).toBe(false);
+  });
+
+  it("#3001: excludes the skill file from this run (without failing the AGENTS.md refresh) when it looks hand-maintained and overwrite isn't allowed", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedSkillTriggerRepo(env, REPO);
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/AGENTS.md") && method === "GET") return new Response("not found", { status: 404 });
+      if (url.includes("/contents/") && method === "GET") return Response.json({ content: base64Utf8("# Hand-written skill notes\n\nNo markers here.\n"), encoding: "base64" });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 85, html_url: "https://github.com/owner/widgets/pull/85" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result.opened).toBe(true);
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    expect((treeCall?.body.tree as Array<{ path: string }>).map((entry) => entry.path)).toEqual(["AGENTS.md", "CLAUDE.md"]);
+  });
+
+  it("#3001: overwrites a hand-maintained skill file with a fresh generate when allowOverwriteExisting is set", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedSkillTriggerRepo(env, REPO, ["agents", "skills"], { allowOverwriteExisting: true });
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/AGENTS.md") && method === "GET") return new Response("not found", { status: 404 });
+      if (url.includes("/contents/") && method === "GET") return Response.json({ content: base64Utf8("# Hand-written skill notes\n\nNo markers here.\n"), encoding: "base64" });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 86, html_url: "https://github.com/owner/widgets/pull/86" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result.opened).toBe(true);
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    const tree = treeCall?.body.tree as Array<{ path: string; content: string }>;
+    const skillEntry = tree.find((entry) => entry.path === repoSkillFilePath(REPO));
+    expect(skillEntry?.content).toContain("name: contributing-to-widgets");
+    expect(skillEntry?.content).not.toContain("Hand-written skill notes");
   });
 
   it("reports a caught GitHub Error's message when both the symlink and copy tree attempts fail", async () => {

@@ -17,12 +17,21 @@
 // common case is disabled, so this must be cheap); `allowOverwriteExisting` is checked later, once refresh
 // reports `manual-review-required` (the "this file looks hand-maintained" signal), and lets that specific case
 // proceed as a fresh wholesale generate instead of skipping.
+//
+// SKILL FILE, ADDITIVE (#3001): when `.gittensory.yml repoDocGeneration.scope` includes `"skills"` AND the repo
+// profile's contribution workflow warrants one (src/review/repo-skill-render.ts's shouldGenerateRepoSkill), a
+// generated skill file rides along in the SAME commit/PR as AGENTS.md/CLAUDE.md -- there is no parallel
+// delivery path. It gets its OWN marker pair and its own refreshGeneratedDoc call (reused unchanged, per that
+// module's own design intent), so a skill-only content change can still open a PR even when AGENTS.md itself
+// is unchanged, and a skill-file conflict (manual-review-required without the overwrite opt-in) only excludes
+// the skill from this run rather than blocking the AGENTS.md refresh it rode in with.
 import { githubErrorStatus, withInstallationTokenRetry } from "./app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
 import { getRepository } from "../db/repositories";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { extractRepoProfile } from "../review/repo-profile";
 import { REPO_DOC_MARKERS, renderRepoDocContent } from "../review/repo-doc-render";
+import { REPO_SKILL_MARKERS, renderRepoSkillContent, repoSkillFilePath } from "../review/repo-skill-render";
 import { refreshGeneratedDoc } from "../review/generated-doc-refresh";
 import type { AgentActionMode } from "../settings/agent-execution";
 
@@ -59,12 +68,14 @@ function decodeGitHubFileContent(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-/** The current AGENTS.md content on `ref`, or `null` when it doesn't exist yet (first run). Any OTHER failure
+/** The current content of `path` on `ref`, or `null` when it doesn't exist yet (first run). Any OTHER failure
  *  (rate limit, auth, a transient 5xx) is rethrown -- a repo we simply couldn't read must never be treated the
- *  same as a genuinely empty one, or a refresh could mistake "we don't know" for "there's nothing there yet". */
-async function fetchExistingAgentsMdContent(octokit: Octokit, owner: string, repo: string, ref: string): Promise<string | null> {
+ *  same as a genuinely empty one, or a refresh could mistake "we don't know" for "there's nothing there yet".
+ *  Shared by AGENTS.md and the (optional) skill file -- both are "does this file exist, and what's in it"
+ *  probes against the same Contents API, differing only in path. */
+async function fetchExistingFileContent(octokit: Octokit, owner: string, repo: string, path: string, ref: string): Promise<string | null> {
   try {
-    const response = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", { owner, repo, path: AGENTS_FILE_PATH, ref });
+    const response = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", { owner, repo, path, ref });
     const data = response.data as { content?: string };
     return typeof data.content === "string" ? decodeGitHubFileContent(data.content) : null;
   } catch (error) {
@@ -73,30 +84,35 @@ async function fetchExistingAgentsMdContent(octokit: Octokit, owner: string, rep
   }
 }
 
-/** Builds the two-file tree (AGENTS.md + CLAUDE.md) atop the branch's current tree in ONE commit, so first-run
- *  (paths absent) and refresh (paths present) are handled identically -- `base_tree` + explicit per-path entries
- *  add-or-replace regardless of whether the path previously existed, with no separate "does it exist yet" probe.
- *  Tries a real symlink (git mode 120000) first; if the target repo/platform rejects that tree, retries with
- *  CLAUDE.md as a byte-identical regular-file copy of AGENTS.md instead (#3000's own documented fallback). */
-async function buildRepoDocTree(octokit: Octokit, owner: string, repo: string, baseTreeSha: string, agentsContent: string): Promise<{ treeSha: string; claudeMode: "symlink" | "copy" }> {
+/** Builds the AGENTS.md + CLAUDE.md tree (plus any `extraEntries`, e.g. a generated skill file, #3001) atop the
+ *  branch's current tree in ONE commit, so first-run (paths absent) and refresh (paths present) are handled
+ *  identically -- `base_tree` + explicit per-path entries add-or-replace regardless of whether the path
+ *  previously existed, with no separate "does it exist yet" probe. Tries a real symlink (git mode 120000) for
+ *  CLAUDE.md first; if the target repo/platform rejects that tree, retries with CLAUDE.md as a byte-identical
+ *  regular-file copy of AGENTS.md instead (#3000's own documented fallback) -- `extraEntries` ride along in
+ *  BOTH attempts unchanged, since the symlink fallback is only ever about CLAUDE.md's own tree entry. */
+async function buildRepoDocTree(octokit: Octokit, owner: string, repo: string, baseTreeSha: string, agentsContent: string, extraEntries: DocTreeEntry[] = []): Promise<{ treeSha: string; claudeMode: "symlink" | "copy" }> {
   const agentsEntry: DocTreeEntry = { path: AGENTS_FILE_PATH, mode: "100644", type: "blob", content: agentsContent };
   try {
     const symlinkEntry: DocTreeEntry = { path: CLAUDE_FILE_PATH, mode: "120000", type: "blob", content: AGENTS_FILE_PATH };
-    const response = await octokit.request("POST /repos/{owner}/{repo}/git/trees", { owner, repo, base_tree: baseTreeSha, tree: [agentsEntry, symlinkEntry] });
+    const response = await octokit.request("POST /repos/{owner}/{repo}/git/trees", { owner, repo, base_tree: baseTreeSha, tree: [agentsEntry, symlinkEntry, ...extraEntries] });
     return { treeSha: (response.data as { sha: string }).sha, claudeMode: "symlink" };
   } catch {
     const copyEntry: DocTreeEntry = { path: CLAUDE_FILE_PATH, mode: "100644", type: "blob", content: agentsContent };
-    const response = await octokit.request("POST /repos/{owner}/{repo}/git/trees", { owner, repo, base_tree: baseTreeSha, tree: [agentsEntry, copyEntry] });
+    const response = await octokit.request("POST /repos/{owner}/{repo}/git/trees", { owner, repo, base_tree: baseTreeSha, tree: [agentsEntry, copyEntry, ...extraEntries] });
     return { treeSha: (response.data as { sha: string }).sha, claudeMode: "copy" };
   }
 }
 
-function repoDocPullRequestBody(repoFullName: string): string {
+function repoDocPullRequestBody(repoFullName: string, skillPath: string | null): string {
+  const skillParagraph = skillPath
+    ? `\n\nThis repo's contribution workflow has enough structure (a blocking gate check, a strict linked-issue rule, and/or multi-stage CI) that it also gets a generated skill file at \`${skillPath}\`, following this project's own \`.claude/skills/\` convention -- a frontmatter description plus a procedural body.`
+    : "";
   return `Gittensory opened this pull request on the maintainer's behalf. This is an automated maintenance action, not a manual code review.
 
 ## What this is
 
-\`AGENTS.md\`, generated from a profile of ${repoFullName}'s own code -- its indexed file layout, naming and test-file conventions, build/test/lint commands, and contribution-workflow settings (whether CI publishes a required check, the linked-issue policy, and indexed CI workflow files). \`CLAUDE.md\` is kept in sync with it (as a symlink where the platform supports one, otherwise an identical copy), so the two never drift apart.
+\`AGENTS.md\`, generated from a profile of ${repoFullName}'s own code -- its indexed file layout, naming and test-file conventions, build/test/lint commands, and contribution-workflow settings (whether CI publishes a required check, the linked-issue policy, and indexed CI workflow files). \`CLAUDE.md\` is kept in sync with it (as a symlink where the platform supports one, otherwise an identical copy), so the two never drift apart.${skillParagraph}
 
 ## Why it looks like this
 
@@ -109,14 +125,15 @@ Set \`repoDocGeneration.enabled: false\` in this repository's \`.gittensory.yml\
 }
 
 /**
- * Generate AGENTS.md/CLAUDE.md from this repo's profile and open (or find the already-open) pull request
- * carrying them. Returns `{ opened: false, reason }` -- never throws -- when: the repo isn't installed, the repo
- * profile has no data yet (#2999's fail-closed branch), `mode` is not `"live"` (dry-run/paused instances must not
- * chain several dependent GitHub writes through synthetic suppressed responses -- see `maybeEscalateModeration`
- * in `agent-action-executor.ts` for the same "no side effect for a write that didn't really happen" guard on a
- * different action), the diff-aware refresh (#3004) found nothing meaningful to change, the existing file's
- * marker block is missing/malformed (fails closed rather than guessing), or any step failed partway through. The
- * ENTIRE body runs inside one try/catch (not just the GitHub-write chain) so a failure in the repo/profile
+ * Generate AGENTS.md/CLAUDE.md (and, when warranted and in scope, a skill file -- #3001) from this repo's
+ * profile and open (or find the already-open) pull request carrying them. Returns `{ opened: false, reason }`
+ * -- never throws -- when: the repo isn't installed, the repo profile has no data yet (#2999's fail-closed
+ * branch), `mode` is not `"live"` (dry-run/paused instances must not chain several dependent GitHub writes
+ * through synthetic suppressed responses -- see `maybeEscalateModeration` in `agent-action-executor.ts` for the
+ * same "no side effect for a write that didn't really happen" guard on a different action), the diff-aware
+ * refresh (#3004) found nothing meaningful to change in EITHER AGENTS.md or the skill file, AGENTS.md's own
+ * marker block is missing/malformed (fails closed rather than guessing), or any step failed partway through.
+ * The ENTIRE body runs inside one try/catch (not just the GitHub-write chain) so a failure in the repo/profile
  * lookups themselves is reported the same honest way, rather than propagating as an uncaught exception from
  * what the rest of the engine treats as a fail-safe call.
  */
@@ -152,7 +169,7 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
       // actually fell back to a copy.
       if (existing) return { opened: true, reused: true, pullNumber: existing.number, url: existing.html_url, claudeMode: "unknown" };
 
-      const currentAgentsContent = await fetchExistingAgentsMdContent(octokit, owner, repo, baseBranch);
+      const currentAgentsContent = await fetchExistingFileContent(octokit, owner, repo, AGENTS_FILE_PATH, baseBranch);
       let refresh = refreshGeneratedDoc(currentAgentsContent, generatedSection, REPO_DOC_MARKERS);
       if (refresh.action === "manual-review-required") {
         // "manual-review-required" is generated-doc-refresh.ts's proxy for "this file looks hand-maintained,
@@ -162,14 +179,36 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
         if (!manifest.repoDocGeneration.allowOverwriteExisting) return { opened: false, reason: `AGENTS.md needs manual review before it can be refreshed: ${refresh.reason}` };
         refresh = { action: "generate", content: generatedSection };
       }
-      if (refresh.action === "no-change") return { opened: false, reason: "no meaningful change since the last generated AGENTS.md" };
-      const agentsContent = refresh.content;
+      const agentsChanged = refresh.action !== "no-change";
+      // refreshGeneratedDoc never returns "no-change" for a null currentContent (that's always "generate"), so
+      // currentAgentsContent is guaranteed non-null here.
+      const agentsContent = refresh.action === "no-change" ? currentAgentsContent! : refresh.content;
+
+      // Skill file (#3001): additive to this SAME pull request, never a parallel delivery path. A skill-only
+      // change can still open a PR even when AGENTS.md itself is unchanged; a skill-file conflict only excludes
+      // the skill from THIS run (agentsChanged is unaffected), it never blocks the AGENTS.md refresh.
+      let skillEntry: { path: string; content: string } | null = null;
+      if (manifest.repoDocGeneration.scope.includes("skills")) {
+        const generatedSkillSection = renderRepoSkillContent(profile);
+        if (generatedSkillSection) {
+          const skillPath = repoSkillFilePath(repoFullName);
+          const currentSkillContent = await fetchExistingFileContent(octokit, owner, repo, skillPath, baseBranch);
+          let skillRefresh = refreshGeneratedDoc(currentSkillContent, generatedSkillSection, REPO_SKILL_MARKERS);
+          if (skillRefresh.action === "manual-review-required" && manifest.repoDocGeneration.allowOverwriteExisting) {
+            skillRefresh = { action: "generate", content: generatedSkillSection };
+          }
+          if (skillRefresh.action === "replace" || skillRefresh.action === "generate") skillEntry = { path: skillPath, content: skillRefresh.content };
+        }
+      }
+
+      if (!agentsChanged && !skillEntry) return { opened: false, reason: "no meaningful change since the last generated AGENTS.md" };
 
       const branchInfo = await octokit.request("GET /repos/{owner}/{repo}/branches/{branch}", { owner, repo, branch: baseBranch });
       const baseCommitSha = branchInfo.data.commit.sha;
       const baseTreeSha = branchInfo.data.commit.commit.tree.sha;
 
-      const { treeSha, claudeMode } = await buildRepoDocTree(octokit, owner, repo, baseTreeSha, agentsContent);
+      const extraEntries: DocTreeEntry[] = skillEntry ? [{ path: skillEntry.path, mode: "100644", type: "blob", content: skillEntry.content }] : [];
+      const { treeSha, claudeMode } = await buildRepoDocTree(octokit, owner, repo, baseTreeSha, agentsContent, extraEntries);
 
       const commit = await octokit.request("POST /repos/{owner}/{repo}/git/commits", { owner, repo, message: PR_TITLE, tree: treeSha, parents: [baseCommitSha] });
       const commitSha = (commit.data as { sha: string }).sha;
@@ -180,7 +219,7 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
         owner,
         repo,
         title: PR_TITLE,
-        body: repoDocPullRequestBody(repoFullName),
+        body: repoDocPullRequestBody(repoFullName, skillEntry?.path ?? null),
         head: REPO_DOC_BRANCH_NAME,
         base: baseBranch,
         maintainer_can_modify: true,

@@ -209,19 +209,25 @@ jobs:
       # firstReference line numbers point into src/selfhost/ai.ts, so any backend change that shifts those
       # lines (not just one that adds/removes an env var) can make it stale. Was previously enforced ONLY by
       # the local `npm run test:ci` aggregate script, never by this workflow -- went stale twice in one day
-      # (2026-07-04) with zero CI signal until someone happened to run the full local script.
+      # (2026-07-04) with zero CI signal until someone happened to run the full local script. Gated on `ui`
+      # too, not just `backend`: the generated file itself lives under apps/gittensory-ui/**, so a PR that
+      # hand-edits it (or a docs page docs:drift-check below cross-checks) without touching backend source
+      # would otherwise never re-run this check.
       - name: Selfhost env-reference drift check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' }}
         run: npm run selfhost:env-reference:check
       # Same generated-artifact-drift class, extracted from src/github/commands.ts's command catalogs (#3046).
-      # Also local-only until now.
+      # Also local-only until now; same backend-or-ui gating rationale as the step above.
       - name: Command reference drift check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' }}
         run: npm run command-reference:check
       # Cross-checks docs pages against source-of-truth enumerable surfaces (feature flags, commands, gate
-      # modes) -- see the script's own header comment. Also local-only until now.
+      # modes) -- see the script's own header comment. Also local-only until now; gated on `ui` as well as
+      # `backend` since the docs pages it validates are themselves UI-side content that can drift on their
+      # own (a docs-only edit that renames/drops a documented flag/command/gate-mode) with no backend change
+      # to trigger a re-check otherwise.
       - name: Docs drift check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' }}
         run: npm run docs:drift-check
       - name: Validate observability configs
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.observability == 'true' }}

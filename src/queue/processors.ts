@@ -357,7 +357,7 @@ import {
   loadRepoReviewContext,
 } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
-import { getLastRepoDocRefreshAttemptedAt, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
+import { getLastRepoDocRefreshAttemptedAtBulk, performRepoDocRefresh } from "../github/repo-doc-refresh-runner";
 import { isRepoDocRefreshDue } from "../review/repo-doc-refresh-schedule";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import {
@@ -1725,14 +1725,22 @@ async function fanOutRepoDocRefreshSweepJobs(env: Env, requestedBy: "schedule" |
   const now = nowIso();
   const repoFullNames = (await listRepositories(env)).map((repo) => repo.fullName);
   const manifests = await loadRepoFocusManifests(env, repoFullNames);
-  const due: string[] = [];
-  for (const repoFullName of repoFullNames) {
+  const enabledRepos = repoFullNames.flatMap((repoFullName) => {
     const manifest = manifests.get(repoFullName.toLowerCase());
-    if (!manifest?.repoDocGeneration.enabled) continue;
-    const lastAttemptedAt = await getLastRepoDocRefreshAttemptedAt(env, repoFullName);
-    if (!isRepoDocRefreshDue(lastAttemptedAt, manifest.repoDocGeneration.refreshIntervalDays, now)) continue;
-    due.push(repoFullName);
-  }
+    return manifest?.repoDocGeneration.enabled ? [{ repoFullName, manifest }] : [];
+  });
+  // Bulk-loaded in ONE round trip rather than one `getLastRepoDocRefreshAttemptedAt` call per repo (#3202
+  // review finding) -- this sweep runs daily across every installed repo, so a per-repo query here would scale
+  // linearly in DB round trips with the installed-repo count.
+  const lastAttempts = await getLastRepoDocRefreshAttemptedAtBulk(
+    env,
+    enabledRepos.map((entry) => entry.repoFullName),
+  );
+  const due = enabledRepos
+    .filter((entry) =>
+      isRepoDocRefreshDue(lastAttempts.get(entry.repoFullName)?.generatedAt ?? null, entry.manifest.repoDocGeneration.refreshIntervalDays, now),
+    )
+    .map((entry) => entry.repoFullName);
   await Promise.all(
     due.map((repoFullName, index) => {
       const message: JobMessage = { type: "repo-doc-refresh-sweep", requestedBy, repoFullName };

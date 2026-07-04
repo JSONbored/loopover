@@ -4031,6 +4031,47 @@ export async function listSignalSnapshots(env: Env, signalType: string, targetKe
   return rows.map(toSignalSnapshotRecord);
 }
 
+/** Bulk variant of `listSignalSnapshots` for callers that need the LATEST snapshot per target key across many
+ *  keys in one round trip (#3202 review finding: a per-repo loop here made the daily repo-doc refresh sweep
+ *  scale linearly in DB round trips with the installed-repo count). Keyed by the exact `targetKey` string, same
+ *  casing convention as `listSignalSnapshots` -- callers that key by lowercased repo name must lowercase both
+ *  the input and the returned map's keys themselves. */
+export async function listLatestSignalSnapshotsForTargets(
+  env: Env,
+  signalType: string,
+  targetKeys: readonly string[],
+): Promise<Map<string, SignalSnapshotRecord>> {
+  const result = new Map<string, SignalSnapshotRecord>();
+  if (targetKeys.length === 0) return result;
+  const placeholders = targetKeys.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `
+      SELECT id, signal_type, target_key, repo_full_name, generated_at
+      FROM (
+        SELECT
+          id, signal_type, target_key, repo_full_name, generated_at,
+          row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, id DESC) AS snapshot_rank
+        FROM signal_snapshots
+        WHERE signal_type = ? AND target_key IN (${placeholders})
+      )
+      WHERE snapshot_rank = 1
+    `,
+  )
+    .bind(signalType, ...targetKeys)
+    .all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; generated_at: string }>();
+  for (const row of results) {
+    result.set(row.target_key, {
+      id: row.id,
+      signalType: row.signal_type,
+      targetKey: row.target_key,
+      repoFullName: row.repo_full_name,
+      payload: {},
+      generatedAt: row.generated_at,
+    });
+  }
+  return result;
+}
+
 export async function listLatestSignalSnapshotsByTarget(
   env: Env,
   options: { limit?: number; generatedAfter?: string; maxTargetKeyChars?: number } = {},

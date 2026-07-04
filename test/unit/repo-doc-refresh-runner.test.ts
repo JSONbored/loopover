@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLastRepoDocRefreshAttemptedAt, performRepoDocRefresh } from "../../src/github/repo-doc-refresh-runner";
+import { getLastRepoDocRefreshAttemptedAt, getLastRepoDocRefreshAttemptedAtBulk, performRepoDocRefresh } from "../../src/github/repo-doc-refresh-runner";
 import { upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
@@ -33,6 +33,26 @@ describe("getLastRepoDocRefreshAttemptedAt (#3003)", () => {
   it("returns null when a repo has never been attempted", async () => {
     const env = createTestEnv();
     expect(await getLastRepoDocRefreshAttemptedAt(env, REPO)).toBeNull();
+  });
+});
+
+describe("getLastRepoDocRefreshAttemptedAtBulk (#3202 — N+1 fix)", () => {
+  it("returns an empty map without querying the DB for an empty repo list", async () => {
+    const env = createTestEnv();
+    expect(await getLastRepoDocRefreshAttemptedAtBulk(env, [])).toEqual(new Map());
+  });
+
+  it("resolves attempted repos in one call and omits a repo that was never attempted", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "attempted", full_name: "owner/attempted", private: false, owner: { login: "owner" } });
+    // repoDocGeneration stays disabled -- performRepoDocRefresh still records an attempt marker on decline.
+    const result = await performRepoDocRefresh(env, "owner/attempted");
+    expect(result.opened).toBe(false);
+    const attemptedAt = await getLastRepoDocRefreshAttemptedAt(env, "owner/attempted");
+
+    const bulk = await getLastRepoDocRefreshAttemptedAtBulk(env, ["owner/attempted", "owner/never-attempted"]);
+    expect(bulk.get("owner/attempted")?.generatedAt).toBe(attemptedAt);
+    expect(bulk.has("owner/never-attempted")).toBe(false);
   });
 });
 

@@ -9,10 +9,11 @@
 // this, matching #3002's own "manifest-only, no DB layer" precedent for this whole feature. The marker is
 // recorded here (not in the sweep itself) so a MANUAL trigger also resets that clock, keeping the sweep from
 // immediately re-checking a repo an operator just refreshed by hand.
-import { getRepositorySettings, listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
+import { getRepositorySettings, listLatestSignalSnapshotsForTargets, listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import { resolveRepoActionMode } from "./client";
 import { openRepoDocPullRequest, type RepoDocPullRequestResult } from "./repo-doc-pr";
 import { nowIso } from "../utils/json";
+import type { SignalSnapshotRecord } from "../types";
 
 const REPO_DOC_REFRESH_ATTEMPT_SIGNAL_TYPE = "repo-doc-refresh-attempt";
 
@@ -21,6 +22,15 @@ const REPO_DOC_REFRESH_ATTEMPT_SIGNAL_TYPE = "repo-doc-refresh-attempt";
 export async function getLastRepoDocRefreshAttemptedAt(env: Env, repoFullName: string): Promise<string | null> {
   const snapshots = await listSignalSnapshots(env, REPO_DOC_REFRESH_ATTEMPT_SIGNAL_TYPE, repoFullName);
   return snapshots[0]?.generatedAt ?? null;
+}
+
+/** Bulk variant for the sweep's fan-out (#3202 review finding): one round trip for every candidate repo
+ *  instead of one `getLastRepoDocRefreshAttemptedAt` call per repo. Keyed by the exact `repoFullName` string
+ *  passed in, same casing convention as the single-repo lookup above. A repo absent from the returned map has
+ *  never been attempted -- callers should read `.get(repoFullName)?.generatedAt ?? null`, same pattern as the
+ *  single-repo lookup above. */
+export async function getLastRepoDocRefreshAttemptedAtBulk(env: Env, repoFullNames: readonly string[]): Promise<Map<string, SignalSnapshotRecord>> {
+  return listLatestSignalSnapshotsForTargets(env, REPO_DOC_REFRESH_ATTEMPT_SIGNAL_TYPE, repoFullNames);
 }
 
 async function recordRepoDocRefreshAttempt(env: Env, repoFullName: string): Promise<void> {

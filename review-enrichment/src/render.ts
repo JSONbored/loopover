@@ -439,6 +439,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("staleBranch", findings.staleBranch));
   lines.push(...renderDescriptorSection("commitHygiene", findings.commitHygiene));
   lines.push(...renderDescriptorSection("pendingReviewRequests", findings.pendingReviewRequests));
+  lines.push(...renderDescriptorSection("testRatio", findings.testRatio));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

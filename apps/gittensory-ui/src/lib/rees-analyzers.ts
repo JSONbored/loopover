@@ -727,6 +727,30 @@ export const REES_ANALYZERS = [
         "Structured-fields-only: reads user.login/team.slug/event/created_at, never diff or comment text. Fail-safe on missing token/fetch error/an unconfirmed-complete timeline.",
     },
   },
+  {
+    name: "testRatio",
+    title: "Test-to-code ratio",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      materialSourceLines: 20,
+      ratioThreshold: 0.3,
+    },
+    docs: {
+      summary:
+        "Flags a PR whose source change is material but ships with disproportionately little (or zero) accompanying test change.",
+      looksAt:
+        "Each changed file's path (classified source vs test by naming convention) and added-line count.",
+      reports:
+        "Source/test added-line and file counts and the resulting ratio — never file content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "A cheap, always-available complement to the coverage-delta analyzer: works even when no CI coverage artifact exists.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

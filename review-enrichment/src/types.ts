@@ -382,6 +382,18 @@ export interface PendingReviewRequestFinding {
   hoursPending: number;
 }
 
+/** How much test change accompanies a PR's source change, computed from `req.files` alone (path + additions) —
+ *  no network, no diff/patch parsing. Emitted only when the source change is material (>= a minimum added-line
+ *  floor) and the test-to-source line ratio is under a configurable threshold (#2024, part of #1499). */
+export interface TestRatioFinding {
+  sourceAdded: number;
+  testAdded: number;
+  sourceFiles: number;
+  testFiles: number;
+  ratio: number;
+  belowThreshold: boolean;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -412,6 +424,7 @@ export interface BriefFindings {
   staleBranch?: StaleBranchFinding[];
   commitHygiene?: CommitHygieneFinding[];
   pendingReviewRequests?: PendingReviewRequestFinding[];
+  testRatio?: TestRatioFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

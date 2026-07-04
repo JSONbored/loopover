@@ -24,6 +24,7 @@ import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
 import { scanSecretLog } from "./secret-log.js";
 import { scanStaleBranch } from "./stale-branch.js";
+import { scanTestRatio } from "./test-ratio.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -679,6 +680,34 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanPendingReviewRequests(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "testRatio",
+    title: "Test-to-code ratio",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { materialSourceLines: 20, ratioThreshold: 0.3 },
+    docs: {
+      summary: "Flags a PR whose source change is material but ships with disproportionately little (or zero) accompanying test change.",
+      looksAt: "Each changed file's path (classified source vs test by naming convention) and added-line count.",
+      reports: "Source/test added-line and file counts and the resulting ratio — never file content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "A cheap, always-available complement to the coverage-delta analyzer: works even when no CI coverage artifact exists.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Test-to-code ratio"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`+${item.sourceAdded} source`)} vs ${helpers.safeCodeSpan(`+${item.testAdded} test`)} added lines (ratio ${item.ratio.toFixed(2)}) across ${item.sourceFiles} source file(s) and ${item.testFiles} test file(s)`,
+        );
+      }
+      return lines;
+    },
+    run: (req) => scanTestRatio(req),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

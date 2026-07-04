@@ -394,4 +394,16 @@ describe("buildRepoSettingsPreview", () => {
     const actualReadPerms = (preview.installPreview.permissions.required as string[]).filter((p) => p.endsWith(": read")).sort();
     expect(actualReadPerms).toEqual(expectedReadPerms);
   });
+
+  it("REGRESSION: merge autonomy requires contents: write in the install preview", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ publicSurface: "label_only", autoLabelEnabled: false, commentMode: "off", checkRunMode: "off", autonomy: { merge: "auto" } }),
+      installation: { ...healthyInstall, missingPermissions: ["contents"] },
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+
+    expect(preview.installPreview.permissions.required).toContain("contents: write");
+    expect(preview.installPreview.permissions.missing).toContain("contents");
+  });
 });

@@ -40,8 +40,8 @@ describe("opportunity branch internals", () => {
 
   it("issueAgeDays floors invalid timestamps to stale age", () => {
     const { issueAgeDays } = opportunityFreshnessInternals;
-    expect(issueAgeDays(null, NOW)).toBe(9999);
-    expect(issueAgeDays("not-a-date", NOW)).toBe(9999);
+    expect(issueAgeDays(null, NOW)).toBe(Number.POSITIVE_INFINITY);
+    expect(issueAgeDays("not-a-date", NOW)).toBe(Number.POSITIVE_INFINITY);
     expect(issueAgeDays("2026-07-03T00:00:00.000Z", NOW)).toBeGreaterThanOrEqual(0);
   });
 

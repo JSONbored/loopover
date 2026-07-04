@@ -28,12 +28,20 @@ describe("isOrbBrokerMode", () => {
 
 describe("fetchBrokeredInstallationToken", () => {
   it("exchanges the secret for a token + parses the expiry (default broker URL + Bearer secret)", async () => {
-    const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z" }));
+    const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z", permissions: { contents: "write" } }));
     const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "orbsec_x" }, fetchImpl);
-    expect(out).toEqual({ token: "ghs_x", installationId: 42, expiresAtMs: Date.parse("2026-06-25T09:00:00Z") });
+    expect(out).toEqual({ token: "ghs_x", installationId: 42, expiresAtMs: Date.parse("2026-06-25T09:00:00Z"), permissions: { contents: "write" } });
     expect(calls[0]?.url).toBe("https://gittensory-api.aethereal.dev/v1/orb/token");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer orbsec_x");
     expect(calls[0]?.init?.method).toBe("POST");
+    expect(calls[0]?.init?.body).toBeUndefined();
+  });
+
+  it("asks the broker to force-refresh when retrying a stale permission scope", async () => {
+    const { fetchImpl, calls } = captureFetch(Response.json({ token: "ghs_x", installationId: 42, expiresAt: "2026-06-25T09:00:00Z" }));
+    await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "orbsec_x" }, fetchImpl, { forceRefresh: true });
+    expect((calls[0]?.init?.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ forceRefresh: true });
   });
 
   it("defaults installationId + expiry when absent, and strips a trailing slash from a custom broker URL", async () => {
@@ -41,6 +49,7 @@ describe("fetchBrokeredInstallationToken", () => {
     const out = await fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s", ORB_BROKER_URL: "https://broker.example/" }, fetchImpl);
     expect(out.token).toBe("ghs_y");
     expect(out.installationId).toBe(0); // payload.installationId ?? 0
+    expect(out.permissions).toEqual({});
     expect(out.expiresAtMs).toBeGreaterThan(Date.now()); // payload.expiresAt absent → ~50min default
     expect(calls[0]?.url).toBe("https://broker.example/v1/orb/token");
   });

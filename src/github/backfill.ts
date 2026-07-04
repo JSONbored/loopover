@@ -38,10 +38,11 @@ import {
   upsertRepoSyncSegment,
   upsertRepoSyncState,
   upsertRepositoryFromGitHub,
+  updateInstallationPermissions,
   persistRepoSnapshot,
   extractLinkedIssueNumbers,
 } from "../db/repositories";
-import { agentRequiresPrWrite } from "../settings/agent-execution";
+import { agentRequiresContentsWrite, agentRequiresPrWrite } from "../settings/agent-execution";
 import type {
   ContributorRepoStatRecord,
   GitHubRateLimitObservationRecord,
@@ -828,12 +829,15 @@ export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
 export const OPTIONAL_PR_WRITE_PERMISSION: Record<string, string> = {
   pull_requests: "write",
 };
+export const OPTIONAL_CONTENTS_WRITE_PERMISSION: Record<string, string> = {
+  contents: "write",
+};
 
 export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
 
 type InstallationModeImpact = {
-  mode: "comment" | "label" | "check_run" | "gate_check";
+  mode: "comment" | "label" | "check_run" | "gate_check" | "agent_pr_action" | "agent_merge";
   enabled: boolean;
   affectedRepoCount: number;
   requiredPermissions: Array<{ permission: string; requiredAccess: string; missing: boolean; optional: boolean }>;
@@ -849,30 +853,30 @@ type InstallationEventDiagnostic = {
   action: string;
 };
 
-// Broker mode (#selfhost-runtime-drift): a brokered self-host holds no local GitHub App private key by design,
-// and the token broker does not expose granted permissions/scopes today -- there is nothing to introspect. Report
-// that plainly instead of running the local-mode remediation math against permissions/events that were never
-// (and structurally cannot be) refreshed, which would otherwise read as either fabricated gaps or fabricated
-// confirmations depending on whatever stale/default data happens to be stored.
+// Broker mode (#selfhost-runtime-drift): a brokered self-host holds no local GitHub App private key by design.
+// Permissions can be refreshed from the broker token response when available; event subscriptions still cannot be
+// introspected through the broker, so the remediation text must keep that distinction explicit.
 function enrichBrokerInstallationHealth(health: InstallationHealthRecord) {
   const brokerHealthy = health.status === "healthy";
+  const missingPermissions = new Set(health.missingPermissions);
+  const requiredPermissions = {
+    ...REQUIRED_INSTALLATION_PERMISSIONS,
+    ...(missingPermissions.has("checks") ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    ...(missingPermissions.has("pull_requests") && permissionSatisfies(health.permissions.pull_requests, "read") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    ...(missingPermissions.has("contents") ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
+  };
   return {
     ...health,
-    requiredPermissions: REQUIRED_INSTALLATION_PERMISSIONS,
+    requiredPermissions,
     optionalPermissions: OPTIONAL_CHECK_RUN_PERMISSION,
     requiredEvents: [...REQUIRED_INSTALLATION_EVENTS],
     optionalVisibleEvents: [...OPTIONAL_VISIBLE_INSTALLATION_EVENTS],
-    // ok is always false here, regardless of brokerHealthy -- a reachable broker only proves it can mint
-    // tokens, never that this specific permission/event is actually granted (the broker exposes no
-    // introspection API for that today). Reporting ok: true for a check that was never verified would recreate
-    // the exact fabricated-success problem broker mode exists to avoid; brokerHealthy still drives repairSteps
-    // and the overall status above, just not these per-check flags.
-    permissionRemediation: Object.entries(REQUIRED_INSTALLATION_PERMISSIONS).map(([permission, access]) => ({
+    permissionRemediation: Object.entries(requiredPermissions).map(([permission, access]) => ({
       permission,
       requiredAccess: access,
-      currentAccess: "unavailable_in_broker_mode",
-      ok: false,
-      action: "Permission introspection is unavailable in broker mode.",
+      currentAccess: health.permissions[permission] ?? "unavailable_in_broker_mode",
+      ok: !missingPermissions.has(permission) && Boolean(health.permissions[permission]),
+      action: missingPermissions.has(permission) ? `Set repository permission ${permission} to ${access}.` : "No change needed.",
     })),
     eventRemediation: REQUIRED_INSTALLATION_EVENTS.map((event) => ({
       event,
@@ -883,7 +887,7 @@ function enrichBrokerInstallationHealth(health: InstallationHealthRecord) {
       ? [
           "This is a brokered self-host (Orb token broker mode) -- it holds no local GitHub App private key by design.",
           "The token broker is reachable and minting installation tokens normally.",
-          "Permission/event introspection is not available through the token broker today.",
+          "Permission grants were refreshed from the broker token response when GitHub provided them; event-subscription introspection is unavailable in broker mode.",
         ]
       : [
           "This is a brokered self-host (Orb token broker mode) -- it holds no local GitHub App private key by design.",
@@ -909,6 +913,7 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
     // Persisted health stores only the missing permission name. If pull_requests is already granted at read level,
     // a missing pull_requests entry can only mean an acting autonomy needs write; otherwise preserve baseline read.
     ...(missingPermissions.has("pull_requests") && permissionSatisfies(health.permissions.pull_requests, "read") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    ...(missingPermissions.has("contents") ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
   };
   return {
     ...health,
@@ -949,14 +954,16 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
   const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
-  const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
+  const prWriteRepoCount = installedSettings.filter((settings) => agentRequiresPrWrite(settings.autonomy)).length;
+  const mergeRepoCount = installedSettings.filter((settings) => agentRequiresContentsWrite(settings.autonomy)).length;
   const missingPermissions = new Set(health.missingPermissions);
   const requiredEventSet = new Set<string>(REQUIRED_INSTALLATION_EVENTS);
   const missingEvents = new Set(health.missingEvents.filter((event) => requiredEventSet.has(event)));
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
-    ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}), // acting autonomy → pull_requests:write (#audit-install-health)
+    ...(prWriteRepoCount > 0 ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    ...(mergeRepoCount > 0 ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
   };
   const optionalPermissions = checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
   const modeImpacts: InstallationModeImpact[] = [
@@ -1003,6 +1010,32 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
         gateCheckRepoCount > 0
           ? "Review-agent check mode is enabled for at least one installed repo, so Checks: write is required."
           : "Checks: write is optional unless review-agent check mode is enabled for an installed repo.",
+    }),
+    buildPermissionModeImpact({
+      mode: "agent_pr_action",
+      enabled: prWriteRepoCount > 0,
+      affectedRepoCount: prWriteRepoCount,
+      permission: "pull_requests",
+      requiredAccess: "write",
+      missing: prWriteRepoCount > 0 && missingPermissions.has("pull_requests"),
+      optional: prWriteRepoCount === 0,
+      summary:
+        prWriteRepoCount > 0
+          ? "Auto-maintain PR review, close, and update-branch actions are enabled for at least one installed repo, so Pull requests: write is required."
+          : "Pull requests: write is optional unless PR-state auto-maintain actions are enabled for an installed repo.",
+    }),
+    buildPermissionModeImpact({
+      mode: "agent_merge",
+      enabled: mergeRepoCount > 0,
+      affectedRepoCount: mergeRepoCount,
+      permission: "contents",
+      requiredAccess: "write",
+      missing: mergeRepoCount > 0 && missingPermissions.has("contents"),
+      optional: mergeRepoCount === 0,
+      summary:
+        mergeRepoCount > 0
+          ? "Auto-merge is enabled for at least one installed repo, so Contents: write is required by GitHub's merge endpoint."
+          : "Contents: write is optional unless auto-merge is enabled for an installed repo.",
     }),
   ];
   const eventDiagnostics: InstallationEventDiagnostic[] = [
@@ -1114,12 +1147,22 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     const { installation: currentInstallation, errorSummary, authMode } = await refreshStoredInstallation(env, installation);
     const installedRepos = repositories.filter((repo) => repo.installationId === currentInstallation.id && repo.isInstalled);
     const registeredInstalled = installedRepos.filter((repo) => repo.isRegistered);
+    const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
+    const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
+    const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
+    const requiresContentsWrite = installedSettings.some((settings) => agentRequiresContentsWrite(settings.autonomy));
+    const requiredPermissions = {
+      ...REQUIRED_INSTALLATION_PERMISSIONS,
+      ...(requiresChecks ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+      // An acting autonomy upgrades the pull_requests requirement read -> write (spread last so it wins). (#audit-install-health)
+      ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+      ...(requiresContentsWrite ? OPTIONAL_CONTENTS_WRITE_PERMISSION : {}),
+    };
 
-    // Broker mode (#selfhost-runtime-drift): the token broker exposes no permission/event introspection today, so
-    // there is nothing to compare against REQUIRED_INSTALLATION_PERMISSIONS -- computing "missing" from whatever
-    // (never-refreshed) permissions/events happen to be stored would fabricate a gap. Health instead reflects
-    // whether the broker itself is reachable and minting tokens; see enrichInstallationHealth's broker branch for
-    // the honest "introspection unavailable" remediation surfaced to callers.
+    // Broker mode (#selfhost-runtime-drift): the token broker can now expose the permission snapshot attached to
+    // the minted installation token, but it still cannot expose webhook event subscriptions. Recompute permission
+    // gaps when a broker snapshot is present; keep event gaps from the previous verified record instead of
+    // fabricating a clean event bill of health.
     //
     // Persistence (#selfhost-runtime-drift follow-up): writing missingPermissions/missingEvents as [] here reads,
     // to any OTHER consumer of InstallationHealthRecord that predates broker mode and doesn't branch on authMode
@@ -1130,15 +1173,22 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     // all has never been verified either way, so [] is the only honest starting point.
     if (authMode === "broker") {
       const previous = await getInstallationHealth(env, currentInstallation.id);
+      const hasBrokerPermissionSnapshot = Object.keys(currentInstallation.permissions).length > 0;
+      const missingPermissions = hasBrokerPermissionSnapshot
+        ? Object.entries(requiredPermissions)
+            .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))
+            .map(([permission]) => permission)
+        : (previous?.missingPermissions ?? ([] as string[]));
+      const missingEvents = previous?.missingEvents ?? ([] as string[]);
       const record = {
         installationId: currentInstallation.id,
         accountLogin: currentInstallation.accountLogin,
         repositorySelection: currentInstallation.repositorySelection,
         installedReposCount: installedRepos.length,
         registeredInstalledCount: registeredInstalled.length,
-        status: errorSummary ? ("needs_attention" as const) : ("healthy" as const),
-        missingPermissions: previous?.missingPermissions ?? ([] as string[]),
-        missingEvents: previous?.missingEvents ?? ([] as string[]),
+        status: errorSummary || missingPermissions.length > 0 || missingEvents.length > 0 ? ("needs_attention" as const) : ("healthy" as const),
+        missingPermissions,
+        missingEvents,
         permissions: currentInstallation.permissions,
         events: currentInstallation.events,
         checkedAt: nowIso(),
@@ -1150,15 +1200,6 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
       continue;
     }
 
-    const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
-    const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
-    const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
-    const requiredPermissions = {
-      ...REQUIRED_INSTALLATION_PERMISSIONS,
-      ...(requiresChecks ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
-      // An acting autonomy upgrades the pull_requests requirement read -> write (spread last so it wins). (#audit-install-health)
-      ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}),
-    };
     const missingPermissions = Object.entries(requiredPermissions)
       .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))
       .map(([permission]) => permission);
@@ -1213,8 +1254,15 @@ async function refreshStoredInstallation(
           authMode: "broker",
         };
       }
+      const refreshedInstallation =
+        minted.permissions && Object.keys(minted.permissions).length > 0
+          ? { ...installation, permissions: minted.permissions, updatedAt: nowIso() }
+          : installation;
+      if (refreshedInstallation !== installation) {
+        await updateInstallationPermissions(env, installation.id, refreshedInstallation.permissions);
+      }
       incr("gittensory_installation_health_broker_probe_total", { result: "ok" });
-      return { installation, authMode: "broker" };
+      return { installation: refreshedInstallation, authMode: "broker" };
     } catch (error) {
       incr("gittensory_installation_health_broker_probe_total", { result: "failed" });
       return {

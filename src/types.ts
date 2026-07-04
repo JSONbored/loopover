@@ -1478,9 +1478,9 @@ export type InstallationHealthRecord = {
   checkedAt: string;
   errorSummary?: string | null | undefined;
   // "broker" = a brokered self-host (ORB_ENROLLMENT_SECRET set, no local GitHub App private key by design).
-  // Permission/event introspection is not available through the token broker today, so missingPermissions /
-  // missingEvents are always [] in broker mode -- an EMPTY array there means "unchecked", not "all satisfied"
-  // the way it does for "local" mode. Consumers must branch on authMode, not infer it from empty arrays alone.
+  // Permission snapshots are available only after the broker returns token permissions; event subscriptions are
+  // not introspectable through the broker. Consumers must branch on authMode, not infer certainty from empty
+  // arrays alone.
   authMode: "local" | "broker";
 };
 

@@ -46,7 +46,7 @@ const headers = (env: Env) => ({ authorization: `Bearer ${env.GITTENSORY_API_TOK
 async function seedPending(env: Env) {
   await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
   await upsertInstallation(env, {
-    installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+    installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
     repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
   });
   await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });

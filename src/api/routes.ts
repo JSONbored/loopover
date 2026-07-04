@@ -2983,9 +2983,11 @@ export function createApp() {
     const auth = c.req.header("authorization") ?? "";
     const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
+    const body = await c.req.json().catch(() => null);
+    const forceRefresh = typeof body === "object" && body !== null && (body as { forceRefresh?: unknown }).forceRefresh === true;
     let result: Awaited<ReturnType<typeof brokerOrbToken>>;
     try {
-      result = await brokerOrbToken(c.env, secret);
+      result = await brokerOrbToken(c.env, secret, { forceRefresh });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(JSON.stringify({ level: "error", event: "orb_broker_mint_failed", message: message.slice(0, 200) }));

@@ -76,7 +76,7 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     autonomy: { merge: "auto_with_approval" },
     agentPaused: false,
     agentDryRun: false,
-    installationPermissions: { pull_requests: "write", issues: "write" },
+    installationPermissions: { contents: "write", pull_requests: "write", issues: "write" },
     ...over,
   };
 }
@@ -89,7 +89,7 @@ async function seedInstallation(env: Env): Promise<void> {
       id: 5,
       account: { login: "owner", id: 1, type: "User" },
       repository_selection: "selected",
-      permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
       events: ["pull_request"],
     },
     repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
@@ -411,7 +411,7 @@ describe("agent approval queue (#779)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { close: "auto_with_approval" } });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "solorepo", full_name: "solorepo", private: false, owner: { login: "owner" } }],
     });
     await upsertPullRequestFromGitHub(env, "solorepo", { number: 7, title: "PR", state: "open", head: { sha: "h7" }, labels: [], body: "Closes #9" });
@@ -787,7 +787,7 @@ describe("agent approval queue (#779)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "solorepo", autonomy: { merge: "auto_with_approval" } });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "solorepo", full_name: "solorepo", private: false, owner: { login: "owner" } }],
     });
     // No `user` on the payload → authorLogin stored null; repoFullName has no "/" → repoOwner falls back to "".

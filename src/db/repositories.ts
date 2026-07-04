@@ -264,6 +264,12 @@ export async function getInstallation(env: Env, installationId: number): Promise
   return row ? toInstallationRecord(row) : null;
 }
 
+export async function updateInstallationPermissions(env: Env, installationId: number, permissions: Record<string, string>): Promise<void> {
+  if (Object.keys(permissions).length === 0) return;
+  const db = getDb(env.DB);
+  await db.update(installations).set({ permissionsJson: jsonString(permissions), updatedAt: nowIso() }).where(eq(installations.id, installationId));
+}
+
 export async function listInstallations(env: Env): Promise<InstallationRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(installations).orderBy(desc(installations.updatedAt)).limit(100);

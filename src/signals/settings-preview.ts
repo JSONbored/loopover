@@ -15,6 +15,7 @@ import {
 } from "./engine";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
 import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
+import { requiredAgentActionPermissions } from "../settings/agent-execution";
 
 export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
@@ -522,18 +523,24 @@ function requiredInstallPermissions(settings: RepositorySettings, decision: Publ
   );
   if (writesPrPublicSurface(settings, decision)) permissions.add("issues: write");
   if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
+  for (const requirement of requiredAgentActionPermissions(settings.autonomy)) {
+    permissions.add(`${requirement.permission}: ${requirement.requiredAccess}`);
+  }
   return [...permissions];
 }
 
 function activeMissingPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision, installation: InstallationHealthSummary | null): string[] {
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
-  const active: string[] = [];
-  if (missing.has("pull_requests")) active.push("pull_requests");
+  const active = new Set<string>();
+  if (missing.has("pull_requests")) active.add("pull_requests");
+  for (const requirement of requiredAgentActionPermissions(settings.autonomy)) {
+    if (missing.has(requirement.permission)) active.add(requirement.permission);
+  }
   // Comment/label output is gated on issues:write (Issues endpoints), not pull_requests:write.
-  if (writesPrPublicSurface(settings, decision) && missing.has("issues")) active.push("issues");
-  if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");
-  return active;
+  if (writesPrPublicSurface(settings, decision) && missing.has("issues")) active.add("issues");
+  if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.add("checks");
+  return [...active];
 }
 
 function permissionSummary(installation: InstallationHealthSummary | null, missing: string[], missingEvents: string[]): string {

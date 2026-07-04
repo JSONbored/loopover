@@ -1,16 +1,17 @@
 import type { AgentActionClass, AuditEventRecord, AutonomyLevel, AutonomyPolicy } from "../types";
 import { isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 
-// The action classes that mutate a PR's review / merge / close / head state — these need GitHub
-// `pull_requests: write`. (`label` mutates via the Issues API, which the App already holds `issues: write` for.)
-// INVARIANT: the executor's PR_WRITE_CLASSES (src/services/agent-action-executor.ts) must be a SUBSET of this list
-// — every class the runtime readiness guard treats as a PR-write must be counted by agentRequiresPrWrite, or the
-// readiness gate under-reports and disagrees with the executor. (This list may be a superset: it also carries the
-// advisory `review` class for conservatism.) `update_branch` (PUT /pulls/{n}/update-branch) is a PR-write the
-// executor gates; omitting it here graded an update_branch-only autonomy "not_required", so the executor's
-// readiness guard denied it even WITH pull_requests:write granted (and it would 403 if it slipped). The
-// agent-execution test enforces this subset invariant against the exported PR_WRITE_CLASSES. (#audit-update-branch)
-const PR_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["review", "request_changes", "approve", "merge", "close", "update_branch"];
+// The action classes that mutate a PR's review / close / head state through Pull Request endpoints. Merge is
+// deliberately separate: GitHub's merge endpoint requires `contents: write`, so treating it as only
+// `pull_requests: write` lets a repo look ready while the live merge 403s.
+// `update_branch` (PUT /pulls/{n}/update-branch) is a PR-write the executor gates; omitting it here graded an
+// update_branch-only autonomy "not_required", so the executor's readiness guard denied it even WITH
+// pull_requests:write granted (and it would 403 if it slipped). Tests keep the action-specific requirements in
+// sync with the executor's exported write-action set. (#audit-update-branch)
+const PR_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["review", "request_changes", "approve", "close", "update_branch"];
+const CONTENTS_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["merge"];
+
+export type AgentPermissionRequirement = { permission: string; requiredAccess: "write" };
 
 // Whether the agent actually executes an action, only logs what it WOULD do, or is halted entirely (#776).
 export type AgentActionMode = "paused" | "dry_run" | "live";
@@ -78,15 +79,68 @@ export function agentRequiresPrWrite(autonomy: AutonomyPolicy | null | undefined
   return PR_WRITE_ACTION_CLASSES.some((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
 }
 
+/** True when the configured autonomy can execute a merge, which GitHub authorizes via Contents: write. */
+export function agentRequiresContentsWrite(autonomy: AutonomyPolicy | null | undefined): boolean {
+  return CONTENTS_WRITE_ACTION_CLASSES.some((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
+}
+
 export type AgentPermissionReadiness = "not_required" | "ready" | "reconsent_required";
+
+function addRequirementOnce(requirements: AgentPermissionRequirement[], requirement: AgentPermissionRequirement): void {
+  if (requirements.some((entry) => entry.permission === requirement.permission)) return;
+  requirements.push(requirement);
+}
+
+export function requiredAgentActionPermissions(
+  autonomy: AutonomyPolicy | null | undefined,
+  actionClass?: AgentActionClass | null | undefined,
+): AgentPermissionRequirement[] {
+  const candidates = actionClass ? [actionClass] : [...PR_WRITE_ACTION_CLASSES, ...CONTENTS_WRITE_ACTION_CLASSES];
+  const requirements: AgentPermissionRequirement[] = [];
+  for (const candidate of candidates) {
+    if (!isActingAutonomyLevel(resolveAutonomy(autonomy, candidate))) continue;
+    if (PR_WRITE_ACTION_CLASSES.includes(candidate)) addRequirementOnce(requirements, { permission: "pull_requests", requiredAccess: "write" });
+    if (CONTENTS_WRITE_ACTION_CLASSES.includes(candidate)) addRequirementOnce(requirements, { permission: "contents", requiredAccess: "write" });
+  }
+  return requirements;
+}
+
+export function missingAgentActionPermissions(input: {
+  autonomy: AutonomyPolicy | null | undefined;
+  installationPermissions: Record<string, string> | null | undefined;
+  actionClass?: AgentActionClass | null | undefined;
+}): AgentPermissionRequirement[] {
+  return requiredAgentActionPermissions(input.autonomy, input.actionClass).filter(
+    (requirement) => input.installationPermissions?.[requirement.permission] !== requirement.requiredAccess,
+  );
+}
+
+export function formatAgentPermissionDenial(input: {
+  autonomy: AutonomyPolicy | null | undefined;
+  installationPermissions: Record<string, string> | null | undefined;
+  actionClass?: AgentActionClass | null | undefined;
+  suppressed?: boolean | undefined;
+}): string {
+  const missing = missingAgentActionPermissions(input);
+  const summary =
+    missing.length > 0
+      ? missing.map((requirement) => `${requirement.permission}: ${requirement.requiredAccess}`).join(", ")
+      : "required GitHub App permission";
+  return `${summary} not granted — maintainer must re-consent${input.suppressed ? " (suppressed repeat)" : ""}`;
+}
 
 /**
  * Whether the installation grants the write scope the configured auto-maintain actions need (#775). The action
- * layer (#778) consults this before executing a PR-write action: `not_required` = no acting PR-write level is
- * configured; `ready` = the App holds `pull_requests: write`; `reconsent_required` = the maintainer must
+ * layer (#778) consults this before executing a GitHub mutation: `not_required` = no acting level needs a write
+ * permission; `ready` = the App holds every required write permission; `reconsent_required` = the maintainer must
  * re-authorize the App with the upgraded permission. Pure.
  */
-export function resolveAgentPermissionReadiness(input: { autonomy: AutonomyPolicy | null | undefined; installationPermissions: Record<string, string> | null | undefined }): AgentPermissionReadiness {
-  if (!agentRequiresPrWrite(input.autonomy)) return "not_required";
-  return input.installationPermissions?.pull_requests === "write" ? "ready" : "reconsent_required";
+export function resolveAgentPermissionReadiness(input: {
+  autonomy: AutonomyPolicy | null | undefined;
+  installationPermissions: Record<string, string> | null | undefined;
+  actionClass?: AgentActionClass | null | undefined;
+}): AgentPermissionReadiness {
+  const required = requiredAgentActionPermissions(input.autonomy, input.actionClass);
+  if (required.length === 0) return "not_required";
+  return missingAgentActionPermissions(input).length === 0 ? "ready" : "reconsent_required";
 }

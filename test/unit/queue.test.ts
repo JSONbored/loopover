@@ -5216,7 +5216,7 @@ describe("queue processors", () => {
         id: 123,
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
-        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
         events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       },
       repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }],
@@ -6079,7 +6079,7 @@ describe("queue processors", () => {
         id: 123,
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
-        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
         events: ["pull_request"],
       },
       repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
@@ -7285,7 +7285,7 @@ describe("queue processors", () => {
 
     async function seedMigrationRecheckRepo(env: Env, prNumber: number, opts: { premergeContentRecheck?: boolean } = {}) {
       await upsertInstallation(env, {
-        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", issues: "write" }, events: [] },
+        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { contents: "write", pull_requests: "write", issues: "write" }, events: [] },
       });
       await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 123);
       await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto", review_state_label: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
@@ -7363,7 +7363,7 @@ describe("queue processors", () => {
     it("fails OPEN (never fetches the live tree) when the PR has no resolvable base ref", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await upsertInstallation(env, {
-        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", issues: "write" }, events: [] },
+        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { contents: "write", pull_requests: "write", issues: "write" }, events: [] },
       });
       // No default_branch on the repo record AND no base.ref on the PR record — baseRef resolves to undefined.
       await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 123);
@@ -7731,7 +7731,7 @@ describe("queue processors", () => {
 
     async function seedFreshRebaseRepo(env: Env, prNumber: number, opts: { requireFreshRebaseWindowMinutes?: number | null; autonomy?: Record<string, string> } = {}) {
       await upsertInstallation(env, {
-        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", issues: "write" }, events: [] },
+        installation: { id: 123, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { contents: "write", pull_requests: "write", issues: "write" }, events: [] },
       });
       await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 123);
       await upsertRepositorySettings(env, {
@@ -17482,7 +17482,7 @@ describe("agentMaintenanceHeadMatchesGate", () => {
         account: { login: "JSONbored", id: 1, type: "User" },
         target_type: "User",
         repository_selection: "all",
-        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
         events: ["pull_request"],
       },
       repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
@@ -19313,7 +19313,7 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
         id: INSTALLATION_ID,
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
-        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
         events: ["pull_request"],
       },
       repositories: [{ name: "gittensory", full_name: REPO, private: false, owner: { login: "JSONbored" } }],

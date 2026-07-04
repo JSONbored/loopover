@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   agentActionModeExecutes,
+  agentRequiresContentsWrite,
   agentRequiresPrWrite,
   buildAgentActionAudit,
+  formatAgentPermissionDenial,
   isGlobalAgentPause,
+  requiredAgentActionPermissions,
   resolveAgentActionMode,
   resolveAgentPermissionReadiness,
 } from "../../src/settings/agent-execution";
@@ -75,7 +78,8 @@ describe("buildAgentActionAudit", () => {
 
 describe("agent write-permission readiness (#775)", () => {
   it("agentRequiresPrWrite is true only for an acting level on a PR-write action class", () => {
-    expect(agentRequiresPrWrite({ merge: "auto" })).toBe(true);
+    expect(agentRequiresPrWrite({ merge: "auto" })).toBe(false);
+    expect(agentRequiresContentsWrite({ merge: "auto" })).toBe(true);
     expect(agentRequiresPrWrite({ request_changes: "auto_with_approval" })).toBe(true);
     expect(agentRequiresPrWrite({ close: "auto" })).toBe(true);
     // non-acting levels never demand write
@@ -89,14 +93,16 @@ describe("agent write-permission readiness (#775)", () => {
     expect(agentRequiresPrWrite({ update_branch: "observe" })).toBe(false); // non-acting still no write
     // label acts via the Issues API (issues: write, already held), so it does NOT demand pull_requests: write
     expect(agentRequiresPrWrite({ label: "auto" })).toBe(false);
+    expect(agentRequiresContentsWrite({ merge: "observe" })).toBe(false);
+    expect(agentRequiresContentsWrite({})).toBe(false);
+    expect(agentRequiresContentsWrite(null)).toBe(false);
   });
 
-  it("INVARIANT: every executor PR_WRITE_CLASS is counted by agentRequiresPrWrite (the readiness gate cannot disagree with the runtime guard)", () => {
-    // The executor denies a PR-write action whose readiness !== "ready". If a class it gates were missing from
-    // PR_WRITE_ACTION_CLASSES, agentRequiresPrWrite would grade it "not_required" and the gate would diverge — the
-    // exact #audit-update-branch bug. Enforce executor PR_WRITE_CLASSES ⊆ readiness write-classes for ALL members.
+  it("INVARIANT: every executor write class has an action-specific permission requirement", () => {
+    // The executor denies a write action whose readiness !== "ready". If a class it gates were missing from
+    // requiredAgentActionPermissions, the readiness guard would grade it "not_required" and the gate would diverge.
     for (const actionClass of PR_WRITE_CLASSES) {
-      expect(agentRequiresPrWrite({ [actionClass]: "auto" })).toBe(true);
+      expect(requiredAgentActionPermissions({ [actionClass]: "auto" }, actionClass).length).toBeGreaterThan(0);
     }
   });
 
@@ -107,14 +113,25 @@ describe("agent write-permission readiness (#775)", () => {
     expect(resolveAgentPermissionReadiness({ autonomy: { update_branch: "auto" }, installationPermissions: { pull_requests: "read" } })).toBe("reconsent_required");
   });
 
-  it("resolveAgentPermissionReadiness gates on the granted pull_requests scope", () => {
+  it("resolveAgentPermissionReadiness gates on the exact granted scopes for each acting action", () => {
     // no acting PR-write level → permission is irrelevant
     expect(resolveAgentPermissionReadiness({ autonomy: { label: "auto" }, installationPermissions: { pull_requests: "read" } })).toBe("not_required");
-    // acting level + write granted → ready
-    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: { pull_requests: "write", issues: "write" } })).toBe("ready");
-    // acting level but only read (or missing) → re-consent required
-    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: { pull_requests: "read" } })).toBe("reconsent_required");
+    // merge is authorized by Contents: write, not Pull requests: write.
+    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: { contents: "write", pull_requests: "read" } })).toBe("ready");
+    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: { pull_requests: "write" } })).toBe("reconsent_required");
+    // non-merge PR state mutations still require Pull requests: write.
+    expect(resolveAgentPermissionReadiness({ autonomy: { approve: "auto" }, installationPermissions: { contents: "write", pull_requests: "read" } })).toBe("reconsent_required");
+    expect(resolveAgentPermissionReadiness({ autonomy: { approve: "auto" }, installationPermissions: { pull_requests: "write" } })).toBe("ready");
     expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: {} })).toBe("reconsent_required");
     expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: null })).toBe("reconsent_required");
+  });
+
+  it("formats the missing action permission instead of blaming pull_requests for merge", () => {
+    expect(formatAgentPermissionDenial({ autonomy: { merge: "auto" }, installationPermissions: { pull_requests: "write" }, actionClass: "merge" })).toBe(
+      "contents: write not granted — maintainer must re-consent",
+    );
+    expect(formatAgentPermissionDenial({ autonomy: { close: "auto" }, installationPermissions: { contents: "write" }, actionClass: "close", suppressed: true })).toBe(
+      "pull_requests: write not granted — maintainer must re-consent (suppressed repeat)",
+    );
   });
 });

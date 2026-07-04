@@ -49,6 +49,7 @@ export {
   computeLaneFit,
   type GoalModelInput,
 } from "./goal-model.js";
+export {
   classifyContributorFit,
   type ContributorFit,
   type ContributorFitCheck,

@@ -26,6 +26,7 @@ import {
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { getInstallation, upsertInstallation } from "../../src/db/repositories";
 
 beforeEach(() => clearInstallationTokenCacheForTest());
 
@@ -470,6 +471,7 @@ describe("GitHub check runs", () => {
           token: "brokered-token",
           installationId: 999,
           expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          permissions: { contents: "write" },
         });
       }
       return new Response("not found", { status: 404 });
@@ -479,6 +481,69 @@ describe("GitHub check runs", () => {
     expect(await createInstallationToken(env, 888)).toBe("brokered-token");
     expect(await createInstallationToken(env, 888)).toBe("brokered-token"); // cached → no second broker exchange
     expect(brokerCalls).toBe(1);
+  });
+
+  it("persists broker-returned installation permissions so runtime readiness sees accepted scopes", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    await upsertInstallation(env, {
+      installation: {
+        id: 889,
+        account: { login: "owner", id: 1, type: "User" },
+        target_type: "User",
+        repository_selection: "selected",
+        permissions: { contents: "read", pull_requests: "write" },
+        events: [],
+      },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/v1/orb/token")) {
+        return Response.json({
+          token: "brokered-token",
+          installationId: 889,
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          permissions: { contents: "write", pull_requests: "write" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await createInstallationToken(env, 889);
+
+    expect((await getInstallation(env, 889))?.permissions).toEqual({ contents: "write", pull_requests: "write" });
+  });
+
+  it("force-remints the broker token once when GitHub rejects a stale permission scope", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    const brokerBodies: Array<string | undefined> = [];
+    let brokerCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input.toString().includes("/v1/orb/token")) {
+        brokerCalls += 1;
+        brokerBodies.push(init?.body === undefined ? undefined : String(init.body));
+        return Response.json({
+          token: brokerCalls === 1 ? "stale-scope-token" : "fresh-scope-token",
+          installationId: 890,
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          permissions: brokerCalls === 1 ? { contents: "read" } : { contents: "write" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const seenTokens: string[] = [];
+
+    const result = await withInstallationTokenRetry(env, 890, async (token) => {
+      seenTokens.push(token);
+      if (token === "stale-scope-token") {
+        const error = new Error("Resource not accessible by integration") as Error & { status: number };
+        error.status = 403;
+        throw error;
+      }
+      return "ok";
+    });
+
+    expect(result).toBe("ok");
+    expect(seenTokens).toEqual(["stale-scope-token", "fresh-scope-token"]);
+    expect(brokerBodies).toEqual([undefined, JSON.stringify({ forceRefresh: true })]);
   });
 
   it("#2: serves a still-valid cached token when the Orb mint fails (stale-token grace, no fleet stall)", async () => {

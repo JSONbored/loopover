@@ -77,7 +77,7 @@ describe("MCP gittensory_get_automation_state (#784)", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto", label: "auto_with_approval" }, agentDryRun: true });
@@ -89,7 +89,7 @@ describe("MCP gittensory_get_automation_state (#784)", () => {
     const data = result.structuredContent as State;
     expect(data.configured).toBe(true);
     expect(data.mode).toBe("dry_run"); // agentDryRun → dry_run
-    expect(data.permissionReadiness).toBe("ready"); // pull_requests: write granted
+    expect(data.permissionReadiness).toBe("ready"); // contents: write granted for merge; pull_requests: write granted for PR writes
     expect(data.actingActionClasses).toEqual(expect.arrayContaining(["merge", "label"]));
     expect(data.pendingActionCount).toBe(1);
     // surfaces the COUNT, not the queue details — no reward/wallet leakage either
@@ -171,7 +171,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   it("an MCP-staged merge is superseded on accept if the PR is force-pushed after proposal — the guard now actually fires (#2255)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -193,7 +193,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   it("allows a session that maintains the repo (owned installation)", async () => {
     const env = createTestEnv();
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -267,7 +267,7 @@ describe("MCP gittensory_propose_action (#784)", () => {
   it("does not trust cached collaborator association without live write permission", async () => {
     const env = createTestEnv();
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -397,7 +397,7 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
   it("accepts a staged action and honors dry-run mode (no live mutation)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
@@ -416,7 +416,7 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
   it("REGRESSION (#2423): reports status=errored (not accepted) and a distinct summary when the live mutation throws", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertInstallation(env, {
-      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write" }, events: ["pull_request"] },
       repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);

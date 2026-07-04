@@ -22,7 +22,7 @@ import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
-import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
+import { buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
 import { errorMessage } from "../utils/json";
@@ -40,10 +40,9 @@ import { incr } from "../selfhost/metrics";
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
 const AGENT_ACTOR = "gittensory";
 
-// The PR-state action classes that require GitHub `pull_requests: write`. `label` mutates via the Issues API
-// (`issues: write`, always held), so it is exempt from the write-permission readiness gate. Exported so the
-// agent-execution test can enforce the invariant that every member is also counted by agentRequiresPrWrite
-// (PR_WRITE_ACTION_CLASSES is a superset), so this runtime guard never disagrees with the readiness gate.
+// The PR-visible action classes that require an elevated GitHub App write permission. Most use
+// `pull_requests: write`; merge uses `contents: write`; `label` mutates through the Issues API, so it is exempt
+// from this readiness gate.
 export const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close", "update_branch"]);
 
 const INSTALLATION_HEALTH_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
@@ -212,11 +211,11 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
-    // 5) Write-permission readiness: a PR-write action needs `pull_requests: write` granted. Checked here --
-    //    before the freshness/live-CI GitHub calls below -- so a known-denied action never spends that API
-    //    budget on an outcome that cannot change until the maintainer re-consents (#selfhost-runtime-drift).
-    //    `label` mutates via the Issues API (`issues: write`, always held), so it is exempt from this gate.
-    if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
+    // 5) Write-permission readiness: a PR-visible action needs its exact GitHub App write permission granted.
+    //    Merge is Contents: write, while review/close/update_branch are Pull requests: write. Checked here
+    //    before the freshness/live-CI GitHub calls below so a known-denied action never spends that API budget on
+    //    an outcome that cannot change until the maintainer re-consents (#selfhost-runtime-drift).
+    if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass }) !== "ready") {
       incr("gittensory_agent_action_permission_denied_total", { actionClass: action.actionClass });
       const cooldownKey = writePermissionDenialKey(ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.actionClass);
       if (shouldSuppressWritePermissionDenial(cooldownKey, Date.now())) {
@@ -226,11 +225,11 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         outcomes.push({
           actionClass: action.actionClass,
           outcome: "denied",
-          detail: "pull_requests: write not granted — maintainer must re-consent (suppressed repeat)",
+          detail: formatAgentPermissionDenial({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass, suppressed: true }),
         });
         continue;
       }
-      await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
+      await audit("denied", formatAgentPermissionDenial({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions, actionClass: action.actionClass }));
       markWritePermissionDenialAudited(cooldownKey, Date.now());
       continue;
     }

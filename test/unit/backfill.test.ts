@@ -501,6 +501,43 @@ describe("GitHub backfill", () => {
       expect(await getInstallationHealth(env, 900)).toMatchObject({ authMode: "broker" });
     });
 
+    it("REGRESSION: broker-mode refresh replaces stale local permissions with the broker token permission snapshot", async () => {
+      const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+      await upsertInstallation(env, {
+        installation: {
+          id: 912,
+          account: { login: "brokered-owner", id: 9, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+        },
+      });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 912);
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/orb/token")) {
+          return Response.json({
+            token: "ghs_brokered",
+            installationId: 912,
+            permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "write" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const result = await refreshInstallationHealth(env);
+
+      expect(result.installations[0]).toMatchObject({
+        status: "healthy",
+        authMode: "broker",
+        missingPermissions: [],
+      });
+      expect(await getInstallationHealth(env, 912)).toMatchObject({
+        permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "write" },
+        missingPermissions: [],
+      });
+    });
+
     it("REGRESSION (gate finding): never reports healthy when the broker mints a token for a DIFFERENT installation than the one being refreshed", async () => {
       const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
       // Two local rows exist (e.g. a stale row left over from a prior re-registration), but a brokered
@@ -606,6 +643,27 @@ describe("GitHub backfill", () => {
         expect.arrayContaining([expect.objectContaining({ event: "issues", ok: false })]),
       );
       expect(healthy.repairSteps.join(" ")).toMatch(/token broker is reachable/i);
+
+      const staleSnapshot = enrichInstallationHealth({
+        installationId: 905,
+        accountLogin: "brokered-owner",
+        repositorySelection: "selected",
+        installedReposCount: 1,
+        registeredInstalledCount: 1,
+        status: "needs_attention",
+        missingPermissions: ["contents"],
+        missingEvents: [],
+        permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+        events: [],
+        checkedAt: "2026-07-03T00:00:00.000Z",
+        authMode: "broker",
+      });
+      expect(staleSnapshot.requiredPermissions).toMatchObject({ contents: "write" });
+      expect(staleSnapshot.permissionRemediation).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ permission: "contents", requiredAccess: "write", currentAccess: "read", ok: false }),
+        ]),
+      );
 
       const degraded = enrichInstallationHealth({
         installationId: 903,
@@ -800,6 +858,48 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("REGRESSION: merge autonomy requires contents:write, so contents:read is needs_attention before merge 403s", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 125,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+        events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+      },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 125);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/125")) {
+        return Response.json({
+          id: 125,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
+          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshInstallationHealth(env);
+
+    expect(refreshed.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 125,
+          status: "needs_attention",
+          missingPermissions: ["contents"],
+          requiredPermissions: expect.objectContaining({ pull_requests: "read", contents: "write" }),
+        }),
+      ]),
+    );
+  });
+
   it("marks comment, label, and check repair impacts disabled by repo settings", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
@@ -828,6 +928,7 @@ describe("GitHub backfill", () => {
 
     expect(repair.repairSteps).toEqual(["No repair needed."]);
     expect(repair.requiredPermissions).not.toHaveProperty("checks");
+    expect(repair.requiredPermissions).not.toHaveProperty("contents");
     expect(repair.requiredPermissions.pull_requests).toBe("read"); // non-acting → baseline read, NOT upgraded to write
     expect(repair.modeImpacts).toEqual(
       expect.arrayContaining([
@@ -838,7 +939,7 @@ describe("GitHub backfill", () => {
     );
   });
 
-  it("repair diagnostics upgrade pull_requests to write for an acting autonomy (#audit-install-health display)", async () => {
+  it("repair diagnostics require contents:write for merge autonomy (#audit-install-health display)", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
@@ -850,15 +951,21 @@ describe("GitHub backfill", () => {
       installedReposCount: 1,
       registeredInstalledCount: 0,
       status: "needs_attention",
-      missingPermissions: ["pull_requests"],
+      missingPermissions: ["contents"],
       missingEvents: [],
-      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      permissions: { metadata: "read", pull_requests: "read", issues: "write", contents: "read" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:00:00.000Z",
       authMode: "local",
     });
 
-    expect(repair.requiredPermissions.pull_requests).toBe("write");
+    expect(repair.requiredPermissions.pull_requests).toBe("read");
+    expect(repair.requiredPermissions.contents).toBe("write");
+    expect(repair.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "agent_merge", enabled: true, requiredPermissions: [expect.objectContaining({ permission: "contents", missing: true })] }),
+      ]),
+    );
   });
 
   it("counts comment-only and label-only repair surfaces separately", async () => {

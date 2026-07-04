@@ -27,9 +27,9 @@ function pickTimestamp(issue: FreshnessIssue): string | null {
 }
 
 function issueAgeDays(value: string | null, nowMs: number): number {
-  if (!value) return 0;
+  if (!value) return Number.POSITIVE_INFINITY;
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return 0;
+  if (!Number.isFinite(parsed)) return Number.POSITIVE_INFINITY;
   return Math.floor((nowMs - parsed) / 86_400_000);
 }
 

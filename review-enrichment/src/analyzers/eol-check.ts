@@ -108,6 +108,10 @@ export function extractVersionPins(
         // goenv/asdf pin file — same leading-version format, product is Go.
         const version = leadingVersion(line);
         if (version) pins.push({ file: file.path, product: "go", version });
+      } else if (base === ".rust-version") {
+        // rustup/asdf pin file — same leading-version format, product is Rust.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "rust", version });
       } else if (base === "go.mod") {
         // Module language version (`go 1.21`) and optional toolchain pin (`toolchain go1.22.0`).
         const match = /^go\s+(\d+\.\d+)/.exec(line);

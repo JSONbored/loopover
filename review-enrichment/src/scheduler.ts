@@ -413,6 +413,7 @@ function isRuntimePinPath(path: string): boolean {
     basename === ".ruby-version" ||
     basename === ".php-version" ||
     basename === ".go-version" ||
+    basename === ".rust-version" ||
     basename === "go.mod"
   );
 }

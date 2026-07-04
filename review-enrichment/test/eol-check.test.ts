@@ -90,6 +90,13 @@ test("extractVersionPins reads .go-version pins as Go", () => {
   ]);
 });
 
+test("extractVersionPins reads .rust-version pins as Rust", () => {
+  // rustup/asdf use `.rust-version` with the same leading-version format.
+  assert.deepEqual(extractVersionPins([added(".rust-version", "1.75.0")]), [
+    { file: ".rust-version", product: "rust", version: "1.75.0" },
+  ]);
+});
+
 test("extractVersionPins ignores removed/context lines and files with no patch", () => {
   const patch = ["@@ -1 +1,2 @@", "-FROM python:3.7", " FROM python:3.9"].join(
     "\n",

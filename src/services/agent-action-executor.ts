@@ -53,7 +53,9 @@ function boundAuditReason(detail: string): string {
 function closeReasonsForAudit(action: PlannedAgentAction): string[] | undefined {
   if (action.actionClass !== "close") return undefined;
   const rawReasons = action.closeReasons?.length ? action.closeReasons : [action.reason];
-  return boundStructuredCloseReasonsForPersistence(rawReasons).map((reason) => boundAuditReason(reason));
+  // Count-bounding happens ONCE, inside buildAgentActionAudit -- pre-bounding here would hide the true
+  // original count from it, so a real over-limit close could never set closeReasonsTruncated (#3213 review).
+  return rawReasons.map((reason) => boundAuditReason(reason));
 }
 
 // The PR-visible action classes that require an elevated GitHub App write permission. Most use

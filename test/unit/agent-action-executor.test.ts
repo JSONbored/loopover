@@ -231,7 +231,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(metadata.closeReasons[1].length).toBeLessThan(longReason.length);
   });
 
-  it("bounds structured closeReasons count before storing audit metadata", async () => {
+  it("bounds structured closeReasons count before storing audit metadata, and flags the real close-action audit row as truncated", async () => {
     const env = createTestEnv({});
     const closeReasons = Array.from({ length: STRUCTURED_CLOSE_REASONS_MAX_COUNT + 1 }, (_, index) => `blocker ${index}`);
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [{ actionClass: "close", requiresApproval: false, reason: closeReasons.join("; "), closeComment: "closing", closeReasons }]);
@@ -240,8 +240,9 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const audit = await auditFor(env, "close");
     const metadata = JSON.parse(audit?.metadata_json ?? "{}");
     expect(metadata.closeReasons).toEqual(closeReasons.slice(0, STRUCTURED_CLOSE_REASONS_MAX_COUNT));
-    expect(metadata.closeReasonCount).toBe(STRUCTURED_CLOSE_REASONS_MAX_COUNT);
-    expect(metadata.closeReasonsTruncated).toBeUndefined();
+    // The REAL count (before bounding), so an over-limit close is distinguishable from an exactly-at-limit one.
+    expect(metadata.closeReasonCount).toBe(STRUCTURED_CLOSE_REASONS_MAX_COUNT + 1);
+    expect(metadata.closeReasonsTruncated).toBe(true);
   });
 
   it("#label-scoping: a label action's autonomyClass (not the literal actionClass) governs the durable re-check", async () => {

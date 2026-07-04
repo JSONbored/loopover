@@ -64,7 +64,8 @@ export function buildAgentActionAudit(input: {
   closeReasons?: readonly string[] | null | undefined;
 }): AuditEventRecord {
   const closeReasonCount = input.actionClass === "close" ? (input.closeReasons?.length ?? 0) : 0;
-  const closeReasons = closeReasonCount > 0 ? [...boundStructuredCloseReasonsForPersistence(input.closeReasons ?? [])] : null;
+  const closeReasons =
+    input.actionClass === "close" && input.closeReasons?.length ? [...boundStructuredCloseReasonsForPersistence(input.closeReasons)] : null;
   return {
     eventType: `agent.action.${input.actionClass}`,
     actor: input.actor ?? null,

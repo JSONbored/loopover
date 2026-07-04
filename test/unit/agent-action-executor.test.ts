@@ -511,7 +511,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     vi.mocked(ensurePullRequestAssignee).mockResolvedValueOnce({ applied: false });
     const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "external-contributor" };
     const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "contributor:external-contributor", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "by:external-contributor", { createMissingLabel: true });
     expect(outcomes[0]?.outcome).toBe("completed");
   });
 

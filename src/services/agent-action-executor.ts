@@ -707,7 +707,10 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
         // GitHub silently drops an assignee lacking push/triage access to the repo -- the common case for an
         // external contributor. Fall back to a per-login label instead of a comment: ensurePullRequestLabel's
         // own GET dedup makes this idempotent, so a repeated sweep never re-posts/spams once the label exists.
-        await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, `contributor:${login}`, { createMissingLabel: true });
+        // Prefix kept short ("by:", not "contributor:") -- GitHub logins run up to 39 chars and label names cap
+        // at 50, so a longer prefix can push a valid max-length login past the limit and fail this fallback for
+        // exactly the contributors it exists to cover.
+        await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, `by:${login}`, { createMissingLabel: true });
       }
       return;
     }

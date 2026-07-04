@@ -74,6 +74,22 @@ describe("GitHub PR assignees (#3182)", () => {
 
     expect(result).toEqual({ applied: false });
   });
+
+  it("treats a response with no assignees field at all as an empty list, on both the GET and the POST", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // Neither response includes an `assignees` key at all -- exercises the `?? []` fallback on both reads.
+      if (url.includes("/issues/4") && !url.includes("/assignees")) return Response.json({});
+      if (url.includes("/issues/4/assignees") && method === "POST") return Response.json({});
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await ensurePullRequestAssignee(createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }), 123, "JSONbored/gittensory", 4, "alice");
+
+    expect(result).toEqual({ applied: false });
+  });
 });
 
 function generateRsaPrivateKeyPem(): string {

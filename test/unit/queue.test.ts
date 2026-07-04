@@ -1969,7 +1969,7 @@ describe("queue processors", () => {
         await processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-recovers", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
         expect(liveCiSpy.mock.calls.length).toBeGreaterThan(liveReadsAfterFailedLookup);
         expect(await renderMetrics()).toContain('gittensory_ci_state_cache_total{field="aggregate",result="miss"} 1');
-        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: "trusted-required-ci" });
+        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: JSON.stringify(["trusted-required-ci"]) });
       } finally {
         liveCiSpy.mockRestore();
       }

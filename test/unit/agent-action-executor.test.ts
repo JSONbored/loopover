@@ -636,6 +636,10 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const coupledClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", closeComment: "closing", closeKind: "contributor_cap" };
     const coupledLabel: PlannedAgentAction = { actionClass: "label", autonomyClass: "close", requiresApproval: false, reason: "over the per-contributor open-item cap", label: "over-contributor-limit", labelOp: "add", closeKind: "contributor_cap" };
     vi.mocked(fetchPullRequestFreshness)
+      // First resolution: the close's own freshness check (open, current). The second resolution is the
+      // regression tripwire -- it must NEVER be consumed, because the label reuses the close's already-proven
+      // outcome instead of re-checking freshness against the now-closed PR (which would read "stale"/closed and
+      // wrongly deny the label). The toHaveBeenCalledTimes(1) assertion below is what actually proves this.
       .mockResolvedValueOnce({ status: "current", liveHeadSha: "sha7", liveState: "open" })
       .mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "sha7", liveHeadSha: "sha7", liveState: "closed" });
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [coupledClose, coupledLabel]);

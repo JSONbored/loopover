@@ -1126,7 +1126,7 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
   it("enriches a single patch-less file with bounded concurrency", async () => {
     const fetcher: FileFetcher = {
       async getFileContent(path, ref) {
-        if (path === "only.env" && ref === "head-sha") return "const ok = 1;\n";
+        if (path === "only.env" && ref === "head-sha") return "const ok = 1;";
         return null;
       },
     };

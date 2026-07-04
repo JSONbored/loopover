@@ -50,12 +50,18 @@ function boundAuditReason(detail: string): string {
   return detail.length > AUDIT_REASON_MAX_LENGTH ? `${detail.slice(0, AUDIT_REASON_MAX_LENGTH)}…` : detail;
 }
 
-function closeReasonsForAudit(action: PlannedAgentAction): string[] | undefined {
+function closeReasonsForAudit(action: PlannedAgentAction): { closeReasons: string[]; closeReasonCount: number } | undefined {
   if (action.actionClass !== "close") return undefined;
   const rawReasons = action.closeReasons?.length ? action.closeReasons : [action.reason];
-  // Count-bounding happens ONCE, inside buildAgentActionAudit -- pre-bounding here would hide the true
-  // original count from it, so a real over-limit close could never set closeReasonsTruncated (#3213 review).
-  return rawReasons.map((reason) => boundAuditReason(reason));
+  // Bound the COUNT first (a cheap slice) so the per-reason string truncation below only ever runs over the
+  // persisted subset, never a potentially unbounded array -- the ORIGINAL count is carried separately as
+  // closeReasonCount so buildAgentActionAudit can still flag truncation correctly even though closeReasons
+  // itself is already bounded by the time it gets there (#3213 review: an unbounded .map(boundAuditReason)
+  // here could exhaust Worker CPU/memory before any cap ran).
+  return {
+    closeReasons: boundStructuredCloseReasonsForPersistence(rawReasons).map((reason) => boundAuditReason(reason)),
+    closeReasonCount: rawReasons.length,
+  };
 }
 
 // The PR-visible action classes that require an elevated GitHub App write permission. Most use
@@ -240,7 +246,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       outcomes.push({ actionClass: action.actionClass, outcome, detail: boundedDetail });
       return recordAuditEvent(
         env,
-        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: boundedDetail, closeReasons: closeReasonsForAudit(action) }),
+        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: boundedDetail, ...closeReasonsForAudit(action) }),
       );
     };
 
@@ -585,7 +591,7 @@ export async function executeIssueMaintenanceActions(env: Env, ctx: IssueActionE
       outcomes.push({ actionClass: action.actionClass, outcome, detail: boundedDetail });
       return recordAuditEvent(
         env,
-        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: boundedDetail, closeReasons: closeReasonsForAudit(action) }),
+        buildAgentActionAudit({ actionClass: action.actionClass, autonomyLevel, mode, outcome: auditOutcome, repoFullName: ctx.repoFullName, targetKey, actor: AGENT_ACTOR, reason: boundedDetail, ...closeReasonsForAudit(action) }),
       );
     };
 

@@ -62,8 +62,12 @@ export function buildAgentActionAudit(input: {
   actor?: string | null | undefined;
   reason?: string | null | undefined;
   closeReasons?: readonly string[] | null | undefined;
+  // The TRUE original count, when the caller has ALREADY bounded `closeReasons` itself for cost reasons
+  // (closeReasonsForAudit bounds the count before per-reason string truncation to avoid unbounded work on the
+  // hot path, #3213 review) -- falls back to closeReasons.length for a caller that passes the full array.
+  closeReasonCount?: number | undefined;
 }): AuditEventRecord {
-  const closeReasonCount = input.actionClass === "close" ? (input.closeReasons?.length ?? 0) : 0;
+  const closeReasonCount = input.actionClass === "close" ? (input.closeReasonCount ?? input.closeReasons?.length ?? 0) : 0;
   const closeReasons =
     input.actionClass === "close" && input.closeReasons?.length ? [...boundStructuredCloseReasonsForPersistence(input.closeReasons)] : null;
   return {

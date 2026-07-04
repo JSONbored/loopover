@@ -187,8 +187,10 @@ async function upsertChunksCapped(env: Env, project: string, repo: string, chunk
 }
 
 
-/** Return distinct paths currently retained for a repo in the chunk text store. Fail-safe: [] on error. */
-async function listStoredChunkPaths(infra: ReturnType<typeof createReviewAdapters>, project: string, repo: string): Promise<string[]> {
+/** Return distinct paths currently retained for a repo in the chunk text store. Fail-safe: [] on error.
+ *  Exported for repo-profile.ts (#2999): the architecture/module-map extraction reuses this exact query
+ *  instead of re-deriving its own "what files does this repo have indexed" logic. */
+export async function listStoredChunkPaths(infra: ReturnType<typeof createReviewAdapters>, project: string, repo: string): Promise<string[]> {
   try {
     const rows = await infra.storage
       .prepare("SELECT DISTINCT path FROM repo_chunks WHERE project=? AND repo=?")

@@ -14,7 +14,7 @@ export type AppendEventInput = {
 };
 
 export type ReadEventsFilter = {
-  repoFullName?: string;
+  repoFullName?: string | null;
   since?: number;
 };
 

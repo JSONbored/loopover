@@ -34,6 +34,14 @@ describe("test evidence helpers", () => {
     expect(isTestPath("src/app/testing.py")).toBe(false); // no `test_` boundary ⇒ not a test
   });
 
+  it("detects Dart/Flutter *_test.dart co-located with source", () => {
+    // Paths NOT under a test/ directory, so only the `_test.dart` suffix rule can match.
+    expect(isTestPath("lib/models/user_test.dart")).toBe(true);
+    expect(isTestPath("lib/widgets/card_test.dart")).toBe(true);
+    expect(isTestPath("lib/models/user.dart")).toBe(false); // source, not a test
+    expect(isTestPath("lib/models/latest_config.dart")).toBe(false); // `_test` not at the stem boundary
+  });
+
   it("detects JVM / C# / Swift class-suffix test conventions", () => {
     // Paths NOT under a test/ directory, so only the class-suffix rule can match.
     expect(isTestPath("app/src/main/java/WidgetTest.java")).toBe(true); // JUnit

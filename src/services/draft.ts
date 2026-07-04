@@ -146,8 +146,11 @@ export function slugify(value: unknown): string {
     .toLowerCase()
     .replace(/['"]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
+    .slice(0, 120)
+    // Strip leading/trailing hyphens AFTER truncation — a 120-char cut can land on a separator and
+    // re-introduce a trailing "-", producing a malformed slug/path (`.../foo-.mdx`). Mirrors `oneLine`,
+    // which likewise normalizes after its truncation.
+    .replace(/^-+|-+$/g, "");
 }
 
 function yamlScalar(value: unknown): string {

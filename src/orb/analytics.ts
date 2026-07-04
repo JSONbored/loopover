@@ -53,7 +53,11 @@ function median(xs: number[]): number | null {
 
 function percentile(sorted: number[], p: number): number | null {
   if (sorted.length === 0) return null;
-  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  // Nearest-rank: the p-th percentile is the value at 1-based rank ceil(p/100 * N), i.e. index
+  // ceil(p/100 * N) - 1. `Math.floor(p/100 * N)` overshot by one rank whenever p/100 * N was an
+  // integer (e.g. P50 of an even-sized set returned the upper-half boundary — at the extreme, the
+  // maximum). Clamp both ends so p=0 and p=100 stay in range.
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[idx]!;
 }
 

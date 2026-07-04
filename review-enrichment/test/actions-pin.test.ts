@@ -99,6 +99,23 @@ test("scanWorkflowPins ignores patches without added mutable third-party uses", 
   );
 });
 
+test("scanWorkflowPins accepts uppercase and mixed-case 40-char SHA pins", () => {
+  // Git SHAs are case-insensitive; an uppercase/mixed-case full SHA is still an immutable pin.
+  const upperSha = "A".repeat(40);
+  const mixedSha = `${"a".repeat(20)}${"B".repeat(20)}`;
+  assert.deepEqual(
+    scanWorkflowPins(
+      workflowPath,
+      [
+        "@@ -1,0 +1,2 @@",
+        `+    - uses: tj-actions/changed-files@${upperSha}`,
+        `+    - uses: docker/login-action@${mixedSha}`,
+      ].join("\n"),
+    ),
+    [],
+  );
+});
+
 test("scanActionPins scans only changed workflow YAML files with patches", async () => {
   const findings = await scanActionPins({
     repoFullName: "o/r",

@@ -278,12 +278,16 @@ volumes:
       <h2>Updating and rolling back</h2>
       <p>
         Both update paths below only ever restart the <code>gittensory</code> app service (
-        <code>--no-deps</code>) — they never touch other compose-profile services (Postgres, Redis,
-        Qdrant, Grafana, and friends), and they never touch <code>.env</code> keys other than the
-        one they persist for next time. That means <code>.env</code>, the{" "}
-        <code>gittensory-config/</code> mount, every data volume, and any{" "}
-        <code>docker-compose.override.yml</code> are preserved automatically across an update — you
-        don&apos;t need to back those up or re-supply them just to run either script.
+        <code>--no-deps</code>) — they never touch other compose-profile services or their state
+        (Postgres, Redis, Qdrant, and Grafana&apos;s own <code>grafana-data</code> volume), and they
+        never touch <code>.env</code> keys other than the one they persist for next time. That means{" "}
+        <code>.env</code>, the <code>gittensory-config/</code> mount, every data volume — including
+        the app&apos;s own <code>/data</code> volume where Codex/Claude Code auth material lives —
+        and any <code>docker-compose.override.yml</code> are preserved automatically across an
+        update. You don&apos;t need to back those up or re-supply them just to run either script,
+        and you only need to recreate a profile service yourself if you&apos;re deliberately
+        upgrading that service (its own image tag in <code>docker-compose.yml</code>, or a
+        Postgres/Redis/Qdrant major-version bump) rather than the app.
       </p>
 
       <h3>Path 1: pull a published image</h3>
@@ -384,6 +388,17 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         <code>healthy</code>, and tail recent logs for startup errors or an unexpected absence of{" "}
         <code>selfhost_listening</code> / <code>selfhost_migrations_applied</code>.
       </p>
+      <p>
+        Neither <code>/health</code> nor <code>/ready</code> reports a version, so confirm the
+        deployed release directly — <code>GITTENSORY_IMAGE</code> or <code>SENTRY_RELEASE</code> in{" "}
+        <code>.env</code> records what the deploy script just resolved, and{" "}
+        <code>docker inspect</code> confirms what the running container actually has:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`grep -E '^(GITTENSORY_IMAGE|GITTENSORY_VERSION|SENTRY_RELEASE)=' .env
+docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"`}
+      />
 
       <p>
         If an operating check fails, go to{" "}

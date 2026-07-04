@@ -158,6 +158,12 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Notion internal integration secret: `secret_` + 43 base62 chars (50 chars total).
+    kind: "notion_integration_secret",
+    re: /\bsecret_[A-Za-z0-9]{43}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

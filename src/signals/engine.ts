@@ -33,6 +33,7 @@ import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
 import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
+import { isAgentConfigured } from "../settings/autonomy";
 import { diffFilePriority } from "../review/review-diff";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
@@ -4278,7 +4279,11 @@ export function buildPublicPrIntelligenceComment(args: {
     /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
     ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
   ].filter((step) => !containsPrivatePublicTerm(step));
-  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode);
+  // #2852: gate presentation follows the SAME evaluation/policy signal as shouldEvaluateGate in
+  // processors.ts (published check-run OR autonomy needs a verdict) -- not the check-run publish flag
+  // alone, so a `reviewCheckMode: disabled` repo with autonomy configured still shows its real gate
+  // result in the public comment instead of silently downgrading to "no gate at all".
+  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode) || isAgentConfigured(args.settings.autonomy);
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
@@ -4519,7 +4524,10 @@ export function buildPublicPrPanelSignalRows(args: {
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs: visibleLinkedDuplicatePrs, scopedOverlapCount });
   const linkedIssueResult = linkedIssuePanelResult(args.pr);
   const relatedWorkResult = relatedWorkPanelResult(visibleLinkedDuplicatePrs, scopedOverlapCount);
-  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode);
+  // #2852: see the matching comment in buildPublicPrIntelligenceComment -- gate presentation must
+  // track whether a gate is actually evaluated (check-run published OR autonomy configured), not
+  // merely whether the check-run itself is published.
+  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode) || isAgentConfigured(args.settings.autonomy);
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): suppress the earliest known claimant's hard-duplicate block
   // (see the comment builder). Sparse legacy rows fail closed; flag-OFF keeps legacy behavior.

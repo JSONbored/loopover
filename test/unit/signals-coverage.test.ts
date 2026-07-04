@@ -831,6 +831,44 @@ describe("signal coverage edge cases", () => {
     expect(duplicateBlocked.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
   });
 
+  it("REGRESSION (#2852): reviewCheckMode disabled + autonomy configured still surfaces a real blocking gate result, not 'Advisory only'", () => {
+    // The gate presentation must key off whether a gate was actually EVALUATED (check-run published OR
+    // autonomy configured), not merely whether the check-run itself is published -- otherwise a disabled-
+    // check-run repo that still evaluates the gate for autonomous merge/close would silently hide a real
+    // blocking verdict from the public comment/panel, contradicting reviews/comments "must still work".
+    const directRepo = repo("owner/disabled-autonomy");
+    const collisions = buildCollisionReport(directRepo.fullName, [], []);
+    const baseArgs = {
+      repo: directRepo,
+      pr: pr(directRepo.fullName, 90, "Fix cache", { authorLogin: "miner", linkedIssues: [42], body: "Fixes #42" }),
+      profile: buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []),
+      detection: { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 },
+      queueHealth: buildQueueHealth(directRepo, [], [], collisions),
+      collisions,
+      preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix cache", body: "Fixes #42", changedFiles: ["src/cache.ts"] }, directRepo, [], []),
+      settings: { ...repoSettings(directRepo.fullName), reviewCheckMode: "disabled" as const, autonomy: { merge: "auto" as const } },
+      gate: { conclusion: "failure" as const, summary: "A configured blocker fired." },
+    };
+
+    const panel = buildPublicPrPanelSignalRows(baseArgs);
+    const gateRow = panel.rows.find((r) => r.key === "gateResult")!;
+    expect(gateRow.cells[1]).toBe("❌ Blocking");
+    expect(gateRow.cells[2]).not.toBe("Advisory only.");
+    expect(gateRow.cells[3]).not.toBe("No action.");
+
+    const comment = buildPublicPrIntelligenceComment(baseArgs);
+    expect(comment).toContain("Gittensory Orb Review Agent is blocking merge");
+    expect(comment).toContain("> [!CAUTION]");
+
+    // Sanity check: the SAME disabled-check-run repo WITHOUT autonomy configured correctly stays advisory-only
+    // (no gate evaluation happens at all, so there is nothing real to surface).
+    const noAutonomySettings = { ...baseArgs.settings, autonomy: {} };
+    const noAutonomyPanel = buildPublicPrPanelSignalRows({ ...baseArgs, settings: noAutonomySettings, gate: undefined });
+    const noAutonomyGateRow = noAutonomyPanel.rows.find((r) => r.key === "gateResult")!;
+    expect(noAutonomyGateRow.cells[2]).toBe("Advisory only.");
+    expect(noAutonomyGateRow.cells[3]).toBe("No action.");
+  });
+
   it("#dup-winner: panel hard-duplicate block is suppressed for the winner, kept for the loser, byte-identical when flag OFF", () => {
     const directRepo = repo("owner/dupwin");
     const dupIssue = issue(directRepo.fullName, 42, "Cache invalidation race");

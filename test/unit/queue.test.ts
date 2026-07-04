@@ -17436,7 +17436,7 @@ describe("queue processors", () => {
         },
       });
       const seen = { posted: [] as string[], removed: [] as string[], issueFetches: 0 };
-      stubPropagationFetch(220, 1, seen, () => Response.json({ number: 1, state: "open", labels: ["gittensor:priority"] }));
+      stubPropagationFetch(220, 1, seen, () => Response.json({ number: 1, state: "open", user: { login: "contributor" }, labels: ["gittensor:priority"] }));
 
       await processJob(env, {
         type: "github-webhook",

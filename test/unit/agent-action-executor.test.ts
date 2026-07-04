@@ -13,6 +13,9 @@ vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
   removePullRequestLabel: vi.fn(async () => undefined),
 }));
+vi.mock("../../src/github/assignees", () => ({
+  ensurePullRequestAssignee: vi.fn(async () => ({ applied: true })),
+}));
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
   return {
@@ -38,6 +41,7 @@ vi.mock("../../src/github/backfill", async (importOriginal) => ({
 
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
+import { ensurePullRequestAssignee } from "../../src/github/assignees";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
@@ -45,6 +49,7 @@ import {
   actionParams,
   clearInstallationHealthRefreshCooldownForTest,
   clearWritePermissionDenialCooldownForTest,
+  writePermissionDenialCooldownSizeForTest,
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
   pendingActionToPlanned,
@@ -493,6 +498,40 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(actionParams(flag)).toEqual({ label: "pending-closure", labelOp: "add", comment: "⚠️ flagged" });
   });
 
+  it("LIVE assign (#3182): calls ensurePullRequestAssignee with the planned login and does not fall back to a label when it sticks", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "alice");
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(outcomes[0]?.outcome).toBe("completed");
+  });
+
+  it("LIVE assign (#3182): falls back to a per-login label when GitHub silently drops an ineligible assignee", async () => {
+    const env = createTestEnv({});
+    vi.mocked(ensurePullRequestAssignee).mockResolvedValueOnce({ applied: false });
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "external-contributor" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "by:external-contributor", { createMissingLabel: true });
+    expect(outcomes[0]?.outcome).toBe("completed");
+  });
+
+  it("assign with no login is a no-op (defensive — the planner always sets it, but the executor must not call GitHub with an empty login)", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener" };
+    await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestAssignee).not.toHaveBeenCalled();
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("assign is denied when the assign autonomy class is not acting", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: {} }), [assign]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(ensurePullRequestAssignee).not.toHaveBeenCalled();
+  });
+
   it("LIVE approve persists the approved head SHA for re-approval idempotency", async () => {
     const env = createTestEnv({});
     await env.DB.prepare("insert into pull_requests (id, repo_full_name, number, title, state, head_sha, payload_json, created_at, updated_at) values (?,?,?,?,?,?,?,?,?)")
@@ -722,6 +761,46 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       expect(prA[0]).toMatchObject({ outcome: "denied", detail: "contents: write not granted — maintainer must re-consent" });
       expect(prB[0]).toMatchObject({ outcome: "denied", detail: "contents: write not granted — maintainer must re-consent" });
       expect(await auditCount(env, "merge")).toBe(2); // one audit row per PR, not one shared row
+    });
+
+    it("REGRESSION: prunes expired per-PR denial entries instead of retaining them for the process lifetime", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "write" as const, contents: "read" as const, issues: "write" as const };
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-03T00:00:00Z"));
+      try {
+        await executeAgentMaintenanceActions(env, ctx({ installationId: 206, pullNumber: 601, installationPermissions: perms }), [merge]);
+        await executeAgentMaintenanceActions(env, ctx({ installationId: 206, pullNumber: 602, installationPermissions: perms }), [merge]);
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(2);
+
+        vi.setSystemTime(new Date("2026-07-03T00:16:00Z"));
+        await executeAgentMaintenanceActions(env, ctx({ installationId: 206, pullNumber: 603, installationPermissions: perms }), [merge]);
+
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(1);
+        expect(await auditCount(env, "merge")).toBe(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("REGRESSION: caps active denial cooldown entries so unique denied PRs cannot grow memory without bound", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "write" as const, contents: "read" as const, issues: "write" as const };
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-03T01:00:00Z"));
+      try {
+        for (let pullNumber = 1; pullNumber <= 1025; pullNumber++) {
+          await executeAgentMaintenanceActions(env, ctx({ installationId: 207, pullNumber, installationPermissions: perms }), [merge]);
+        }
+
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(1024);
+
+        const oldestPrRetry = await executeAgentMaintenanceActions(env, ctx({ installationId: 207, pullNumber: 1, installationPermissions: perms }), [merge]);
+        expect(oldestPrRetry[0]?.detail).toBe("contents: write not granted — maintainer must re-consent");
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(1024);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

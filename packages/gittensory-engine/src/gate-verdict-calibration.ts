@@ -245,6 +245,62 @@ function isGateVerdictCalibrationIngestion(value: unknown): value is GateVerdict
   return isRecord(value) && Array.isArray(value.accepted) && Array.isArray(value.rejected);
 }
 
+function sanitizeGateVerdictCalibrationIngestion(
+  ingestion: GateVerdictCalibrationIngestion,
+): GateVerdictCalibrationIngestion {
+  const accepted: GateVerdictCalibrationSignal[] = [];
+  const rejected: GateVerdictCalibrationIngestion["rejected"] = [];
+
+  for (const signal of ingestion.accepted) {
+    if (!isRecord(signal) || !Array.isArray(signal.dimensions)) continue;
+    const repoFullName = typeof signal.repoFullName === "string" ? normalizeRepoFullName(signal.repoFullName) : null;
+    const replayRunId = typeof signal.replayRunId === "string" ? normalizeId(signal.replayRunId) : null;
+    const gateRunId = typeof signal.gateRunId === "string" ? normalizeId(signal.gateRunId) : null;
+    if (!repoFullName || !replayRunId || !gateRunId) continue;
+    const dimensionInputs = signal.dimensions.flatMap((dimension): GateVerdictCalibrationDimensionInput[] => {
+      if (!isRecord(dimension) || typeof dimension.dimension !== "string" || typeof dimension.outcome !== "string") {
+        return [];
+      }
+      return [
+        {
+          dimension: dimension.dimension,
+          outcome: dimension.outcome,
+          confidence: typeof dimension.confidence === "number" ? dimension.confidence : undefined,
+        },
+      ];
+    });
+    const dimensions = normalizeDimensions(dimensionInputs);
+    if (dimensions.length === 0) continue;
+    accepted.push({
+      repoFullName,
+      replayRunId,
+      gateRunId,
+      observedAt: typeof signal.observedAt === "string" ? normalizeObservedAt(signal.observedAt) : null,
+      dimensions,
+      score: roundScore(dimensions.reduce((sum, item) => sum + item.score, 0) / dimensions.length),
+    });
+  }
+
+  for (const row of ingestion.rejected) {
+    if (!isRecord(row)) continue;
+    const repoFullName = typeof row.repoFullName === "string" ? normalizeRepoFullName(row.repoFullName) : null;
+    const replayRunId = typeof row.replayRunId === "string" ? normalizeId(row.replayRunId) : null;
+    const gateRunId = typeof row.gateRunId === "string" ? normalizeId(row.gateRunId) : null;
+    const reason = row.reason;
+    if (
+      !repoFullName ||
+      !replayRunId ||
+      !gateRunId ||
+      !["not_opted_in", "empty_dimensions", "invalid_repo", "invalid_run_id"].includes(reason as string)
+    ) {
+      continue;
+    }
+    rejected.push({ repoFullName, replayRunId, gateRunId, reason });
+  }
+
+  return { accepted, rejected };
+}
+
 function normalizeCompositeWeights(weights: GateVerdictCalibrationWeights | undefined): {
   objectiveAnchor: number;
   pairwiseJudge: number;
@@ -400,7 +456,7 @@ export function computeGateVerdictCompositeCalibrationScore(input: {
   weights?: GateVerdictCalibrationWeights | undefined;
 }): GateVerdictCompositeCalibrationScore {
   const ingestion = isGateVerdictCalibrationIngestion(input.gateVerdicts)
-    ? input.gateVerdicts
+    ? sanitizeGateVerdictCalibrationIngestion(input.gateVerdicts)
     : ingestGateVerdictCalibrationSignals(input.gateVerdicts);
   const objectiveAnchorScore =
     typeof input.objectiveAnchor === "number" ? roundScore(input.objectiveAnchor) : input.objectiveAnchor.score;

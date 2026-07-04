@@ -71,14 +71,29 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_export_error,selfhost_orb_relay_regis
       <h2>2. Brokered mode (private / managed-beta only)</h2>
       <p>
         <code>ORB_ENROLLMENT_SECRET</code> set — the container gets tokens from the central Orb
-        instead of its own App key. A working push-mode registration logs{" "}
-        <code>selfhost_orb_relay_register</code>; a broken one is fatal for push mode (logged at{" "}
-        <code>error</code>, not <code>warn</code>).
+        instead of its own App key. Relay mode changes what "working" means: push mode (
+        <code>ORB_RELAY_MODE</code> unset, the default) needs a real public{" "}
+        <code>PUBLIC_API_ORIGIN</code> and a failed registration is release-blocking (logged at{" "}
+        <code>error</code>); pull mode (<code>ORB_RELAY_MODE=pull</code>) needs no inbound endpoint
+        at all and tolerates a failed registration (logged at <code>warn</code>) since the drain
+        loop keeps retrying regardless. Run BOTH scenarios — they exercise genuinely different code
+        paths, not just different env (see{" "}
+        <Link to="/docs/self-hosting-github-app">choosing a relay mode</Link>).
       </p>
       <CodeBlock
         lang="bash"
-        code={`SELFHOST_SMOKE_EXTRA_ENV="ORB_ENROLLMENT_SECRET=\${TEST_ENROLLMENT_SECRET}
+        code={`# Push mode (default) -- requires a real, internet-reachable PUBLIC_API_ORIGIN; the Orb
+# SSRF-validates it server-side at registration time, so a loopback/private origin is rejected.
+SELFHOST_SMOKE_EXTRA_ENV="ORB_ENROLLMENT_SECRET=\${TEST_ENROLLMENT_SECRET}
 PUBLIC_API_ORIGIN=https://selfhost-smoke.example" \\
+SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_orb_relay_register" \\
+SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_relay_register_failed" \\
+./scripts/smoke-selfhost.sh gittensory:rc-candidate
+
+# Pull mode -- no PUBLIC_API_ORIGIN needed; the container polls the broker outbound instead of
+# exposing an inbound endpoint. The right fit for NAT/tailnet operators with no public ingress.
+SELFHOST_SMOKE_EXTRA_ENV="ORB_ENROLLMENT_SECRET=\${TEST_ENROLLMENT_SECRET}
+ORB_RELAY_MODE=pull" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_orb_relay_register" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_relay_register_failed" \\
 ./scripts/smoke-selfhost.sh gittensory:rc-candidate`}

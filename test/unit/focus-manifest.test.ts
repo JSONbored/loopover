@@ -527,7 +527,7 @@ describe("compileFocusManifestPolicy", () => {
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
-      repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false },
+      repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1269,12 +1269,12 @@ describe("parseFocusManifest gate config", () => {
   describe("repoDocGeneration: (#3002, repo-doc generation config-as-code surface)", () => {
     it("defaults to fully disabled and absent when the key is omitted, and does not make the manifest present on its own", () => {
       const m = parseFocusManifest({});
-      expect(m.repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false });
+      expect(m.repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
       expect(m.present).toBe(false);
     });
 
     it("treats an explicit null the same as an omitted key", () => {
-      expect(parseFocusManifest({ repoDocGeneration: null }).repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false });
+      expect(parseFocusManifest({ repoDocGeneration: null }).repoDocGeneration).toEqual({ present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
     });
 
     it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
@@ -1286,9 +1286,9 @@ describe("parseFocusManifest gate config", () => {
       expect(asArray.warnings.some((w) => /"repoDocGeneration" must be a mapping/.test(w))).toBe(true);
     });
 
-    it("parses enabled: true and defaults scope/allowOverwriteExisting, making the manifest present", () => {
+    it("parses enabled: true and defaults scope/allowOverwriteExisting/refreshIntervalDays, making the manifest present", () => {
       const m = parseFocusManifest({ repoDocGeneration: { enabled: true } });
-      expect(m.repoDocGeneration).toEqual({ present: true, enabled: true, scope: ["agents"], allowOverwriteExisting: false });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: true, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 });
       expect(m.present).toBe(true);
     });
 
@@ -1300,7 +1300,24 @@ describe("parseFocusManifest gate config", () => {
 
     it("parses allowOverwriteExisting independently of enabled", () => {
       const m = parseFocusManifest({ repoDocGeneration: { enabled: false, allowOverwriteExisting: true } });
-      expect(m.repoDocGeneration).toEqual({ present: true, enabled: false, scope: ["agents"], allowOverwriteExisting: true });
+      expect(m.repoDocGeneration).toEqual({ present: true, enabled: false, scope: ["agents"], allowOverwriteExisting: true, refreshIntervalDays: 7 });
+    });
+
+    it("parses a valid refreshIntervalDays and defaults to 7 (weekly) when omitted", () => {
+      const m = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 3 } });
+      expect(m.repoDocGeneration.refreshIntervalDays).toBe(3);
+      const defaulted = parseFocusManifest({ repoDocGeneration: { enabled: true } });
+      expect(defaulted.repoDocGeneration.refreshIntervalDays).toBe(7);
+    });
+
+    it("warns and defaults refreshIntervalDays to 7 when the value is not a positive whole number", () => {
+      const zero = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 0 } });
+      expect(zero.repoDocGeneration.refreshIntervalDays).toBe(7);
+      expect(zero.warnings.some((w) => /repoDocGeneration\.refreshIntervalDays/.test(w))).toBe(true);
+      const fractional = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: 2.5 } });
+      expect(fractional.repoDocGeneration.refreshIntervalDays).toBe(7);
+      const negative = parseFocusManifest({ repoDocGeneration: { enabled: true, refreshIntervalDays: -1 } });
+      expect(negative.repoDocGeneration.refreshIntervalDays).toBe(7);
     });
 
     it("accepts an explicit multi-entry scope list", () => {
@@ -1943,6 +1960,50 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parsed);
     expect(eff.typeLabels).toEqual(db.typeLabels); // malformed manifest value never blanks the DB-persisted override
+  });
+
+  describe("arbitrary custom typeLabels categories (#label-modularity)", () => {
+    it("wires an arbitrary custom category through the sparse override, additively alongside the DB-persisted built-ins", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } });
+      expect(parsed.settings.typeLabels).toEqual({ security: "area:security" });
+      expect(parsed.warnings).toEqual([]);
+
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
+      expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", security: "area:security" });
+    });
+
+    it("does not unexpectedly reset unrelated categories when a sparse override only adds a new one (invariant: sparse overrides layer correctly)", () => {
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", docs: "area:docs" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
+      // `docs` was never named by the override, so it survives untouched alongside the newly-added `security`.
+      expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", docs: "area:docs", security: "area:security" });
+    });
+  });
+
+  describe("explicit typeLabels: {} (#label-modularity)", () => {
+    it("parses a literal empty settings.typeLabels object to null, distinct from a sparse override with zero surviving keys", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: {} } });
+      expect(parsed.settings.typeLabels).toBeNull();
+      expect(parsed.warnings).toEqual([]);
+    });
+
+    it("resolveEffectiveSettings replaces the DB-persisted set wholesale with an empty set for an explicit typeLabels: {}", () => {
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: {} } }));
+      expect(eff.typeLabels).toEqual({});
+    });
+
+    it("still leaves the DB value untouched when a sparse override's only named key fails validation (contrast with explicit {})", () => {
+      // Same net {} shape as the explicit-empty case above at the parse step, but arising from a NAMED,
+      // invalid key rather than a literal `{}` -- must NOT replace the DB value (see the malformed-value
+      // test above), unlike the deliberate `typeLabels: {}` case immediately above.
+      const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: 42 } } });
+      expect(parsed.settings.typeLabels).toEqual({});
+      const eff = resolveEffectiveSettings(db, parsed);
+      expect(eff.typeLabels).toEqual(db.typeLabels);
+    });
   });
 
   it("wires settings.linkedIssueLabelPropagation into the manifest parser and lets a per-repo override win over the DB value (#priority-linked-issue-gate)", () => {

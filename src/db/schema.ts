@@ -1222,8 +1222,14 @@ export const aiUsageEvents = sqliteTable(
     actor: text("actor"),
     route: text("route"),
     model: text("model").notNull(),
+    provider: text("provider"),
+    effort: text("effort"),
     status: text("status").notNull(),
     estimatedNeurons: integer("estimated_neurons").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    costUsd: real("cost_usd").notNull().default(0),
     detail: text("detail"),
     metadataJson: text("metadata_json").notNull().default("{}"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
@@ -1231,6 +1237,7 @@ export const aiUsageEvents = sqliteTable(
   (table) => ({
     featureCreated: index("ai_usage_events_feature_created_idx").on(table.feature, table.createdAt),
     actorCreated: index("ai_usage_events_actor_created_idx").on(table.actor, table.createdAt),
+    providerCreated: index("ai_usage_events_provider_created_idx").on(table.provider, table.createdAt),
     // Covers the daily-budget query (sumAiEstimatedNeuronsSince): WHERE status='ok' AND created_at >= ?.
     // Without it that aggregate full-scans ai_usage_events, which runs on every AI review/summary.
     statusCreated: index("ai_usage_events_status_created_idx").on(table.status, table.createdAt),

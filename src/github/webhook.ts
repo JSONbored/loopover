@@ -177,6 +177,17 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
   if (!env.WEBHOOKS) {
     await recordWebhookEvent(env, { ...eventRow, status: "error" });
     recordWebhookEnqueueMetric(eventName, payload.action, "enqueue_failed");
+    // Missing binding is a deploy-ordering defect (the WEBHOOKS queue isn't provisioned yet), not a transient
+    // blip — an operator needs to SEE it, not infer it from a metric dip. ERROR level so the central Sentry
+    // forwarder captures it (#1824); repository/installation stay out of the tags (webhook ingest observability).
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_webhook_enqueue_binding_missing",
+        eventName,
+        repository: eventRow.repositoryFullName,
+      }),
+    );
     return "enqueue_failed";
   }
 
@@ -187,12 +198,24 @@ export async function enqueueWebhookByEnv(env: Env, deliveryId: string, eventNam
     // Send to the dedicated WEBHOOKS lane (not the shared JOBS queue) so a maintenance burst on JOBS can never
     // starve real GitHub events into the DLQ. (#audit-webhook-queue)
     await env.WEBHOOKS.send(message);
-  } catch {
+  } catch (error) {
     // Enqueue failed: flip the event to "error" so the dedup guard above lets GitHub redeliver / the next pull
     // re-deliver, instead of treating the webhook as handled (#786). Also covers the deploy-ordering case where
     // the WEBHOOKS queue is not yet provisioned — no event is lost.
     await recordWebhookEvent(env, { ...eventRow, status: "error" });
     recordWebhookEnqueueMetric(eventName, payload.action, "enqueue_failed");
+    // ERROR level so the central Sentry forwarder captures a failing webhook enqueue (#1824) — previously only a
+    // Prometheus counter moved, which an operator would only notice by comparing dashboards. Never logs rawBody or
+    // the parsed payload (secret-scrub boundary); only the delivery's routing metadata.
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "selfhost_webhook_enqueue_failed",
+        eventName,
+        repository: eventRow.repositoryFullName,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
     return "enqueue_failed";
   }
 

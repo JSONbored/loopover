@@ -8830,6 +8830,26 @@
                   "auto_with_approval",
                   "auto"
                 ]
+              },
+              "update_branch": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "assign": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
               }
             }
           },
@@ -8999,22 +9019,9 @@
           },
           "typeLabels": {
             "type": "object",
-            "properties": {
-              "bug": {
-                "type": "string"
-              },
-              "feature": {
-                "type": "string"
-              },
-              "priority": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "bug",
-              "feature",
-              "priority"
-            ]
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "linkedIssueLabelPropagation": {
             "type": "object",

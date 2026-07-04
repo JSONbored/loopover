@@ -117,6 +117,10 @@ export function extractVersionPins(
         const version = leadingVersion(line);
         if (version)
           pins.push({ file: file.path, product: "oracle-jdk", version });
+      } else if (base === ".terraform-version") {
+        // tfenv/asdf pin file — same leading-version format, product is Terraform.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "terraform", version });
       } else if (base === "go.mod") {
         // Module language version (`go 1.21`) and optional toolchain pin (`toolchain go1.22.0`).
         const match = /^go\s+(\d+\.\d+)/.exec(line);

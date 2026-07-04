@@ -301,6 +301,30 @@ test("scanPatchForIacMisconfig flags insecure Dockerfile build instructions", ()
   }
 });
 
+test("scanPatchForIacMisconfig treats Dockerfile instruction keywords case-insensitively", () => {
+  // Dockerfile instructions are case-insensitive, so lowercase instructions must not bypass
+  // the build-hardening findings that the uppercase forms already produce.
+  const cases = [
+    ["+add https://example.com/app.tar.gz /app/", "docker-add-remote-url"],
+    ["+from node:latest", "docker-image-latest-tag"],
+    ["+user root", "docker-root-user"],
+    ["+expose 22", "ssh-port-exposed"],
+    ["+run sudo apt-get update", "sudo-in-build"],
+  ];
+
+  for (const [added, kind] of cases) {
+    const findings = scanPatchForIacMisconfig(
+      "Dockerfile",
+      ["@@ -1,0 +1,1 @@", added].join("\n"),
+    );
+    assert.deepEqual(
+      findings,
+      [{ file: "Dockerfile", line: 1, kind }],
+      `${kind}: expected lowercase Dockerfile instruction to be detected, got ${JSON.stringify(findings)}`,
+    );
+  }
+});
+
 test("scanPatchForIacMisconfig does not flag the safe counterpart of each Dockerfile instruction", () => {
   // Safe/near-miss forms: a local ADD source, a pinned image tag, a non-root user (incl. a non-zero uid), a
   // curl without a shell pipe, a wget without the insecure flag, a non-SSH port (incl. 2222), npm without
@@ -323,6 +347,50 @@ test("scanPatchForIacMisconfig does not flag the safe counterpart of each Docker
   for (const added of safe) {
     assert.deepEqual(
       scanPatchForIacMisconfig("Dockerfile", ["@@ -1,0 +1,1 @@", added].join("\n")),
+      [],
+      `should not flag: ${added.trim()}`,
+    );
+  }
+});
+
+test("scanPatchForIacMisconfig flags TLS/certificate-verification bypass across ecosystems", () => {
+  // In each case the matched VALUE is the bypass action itself, so there is no safe-value form of the line.
+  const cases = [
+    ["+DATABASE_URL=postgres://u:p@h/db?sslmode=disable", "db-ssl-disabled"],
+    ["+  GIT_SSL_NO_VERIFY: true", "git-ssl-no-verify"],
+    ["+  StrictHostKeyChecking no", "ssh-host-key-check-off"],
+    ["+  verify_ssl: false", "verify-ssl-off"],
+    ["+  validate_certs: no", "validate-certs-off"],
+    ["+  insecure_skip_verify = true", "tls-skip-verify"],
+    ["+  ConnectionString: Server=db;TrustServerCertificate=true", "trust-all-server-certs"],
+  ];
+  for (const [added, kind] of cases) {
+    const findings = scanPatchForIacMisconfig(
+      "config.yaml",
+      ["@@ -1,0 +1,1 @@", added].join("\n"),
+    );
+    assert.deepEqual(
+      findings,
+      [{ file: "config.yaml", line: 1, kind }],
+      `${kind}: expected exactly one finding of that kind, got ${JSON.stringify(findings)}`,
+    );
+  }
+});
+
+test("scanPatchForIacMisconfig does not flag the secure counterpart of each TLS-bypass setting", () => {
+  // The secure value uses a different token the regex never matches (verification stays ON).
+  const safe = [
+    "+DATABASE_URL=postgres://u:p@h/db?sslmode=require",
+    "+  GIT_SSL_NO_VERIFY: false",
+    "+  StrictHostKeyChecking yes",
+    "+  verify_ssl: true",
+    "+  validate_certs: yes",
+    "+  insecure_skip_verify = false",
+    "+  ConnectionString: Server=db;TrustServerCertificate=false",
+  ];
+  for (const added of safe) {
+    assert.deepEqual(
+      scanPatchForIacMisconfig("config.yaml", ["@@ -1,0 +1,1 @@", added].join("\n")),
       [],
       `should not flag: ${added.trim()}`,
     );

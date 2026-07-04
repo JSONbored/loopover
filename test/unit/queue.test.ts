@@ -5166,6 +5166,41 @@ describe("queue processors", () => {
     expect(await env.SELFHOST_TRANSIENT_CACHE!.get!("pr-actuation-lock:owner/act-repo#7")).toBeNull();
   });
 
+  it("does not blind-del when the cache lacks releaseIfValue (TTL backstop)", async () => {
+    let deleted = false;
+    const store = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key: string) => store.get(key) ?? null,
+        set: async (key: string, value: string) => { store.set(key, value); },
+        claim: async (key: string, value: string) => {
+          if (store.has(key)) return false;
+          store.set(key, value);
+          return true;
+        },
+        del: async () => { deleted = true; },
+      },
+    });
+    const lock = await claimPrActuationLock(env, "owner/act-repo", 7);
+    expect(lock.acquired).toBe(true);
+    await releasePrActuationLock(env, "owner/act-repo", 7, lock.ownerToken);
+    expect(deleted).toBe(false);
+    expect(store.get("pr-actuation-lock:owner/act-repo#7")).toBe(lock.ownerToken);
+  });
+
+  it("releaseIfValue errors are best-effort (TTL backstop)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => null,
+        set: async () => undefined,
+        claim: async (_key: string, value: string) => value.length > 0,
+        releaseIfValue: async () => { throw new Error("redis eval failed"); },
+      },
+    });
+    const lock = await claimPrActuationLock(env, "owner/act-repo", 7);
+    await expect(releasePrActuationLock(env, "owner/act-repo", 7, lock.ownerToken)).resolves.toBeUndefined();
+  });
+
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });

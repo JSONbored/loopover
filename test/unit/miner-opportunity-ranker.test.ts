@@ -11,6 +11,14 @@ import {
 
 const NOW = Date.parse("2026-07-03T12:00:00.000Z");
 
+const FATIGUE_NONE = {
+  tier: "none" as const,
+  priorityAdjustment: "none" as const,
+  priorityFactor: 1,
+  deferRecheckUntil: null,
+  evidence: [],
+};
+
 function rawIssue(overrides: Record<string, unknown> = {}) {
   return {
     owner: "acme",
@@ -25,6 +33,7 @@ function rawIssue(overrides: Record<string, unknown> = {}) {
     htmlUrl: "https://github.com/acme/widgets/issues/42",
     aiPolicyAllowed: true as const,
     aiPolicySource: "CONTRIBUTING.md" as const,
+    aiPolicyFatigue: FATIGUE_NONE,
     ...overrides,
   };
 }

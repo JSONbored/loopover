@@ -147,16 +147,16 @@ async function fetchRepoDoc(target, path, githubToken, options, summary, warning
 
 async function resolveRepoAiPolicy(target, githubToken, options, summary, warnings) {
   const aiUsage = await fetchRepoDoc(target, "AI-USAGE.md", githubToken, options, summary, warnings);
-  // Short-circuit only on AI-USAGE.md that has real content. A present-but-blank AI-USAGE.md must still fall
-  // through to CONTRIBUTING.md — otherwise a stub AI-USAGE.md silently fails open and swallows a ban declared in
-  // CONTRIBUTING.md (the exact case resolveAiPolicyVerdict was fixed to handle in #2900, which can only fire if
-  // both docs reach it).
-  if (aiUsage !== null && aiUsage.trim().length > 0) {
-    return resolveAiPolicyAssessment({
+  const hasAiUsage = aiUsage !== null && aiUsage.trim().length > 0;
+  // Short-circuit only on AI-USAGE.md that declares a formal ban. A present-but-permissive AI-USAGE.md must still
+  // fall through to CONTRIBUTING.md so metadata-derived fatigue (doc revision + closed-PR signals) can attach.
+  if (hasAiUsage) {
+    const preliminary = resolveAiPolicyAssessment({
       docs: { aiUsage, contributing: null },
       closedPullRequests: options.closedPullRequestsByRepo?.[target.repoFullName] ?? [],
       nowMs: options.nowMs,
     });
+    if (!preliminary.allowed) return preliminary;
   }
   const contributing = await fetchRepoDoc(
     target,
@@ -167,7 +167,7 @@ async function resolveRepoAiPolicy(target, githubToken, options, summary, warnin
     warnings,
   );
   return resolveAiPolicyAssessment({
-    docs: { aiUsage: null, contributing },
+    docs: { aiUsage: hasAiUsage ? aiUsage : null, contributing },
     previousContributing: options.previousContributingByRepo?.[target.repoFullName] ?? null,
     contributingObservedAt: options.contributingObservedAtByRepo?.[target.repoFullName] ?? null,
     closedPullRequests: options.closedPullRequestsByRepo?.[target.repoFullName] ?? [],
@@ -303,6 +303,10 @@ function normalizeOptions(options = {}) {
         : defaultApiBaseUrl,
     concurrency: normalizeLimit(options.concurrency, defaultConcurrency, 1, 10),
     perPage: normalizeLimit(options.perPage, defaultPerPage, 1, 100),
+    nowMs: options.nowMs,
+    closedPullRequestsByRepo: options.closedPullRequestsByRepo ?? {},
+    previousContributingByRepo: options.previousContributingByRepo ?? {},
+    contributingObservedAtByRepo: options.contributingObservedAtByRepo ?? {},
   };
 }
 

@@ -1,6 +1,21 @@
+import type {
+  AiAttributedPullRequestMetadata,
+  AiPolicyFatigueSignal,
+} from "@jsonbored/gittensory-engine";
+
 export type FanoutTarget = {
   owner: string;
   repo: string;
+};
+
+export type FanoutOptions = {
+  apiBaseUrl?: string;
+  concurrency?: number;
+  perPage?: number;
+  nowMs?: number;
+  closedPullRequestsByRepo?: Record<string, readonly AiAttributedPullRequestMetadata[]>;
+  previousContributingByRepo?: Record<string, string | null>;
+  contributingObservedAtByRepo?: Record<string, string | null>;
 };
 
 export type RawCandidateIssue = {
@@ -16,6 +31,7 @@ export type RawCandidateIssue = {
   htmlUrl: string | null;
   aiPolicyAllowed: true;
   aiPolicySource: "AI-USAGE.md" | "CONTRIBUTING.md" | "none";
+  aiPolicyFatigue: AiPolicyFatigueSignal;
 };
 
 export type CandidateIssueWarning = {
@@ -34,39 +50,23 @@ export type CandidateIssueSummary = {
 export function fetchCandidateIssuesWithSummary(
   targets: FanoutTarget[],
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    perPage?: number;
-  },
+  options?: FanoutOptions,
 ): Promise<CandidateIssueSummary>;
 
 export function fetchCandidateIssues(
   targets: FanoutTarget[],
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    perPage?: number;
-  },
+  options?: FanoutOptions,
 ): Promise<RawCandidateIssue[]>;
 
 export function searchCandidateIssuesWithSummary(
   searchQuery: string,
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    perPage?: number;
-  },
+  options?: FanoutOptions,
 ): Promise<CandidateIssueSummary>;
 
 export function searchCandidateIssues(
   searchQuery: string,
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    perPage?: number;
-  },
+  options?: FanoutOptions,
 ): Promise<RawCandidateIssue[]>;

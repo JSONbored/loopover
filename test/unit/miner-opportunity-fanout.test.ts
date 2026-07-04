@@ -315,4 +315,62 @@ describe("fetchCandidateIssues (#2307)", () => {
       { repoFullName: "*", stage: "search", message: "GitHub returned 502" },
     ]);
   });
+
+  it("passes closed-PR fatigue metadata through normalizeOptions to candidate issues (#3009)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/issues?")) return jsonResponse([issue(7)]);
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const closedPullRequestsByRepo = {
+      "acme/widgets": [
+        { number: 1, state: "closed", merged: false, aiAttributed: true, terseRejection: true },
+        { number: 2, state: "closed", merged: false, aiAttributed: true, terseRejection: true },
+        { number: 3, state: "closed", merged: false, aiAttributed: true, terseRejection: true },
+      ],
+    };
+
+    const result = await fetchCandidateIssues([{ owner: "acme", repo: "widgets" }], "", {
+      apiBaseUrl: API,
+      nowMs: Date.parse("2026-07-04T12:00:00.000Z"),
+      closedPullRequestsByRepo,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.aiPolicyAllowed).toBe(true);
+    expect(result[0]?.aiPolicyFatigue.tier).not.toBe("none");
+    expect(result[0]?.aiPolicyFatigue.priorityAdjustment).not.toBe("none");
+  });
+
+  it("fetches CONTRIBUTING.md for fatigue when AI-USAGE.md is permissive (#3009)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/contents/AI-USAGE.md")) {
+        return contentResponse("AI-assisted contributions are allowed when reviewed.");
+      }
+      if (url.endsWith("/contents/CONTRIBUTING.md")) {
+        return contentResponse("Please disclose AI-assisted contributions in your PR description.");
+      }
+      if (url.includes("/issues?")) return jsonResponse([issue(9)]);
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await fetchCandidateIssues([{ owner: "acme", repo: "widgets" }], "", {
+      apiBaseUrl: API,
+      nowMs: Date.parse("2026-07-04T12:00:00.000Z"),
+      previousContributingByRepo: { "acme/widgets": "Please include tests." },
+      contributingObservedAtByRepo: { "acme/widgets": "2026-07-04T12:00:00.000Z" },
+    });
+
+    expect(calls.some((url) => url.endsWith("/contents/CONTRIBUTING.md"))).toBe(true);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.aiPolicySource).toBe("AI-USAGE.md");
+    expect(result[0]?.aiPolicyAllowed).toBe(true);
+    expect(result[0]?.aiPolicyFatigue.tier).not.toBe("none");
+  });
 });

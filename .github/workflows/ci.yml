@@ -137,6 +137,8 @@ jobs:
           # Full history so Codecov can resolve the merge base for patch coverage.
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Neutralize untrusted npm config
+        run: rm -f .npmrc
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -205,7 +207,9 @@ jobs:
         run: npm run cf-typegen:check
       - name: Validate observability configs
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.observability == 'true' }}
-        run: npm run selfhost:validate-observability
+        env:
+          NODE_OPTIONS: ""
+        run: node scripts/validate-observability-configs.mjs
       - name: Typecheck
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run typecheck

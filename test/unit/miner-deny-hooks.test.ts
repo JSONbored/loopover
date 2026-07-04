@@ -61,6 +61,13 @@ describe("evaluateDenyHooks — built-in DEFAULT_DENY_RULES", () => {
     expect(evaluateDenyHooks({ name: "Bash", input: { command: "git push origin main" } }).allowed).toBe(true);
     expect(evaluateDenyHooks({ name: "Bash", input: { command: "git commit --amend" } }).allowed).toBe(true);
   });
+
+  it("blocks the short -f force-push flag (bare or bundled) without false-flagging --follow-tags", () => {
+    expect(evaluateDenyHooks({ name: "Bash", input: { command: "git push -f origin main" } }).allowed).toBe(false);
+    expect(evaluateDenyHooks({ name: "Bash", input: { command: "git push -uf origin main" } }).allowed).toBe(false);
+    // --follow-tags contains "-f" as a substring but is not a force flag — must not be blocked.
+    expect(evaluateDenyHooks({ name: "Bash", input: { command: "git push --follow-tags origin main" } }).allowed).toBe(true);
+  });
 });
 
 describe("evaluateDenyHooks — rule composition and allow paths", () => {

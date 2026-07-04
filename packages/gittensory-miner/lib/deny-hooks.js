@@ -6,8 +6,11 @@
 //
 // A rule fires when its tool-name `matcher` matches AND every constraint it declares also matches:
 //   - `pathPattern` (a glob) must match some path-shaped string in the tool-call input, and/or
-//   - `inputIncludesAll` (substrings) must ALL appear in a single string-shaped input field (e.g. a command).
-// A rule with neither constraint fires on the matcher alone. The built-in DEFAULT_DENY_RULES mirror the
+//   - `inputIncludesAll` (substrings) must ALL appear in a single string-shaped input field (e.g. a command), and/or
+//   - `inputTokenPattern` (a RegExp) must match a whole whitespace-separated token (quotes stripped) of a single
+//     string-shaped input field — for flag-shaped needles like `-f`, where a substring test would also fire on
+//     `--follow-tags`.
+// A rule with none of these constraints fires on the matcher alone. The built-in DEFAULT_DENY_RULES mirror the
 // forbidden-path patterns enforced in `scripts/check-mcp-package.mjs` plus a conservative git force-push guard.
 
 /**
@@ -62,6 +65,15 @@ function collectInputStrings(input, seen = new WeakSet()) {
   return strings;
 }
 
+/** Split a string-shaped input field into whitespace-separated tokens with surrounding quotes stripped —
+ *  shared by path-candidate expansion and flag-token matching below. */
+function splitTokens(value) {
+  return value
+    .split(/\s+/)
+    .map((token) => token.replace(/^["']+|["']+$/g, ""))
+    .filter(Boolean);
+}
+
 /**
  * The candidate strings a path glob is tested against for one input value: the whole value AND each
  * whitespace-separated token (surrounding quotes stripped). A protected path is frequently embedded as one
@@ -71,12 +83,9 @@ function collectInputStrings(input, seen = new WeakSet()) {
  */
 function pathCandidates(value) {
   const candidates = new Set([value, normalizePathCandidate(value)]);
-  for (const token of value.split(/\s+/)) {
-    const trimmed = token.replace(/^["']+|["']+$/g, "");
-    if (trimmed) {
-      candidates.add(trimmed);
-      candidates.add(normalizePathCandidate(trimmed));
-    }
+  for (const trimmed of splitTokens(value)) {
+    candidates.add(trimmed);
+    candidates.add(normalizePathCandidate(trimmed));
   }
   return [...candidates].filter(Boolean);
 }
@@ -99,13 +108,18 @@ function ruleMatches(rule, toolName, inputStrings) {
     const needles = rule.inputIncludesAll.filter((needle) => typeof needle === "string");
     if (!inputStrings.some((value) => needles.every((needle) => value.includes(needle)))) return false;
   }
+  if (rule.inputTokenPattern instanceof RegExp) {
+    if (!inputStrings.some((value) => splitTokens(value).some((token) => rule.inputTokenPattern.test(token)))) {
+      return false;
+    }
+  }
   return true;
 }
 
 /**
  * The built-in house-rule deny set — a non-empty starting example a later phase can extend or replace. Mirrors the
  * forbidden-path regex in `scripts/check-mcp-package.mjs` (CI workflows, env files, secret-bearing paths, private
- * key material) and adds a conservative git force-push guard (a command carrying both `push` and `--force`).
+ * key material) and adds conservative git force-push guards (a command carrying `push` plus a force flag).
  */
 export const DEFAULT_DENY_RULES = [
   { matcher: "*", pathPattern: "**/.github/workflows/**", reason: "Never modify CI workflows (.github/workflows/**)." },
@@ -120,6 +134,10 @@ export const DEFAULT_DENY_RULES = [
   { matcher: "*", pathPattern: "**/*private*key*", reason: "Never touch private key material (**/*private*key*)." },
   { matcher: "*", pathPattern: "**/*.pem", reason: "Never touch PEM key material (*.pem)." },
   { matcher: "*", inputIncludesAll: ["push", "--force"], reason: "Never force-push (git push --force)." },
+  // Token-matched rather than substring-matched: a substring test for "-f" would also fire on an
+  // unrelated long flag like --follow-tags. Matches a whole short-option token (bundled or not)
+  // whose letters include "f", e.g. -f, -uf, -fu, but not a "--"-prefixed long flag.
+  { matcher: "*", inputIncludesAll: ["push"], inputTokenPattern: /^-[a-z]*f[a-z]*$/i, reason: "Never force-push (git push -f)." },
 ];
 
 /**

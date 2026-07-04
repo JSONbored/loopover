@@ -89,6 +89,16 @@ export const denyHookFixtures: DenyHookFixture[] = [
     expected: { allowed: false, blockedByIncludes: "force-push" },
   },
   { name: "allows a normal push", toolCall: { name: "Bash", input: { command: "git push origin main" } }, expected: { allowed: true } },
+  {
+    name: "blocks the short -f force-push flag",
+    toolCall: { name: "Bash", input: { command: "git push -f origin main" } },
+    expected: { allowed: false, blockedByIncludes: "force-push" },
+  },
+  {
+    name: "GLOB EDGE: --follow-tags is NOT a force flag (token-matched, not a `-f` substring match)",
+    toolCall: { name: "Bash", input: { command: "git push --follow-tags origin main" } },
+    expected: { allowed: true },
+  },
   { name: "allows running the test suite", toolCall: { name: "Bash", input: { command: "npm test" } }, expected: { allowed: true } },
 
   // ── multi-path edits + custom-rule cases ──────────────────────────────────────────────────────

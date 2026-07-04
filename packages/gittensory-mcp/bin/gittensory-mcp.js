@@ -6,7 +6,7 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
+import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
@@ -3585,7 +3585,7 @@ async function analyzeCurrentBranch(input) {
       mergeBaseSha: body.mergeBaseSha,
       remoteTrackingSha: body.remoteTrackingSha,
       changedFileCount: body.changedFiles?.length ?? 0,
-      testFileCount: body.changedFiles?.filter((file) => /(^|\/)(test|tests|spec|__tests__)\/|(^|\/)src\/test\/|(^|\/)[^/]+_test\.(go|py|rb)$|(^|\/)[^/]+_spec\.rb$|\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file.path)).length ?? 0,
+      testFileCount: body.changedFiles?.filter((file) => isTestFile(file.path)).length ?? 0,
       passedValidationCount: body.validation?.filter((entry) => entry.status === "passed").length ?? 0,
       localScorerStatus: sanitizeLocalScorerStatus(localScorerStatus),
       setupGuidance: setupGuidanceForLocalScorer(localScorerStatus),

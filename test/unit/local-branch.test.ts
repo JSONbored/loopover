@@ -1762,15 +1762,15 @@ describe("local MCP git metadata collection", () => {
       expect(isTestFile(file)).toBe(true);
       expect(isCodeFile(file)).toBe(false);
     }
-    // #2666 + #2743 parity: the pytest `test_*.py` prefix and the JVM/C#/Swift `SomethingTest(s)`/`Spec`
+    // #2666 + #2743 parity: the pytest `test_*.py` prefix and the JVM/C#/Swift/PHP `SomethingTest(s)`/`Spec`
     // class-suffix conventions were added to the server isTestPath but not this MCP copy — so the local
-    // predictor wrongly counted Java/Kotlin/Scala/C#/Swift tests and pytest-prefixed files as SOURCE.
-    for (const file of ["tests/test_utils.py", "test_api.py", "app/FooTests.java", "src/BarSpec.kt", "core/BazTest.scala", "svc/QuuxTests.cs", "ios/CorgeSpec.swift", "build/GraultTest.groovy"]) {
+    // predictor wrongly counted Java/Kotlin/Scala/C#/Swift/PHP tests and pytest-prefixed files as SOURCE.
+    for (const file of ["tests/test_utils.py", "test_api.py", "app/FooTests.java", "src/BarSpec.kt", "core/BazTest.scala", "svc/QuuxTests.cs", "ios/CorgeSpec.swift", "build/GraultTest.groovy", "lib/WaldoSpec.php"]) {
       expect(isTestFile(file)).toBe(true);
       expect(isCodeFile(file)).toBe(false);
     }
-    // Case-sensitive on the PascalCase suffix: a JVM source merely ENDING in "test"/"spec" stays source.
-    for (const file of ["src/Latest.java", "core/manifest.scala", "app/MyService.kt"]) {
+    // Case-sensitive on the PascalCase suffix: a JVM/PHP source merely ENDING in "test"/"spec" stays source.
+    for (const file of ["src/Latest.java", "core/manifest.scala", "app/MyService.kt", "web/Latest.php"]) {
       expect(isTestFile(file)).toBe(false);
       expect(isCodeFile(file)).toBe(true);
     }

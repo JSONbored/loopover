@@ -601,16 +601,16 @@ export function isTestFile(file) {
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
     /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
     /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
-    // JVM / C# / Swift `SomethingTest(s)`/`SomethingSpec` class-suffix convention (JUnit, Kotlin/ScalaTest,
-    // Spock, xUnit/NUnit, XCTest). Case-sensitive on the PascalCase suffix so it can't false-positive on words
-    // that merely end in "test"/"spec" (Latest.java, Contest.cs, manifest.scala).
-    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy)$/.test(file) ||
+    // JVM / C# / Swift / PHP `SomethingTest(s)`/`SomethingSpec` class-suffix convention (JUnit, Kotlin/ScalaTest,
+    // Spock, xUnit/NUnit, XCTest, PHPUnit/PHPSpec). Case-sensitive on the PascalCase suffix so it can't false-positive on words
+    // that merely end in "test"/"spec" (Latest.java, Contest.cs, manifest.scala, Latest.php).
+    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy|php)$/.test(file) ||
     /(^|\/)__snapshots__\//i.test(file)
   );
 }
 
 export function isCodeFile(file) {
-  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy)$/i.test(file) && !isTestFile(file);
+  return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs|kt|scala|java|go|sql|cs|swift|groovy|php)$/i.test(file) && !isTestFile(file);
 }
 
 function numberValue(value) {

@@ -708,18 +708,38 @@ export function createPgQueue(
    *  maxReleasePerSweep allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited
    *  backlog drains gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once.
    *  Logs + records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam
-   *  the log. */
+   *  the log.
+   *
+   *  Candidate selection queries an OLDEST window AND a NEWEST window (#selfhost-queue-liveness clear-bucket
+   *  starvation fix), not just one oldest-first window. A single `ORDER BY created_at ASC LIMIT` window can be
+   *  filled ENTIRELY by older still-rate-limited jobs once the backlog exceeds the limit -- selectForegroundDeferralsToRelease's
+   *  clear-bucket-priority sort can only prioritize candidates it is actually shown, so a large-enough glut of
+   *  older blocked jobs would permanently hide every newer, already-admittable candidate from it, defeating the
+   *  whole point of the clear-bucket check. The newest window guarantees a fresh clear-bucket candidate is
+   *  always represented in `eligible` regardless of how large the older-blocked backlog grows, at the same
+   *  total worst-case row/admission-check budget as before (still `maxReleasePerSweep * 2` candidates, just
+   *  split fairly across both ends of the age spectrum instead of packed entirely into the oldest end). */
   async function releaseStaleForegroundDeferrals(): Promise<number> {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
-    const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep * 2;
-    const res = await pool.query(
-      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at ASC, id ASC LIMIT $3`,
-      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
-    );
+    const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
+    const [oldestRes, newestRes] = await Promise.all([
+      pool.query(
+        `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at ASC, id ASC LIMIT $3`,
+        [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+      ),
+      pool.query(
+        `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at DESC, id DESC LIMIT $3`,
+        [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+      ),
+    ]);
+    const candidateRowsById = new Map<string, { id: string; payload: string; created_at: number | string }>();
+    for (const row of [...oldestRes.rows, ...newestRes.rows] as Array<{ id: string; payload: string; created_at: number | string }>) {
+      candidateRowsById.set(row.id, row);
+    }
     const eligible: Array<{ id: string; pendingSinceMs: number; ageStale: boolean; rateLimitClear: boolean }> = [];
     const admissionCache = new Map<string, Promise<boolean>>();
-    for (const row of res.rows as Array<{ id: string; payload: string; created_at: number | string }>) {
+    for (const row of candidateRowsById.values()) {
       const pendingSinceMs = Number(row.created_at);
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, pendingSinceMs, now);
       const rateLimitClear = await isRateLimitAdmissionNowClear(row.payload, admissionCache);

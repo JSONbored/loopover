@@ -2435,6 +2435,52 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(releasedIds).toEqual(["blocked-oldest", "clear-newer"]);
     });
 
+    // REGRESSION (#selfhost-queue-liveness clear-bucket starvation): the test above only seeds 3 rows, well
+    // under the OLD single-window candidateLimit (maxReleasePerSweep * 2 = 4), so it can't actually distinguish
+    // "the fix" from "the bug" -- a single `ORDER BY created_at ASC LIMIT 4` query would have returned all 3
+    // rows there too. This test seeds MORE older still-blocked rows than that old limit, against a REAL SQLite
+    // engine (not a mock), so the candidate query genuinely truncates. Under the pre-fix single-window query,
+    // "clear-newer" (the single newest pending row) would never even be SELECTed into `eligible` -- proving the
+    // starvation this fix closes, not just describing it.
+    it("REGRESSION: a large glut of older still-blocked rows does not hide a newer clear-bucket row from the candidate window", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000";
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2"; // old candidateLimit would have been 4
+      const driver = makeDriver();
+      const now = Date.now();
+      seedExhaustedRateLimitObservation(driver, "installation:111", new Date(now + 30 * 60_000).toISOString());
+      const q = createSqliteQueue(driver, async () => undefined);
+      const farFuture = now + 60 * 60_000;
+      // 6 older still-blocked rows -- more than the old single-window candidateLimit of 4, so a naive
+      // "oldest N" window is entirely consumed by these and never reaches the newer row below.
+      for (let i = 0; i < 6; i += 1) {
+        driver.query(
+          `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+           VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+          [
+            JSON.stringify({ type: "github-webhook", deliveryId: `blocked-${i}`, eventName: "x", payload: { installation: { id: 111 } } }),
+            farFuture,
+            now - (20 - i) * 60_000, // ages 20m down to 15m, oldest first
+          ],
+        );
+      }
+      // The single newest pending row, on a different (clear) admission target.
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, ?, ?, 10, NULL, 0)`,
+        [JSON.stringify({ type: "github-webhook", deliveryId: "clear-newer", eventName: "x", payload: { installation: { id: 222 } } }), farFuture, now - 1_000],
+      );
+
+      const released = q.releaseStaleForegroundDeferrals();
+
+      const releasedIds = driver.query(`SELECT payload FROM _selfhost_jobs WHERE run_after<?`, [farFuture]).rows.map((row) =>
+        JSON.parse((row as { payload: string }).payload).deliveryId,
+      );
+      expect(released).toBe(2);
+      // clear-newer wins a release slot despite the 6-row older-blocked glut; the remaining slot goes to the
+      // single oldest age-stale row, exactly matching selectForegroundDeferralsToRelease's own ordering.
+      expect(releasedIds.sort()).toEqual(["blocked-0", "clear-newer"]);
+    });
+
     // Mirrors reviveDeadLetterJobsSafely's own regression test: the foreground-liveness interval had no error
     // handler of its own, so a thrown driver/metric failure on that tick would surface as an uncaught exception
     // and could terminate the process -- exactly the failure mode pump()'s own try/catch already guards against

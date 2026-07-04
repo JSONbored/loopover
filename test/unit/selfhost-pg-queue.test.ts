@@ -81,17 +81,30 @@ interface MockPool {
     backlogConvergence?: { cnt: number };
     freshIntake?: { cnt: number };
   }): void;
-  /** Programs the exact rows returned by releaseStaleForegroundDeferrals' candidate SELECT
-   *  (`WHERE status='pending' AND priority>=$1 AND run_after>$2`), and the per-row rowCount its conditional
-   *  UPDATE reports (defaults to 1 -- the row still matched at UPDATE time -- when not otherwise queued).
-   *  `payload` defaults to a "recapture-preview" message -- a foreground type NOT in
-   *  GITHUB_BUDGET_BACKGROUND_TYPES / not "github-webhook"/"agent-regate-pr" -- so
+  /** Programs the exact rows returned by releaseStaleForegroundDeferrals' candidate SELECT (both the oldest-
+   *  and newest-ordered windows, see setForegroundLivenessCandidatesByWindow's doc comment for why there are
+   *  two), and the per-row rowCount its conditional UPDATE reports (defaults to 1 -- the row still matched at
+   *  UPDATE time -- when not otherwise queued). `payload` defaults to a "recapture-preview" message -- a
+   *  foreground type NOT in GITHUB_BUDGET_BACKGROUND_TYPES / not "github-webhook"/"agent-regate-pr" -- so
    *  githubRateLimitAdmissionTargetForJob returns null for it and the rate-limit-clear OR-condition is
    *  trivially/always true, isolating the AGE condition cleanly for tests that aren't specifically about
    *  rate-limit clearing. Pass an explicit `payload` (e.g. a github-webhook message) plus `setRateLimitRows`
    *  to test the rate-limit-clear condition itself, or "not valid json" to test the unparseable-payload path. */
   setForegroundLivenessCandidates(
     rows: Array<{ id: string; created_at: number; payload?: string }>,
+    updateRowCounts?: number[],
+  ): void;
+  /** Like setForegroundLivenessCandidates, but programs the OLDEST-ordered and NEWEST-ordered candidate windows
+   *  independently (#selfhost-queue-liveness clear-bucket starvation fix) -- releaseStaleForegroundDeferrals now
+   *  issues two real, differently-bounded queries (`ORDER BY created_at ASC LIMIT` and `... DESC LIMIT`) so a
+   *  large glut of older still-blocked rows can never fill the ONLY candidate window and hide a newer
+   *  clear-bucket row from it. This mock doesn't apply real SQL LIMIT/ORDER BY semantics (setForegroundLivenessCandidates
+   *  above just returns the same configured array for both windows), so a test that needs to prove the two
+   *  windows are genuinely independent -- i.e. a candidate present in one window but not the other -- must use
+   *  this instead. */
+  setForegroundLivenessCandidatesByWindow(
+    oldestRows: Array<{ id: string; created_at: number; payload?: string }>,
+    newestRows: Array<{ id: string; created_at: number; payload?: string }>,
     updateRowCounts?: number[],
   ): void;
 }
@@ -108,7 +121,8 @@ function makePool(): MockPool {
   let pressureMaintenance: { cnt: number; oldest: number | null } = { cnt: 0, oldest: null };
   let pressureBacklogConvergence: { cnt: number } = { cnt: 0 };
   let pressureFreshIntake: { cnt: number } = { cnt: 0 };
-  let foregroundLivenessCandidates: Array<{ id: string; created_at: number; payload?: string }> = [];
+  let foregroundLivenessOldestCandidates: Array<{ id: string; created_at: number; payload?: string }> = [];
+  let foregroundLivenessNewestCandidates: Array<{ id: string; created_at: number; payload?: string }> = [];
   const foregroundLivenessUpdateRowCounts: number[] = [];
   const DEFAULT_FOREGROUND_LIVENESS_PAYLOAD = JSON.stringify({
     type: "recapture-preview",
@@ -120,13 +134,18 @@ function makePool(): MockPool {
   const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
     const q = String(sql);
     if (q.includes("SELECT id, payload, created_at FROM") && q.includes("priority>=$1 AND run_after>$2")) {
+      // #selfhost-queue-liveness clear-bucket starvation fix: releaseStaleForegroundDeferrals issues an OLDEST-
+      // ordered window and a NEWEST-ordered window as two independent queries -- match on ORDER BY direction so
+      // setForegroundLivenessCandidatesByWindow can program them differently (setForegroundLivenessCandidates
+      // programs both windows identically, matching this repo's other tests that don't care about the split).
+      const rows = q.includes("ORDER BY created_at DESC") ? foregroundLivenessNewestCandidates : foregroundLivenessOldestCandidates;
       return {
-        rows: foregroundLivenessCandidates.map((row) => ({
+        rows: rows.map((row) => ({
           id: row.id,
           payload: row.payload ?? DEFAULT_FOREGROUND_LIVENESS_PAYLOAD,
           created_at: row.created_at,
         })),
-        rowCount: foregroundLivenessCandidates.length,
+        rowCount: rows.length,
       };
     }
     if (q.includes("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1")) {
@@ -225,7 +244,14 @@ function makePool(): MockPool {
       rateLimitRows = rows;
     },
     setForegroundLivenessCandidates(rows, updateRowCounts) {
-      foregroundLivenessCandidates = rows;
+      foregroundLivenessOldestCandidates = rows;
+      foregroundLivenessNewestCandidates = rows;
+      foregroundLivenessUpdateRowCounts.length = 0;
+      if (updateRowCounts) foregroundLivenessUpdateRowCounts.push(...updateRowCounts);
+    },
+    setForegroundLivenessCandidatesByWindow(oldestRows, newestRows, updateRowCounts) {
+      foregroundLivenessOldestCandidates = oldestRows;
+      foregroundLivenessNewestCandidates = newestRows;
       foregroundLivenessUpdateRowCounts.length = 0;
       if (updateRowCounts) foregroundLivenessUpdateRowCounts.push(...updateRowCounts);
     },
@@ -2367,9 +2393,17 @@ describe("createPgQueue (durable #977)", () => {
       const released = await q.releaseStaleForegroundDeferrals();
 
       expect(released).toBe(2);
+      // candidateLimit is now maxReleasePerSweep itself (2), not maxReleasePerSweep * 2 -- the query is issued
+      // TWICE (an oldest-ordered window and a newest-ordered window, #selfhost-queue-liveness clear-bucket
+      // starvation fix), each individually bounded to maxReleasePerSweep so the combined worst-case candidate
+      // budget is unchanged.
       expect(m.fn).toHaveBeenCalledWith(
-        expect.stringContaining("LIMIT $3"),
-        expect.arrayContaining([8, 4]),
+        expect.stringContaining("ORDER BY created_at ASC, id ASC LIMIT $3"),
+        expect.arrayContaining([8, 2]),
+      );
+      expect(m.fn).toHaveBeenCalledWith(
+        expect.stringContaining("ORDER BY created_at DESC, id DESC LIMIT $3"),
+        expect.arrayContaining([8, 2]),
       );
       for (const id of ["oldest", "second-oldest"]) {
         expect(m.fn).toHaveBeenCalledWith(
@@ -2412,6 +2446,64 @@ describe("createPgQueue (durable #977)", () => {
         { id: "blocked-second", created_at: now - 9 * 60_000, payload: payload("blocked-second", 111) },
         { id: "clear-newer", created_at: now - 5 * 60_000, payload: payload("clear-newer", 222) },
       ]);
+      const q = createPgQueue(m.pool, async () => undefined);
+
+      const released = await q.releaseStaleForegroundDeferrals();
+
+      expect(released).toBe(2);
+      for (const id of ["clear-newer", "blocked-oldest"]) {
+        expect(m.fn).toHaveBeenCalledWith(
+          expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+          expect.arrayContaining([id]),
+        );
+      }
+      expect(m.fn).not.toHaveBeenCalledWith(
+        expect.stringContaining("SET run_after=$1 WHERE id=$2 AND status='pending' AND run_after>$1"),
+        expect.arrayContaining(["blocked-second"]),
+      );
+    });
+
+    // REGRESSION (#selfhost-queue-liveness clear-bucket starvation): the test above never exceeds the OLD
+    // single-window candidateLimit (maxReleasePerSweep * 2 = 4 for 3 seeded rows), so it can't actually catch a
+    // regression to the old single-`ORDER BY created_at ASC LIMIT` query -- that window would still have
+    // included "clear-newer" by coincidence. This test uses setForegroundLivenessCandidatesByWindow to program
+    // the OLDEST window as entirely older still-blocked rows (as a real oldest-first LIMIT query against a
+    // large glut would return) and the NEWEST window as containing the newer clear-bucket row (as a real
+    // newest-first LIMIT query would), proving the two windows are queried and merged independently -- a single
+    // bounded oldest-first query would have hidden "clear-newer" from `eligible` entirely.
+    it("REGRESSION: releases a newer clear-bucket row even when the oldest-ordered window is entirely older still-blocked rows", async () => {
+      process.env.FOREGROUND_LIVENESS_MAX_DEFER_MS = "60000";
+      process.env.FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP = "2";
+      const m = makePool();
+      const now = Date.now();
+      m.setRateLimitRows([
+        {
+          admission_key: "installation:111",
+          remaining: 1,
+          reset_at: new Date(now + 30 * 60_000).toISOString(),
+          observed_at: new Date(now).toISOString(),
+        },
+      ]);
+      const payload = (deliveryId: string, installationId: number) =>
+        JSON.stringify({
+          type: "github-webhook",
+          deliveryId,
+          eventName: "x",
+          payload: { installation: { id: installationId } },
+        });
+      m.setForegroundLivenessCandidatesByWindow(
+        // The oldest-ordered window: a large glut of older still-blocked rows (installation 111 is exhausted
+        // above) is ALL a real "ORDER BY created_at ASC LIMIT" query would ever return once the backlog exceeds
+        // the limit -- "clear-newer" never appears here.
+        [
+          { id: "blocked-oldest", created_at: now - 20 * 60_000, payload: payload("blocked-oldest", 111) },
+          { id: "blocked-second", created_at: now - 19 * 60_000, payload: payload("blocked-second", 111) },
+        ],
+        // The newest-ordered window: the fix's whole point -- a real "ORDER BY created_at DESC LIMIT" query
+        // always surfaces the most-recently-enqueued pending rows regardless of how large the older-blocked
+        // backlog is, so "clear-newer" (a different, non-exhausted admission target) is always represented.
+        [{ id: "clear-newer", created_at: now - 5_000, payload: payload("clear-newer", 222) }],
+      );
       const q = createPgQueue(m.pool, async () => undefined);
 
       const released = await q.releaseStaleForegroundDeferrals();

@@ -1950,6 +1950,26 @@ describe("label pattern matcher memoization (#2106)", () => {
     expect(labelMatchesPattern("bugfix", "bug")).toBe(false);
   });
 
+  it("REGRESSION: a literal `-` following a completed range keeps the class valid, not a descending range", () => {
+    // `[a-z-9]` is `a`-`z` plus a literal `-` plus `9` — a valid class that JS `RegExp` compiles and Python
+    // fnmatch matches, so the preview must too. The descending-range suppressor previously misread the
+    // trailing `-9` as an inverted range and degraded the whole class to never-match, silently dropping any
+    // `label_multipliers` key shaped like this to the neutral default. Only a genuinely inverted range
+    // (the case JS `RegExp` throws on) may be suppressed.
+    expect(labelMatchesPattern("m", "[a-z-9]")).toBe(true); // inside the a-z range
+    expect(labelMatchesPattern("9", "[a-z-9]")).toBe(true); // the trailing literal member
+    expect(labelMatchesPattern("-", "[a-z-9]")).toBe(true); // the literal dash member
+    expect(labelMatchesPattern("5", "[a-z-9]")).toBe(false); // 5 is not in {a-z, -, 9}
+    // A genuinely inverted range stays a never-match — the fix preserves the JS-`RegExp`-throws case.
+    expect(labelMatchesPattern("m", "[z-a]")).toBe(false);
+    // The same literal-dash handling applies inside a negated class `[!a-z-9]` (matches only chars OUTSIDE it).
+    expect(labelMatchesPattern("5", "[!a-z-9]")).toBe(true);
+    expect(labelMatchesPattern("a", "[!a-z-9]")).toBe(false);
+    // A plain multi-character class with no range exercises the non-range walk arm.
+    expect(labelMatchesPattern("b", "[abc]")).toBe(true);
+    expect(labelMatchesPattern("d", "[abc]")).toBe(false);
+  });
+
   it("SECURITY (ReDoS, #2456): a label pattern with too many chained wildcards no longer risks catastrophic backtracking — it fails SAFE TOWARD NO MULTIPLIER (never matches) instead of ever compiling the pathological pattern", () => {
     // 3 chained wildcards is already empirically dangerous for the identical `.*`-chaining shape this reuses
     // from change-guardrail.ts's globToRegExp (see MAX_GLOB_WILDCARD_GROUPS's rationale: over 2 seconds at a

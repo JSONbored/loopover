@@ -1046,8 +1046,19 @@ function escapeRegExpLiteral(value: string): string {
 
 function hasDescendingCharacterRange(body: string): boolean {
   const start = body.startsWith("!") ? 1 : 0;
-  for (let i = start + 1; i < body.length - 1; i += 1) {
-    if (body.charAt(i) === "-" && body.charCodeAt(i - 1) > body.charCodeAt(i + 1)) return true;
+  // Walk the class left-to-right, consuming each `X-Y` range as a unit so a range endpoint can't be
+  // misread as the start of a spurious second range. Only a genuinely inverted range like `[z-a]` — the
+  // case JS `RegExp` actually throws on — must degrade the class to never-match; a literal `-` that
+  // follows a completed range (as in `[a-z-9]`, a valid class) must NOT be suppressed. The prior scan
+  // flagged any `-` whose left neighbor outranked its right neighbor, so it wrongly killed `[a-z-9]`.
+  let i = start;
+  while (i < body.length) {
+    if (i + 2 < body.length && body.charAt(i + 1) === "-") {
+      if (body.charCodeAt(i) > body.charCodeAt(i + 2)) return true;
+      i += 3;
+    } else {
+      i += 1;
+    }
   }
   return false;
 }

@@ -42,7 +42,7 @@ export function parseLedgerListArgs(args) {
     }
     if (token === "--since") {
       const sinceArg = args[index + 1];
-      if (!sinceArg || sinceArg.startsWith("-")) return { error: LEDGER_LIST_USAGE };
+      if (!sinceArg || sinceArg.startsWith("--")) return { error: LEDGER_LIST_USAGE };
       const parsedSince = parseSinceArg(sinceArg);
       if ("error" in parsedSince) return parsedSince;
       options.since = parsedSince.since;

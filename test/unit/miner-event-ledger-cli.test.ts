@@ -109,11 +109,20 @@ describe("gittensory-miner event ledger CLI (#2290)", () => {
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown ledger subcommand");
   });
 
-  it("surfaces invalid since cursors from the ledger store", () => {
+  it("surfaces invalid since cursors from argv parsing and the ledger store", () => {
     const eventLedger = tempLedger();
+    eventLedger.appendEvent({ type: "plan_built", payload: {} });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(
       runLedgerList(["--since", "-1"], {
+        initEventLedger: () => eventLedger,
+      }),
+    ).toBe(2);
+    expect(error).toHaveBeenCalledWith("since must be a non-negative integer seq cursor.");
+
+    error.mockClear();
+    expect(
+      runLedgerList(["--since", "1.5"], {
         initEventLedger: () => eventLedger,
       }),
     ).toBe(2);

@@ -32,7 +32,7 @@ declare global {
        *  already held by someone else. Unlike a get-then-set pair, there is no window where two concurrent
        *  callers can both observe an absent key and both claim it — the store (e.g. Redis SET NX) performs the
        *  check-and-set as one operation. Optional so a cache adapter that hasn't implemented it yet still
-       *  type-checks; callers fall back to the non-atomic get/set pair when absent (#2129). */
+       *  type-checks; callers fail open (proceed without exclusivity) when absent — no get-then-set fallback (#2129). */
       claim?(key: string, value: string, ttlSeconds: number): Promise<boolean>;
       /** Delete `key` only when its current value equals `value` (compare-and-delete). Returns true when the
        *  key was removed. Optional; lock release skips when absent and relies on TTL instead of blind `del()`. */

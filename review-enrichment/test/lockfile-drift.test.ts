@@ -83,3 +83,52 @@ test("extractLockfileChanges does not let unparsed lockfiles consume the scan bu
     },
   ]);
 });
+
+test("extractLockfileChanges excludes PyPI direct deps under PEP 503 name normalization", () => {
+  // Manifests often use `Django` / `PyYAML` while poetry.lock stores `django` / `pyyaml`.
+  // Without PEP 503 normalization those were treated as lockfile-only transitive drift.
+  const changes = extractLockfileChanges([
+    {
+      path: "requirements.txt",
+      patch: ["@@ -1,0 +1,2 @@", "+Django==4.2.0", "+PyYAML==6.0"].join("\n"),
+    },
+    {
+      path: "poetry.lock",
+      patch: [
+        "@@ -1,0 +1,6 @@",
+        "+[[package]]",
+        '+name = "django"',
+        '+version = "4.2.0"',
+        "+[[package]]",
+        '+name = "pyyaml"',
+        '+version = "6.0"',
+      ].join("\n"),
+    },
+  ]);
+  assert.deepEqual(changes, []);
+});
+
+test("extractLockfileChanges still reports a PyPI lockfile-only package", () => {
+  // A package present only in poetry.lock (no manifest entry) remains lockfile drift.
+  const changes = extractLockfileChanges([
+    {
+      path: "poetry.lock",
+      patch: [
+        "@@ -1,0 +1,3 @@",
+        "+[[package]]",
+        '+name = "requests"',
+        '+version = "2.31.0"',
+      ].join("\n"),
+    },
+  ]);
+  assert.deepEqual(changes, [
+    {
+      file: "poetry.lock",
+      line: 3,
+      ecosystem: "PyPI",
+      package: "requests",
+      from: null,
+      to: "2.31.0",
+    },
+  ]);
+});

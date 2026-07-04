@@ -123,10 +123,7 @@ function isSafeQuery(pkg: string, version: string): boolean {
   );
 }
 
-function* patchLines(
-  patch: string,
-  maxLines: number,
-): Generator<PatchLine> {
+function* patchLines(patch: string, maxLines: number): Generator<PatchLine> {
   let newLine = 0;
   let seen = 0;
   for (const raw of patch.split("\n")) {
@@ -164,7 +161,11 @@ function npmPackageFromNodeModulesPath(path: string): string | null {
   return rest.split("/")[0] || null;
 }
 
-function parsePackageLock(path: string, patch: string, maxLines: number): LockfileChange[] {
+function parsePackageLock(
+  path: string,
+  patch: string,
+  maxLines: number,
+): LockfileChange[] {
   const byKey = new Map<string, LockfileChange>();
   let currentPackage: string | null = null;
   let sawPackagesEntry = false;
@@ -190,16 +191,14 @@ function parsePackageLock(path: string, patch: string, maxLines: number): Lockfi
     if (!versionMatch) continue;
     const version = versionMatch[1]!;
     const key = `npm::${currentPackage}`;
-    const entry =
-      byKey.get(key) ??
-      {
-        file: path,
-        line: line.newLine,
-        ecosystem: "npm" as const,
-        package: currentPackage,
-        from: null,
-        to: "",
-      };
+    const entry = byKey.get(key) ?? {
+      file: path,
+      line: line.newLine,
+      ecosystem: "npm" as const,
+      package: currentPackage,
+      from: null,
+      to: "",
+    };
     if (line.sign === "+") {
       entry.to = version;
       entry.line = line.newLine;
@@ -208,7 +207,9 @@ function parsePackageLock(path: string, patch: string, maxLines: number): Lockfi
     }
     byKey.set(key, entry);
   }
-  return [...byKey.values()].filter((change) => change.to && change.to !== change.from);
+  return [...byKey.values()].filter(
+    (change) => change.to && change.to !== change.from,
+  );
 }
 
 function yarnPackageFromDescriptor(descriptor: string): string | null {
@@ -229,7 +230,7 @@ function splitYarnDescriptors(header: string): string[] {
   let current = "";
   let quote: string | null = null;
   for (const char of header) {
-    if ((char === "\"" || char === "'") && quote === null) {
+    if ((char === '"' || char === "'") && quote === null) {
       quote = char;
       current += char;
       continue;
@@ -252,11 +253,19 @@ function splitYarnDescriptors(header: string): string[] {
   return descriptors;
 }
 
-function parseYarnLock(path: string, patch: string, maxLines: number): LockfileChange[] {
+function parseYarnLock(
+  path: string,
+  patch: string,
+  maxLines: number,
+): LockfileChange[] {
   const byKey = new Map<string, LockfileChange>();
   let currentPackages: string[] = [];
   for (const line of patchLines(patch, maxLines)) {
-    if (line.content && !line.content.startsWith("#") && !/^\s/.test(line.content)) {
+    if (
+      line.content &&
+      !line.content.startsWith("#") &&
+      !/^\s/.test(line.content)
+    ) {
       if (!line.content.trim().endsWith(":")) {
         currentPackages = [];
         continue;
@@ -279,16 +288,14 @@ function parseYarnLock(path: string, patch: string, maxLines: number): LockfileC
     const version = versionMatch[1]!;
     for (const currentPackage of currentPackages) {
       const key = `npm::${currentPackage}`;
-      const entry =
-        byKey.get(key) ??
-        {
-          file: path,
-          line: line.newLine,
-          ecosystem: "npm" as const,
-          package: currentPackage,
-          from: null,
-          to: "",
-        };
+      const entry = byKey.get(key) ?? {
+        file: path,
+        line: line.newLine,
+        ecosystem: "npm" as const,
+        package: currentPackage,
+        from: null,
+        to: "",
+      };
       if (line.sign === "+") {
         entry.to = version;
         entry.line = line.newLine;
@@ -298,10 +305,16 @@ function parseYarnLock(path: string, patch: string, maxLines: number): LockfileC
       byKey.set(key, entry);
     }
   }
-  return [...byKey.values()].filter((change) => change.to && change.to !== change.from);
+  return [...byKey.values()].filter(
+    (change) => change.to && change.to !== change.from,
+  );
 }
 
-function parsePoetryLock(path: string, patch: string, maxLines: number): LockfileChange[] {
+function parsePoetryLock(
+  path: string,
+  patch: string,
+  maxLines: number,
+): LockfileChange[] {
   const byKey = new Map<string, LockfileChange>();
   let currentPackage: string | null = null;
   for (const line of patchLines(patch, maxLines)) {
@@ -320,16 +333,14 @@ function parsePoetryLock(path: string, patch: string, maxLines: number): Lockfil
     if (!versionMatch) continue;
     const version = versionMatch[1]!;
     const key = `PyPI::${currentPackage}`;
-    const entry =
-      byKey.get(key) ??
-      {
-        file: path,
-        line: line.newLine,
-        ecosystem: "PyPI" as const,
-        package: currentPackage,
-        from: null,
-        to: "",
-      };
+    const entry = byKey.get(key) ?? {
+      file: path,
+      line: line.newLine,
+      ecosystem: "PyPI" as const,
+      package: currentPackage,
+      from: null,
+      to: "",
+    };
     if (line.sign === "+") {
       entry.to = version;
       entry.line = line.newLine;
@@ -338,15 +349,32 @@ function parsePoetryLock(path: string, patch: string, maxLines: number): Lockfil
     }
     byKey.set(key, entry);
   }
-  return [...byKey.values()].filter((change) => change.to && change.to !== change.from);
+  return [...byKey.values()].filter(
+    (change) => change.to && change.to !== change.from,
+  );
 }
 
-function parseLockfile(path: string, patch: string, maxLines: number): LockfileChange[] {
+function parseLockfile(
+  path: string,
+  patch: string,
+  maxLines: number,
+): LockfileChange[] {
   const name = lockfileBasename(path).toLowerCase();
-  if (name === "package-lock.json") return parsePackageLock(path, patch, maxLines);
+  if (name === "package-lock.json")
+    return parsePackageLock(path, patch, maxLines);
   if (name === "yarn.lock") return parseYarnLock(path, patch, maxLines);
   if (name === "poetry.lock") return parsePoetryLock(path, patch, maxLines);
   return [];
+}
+
+/** Stable key for direct-dep exclusion. PyPI names are PEP 503–normalized (case-insensitive;
+ *  `-` / `_` / `.` equivalent) so `Django` in requirements.txt matches `django` in poetry.lock.
+ *  npm keys stay exact — registry names are case-sensitive / enforced-lowercase. */
+function packageKey(ecosystem: string, pkg: string): string {
+  if (ecosystem === "PyPI") {
+    return `PyPI::${pkg.toLowerCase().replace(/[-_.]+/g, "-")}`;
+  }
+  return `${ecosystem}::${pkg}`;
 }
 
 /** Extract lockfile-only resolved package changes. Top-level manifest changes are excluded as direct deps. */
@@ -355,7 +383,9 @@ export function extractLockfileChanges(
   limits: ScanLimits = {},
 ): LockfileChange[] {
   const direct = new Set(
-    extractDependencyChanges(files).map((dep) => `${dep.ecosystem}::${dep.package}`),
+    extractDependencyChanges(files).map((dep) =>
+      packageKey(dep.ecosystem, dep.package),
+    ),
   );
   const maxFiles = limits.maxLockfileFiles ?? MAX_LOCKFILE_FILES;
   const maxLines = limits.maxPatchLinesPerFile ?? MAX_PATCH_LINES_PER_FILE;
@@ -366,7 +396,7 @@ export function extractLockfileChanges(
     scannedFiles += 1;
     if (scannedFiles > maxFiles) break;
     for (const change of parseLockfile(file.path, file.patch, maxLines)) {
-      if (direct.has(`${change.ecosystem}::${change.package}`)) continue;
+      if (direct.has(packageKey(change.ecosystem, change.package))) continue;
       if (!isSafeQuery(change.package, change.to)) continue;
       changes.push(change);
     }
@@ -383,7 +413,9 @@ export async function queryOsvBatch(
 ): Promise<Map<string, Cve[]>> {
   const results = new Map<string, Cve[]>();
   if (!changes.length || signal?.aborted) return results;
-  const maxBatchCalls = Math.ceil(changes.length / LOCKFILE_OSV_BATCH_CHUNK_SIZE);
+  const maxBatchCalls = Math.ceil(
+    changes.length / LOCKFILE_OSV_BATCH_CHUNK_SIZE,
+  );
   for (let i = 0; i < changes.length; i += LOCKFILE_OSV_BATCH_CHUNK_SIZE) {
     if (signal?.aborted) break;
     const chunk = changes.slice(i, i + LOCKFILE_OSV_BATCH_CHUNK_SIZE);
@@ -410,8 +442,8 @@ export async function queryOsvBatch(
           results?: Array<{ vulns?: OsvVuln[] }>;
         }>("https://api.osv.dev/v1/querybatch", fetchOptions)
       : await boundedFetchJson<{
-        results?: Array<{ vulns?: OsvVuln[] }>;
-      }>("https://api.osv.dev/v1/querybatch", fetchOptions);
+          results?: Array<{ vulns?: OsvVuln[] }>;
+        }>("https://api.osv.dev/v1/querybatch", fetchOptions);
     if (!response.ok) continue;
     chunk.forEach((change, index) => {
       results.set(
@@ -433,10 +465,17 @@ export async function scanLockfileDrift(
     0,
     options.limits?.maxOsvQueries ?? MAX_OSV_QUERIES,
   );
-  const cvesByKey = await queryOsvBatch(changes, fetchImpl, options.signal, options);
+  const cvesByKey = await queryOsvBatch(
+    changes,
+    fetchImpl,
+    options.signal,
+    options,
+  );
   const findings: LockfileDriftFinding[] = [];
   for (const change of changes) {
-    const cves = cvesByKey.get(`${change.ecosystem}::${change.package}@${change.to}`) ?? [];
+    const cves =
+      cvesByKey.get(`${change.ecosystem}::${change.package}@${change.to}`) ??
+      [];
     if (!cves.length) continue;
     findings.push({
       ...change,

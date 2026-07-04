@@ -371,12 +371,21 @@ async function seedGateEnabledRepo(env: Env): Promise<void> {
 // The miner-list/token/check-run endpoints the gate finalize touches; `confirmedAuthor` toggles whether the
 // gittensor miner list confirms the PR author. Confirmed status no longer changes the gate verdict (it feeds
 // scoring); the configured blocker fails the gate for either author (#gate-nonconfirmed).
+//
+// Also stubs the live `GET /pulls/{n}` read that `maybePublishPrPublicSurface`'s pre-publish freshness guard
+// makes on every finalize pass (reviewTargetFreshness → fetchPullRequestFreshness → fetchLivePullRequestResult).
+// Without this, that call falls through to the catch-all 404 below, which the freshness guard now classifies
+// as "unavailable" and retries via RetryablePullRequestFreshnessUnavailableError instead of the old silent
+// no-op -- correct production behavior (a real, freshly-opened PR resolves this read every time), but it means
+// every finalize-path test needs the live PR to actually resolve, matching prWebhook's own head sha (#gate123)
+// so freshness classifies as "current" rather than "unavailable"/"head_changed".
 function stubFinalizeFetch(confirmedAuthor: string | null): void {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (url === "https://api.gittensor.io/miners") return Response.json(confirmedAuthor ? [{ uid: 7, githubUsername: confirmedAuthor, githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 }] : []);
     if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
     if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+    if (url.includes("/pulls/42")) return Response.json({ number: 42, title: "Gate without issue", state: "open", head: { sha: "gate123" } });
     return new Response("not found", { status: 404 });
   });
 }

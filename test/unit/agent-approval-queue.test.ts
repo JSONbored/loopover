@@ -64,7 +64,7 @@ import {
   upsertPullRequestFromGitHub,
   upsertRepositorySettings,
 } from "../../src/db/repositories";
-import type { PlannedAgentAction } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_NEEDS_REVIEW, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { createTestEnv } from "../helpers/d1";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
@@ -579,7 +579,7 @@ describe("agent approval queue (#779)", () => {
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("accepted");
     expect(mergePullRequest).not.toHaveBeenCalled();
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, AGENT_LABEL_NEEDS_REVIEW, { createMissingLabel: true });
   });
 
   it("REGRESSION: a precision-breaker-downgraded merge still executes the hold/label plan even when the linked issue would now violate the hard rule", async () => {
@@ -600,7 +600,7 @@ describe("agent approval queue (#779)", () => {
     expect(result.status).toBe("accepted");
     expect(result.executionOutcome).toBe("completed");
     expect(mergePullRequest).not.toHaveBeenCalled();
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, "gittensory:needs-human-review", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 7, AGENT_LABEL_NEEDS_REVIEW, { createMissingLabel: true });
     // The recheck must not even run once the plan no longer contains a merge -- there's nothing left to validate.
     expect(resolveLinkedIssueHardRule).not.toHaveBeenCalled();
   });
@@ -712,7 +712,7 @@ describe("agent approval queue (#779)", () => {
     expect(result.status).toBe("accepted");
     const { closePullRequest } = await import("../../src/github/pr-actions");
     expect(closePullRequest).not.toHaveBeenCalled();
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 8, "gittensory:needs-human-review", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 5, "owner/repo", 8, AGENT_LABEL_NEEDS_REVIEW, { createMissingLabel: true });
   });
 
   it("accept supersedes a staged merge when the linked issue trips a hard rule after staging (#2132)", async () => {

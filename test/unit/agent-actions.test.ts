@@ -51,6 +51,32 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, pr: { labels: [AGENT_LABEL_READY] } })))).not.toContain("label");
   });
 
+  it("uses repo-configured disposition labels instead of engine fallback names", () => {
+    expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, readyToMergeLabel: "ship-it" }))[0]).toMatchObject({ actionClass: "label", label: "ship-it" });
+    expect(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { review_state_label: "auto" }, blockerTitles: ["x"], changesRequestedLabel: "needs-work" }))[0]).toMatchObject({ actionClass: "label", label: "needs-work" });
+
+    const guarded = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, manualReviewLabel: "human-review", changedPaths: ["src/settings/agent-actions.ts"], hardGuardrailGlobs: ["src/settings/**"], pr: { labels: [], mergeableState: "clean" } }));
+    expect(guarded.some((a) => a.actionClass === "label" && a.label === "human-review")).toBe(true);
+    expect(classes(guarded)).not.toContain("merge");
+
+    const collision = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, migrationCollisionLabel: "migration-review", migrationCollisionHold: { reason: "live migrations/** collision", comment: "Please rebase." }, pr: { labels: [], mergeableState: "clean" } }));
+    expect(collision.some((a) => a.actionClass === "label" && a.label === "migration-review")).toBe(true);
+    expect(classes(collision)).not.toContain("merge");
+  });
+
+  it("explicit null disables disposition labels without disabling the underlying decision", () => {
+    expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, readyToMergeLabel: null }))).toEqual([]);
+    expect(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { review_state_label: "auto" }, blockerTitles: ["x"], changesRequestedLabel: null }))).toEqual([]);
+
+    const guarded = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, manualReviewLabel: null, changedPaths: ["src/settings/agent-actions.ts"], hardGuardrailGlobs: ["src/settings/**"], pr: { labels: [], mergeableState: "clean" } }));
+    expect(classes(guarded)).not.toContain("merge");
+    expect(guarded.some((a) => a.actionClass === "label")).toBe(false);
+
+    const collision = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, migrationCollisionLabel: null, migrationCollisionHold: { reason: "live migrations/** collision", comment: "Please rebase." }, pr: { labels: [], mergeableState: "clean" } }));
+    expect(classes(collision)).not.toContain("merge");
+    expect(collision.some((a) => a.actionClass === "label")).toBe(false);
+  });
+
   it("#label-scoping: the verdict-bucket label carries autonomyClass: review_state_label, is OFF under the broad label class, and defaults OFF entirely", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" } }));
     expect(plan[0]).toMatchObject({ actionClass: "label", autonomyClass: "review_state_label", label: AGENT_LABEL_READY });
@@ -350,7 +376,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(plan).not.toContain("merge");
     });
 
-    it("labels the PR gittensory:migration-collision (NOT needs-human-review or ready-to-merge) with the live-collision reason", () => {
+    it("labels the PR migration-collision (NOT manual-review or ready-to-merge) with the live-collision reason", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto", merge: "auto" }, ...collided, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const label = plan.find((a) => a.actionClass === "label");
       expect(label?.label).toBe(AGENT_LABEL_MIGRATION_COLLISION);
@@ -713,6 +739,23 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(flag?.comment).toContain("~30s");
     });
 
+    it("uses a repo-configured pending-closure label for both verification passes", () => {
+      const pass1 = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", review_state_label: "auto" }, pendingClosureLabel: "pending-review-close", ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
+      const flag = pass1.find((a) => a.actionClass === "label" && a.label === "pending-review-close");
+      expect(flag).toMatchObject({ labelOp: "add", closeKind: "linked-issue-hard-rule" });
+      expect(classes(pass1)).not.toContain("close");
+
+      const pass2 = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", review_state_label: "auto" }, pendingClosureLabel: "pending-review-close", ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: ["pending-review-close"] } }));
+      expect(classes(pass2)).toContain("close");
+      expect(pass2.some((a) => a.actionClass === "label" && a.label === "pending-review-close" && a.labelOp !== "remove")).toBe(false);
+    });
+
+    it("explicit pendingClosureLabel null disables the flag state and closes immediately", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", review_state_label: "auto" }, pendingClosureLabel: null, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
+      expect(classes(plan)).toContain("close");
+      expect(plan.some((a) => a.actionClass === "label" && a.closeKind === "linked-issue-hard-rule")).toBe(false);
+    });
+
     it("label disabled: falls back to immediate close instead of holding forever without a state label", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", review_state_label: "observe" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
       expect(classes(plan)).toContain("close");
@@ -793,6 +836,21 @@ describe("downgradeMergeToHold — accuracy circuit-breaker (#self-improve / GAP
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_READY)).toBe(false); // the ready-to-merge promise is dropped
   });
 
+  it("uses repo-configured labels when the merge breaker downgrades a ready PR", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, readyToMergeLabel: "ship-it", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean" } }));
+    expect(plan.some((a) => a.actionClass === "label" && a.label === "ship-it")).toBe(true);
+    const held = downgradeMergeToHold(plan, true, { manualReviewLabel: "human-review", readyToMergeLabel: "ship-it" });
+    expect(classes(held)).not.toContain("merge");
+    expect(held.some((a) => a.actionClass === "label" && a.label === "human-review")).toBe(true);
+    expect(held.some((a) => a.actionClass === "label" && a.label === "ship-it")).toBe(false);
+  });
+
+  it("honors null manualReviewLabel when the merge breaker downgrades a ready PR", () => {
+    const held = downgradeMergeToHold(wouldMerge(), true, { manualReviewLabel: null });
+    expect(classes(held)).not.toContain("merge");
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(false);
+  });
+
   it("holdOnly=false leaves a real would-merge plan UNCHANGED (byte-identical common path)", () => {
     const plan = wouldMerge();
     expect(downgradeMergeToHold(plan, false)).toBe(plan);
@@ -831,6 +889,18 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add")).toBe(true); // ...to a human hold
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(true); // changes-requested KEPT
     expect(held.some((a) => a.actionClass === "merge" || a.actionClass === "approve")).toBe(false); // NEVER adds merge/approve
+  });
+
+  it("uses repo-configured manualReviewLabel when the close breaker downgrades a heuristic close", () => {
+    const held = downgradeCloseToHold(heuristicClosePlan(), true, { manualReviewLabel: "human-review" });
+    expect(held.some((a) => a.actionClass === "close")).toBe(false);
+    expect(held.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp === "add")).toBe(true);
+  });
+
+  it("honors null manualReviewLabel when the close breaker downgrades a heuristic close", () => {
+    const held = downgradeCloseToHold(heuristicClosePlan(), true, { manualReviewLabel: null });
+    expect(held.some((a) => a.actionClass === "close")).toBe(false);
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(false);
   });
 
   it("a deterministic linked-issue-hard-rule close is EXEMPT (NOT dropped, no needs-human-review added)", () => {

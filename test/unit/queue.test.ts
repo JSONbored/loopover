@@ -7438,7 +7438,7 @@ describe("queue processors", () => {
 
       expect(seen.merged).toBe(false);
       expect(seen.closed).toBe(false); // held, never closed — this is a hold, not a close
-      expect(seen.labels).toContain("gittensory:migration-collision");
+      expect(seen.labels).toContain("migration-collision");
       expect(seen.comments.some((c) => c.includes("rebase") && c.includes("0099"))).toBe(true);
       expect(seen.treeCalls).toBe(1);
     });
@@ -7452,7 +7452,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-no-collision", repoFullName: "owner/repo", prNumber: 61, installationId: 123 });
 
       expect(seen.merged).toBe(true);
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
       expect(seen.treeCalls).toBe(1);
     });
 
@@ -7490,7 +7490,7 @@ describe("queue processors", () => {
 
       expect(seen.treeCalls).toBe(1);
       expect(seen.merged).toBe(true);
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("fails OPEN (never fetches the live tree) when the PR has no resolvable base ref", async () => {
@@ -7510,7 +7510,7 @@ describe("queue processors", () => {
 
       expect(seen.treeCalls).toBe(0); // no live target to compare against — never even attempted the fetch
       expect(seen.merged).toBe(true);
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("REGRESSION: is deliberately UNCACHED — a live tree that changes between two consecutive maintenance passes is picked up fresh, never served stale", async () => {
@@ -7565,7 +7565,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-fresh-pass-2", repoFullName: "owner/repo", prNumber: 66, installationId: 123 });
 
       expect(seen.treeCalls).toBe(2); // every pass fetches fresh — no cache could ever mask the change
-      expect(seen.labels).toContain("gittensory:migration-collision");
+      expect(seen.labels).toContain("migration-collision");
       expect(seen.merged).toBe(false); // pass 2 correctly catches the now-live collision, never stale-served
     });
 
@@ -7584,7 +7584,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-unrelated-collision", repoFullName: "owner/repo", prNumber: 67, installationId: 123 });
 
       expect(seen.merged).toBe(true);
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("holds and reports every colliding number when a PR touches two migration files that each independently collide", async () => {
@@ -7607,7 +7607,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-multi-collision", repoFullName: "owner/repo", prNumber: 68, installationId: 123 });
 
       expect(seen.merged).toBe(false);
-      expect(seen.labels).toContain("gittensory:migration-collision");
+      expect(seen.labels).toContain("migration-collision");
       expect(seen.comments.some((c) => c.includes("0098") && c.includes("0099"))).toBe(true);
     });
 
@@ -7625,7 +7625,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-grandfathered", repoFullName: "owner/repo", prNumber: 69, installationId: 123 });
 
       expect(seen.merged).toBe(true);
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("REGRESSION: renaming this PR's own not-yet-merged migration file (e.g. a typo fix, same number) does NOT self-collide", async () => {
@@ -7671,7 +7671,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-rename-self", repoFullName: "owner/repo", prNumber: 70, installationId: 123 });
 
       expect(seen.merged).toBe(true); // no false self-collision from counting the old+new rename names as two files
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("REGRESSION: renaming an EXISTING base migration (same number) does NOT self-collide with its own old name still live on main", async () => {
@@ -7720,7 +7720,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-rename-existing-base", repoFullName: "owner/repo", prNumber: 73, installationId: 123 });
 
       expect(seen.merged).toBe(true); // the pre-rename name still live on main must not count against this PR
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("REGRESSION: renumbering (renaming) this PR's migration to resolve a real collision does not leave a stale hold from the old filename", async () => {
@@ -7768,7 +7768,7 @@ describe("queue processors", () => {
       await processJob(env, { type: "agent-regate-pr", deliveryId: "migration-renumber-remediation", repoFullName: "owner/repo", prNumber: 71, installationId: 123 });
 
       expect(seen.merged).toBe(true); // the stale old-number previousFilename must not re-trigger a hold
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
 
     it("REGRESSION: deleting this PR's own colliding migration file does not still count it as one of the PR's own filenames", async () => {
@@ -7815,7 +7815,7 @@ describe("queue processors", () => {
       // prMigrationFilenames is empty — the whole recheck is path-gated off, so it never even fetches the tree.
       expect(seen.treeCalls).toBe(0);
       expect(seen.merged).toBe(true);
-      expect(seen.labels).not.toContain("gittensory:migration-collision");
+      expect(seen.labels).not.toContain("migration-collision");
     });
   });
 
@@ -19810,6 +19810,17 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     // leaves no merge/close action) that previously had zero aggregate signal. close autonomy is unset in this
     // repo's settings (only merge/approve are configured), so it resolves to the default "observe".
     expect(await renderMetrics()).toContain('gittensory_agent_disposition_total{action_class="hold",autonomy_level="observe",blocker_class="none"} 1');
+    const holdAudit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = 'agent.action.hold' order by created_at desc limit 1").first<{ detail: string; metadata_json: string }>();
+    expect(holdAudit?.detail).toBe("auto-action held by precision circuit breaker");
+    expect(JSON.parse(holdAudit?.metadata_json ?? "{}")).toMatchObject({
+      repoFullName: REPO,
+      pullNumber: 65,
+      gateConclusion: "success",
+      ciState: "passed",
+      disposition: { actionClass: "hold", blockerClass: "none" },
+      plannedActionClasses: ["merge"],
+      finalActionClasses: ["label"],
+    });
   });
 
   it("reviewCheckMode: disabled still auto-merges a green PR via the general heuristic path, with ZERO check-run API calls (#2852)", async () => {

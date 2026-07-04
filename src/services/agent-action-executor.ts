@@ -26,7 +26,6 @@ import { buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause,
 import type { PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
 import { errorMessage } from "../utils/json";
-import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 import {
   MODERATION_VIOLATION_EVENT_TYPE,
   moderationTierForViolationCount,
@@ -149,7 +148,7 @@ export type AgentActionOutcome = {
 // establish the label-backed state the verification pass reads, so re-enqueuing the delayed re-review off the plan
 // alone would create a verification loop. `outcomes[i]` is the outcome of `planned[i]` (1:1, same order).
 export function pendingClosureLabelApplied(plan: PlannedAgentAction[], outcomes: AgentActionOutcome[]): boolean {
-  return plan.some((action, index) => action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add" && outcomes[index]?.outcome === "completed");
+  return plan.some((action, index) => action.actionClass === "label" && action.closeKind === "linked-issue-hard-rule" && action.labelOp === "add" && outcomes[index]?.outcome === "completed");
 }
 
 // #label-close-split-brain: the outcome of the `close` action tagged with `closeKind`, among the actions ALREADY

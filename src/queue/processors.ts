@@ -218,6 +218,7 @@ import {
   isAuthorBlacklisted,
 } from "../settings/contributor-blacklist";
 import {
+  DEFAULT_AUTO_MAINTAIN_POLICY,
   autonomyRequiresApproval,
   isAgentConfigured,
   resolveAutonomy,
@@ -252,6 +253,7 @@ import {
   MAX_REVIEW_NAG_COOLDOWN_DAYS,
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
+  type AgentDispositionLabelSettings,
   type PlannedAgentAction,
 } from "../settings/agent-actions";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
@@ -413,8 +415,8 @@ import {
   deploymentStatusToPreview,
   type DeploymentStatusPayload,
 } from "../review/visual/preview-url";
-import { loadHardGuardrailGlobs } from "../review/guardrail-config";
-import { isGuardrailHit } from "../signals/change-guardrail";
+import { resolveHardGuardrailGlobs } from "../review/guardrail-config";
+import { guardrailPathMatches, isGuardrailHit } from "../signals/change-guardrail";
 import {
   closePullRequest,
   createIssueComment,
@@ -1839,9 +1841,10 @@ export function applyPrecisionBreakers(
   planned: PlannedAgentAction[],
   holdOnly: boolean,
   closeHoldOnly: boolean,
+  labelSettings: AgentDispositionLabelSettings = {},
 ): PlannedAgentAction[] {
-  const afterMerge = holdOnly ? downgradeMergeToHold(planned, true) : planned;
-  return closeHoldOnly ? downgradeCloseToHold(afterMerge, true) : afterMerge;
+  const afterMerge = holdOnly ? downgradeMergeToHold(planned, true, labelSettings) : planned;
+  return closeHoldOnly ? downgradeCloseToHold(afterMerge, true, labelSettings) : afterMerge;
 }
 
 /** PURE: which precision-breaker directions actually rewrote the plan — i.e. `planned` had a merge/close that
@@ -1877,6 +1880,62 @@ export function agentDispositionLabels(breakerOnPlan: PlannedAgentAction[], gate
       ? "close"
       : "hold";
   return { actionClass, blockerClass: gateBlockerCodes[0] ?? "none" };
+}
+
+const AGENT_HOLD_AUDIT_REASON_MAX_LENGTH = 240;
+
+function boundAgentHoldAuditReason(reason: string): string {
+  return reason.length > AGENT_HOLD_AUDIT_REASON_MAX_LENGTH
+    ? `${reason.slice(0, AGENT_HOLD_AUDIT_REASON_MAX_LENGTH)}...`
+    : reason;
+}
+
+export function agentHoldAuditDetail(args: {
+  planned: PlannedAgentAction[];
+  breakerOnPlan: PlannedAgentAction[];
+  gateConclusion: string;
+  gateBlockerCodes: string[];
+  ciState: string;
+  ciHasPending: boolean;
+  mergeableState: string | null | undefined;
+  approvalsSatisfied: boolean;
+  authorIsOwner: boolean;
+  authorIsAdmin: boolean;
+  authorIsAutomationBot: boolean;
+  closeOwnerAuthors: boolean;
+  mergeAutonomy: string;
+  closeAutonomy: string;
+}): string {
+  const plannedTerminalAction = args.planned.some((action) => action.actionClass === "merge" || action.actionClass === "close");
+  const finalTerminalAction = args.breakerOnPlan.some((action) => action.actionClass === "merge" || action.actionClass === "close");
+  if (plannedTerminalAction && !finalTerminalAction)
+    return "auto-action held by precision circuit breaker";
+  if (args.ciHasPending || args.ciState === "pending")
+    return "auto-action held because CI is still pending";
+  if (args.ciState === "failed")
+    return "auto-action held because CI is failing but no close action was planned";
+  if (args.gateConclusion === "success") {
+    if (args.mergeableState === "dirty")
+      return "merge withheld because the PR conflicts with the base branch";
+    if (args.mergeableState && args.mergeableState !== "clean")
+      return boundAgentHoldAuditReason(`merge withheld because mergeable_state is ${args.mergeableState}`);
+    if (!args.approvalsSatisfied)
+      return "merge withheld because required approvals are not satisfied";
+    if (args.mergeAutonomy !== "auto" && args.mergeAutonomy !== "auto_with_approval")
+      return boundAgentHoldAuditReason(`merge withheld because merge autonomy is ${args.mergeAutonomy}`);
+    return "merge withheld because no merge action was planned";
+  }
+  const protectedAuthor = args.authorIsAutomationBot || args.authorIsOwner || args.authorIsAdmin;
+  if (args.gateBlockerCodes.length > 0) {
+    if (protectedAuthor && args.closeOwnerAuthors !== true)
+      return boundAgentHoldAuditReason(`close withheld for protected author on gate blocker ${args.gateBlockerCodes[0]}`);
+    if (args.closeAutonomy !== "auto" && args.closeAutonomy !== "auto_with_approval")
+      return boundAgentHoldAuditReason(`close withheld because close autonomy is ${args.closeAutonomy}`);
+    return boundAgentHoldAuditReason(`held on gate blocker ${args.gateBlockerCodes[0]}`);
+  }
+  if (protectedAuthor && args.closeOwnerAuthors !== true)
+    return "auto-action held for protected author";
+  return "no auto-action planned";
 }
 
 /**
@@ -2049,9 +2108,9 @@ async function runAgentMaintenancePlanAndExecute(
   const token = ciToken ?? env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
   const baseRef = pr.baseRef ?? args.repo?.defaultBranch;
+  const hardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
   const [
     changedFiles,
-    hardGuardrailGlobs,
     requiredContexts,
     liveMergeState,
     liveReviewDecision,
@@ -2061,7 +2120,6 @@ async function runAgentMaintenancePlanAndExecute(
       repoFullName,
       pullNumber: pr.number,
     }),
-    loadHardGuardrailGlobs(env, repoFullName),
     // RC2: branch-protection REQUIRED status contexts, so only a required red check gates the PR (a red
     // codecov/* is surfaced but never blocks merge/approve or forces request_changes). null ⇒ fold all red.
     cachedRequiredStatusContexts(
@@ -2318,6 +2376,11 @@ async function runAgentMaintenancePlanAndExecute(
     }
   }
 
+  const autoMaintain =
+    settings.autoMaintain ?? DEFAULT_AUTO_MAINTAIN_POLICY;
+  const approvalsSatisfied =
+    autoMaintain.requireApprovals === 0 ||
+    (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -2329,6 +2392,11 @@ async function runAgentMaintenancePlanAndExecute(
     slopGateMinScore: settings.slopGateMinScore,
     changedPaths,
     hardGuardrailGlobs,
+    manualReviewLabel: settings.manualReviewLabel,
+    readyToMergeLabel: settings.readyToMergeLabel,
+    changesRequestedLabel: settings.changesRequestedLabel,
+    migrationCollisionLabel: settings.migrationCollisionLabel,
+    pendingClosureLabel: settings.pendingClosureLabel,
     authorIsOwner,
     authorIsAdmin,
     authorIsAutomationBot,
@@ -2386,6 +2454,13 @@ async function runAgentMaintenancePlanAndExecute(
     planned,
     await isHoldOnly(env, repoFullName),
     await isCloseHoldOnly(env, repoFullName),
+    {
+      manualReviewLabel: settings.manualReviewLabel,
+      readyToMergeLabel: settings.readyToMergeLabel,
+      changesRequestedLabel: settings.changesRequestedLabel,
+      migrationCollisionLabel: settings.migrationCollisionLabel,
+      pendingClosureLabel: settings.pendingClosureLabel,
+    },
   );
   // Observability (#terminal-outcome-audit): a bounded-cardinality counter (direction only — no repo/PR/reason
   // text) so an operator can see, at a glance, how much of the plan a breaker is currently rewriting, without
@@ -2408,7 +2483,49 @@ async function runAgentMaintenancePlanAndExecute(
     blocker_class: disposition.blockerClass,
     autonomy_level: resolveAutonomy(settings.autonomy, disposition.actionClass === "merge" ? "merge" : "close"),
   });
-  if (breakerOnPlan.length === 0) return;
+  if (disposition.actionClass === "hold") {
+    const gateBlockerCodes = gate.blockers.map((blocker) => blocker.code);
+    const holdDetail = agentHoldAuditDetail({
+      planned,
+      breakerOnPlan,
+      gateConclusion: gate.conclusion,
+      gateBlockerCodes,
+      ciState: ciAggregate.ciState,
+      ciHasPending: ciAggregate.hasPending,
+      mergeableState: liveMergeState ?? pr.mergeableState,
+      approvalsSatisfied,
+      authorIsOwner,
+      authorIsAdmin,
+      authorIsAutomationBot,
+      closeOwnerAuthors: settings.closeOwnerAuthors,
+      mergeAutonomy: resolveAutonomy(settings.autonomy, "merge"),
+      closeAutonomy: resolveAutonomy(settings.autonomy, "close"),
+    });
+    await recordAuditEvent(env, {
+      eventType: "agent.action.hold",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "completed",
+      detail: holdDetail,
+      metadata: {
+        deliveryId,
+        repoFullName,
+        pullNumber: pr.number,
+        gateConclusion: gate.conclusion,
+        gateBlockerCodes,
+        ciState: ciAggregate.ciState,
+        ciHasPending: ciAggregate.hasPending,
+        mergeableState: liveMergeState ?? pr.mergeableState ?? null,
+        reviewDecision: liveReviewDecision ?? pr.reviewDecision ?? null,
+        disposition,
+        plannedActionClasses: planned.map((action) => action.actionClass),
+        finalActionClasses: breakerOnPlan.map((action) => action.actionClass),
+      },
+    }).catch(() => undefined);
+  }
+  if (breakerOnPlan.length === 0) {
+    return;
+  }
 
   // #2552 (gate review finding, round 2): force a fresh rebase + CI recheck when the base has advanced within
   // the configured window, immediately before what would otherwise be an agent-driven merge — mergeable_state
@@ -5394,6 +5511,7 @@ export function gateCheckPolicy(
     changedFileCount: number;
     changedLineCount: number;
     guardrailHit: boolean;
+    guardrailMatches?: ReturnType<typeof guardrailPathMatches> | undefined;
   },
 ) {
   // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
@@ -5431,6 +5549,7 @@ export function gateCheckPolicy(
     changedFileCount: sizeContext?.changedFileCount ?? null,
     changedLineCount: sizeContext?.changedLineCount ?? null,
     guardrailHit: sizeContext?.guardrailHit ?? false,
+    guardrailMatches: sizeContext?.guardrailMatches,
     // CLA / license-compatibility gate (#2564): the MODE comes from config; the `cla_consent_missing` finding
     // itself (or its absence) is pushed into the advisory upstream by evaluateClaCheck, so this only decides
     // whether isConfiguredGateBlocker escalates it to a hard blocker.
@@ -7607,16 +7726,16 @@ async function maybePublishPrPublicSurface(
     // guardrail-hit from the resolved files (getReviewFiles is memoized — no extra fetch) so the gate can HOLD an
     // oversized or guardrail-touching PR (neutral → "manual" verdict), visible even in advisory/dry-run.
     const sizeGateFiles = await getReviewFiles();
+    const hardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
+    const guardrailChangedPaths = changedPathsForGuardrail(sizeGateFiles);
     const gateSizeContext = {
       changedFileCount: sizeGateFiles.length,
       changedLineCount: sizeGateFiles.reduce(
         (n, f) => n + f.additions + f.deletions,
         0,
       ),
-      guardrailHit: isGuardrailHit(
-        changedPathsForGuardrail(sizeGateFiles),
-        await loadHardGuardrailGlobs(env, repoFullName),
-      ),
+      guardrailHit: isGuardrailHit(guardrailChangedPaths, hardGuardrailGlobs),
+      guardrailMatches: guardrailPathMatches(guardrailChangedPaths, hardGuardrailGlobs),
     };
     const gatePolicy = gateCheckPolicy(
       settings,
@@ -8124,9 +8243,10 @@ async function maybePublishPrPublicSurface(
       // for owner review by the disposition (planAgentMaintenanceActions), never auto-merged — so the comment
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
       // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
+      const commentHardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
       const heldForReview = isGuardrailHit(
         changedPathsForGuardrail(unifiedFiles),
-        await loadHardGuardrailGlobs(env, repoFullName),
+        commentHardGuardrailGlobs,
       );
       // Held-vs-closed parity (#8/#9): the disposition NEVER auto-closes an owner / automation-bot PR, so a gate
       // "close" verdict on one must headline "held", not "Closed". Compute the same author classification the

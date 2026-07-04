@@ -817,6 +817,21 @@ export type RepositorySettings = {
    *  on top of the standing owner/admin/automation-bot exemption. Always populated by the DB layer (default
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
+  /** Hard manual-review guardrail globs. Config-as-code only: set in private/global or per-repo
+   *  `.gittensory.yml` under `settings.hardGuardrailGlobs`. Absent keeps the engine's built-in safe defaults.
+   *  Arrays are replacement overlays, so a repo can clear a global or built-in default with `[]`. */
+  hardGuardrailGlobs?: string[] | null | undefined;
+  /** Label applied when an otherwise-ready PR is held for manual review by a guardrail. Config-as-code only;
+   *  `null` disables the label while keeping the hold. Distinct from `review_state_label`, so operators can
+   *  apply one manual-review label without enabling ready/changes-requested disposition labels. */
+  manualReviewLabel?: string | null | undefined;
+  /** Optional review-state label names. Config-as-code only; each `null` disables that specific label. These are
+   *  deliberately generic defaults rather than `gittensory:*` names so self-hosters can opt into their own
+   *  taxonomy without inheriting project-specific labels. */
+  readyToMergeLabel?: string | null | undefined;
+  changesRequestedLabel?: string | null | undefined;
+  migrationCollisionLabel?: string | null | undefined;
+  pendingClosureLabel?: string | null | undefined;
   /** Force-rebase-before-merge window in minutes (#2552, anti-race). When a base branch has advanced within
    *  this many minutes of the actual merge-decision moment, an agent-driven merge forces an `update_branch` +
    *  fresh CI recheck cycle first, rather than trusting a `mergeableState: clean` read that may already be

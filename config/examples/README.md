@@ -123,11 +123,16 @@ Two `autonomy` classes govern every label the bot can apply, and they are **inde
   Set `settings.contributorCapLabel`/`blacklistLabel`/`reviewNagLabel` to explicit `null` (not just
   omitted) to close/hold **without** applying any label at all.
 - **`review_state_label`** authorizes the bot's own disposition-communication labels only —
-  `gittensory:ready-to-merge` / `changes-requested` / `needs-human-review` /
-  `migration-collision`. These are advisory commentary about the bot's own verdict, not
+  `ready-to-merge` / `changes-requested` / `manual-review` /
+  `migration-collision` by default. These are advisory commentary about the bot's own verdict, not
   enforcement, and default OFF like every autonomy class. **For a one-shot review model, leave this
   at the default** so a PR merges, closes, or holds through the required gate check alone — set it
   to `auto` only if you specifically want that commentary as GitHub labels too.
+
+All disposition labels are configurable under `settings.*Label`, and explicit `null` disables the
+label without disabling the underlying merge/close/hold decision. Hard path guardrails use built-in
+safety defaults when `settings.hardGuardrailGlobs` is omitted. A concrete list replaces those
+defaults, and an explicit empty list means no path guardrails.
 
 ```yaml
 # .gittensory.yml (global default) — recommended one-shot baseline

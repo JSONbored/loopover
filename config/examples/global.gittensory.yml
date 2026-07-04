@@ -32,7 +32,7 @@ settings:
   # terminal merge/close/hold disposition AND every anti-abuse enforcement label (blacklist/
   # contributor-cap/review-nag) below — no separate `label` grant needed for those.
   # `review_state_label` is left at the default `observe` so the bot's own advisory disposition
-  # labels (gittensory:ready-to-merge/changes-requested/needs-human-review) never appear — a
+  # labels (ready-to-merge/changes-requested/manual-review) never appear — a
   # one-shot review merges, closes, or holds through the required gate check alone, with no running
   # commentary as GitHub labels. Set `review_state_label: auto` only if you specifically want that
   # commentary too.
@@ -47,6 +47,18 @@ settings:
   # owner/admin/automation-bot exemption). Replace with your own maintainer/admin logins.
   autoCloseExemptLogins:
     - your-admin-login
+
+  # Hard manual-review path guardrails use built-in safe defaults when omitted. A concrete list
+  # replaces those defaults, and this empty list is an explicit no-path-guardrail opt-out.
+  hardGuardrailGlobs: []
+
+  # Disposition label names are config-as-code, not engine identity. Set any value to your repo's
+  # preferred label name, or explicit null to disable that label while preserving the action/hold.
+  manualReviewLabel: manual-review
+  readyToMergeLabel: null
+  changesRequestedLabel: null
+  migrationCollisionLabel: migration-collision
+  pendingClosureLabel: pending-closure
 
   # Maintainer-mention nag moderation (#label-scoping): throttle a contributor who repeatedly tags a
   # configured maintainer login for review/status, reusing the review-nag cooldown below. Replace with

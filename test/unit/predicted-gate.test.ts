@@ -384,7 +384,7 @@ describe("buildPredictedGateVerdict", () => {
     expect([...result.blockers, ...result.warnings].some((f) => f.code === "manifest_off_focus")).toBe(false);
   });
 
-  // Regression tests for #2458: the predictor previously never threaded size/guardrail signals into
+  // Regression tests for #2458: the predictor previously never threaded size/configured guardrail signals into
   // evaluateGateCheck, so it always predicted "success" even when the live gate would hold the same PR for
   // manual review (neutral → "manual").
   it("REGRESSION (#2458): predicts a size HOLD (neutral) when changedPaths exceeds the file-count threshold and gate.size.mode is on", () => {
@@ -408,11 +408,31 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.warnings.some((w) => w.code === "oversized_pr")).toBe(false);
   });
 
-  it("REGRESSION (#2458): predicts a guardrail HOLD (neutral) when changedPaths hits a hard-guardrail path — always-on, no gate config needed", () => {
-    const result = verdict({ gate: { duplicates: "block" }, changedPaths: [".github/workflows/ci.yml"] });
+  it("REGRESSION (#2458): predicts a guardrail HOLD (neutral) when changedPaths hits a configured hard-guardrail path", () => {
+    const result = verdict({
+      gate: { duplicates: "block" },
+      manifestExtra: { settings: { hardGuardrailGlobs: [".github/workflows/**"] } },
+      changedPaths: [".github/workflows/ci.yml"],
+    });
     expect(result.conclusion).toBe("neutral");
     expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
     expect(result.blockers).toHaveLength(0);
+  });
+
+  it("REGRESSION: keeps built-in guardrails when hardGuardrailGlobs is omitted", () => {
+    const result = verdict({ gate: { duplicates: "block" }, changedPaths: [".github/workflows/ci.yml"] });
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
+  });
+
+  it("does NOT predict a guardrail hold when hardGuardrailGlobs is explicitly empty", () => {
+    const result = verdict({
+      gate: { duplicates: "block" },
+      manifestExtra: { settings: { hardGuardrailGlobs: [] } },
+      changedPaths: [".github/workflows/ci.yml"],
+    });
+    expect(result.conclusion).toBe("success");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(false);
   });
 
   it("does NOT predict a guardrail hold for an ordinary changed path", () => {

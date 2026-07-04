@@ -7,18 +7,11 @@ import {
   type IssueQualityReport,
 } from "../signals/engine";
 import { buildFocusManifestGuidance, type FocusManifest } from "../signals/focus-manifest";
-import { isGuardrailHit } from "../signals/change-guardrail";
-import { CONFIG_AS_CODE_GUARDRAIL_GLOBS, DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ENGINE_DECISION_GUARDRAIL_GLOBS } from "../review/guardrail-config";
+import { guardrailPathMatches, isGuardrailHit } from "../signals/change-guardrail";
+import { resolveHardGuardrailGlobs } from "../review/guardrail-config";
 import { sanitizePublicComment } from "../github/commands";
 import { GITTENSOR_HOME_URL } from "../github/footer";
 import type { BountyRecord, GatePolicyPack, IssueRecord, PullRequestRecord, RepositoryRecord } from "../types";
-
-// The live gate's hard-guardrail globs (src/review/guardrail-config.ts) are 100% hardcoded engine constants —
-// loadHardGuardrailGlobs there is only `async` for processor call-graph compatibility, its body just
-// concatenates these three exported arrays with no live fetch. Predicted-gate is metadata-only/synchronous by
-// design (its own docstring: sourced ONLY from the PUBLIC .gittensory.yml + safe defaults), so import the
-// constants directly rather than making this whole function async for a call that was never actually live.
-const PREDICTED_GATE_HARD_GUARDRAIL_GLOBS = [...DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ...CONFIG_AS_CODE_GUARDRAIL_GLOBS, ...ENGINE_DECISION_GUARDRAIL_GLOBS];
 
 // Opt-in funnel (#694): a non-Gittensor adopter running the `oss-anti-slop` pack learns that Gittensor pays
 // contributors for OSS work like this. Public-safe "earn" wording only (never reward/payout/score).
@@ -269,6 +262,7 @@ export function buildPredictedGateVerdict(args: {
   const contributorLoginLc = input.contributorLogin?.toLowerCase();
   const authorHistory = pullRequests.filter((pr) => sameRepoFullName(pr.repoFullName, input.repoFullName) && pr.authorLogin?.toLowerCase() === contributorLoginLc);
 
+  const hardGuardrailGlobs = resolveHardGuardrailGlobs(manifest.settings);
   const evaluation = evaluateGateCheck(advisory, {
     linkedIssueGateMode: gate.linkedIssue ?? undefined,
     duplicatePrGateMode: gate.duplicates ?? undefined,
@@ -297,7 +291,8 @@ export function buildPredictedGateVerdict(args: {
     ...(hasChangedPaths
       ? {
           changedFileCount: changedPaths.length,
-          guardrailHit: isGuardrailHit(changedPaths, PREDICTED_GATE_HARD_GUARDRAIL_GLOBS),
+          guardrailHit: isGuardrailHit(changedPaths, hardGuardrailGlobs),
+          guardrailMatches: guardrailPathMatches(changedPaths, hardGuardrailGlobs),
         }
       : {}),
   });

@@ -203,6 +203,12 @@ export type FocusManifestSettings = Partial<
     | "reviewNagLabel"
     | "reviewNagMonitoredMentions"
     | "autoCloseExemptLogins"
+    | "hardGuardrailGlobs"
+    | "manualReviewLabel"
+    | "readyToMergeLabel"
+    | "changesRequestedLabel"
+    | "migrationCollisionLabel"
+    | "pendingClosureLabel"
     | "accountAgeThresholdDays"
     | "newAccountLabel"
     | "commandRateLimitPolicy"
@@ -1160,6 +1166,51 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     const { logins, warnings: exemptWarnings } = normalizeAutoCloseExemptLogins(r.autoCloseExemptLogins);
     warnings.push(...exemptWarnings);
     if (logins.length > 0) out.autoCloseExemptLogins = logins;
+  }
+  // Hard manual-review guardrails are config-as-code only. Arrays replace lower layers wholesale, so only an
+  // explicit [] or a non-empty valid list replaces a private global or built-in default. Null/malformed values are
+  // ignored instead of clearing.
+  if (Array.isArray(r.hardGuardrailGlobs)) {
+    const hardGuardrailGlobs = normalizeStringList(r.hardGuardrailGlobs, "settings.hardGuardrailGlobs", warnings);
+    if (r.hardGuardrailGlobs.length === 0 || hardGuardrailGlobs.length > 0) {
+      out.hardGuardrailGlobs = hardGuardrailGlobs;
+    } else {
+      warnings.push(`Manifest "settings.hardGuardrailGlobs" did not contain any valid path globs; ignoring it and keeping any existing guardrails.`);
+    }
+  } else if (r.hardGuardrailGlobs !== undefined) {
+    warnings.push(`Manifest "settings.hardGuardrailGlobs" must be an array of path globs; ignoring it and keeping any existing guardrails.`);
+  }
+  // Manual-review label is deliberately separate from review_state_label so operators can use one hold label
+  // without enabling the old ready/changes disposition labels. Null disables only the label, not the hold.
+  if (r.manualReviewLabel === null) {
+    out.manualReviewLabel = null;
+  } else {
+    const manualReviewLabel = normalizeOptionalString(r.manualReviewLabel, "settings.manualReviewLabel", warnings);
+    if (manualReviewLabel !== null) out.manualReviewLabel = manualReviewLabel;
+  }
+  if (r.readyToMergeLabel === null) {
+    out.readyToMergeLabel = null;
+  } else {
+    const readyToMergeLabel = normalizeOptionalString(r.readyToMergeLabel, "settings.readyToMergeLabel", warnings);
+    if (readyToMergeLabel !== null) out.readyToMergeLabel = readyToMergeLabel;
+  }
+  if (r.changesRequestedLabel === null) {
+    out.changesRequestedLabel = null;
+  } else {
+    const changesRequestedLabel = normalizeOptionalString(r.changesRequestedLabel, "settings.changesRequestedLabel", warnings);
+    if (changesRequestedLabel !== null) out.changesRequestedLabel = changesRequestedLabel;
+  }
+  if (r.migrationCollisionLabel === null) {
+    out.migrationCollisionLabel = null;
+  } else {
+    const migrationCollisionLabel = normalizeOptionalString(r.migrationCollisionLabel, "settings.migrationCollisionLabel", warnings);
+    if (migrationCollisionLabel !== null) out.migrationCollisionLabel = migrationCollisionLabel;
+  }
+  if (r.pendingClosureLabel === null) {
+    out.pendingClosureLabel = null;
+  } else {
+    const pendingClosureLabel = normalizeOptionalString(r.pendingClosureLabel, "settings.pendingClosureLabel", warnings);
+    if (pendingClosureLabel !== null) out.pendingClosureLabel = pendingClosureLabel;
   }
   // Account-age throttle (#2561): an explicit yml `null` is load-bearing (clears a DB-configured threshold
   // back to "off"), matching contributorOpenPrCap's own null-vs-omitted distinction above.

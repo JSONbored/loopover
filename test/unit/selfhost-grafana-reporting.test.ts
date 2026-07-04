@@ -247,7 +247,7 @@ esac
     expect(sqlite(outDb, "SELECT count(*) FROM review_targets;")).toBe("3");
     // Latest advisory conclusion for #1690 is 'neutral' -- counted as 'manual' (matches gateHeld's held-for-review
     // definition in src/signals/engine.ts, not 'commented'/'comment') so the dashboard's manual-review panel
-    // reflects the same held state the live app itself surfaces via gittensory:needs-human-review.
+    // reflects the same held state the live app itself surfaces via the configured manual-review label.
     expect(sqlite(outDb, "SELECT submitter || '|' || status || '|' || verdict || '|' || updated_at FROM review_targets WHERE repo='JSONbored/gittensory' AND number=1690;")).toBe(
       "JSONbored|manual|manual|2026-06-28T21:40:00Z",
     );

@@ -228,8 +228,15 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // precision drop) still holds this sticky pending row instead of executing it unmodified. (#2127)
   const [holdOnly, closeHoldOnly] = await Promise.all([isHoldOnly(env, pending.repoFullName), isCloseHoldOnly(env, pending.repoFullName)]);
   let plan: PlannedAgentAction[] = [pendingActionToPlanned({ actionClass: pending.actionClass, params: liveParams, reason: pending.reason })];
-  if (holdOnly) plan = downgradeMergeToHold(plan, true);
-  if (closeHoldOnly) plan = downgradeCloseToHold(plan, true);
+  const labelSettings = {
+    manualReviewLabel: settings.manualReviewLabel,
+    readyToMergeLabel: settings.readyToMergeLabel,
+    changesRequestedLabel: settings.changesRequestedLabel,
+    migrationCollisionLabel: settings.migrationCollisionLabel,
+    pendingClosureLabel: settings.pendingClosureLabel,
+  };
+  if (holdOnly) plan = downgradeMergeToHold(plan, true, labelSettings);
+  if (closeHoldOnly) plan = downgradeCloseToHold(plan, true, labelSettings);
 
   // Re-validate a staged MERGE against the CURRENT linked-issue hard-rule state (#2132). The hard rule is
   // evaluated fresh on every planning pass and takes precedence over merge (see planAgentMaintenanceActions),

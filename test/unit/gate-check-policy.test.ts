@@ -833,9 +833,18 @@ describe("size + guardrail manual-review HOLD (#gate-size / #gate-guardrail)", (
     expect(evaluateGateCheck(clean(), { sizeGateMode: "advisory" }).conclusion).toBe("success"); // no counts ⇒ 0 ⇒ no hold
   });
   it("holds (neutral) on a guardrail hit, surfacing the hold finding in warnings", () => {
-    const out = evaluateGateCheck(clean(), { guardrailHit: true });
+    const out = evaluateGateCheck(clean(), { guardrailHit: true, guardrailMatches: [{ path: "src/settings/agent-actions.ts", glob: "src/settings/**" }] });
     expect(out.conclusion).toBe("neutral");
-    expect(out.warnings.map((w) => w.code)).toContain("guardrail_hold");
+    const hold = out.warnings.find((w) => w.code === "guardrail_hold");
+    expect(hold).toBeTruthy();
+    expect(hold?.detail).toContain("src/settings/agent-actions.ts");
+    expect(hold?.detail).toContain("src/settings/**");
+  });
+  it("holds fail-closed when the caller reports a guardrail hit without match details", () => {
+    const out = evaluateGateCheck(clean(), { guardrailHit: true });
+    const hold = out.warnings.find((w) => w.code === "guardrail_hold");
+    expect(out.conclusion).toBe("neutral");
+    expect(hold?.detail).toContain("could not be verified");
   });
   it("a real hard blocker WINS over a size/guardrail hold (failure, not neutral)", () => {
     const out = evaluateGateCheck(missingIssueAdvisory(), { linkedIssueGateMode: "block", sizeGateMode: "advisory", changedFileCount: 50, changedLineCount: 9000, guardrailHit: true });

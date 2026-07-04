@@ -12,6 +12,8 @@ import {
 } from "../../src/review/outcomes-wire";
 import { applyAutoTune, type GateEvalReport } from "../../src/review/auto-tune";
 import {
+  AGENT_LABEL_NEEDS_REVIEW,
+  AGENT_LABEL_READY,
   downgradeMergeToHold,
   type PlannedAgentAction,
 } from "../../src/settings/agent-actions";
@@ -468,7 +470,7 @@ describe("downgradeMergeToHold (pure)", () => {
     actionClass: "label",
     requiresApproval: false,
     reason: "ready",
-    label: "gittensory:ready-to-merge",
+    label: AGENT_LABEL_READY,
     labelOp: "add",
   };
   const closeAction: PlannedAgentAction = {
@@ -488,14 +490,14 @@ describe("downgradeMergeToHold (pure)", () => {
     expect(
       out.some(
         (a) =>
-          a.actionClass === "label" && a.label === "gittensory:ready-to-merge",
+              a.actionClass === "label" && a.label === AGENT_LABEL_READY,
       ),
     ).toBe(false);
     expect(
       out.some(
         (a) =>
           a.actionClass === "label" &&
-          a.label === "gittensory:needs-human-review" &&
+          a.label === AGENT_LABEL_NEEDS_REVIEW &&
           a.labelOp === "add",
       ),
     ).toBe(true);

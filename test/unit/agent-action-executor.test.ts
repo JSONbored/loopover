@@ -75,7 +75,7 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
   };
 }
 
-const label: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "ready", label: "gittensory:ready-to-merge" };
+const label: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "ready", label: "ready-to-merge" };
 const requestChanges: PlannedAgentAction = { actionClass: "request_changes", requiresApproval: false, reason: "1 blocker", reviewBody: "please fix" };
 const approve: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "passed", reviewBody: "lgtm" };
 const merge: PlannedAgentAction = { actionClass: "merge", requiresApproval: false, reason: "clean", mergeMethod: "squash" };
@@ -101,7 +101,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
 
   it("actionParams threads expectedHeadSha for an update_branch action (and omits absent fields)", () => {
     expect(actionParams(updateBranch)).toEqual({ expectedHeadSha: "sha7" });
-    expect(actionParams(label)).toEqual({ label: "gittensory:ready-to-merge" });
+    expect(actionParams(label)).toEqual({ label: "ready-to-merge" });
     expect(actionParams(merge)).toEqual({ mergeMethod: "squash" });
   });
 
@@ -109,7 +109,7 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const env = createTestEnv({});
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, requestChanges, approve, merge, close, updateBranch]);
     expect(outcomes.map((o) => o.outcome)).toEqual(["completed", "completed", "completed", "completed", "completed", "completed"]);
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "gittensory:ready-to-merge", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "ready-to-merge", { createMissingLabel: true });
     expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "REQUEST_CHANGES", "please fix");
     // Falls back to ctx.headSha ("sha7") as the pinned commit_id when the action carries no expectedHeadSha of
     // its own — a live sweep's approve plans no explicit pin, so this is the unpinned/live-sweep case (#2262).
@@ -384,25 +384,25 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
 
   it("LIVE label with labelOp=add + comment: adds the label AND posts the comment", async () => {
     const env = createTestEnv({});
-    const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" };
+    const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "pending-closure", labelOp: "add", comment: "⚠️ flagged" };
     await executeAgentMaintenanceActions(env, ctx(), [flag]);
-    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "gittensory:pending-closure", { createMissingLabel: true });
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "pending-closure", { createMissingLabel: true });
     expect(removePullRequestLabel).not.toHaveBeenCalled();
     expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "⚠️ flagged");
   });
 
   it("LIVE label with labelOp=remove + comment: removes the label (never adds) AND posts the comment", async () => {
     const env = createTestEnv({});
-    const clear: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "resolved", label: "gittensory:pending-closure", labelOp: "remove", comment: "✓ resolved" };
+    const clear: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "resolved", label: "pending-closure", labelOp: "remove", comment: "✓ resolved" };
     await executeAgentMaintenanceActions(env, ctx(), [clear]);
-    expect(removePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "gittensory:pending-closure");
+    expect(removePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "pending-closure");
     expect(ensurePullRequestLabel).not.toHaveBeenCalled();
     expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "✓ resolved");
   });
 
   it("actionParams threads labelOp + comment so a staged flag replays faithfully", () => {
-    const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" };
-    expect(actionParams(flag)).toEqual({ label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" });
+    const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "pending-closure", labelOp: "add", comment: "⚠️ flagged" };
+    expect(actionParams(flag)).toEqual({ label: "pending-closure", labelOp: "add", comment: "⚠️ flagged" });
   });
 
   it("LIVE approve persists the approved head SHA for re-approval idempotency", async () => {
@@ -1180,7 +1180,7 @@ describe("executeIssueMaintenanceActions (#2270 issue-side actuation)", () => {
 });
 
 describe("pendingClosureLabelApplied (#1136 Pass-2 trigger)", () => {
-  const labelAdd: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: AGENT_LABEL_PENDING_CLOSURE, labelOp: "add" };
+  const labelAdd: PlannedAgentAction = { actionClass: "label", closeKind: "linked-issue-hard-rule", requiresApproval: false, reason: "flag", label: AGENT_LABEL_PENDING_CLOSURE, labelOp: "add" };
   const approve2: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "ok" };
   const out = (outcome: AgentActionOutcome["outcome"], actionClass: AgentActionOutcome["actionClass"] = "label"): AgentActionOutcome => ({ actionClass, outcome, detail: "" });
 
@@ -1196,8 +1196,12 @@ describe("pendingClosureLabelApplied (#1136 Pass-2 trigger)", () => {
   it("false for a label REMOVE — only an ADD establishes the pending-closure flag", () => {
     expect(pendingClosureLabelApplied([{ ...labelAdd, labelOp: "remove" }], [out("completed")])).toBe(false);
   });
-  it("false for a completed add of a DIFFERENT label", () => {
-    expect(pendingClosureLabelApplied([{ ...labelAdd, label: "some-other-label" }], [out("completed")])).toBe(false);
+  it("true for a completed linked-issue flag even when the pending label is customized", () => {
+    expect(pendingClosureLabelApplied([{ ...labelAdd, label: "custom-pending-label" }], [out("completed")])).toBe(true);
+  });
+  it("false for a completed add that is not the linked-issue hard-rule flag", () => {
+    const { closeKind: _closeKind, ...ordinaryLabel } = labelAdd;
+    expect(pendingClosureLabelApplied([{ ...ordinaryLabel, label: "custom-pending-label" }], [out("completed")])).toBe(false);
   });
   it("matches the label's outcome by its OWN plan index (not assuming index 0)", () => {
     expect(pendingClosureLabelApplied([approve2, labelAdd], [out("completed", "approve"), out("completed")])).toBe(true);

@@ -1490,22 +1490,92 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(tooLarge.warnings.some((w) => /settings\.reviewNagCooldownDays/.test(w) && /365/.test(w))).toBe(true);
   });
 
-  it("#label-scoping: an explicit yml null clears blacklistLabel/contributorCapLabel/reviewNagLabel back to 'no label' (load-bearing null)", () => {
-    const cleared = parseFocusManifest({ settings: { blacklistLabel: null, contributorCapLabel: null, reviewNagLabel: null } });
+  it("#label-scoping: an explicit yml null clears configurable action labels back to 'no label' (load-bearing null)", () => {
+    const cleared = parseFocusManifest({
+      settings: {
+        blacklistLabel: null,
+        contributorCapLabel: null,
+        reviewNagLabel: null,
+        manualReviewLabel: null,
+        readyToMergeLabel: null,
+        changesRequestedLabel: null,
+        migrationCollisionLabel: null,
+        pendingClosureLabel: null,
+      },
+    });
     expect(cleared.settings.blacklistLabel).toBeNull();
     expect(cleared.settings.contributorCapLabel).toBeNull();
     expect(cleared.settings.reviewNagLabel).toBeNull();
+    expect(cleared.settings.manualReviewLabel).toBeNull();
+    expect(cleared.settings.readyToMergeLabel).toBeNull();
+    expect(cleared.settings.changesRequestedLabel).toBeNull();
+    expect(cleared.settings.migrationCollisionLabel).toBeNull();
+    expect(cleared.settings.pendingClosureLabel).toBeNull();
     // Overlays (clears) a DB-configured label name.
-    const eff = resolveEffectiveSettings({ blacklistLabel: "slop", contributorCapLabel: "over-contributor-limit", reviewNagLabel: "review-nag-cooldown" } as unknown as RepositorySettings, cleared);
+    const eff = resolveEffectiveSettings(
+      {
+        blacklistLabel: "slop",
+        contributorCapLabel: "over-contributor-limit",
+        reviewNagLabel: "review-nag-cooldown",
+        manualReviewLabel: "human-review",
+        readyToMergeLabel: "ship-it",
+        changesRequestedLabel: "needs-work",
+        migrationCollisionLabel: "rebase-migration",
+        pendingClosureLabel: "pending-close",
+      } as unknown as RepositorySettings,
+      cleared,
+    );
     expect(eff.blacklistLabel).toBeNull();
     expect(eff.contributorCapLabel).toBeNull();
     expect(eff.reviewNagLabel).toBeNull();
+    expect(eff.manualReviewLabel).toBeNull();
+    expect(eff.readyToMergeLabel).toBeNull();
+    expect(eff.changesRequestedLabel).toBeNull();
+    expect(eff.migrationCollisionLabel).toBeNull();
+    expect(eff.pendingClosureLabel).toBeNull();
     // Omitted in yml ⇒ the DB-configured label survives untouched (distinct from explicit null).
-    const noOverride = resolveEffectiveSettings({ blacklistLabel: "slop" } as unknown as RepositorySettings, parseFocusManifest({}));
+    const noOverride = resolveEffectiveSettings({ blacklistLabel: "slop", manualReviewLabel: "human-review" } as unknown as RepositorySettings, parseFocusManifest({}));
     expect(noOverride.blacklistLabel).toBe("slop");
+    expect(noOverride.manualReviewLabel).toBe("human-review");
     // A configured (non-null) string still overrides the DB normally.
-    const customized = parseFocusManifest({ settings: { blacklistLabel: "abuse" } });
+    const customized = parseFocusManifest({ settings: { blacklistLabel: "abuse", readyToMergeLabel: "ship-it", changesRequestedLabel: "needs-work", migrationCollisionLabel: "migration-review", pendingClosureLabel: "pending-close" } });
     expect(customized.settings.blacklistLabel).toBe("abuse");
+    expect(customized.settings.readyToMergeLabel).toBe("ship-it");
+    expect(customized.settings.changesRequestedLabel).toBe("needs-work");
+    expect(customized.settings.migrationCollisionLabel).toBe("migration-review");
+    expect(customized.settings.pendingClosureLabel).toBe("pending-close");
+    const blank = parseFocusManifest({ settings: { manualReviewLabel: "   ", readyToMergeLabel: 42 as never } });
+    expect(blank.settings.manualReviewLabel).toBeUndefined();
+    expect(blank.settings.readyToMergeLabel).toBeUndefined();
+    expect(blank.warnings.some((w) => /settings\.manualReviewLabel/.test(w))).toBe(true);
+    expect(blank.warnings.some((w) => /settings\.readyToMergeLabel/.test(w))).toBe(true);
+  });
+
+  it("parses + resolves hardGuardrailGlobs as a replace-list, including explicit empty clear", () => {
+    const manifest = parseFocusManifest({ settings: { hardGuardrailGlobs: ["src/settings/**", "migrations/*.sql"] } });
+    expect(manifest.settings.hardGuardrailGlobs).toEqual(["src/settings/**", "migrations/*.sql"]);
+    const eff = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, manifest);
+    expect(eff.hardGuardrailGlobs).toEqual(["src/settings/**", "migrations/*.sql"]);
+
+    const cleared = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({ settings: { hardGuardrailGlobs: [] } }));
+    expect(cleared.hardGuardrailGlobs).toEqual([]);
+
+    const nullManifest = parseFocusManifest({ settings: { hardGuardrailGlobs: null } });
+    const nullIgnored = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, nullManifest);
+    expect(nullIgnored.hardGuardrailGlobs).toEqual(["db-default/**"]);
+    expect(nullManifest.warnings.some((w) => /settings\.hardGuardrailGlobs/.test(w))).toBe(true);
+
+    const omitted = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(omitted.hardGuardrailGlobs).toEqual(["db-default/**"]);
+
+    const malformed = parseFocusManifest({ settings: { hardGuardrailGlobs: "src/**" as never } });
+    expect(malformed.settings.hardGuardrailGlobs).toBeUndefined();
+    expect(malformed.warnings.some((w) => /settings\.hardGuardrailGlobs/.test(w))).toBe(true);
+
+    const invalidArray = parseFocusManifest({ settings: { hardGuardrailGlobs: [123, ""] as never } });
+    const invalidIgnored = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, invalidArray);
+    expect(invalidIgnored.hardGuardrailGlobs).toEqual(["db-default/**"]);
+    expect(invalidArray.warnings.some((w) => /did not contain any valid path globs/.test(w))).toBe(true);
   });
 
   it("#label-scoping: parses + resolves reviewNagMonitoredMentions from the settings: block, overlaying the DB", () => {

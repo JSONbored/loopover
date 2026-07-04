@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentDispositionLabels, applyPrecisionBreakers, precisionBreakerDowngradeDirections } from "../../src/queue/processors";
+import { agentDispositionLabels, agentHoldAuditDetail, applyPrecisionBreakers, precisionBreakerDowngradeDirections } from "../../src/queue/processors";
 import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, type PlannedAgentAction } from "../../src/settings/agent-actions";
 
 // The processors chaining at maybeRunAgentMaintenance:
@@ -118,5 +118,69 @@ describe("agentDispositionLabels — bounded {actionClass, blockerClass} for git
 
   it("prefers 'merge' over 'close' when (hypothetically) both are present in the final plan", () => {
     expect(agentDispositionLabels([mergeAction, heuristicClose], []).actionClass).toBe("merge");
+  });
+});
+
+describe("agentHoldAuditDetail — durable why-no-action audit reason", () => {
+  const base = {
+    planned: [] as PlannedAgentAction[],
+    breakerOnPlan: [] as PlannedAgentAction[],
+    gateConclusion: "success",
+    gateBlockerCodes: [] as string[],
+    ciState: "passed",
+    ciHasPending: false,
+    mergeableState: "clean" as string | null,
+    approvalsSatisfied: true,
+    authorIsOwner: false,
+    authorIsAdmin: false,
+    authorIsAutomationBot: false,
+    closeOwnerAuthors: false,
+    mergeAutonomy: "auto",
+    closeAutonomy: "auto",
+  };
+
+  it("records that a precision breaker removed the planned terminal action", () => {
+    expect(agentHoldAuditDetail({ ...base, planned: [mergeAction] })).toBe("auto-action held by precision circuit breaker");
+    expect(
+      agentHoldAuditDetail({
+        ...base,
+        planned: [readyLabel, mergeAction],
+        breakerOnPlan: [{ actionClass: "label", requiresApproval: false, reason: "held", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" }],
+      }),
+    ).toBe("auto-action held by precision circuit breaker");
+  });
+
+  it("records pending CI ahead of mergeability or gate-policy guesses", () => {
+    expect(agentHoldAuditDetail({ ...base, ciState: "pending" })).toBe("auto-action held because CI is still pending");
+    expect(agentHoldAuditDetail({ ...base, ciHasPending: true })).toBe("auto-action held because CI is still pending");
+  });
+
+  it("records failing CI when no close action was planned", () => {
+    expect(agentHoldAuditDetail({ ...base, ciState: "failed" })).toBe("auto-action held because CI is failing but no close action was planned");
+  });
+
+  it("records the common green-review/no-merge reasons", () => {
+    expect(agentHoldAuditDetail({ ...base, mergeableState: "dirty" })).toBe("merge withheld because the PR conflicts with the base branch");
+    expect(agentHoldAuditDetail({ ...base, mergeableState: "blocked" })).toBe("merge withheld because mergeable_state is blocked");
+    expect(agentHoldAuditDetail({ ...base, approvalsSatisfied: false })).toBe("merge withheld because required approvals are not satisfied");
+    expect(agentHoldAuditDetail({ ...base, mergeAutonomy: "observe" })).toBe("merge withheld because merge autonomy is observe");
+    expect(agentHoldAuditDetail(base)).toBe("merge withheld because no merge action was planned");
+  });
+
+  it("bounds dynamic audit reasons before writing them to audit_events.detail", () => {
+    const detail = agentHoldAuditDetail({ ...base, mergeAutonomy: "x".repeat(300) });
+    expect(detail).toHaveLength(243);
+    expect(detail.endsWith("...")).toBe(true);
+  });
+
+  it("records why a gate blocker did not close the PR", () => {
+    expect(agentHoldAuditDetail({ ...base, gateConclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], authorIsOwner: true })).toBe("close withheld for protected author on gate blocker ai_consensus_defect");
+    expect(agentHoldAuditDetail({ ...base, gateConclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], closeAutonomy: "observe" })).toBe("close withheld because close autonomy is observe");
+    expect(agentHoldAuditDetail({ ...base, gateConclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"] })).toBe("held on gate blocker ai_consensus_defect");
+  });
+
+  it("records protected-author and generic fallback holds", () => {
+    expect(agentHoldAuditDetail({ ...base, gateConclusion: "neutral", authorIsAutomationBot: true })).toBe("auto-action held for protected author");
+    expect(agentHoldAuditDetail({ ...base, gateConclusion: "neutral" })).toBe("no auto-action planned");
   });
 });

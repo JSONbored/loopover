@@ -9081,6 +9081,33 @@
               "visible",
               "disabled"
             ]
+          },
+          "hardGuardrailGlobs": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "manualReviewLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "readyToMergeLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "changesRequestedLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "migrationCollisionLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "pendingClosureLabel": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [

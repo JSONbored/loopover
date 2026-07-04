@@ -43,10 +43,10 @@ export type LinkedIssueHardRulesConfig = {
 // this loader no longer reads external policy storage; deterministic linked-issue auto-closes stay off
 // unless/until they are wired through self-host repo config.
 
-// The namespaced label that marks a PR as flagged-for-closure by the linked-issue hard rule (Pass 1). Its
-// presence + a persisting violation on the next evaluation is the verification trigger (Pass 2 → close). Cleared
-// when the violation resolves. Namespaced so it never collides with project labels (mirrors AGENT_LABEL_*).
-export const AGENT_LABEL_PENDING_CLOSURE = "gittensory:pending-closure";
+// Fallback label that marks a PR as flagged-for-closure by the linked-issue hard rule (Pass 1). Its presence + a
+// persisting violation on the next evaluation is the verification trigger (Pass 2 → close). Operators can rename
+// or disable it with `settings.pendingClosureLabel`; the fallback intentionally avoids project-specific labels.
+export const AGENT_LABEL_PENDING_CLOSURE = "pending-closure";
 
 // Default verification delay (seconds) — how long until the second-pass close. Clamped to this range on load.
 const DEFAULT_CLOSE_DELAY_SECONDS = 30;

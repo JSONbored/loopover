@@ -19523,7 +19523,7 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
       const method = init?.method ?? "GET";
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
-      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "test-token" });
       if (url.includes("/pulls/65/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
       if (url.includes("/pulls/65/reviews")) return Response.json([]);
       if (url.includes("/pulls/65/commits")) return Response.json([]);

@@ -49,7 +49,8 @@ gittensory-miner doctor
 `init` bootstraps the local config directory and the SQLite-backed `run-state.sqlite3` file. Path
 resolution mirrors the package's other local stores: `GITTENSORY_MINER_CONFIG_DIR`, then
 `XDG_CONFIG_HOME`, then `~/.config/gittensory-miner/`. If you need the SQLite file elsewhere, set
-`GITTENSORY_MINER_RUN_STATE_DB`; that overrides the DB path only, not the config-dir chain.
+`GITTENSORY_MINER_RUN_STATE_DB`; that overrides the DB path only, not the config-dir chain, and
+`init` still creates the configured laptop-mode config directory.
 
 ## Commands
 

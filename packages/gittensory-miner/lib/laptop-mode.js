@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -39,6 +39,7 @@ export function initLaptopMode(input = {}) {
   const configDir = resolveLaptopModeConfigDir(env);
   const configDirExisted = existsSync(configDir);
   const stateDbExisted = existsSync(stateDbPath);
+  mkdirSync(configDir, { recursive: true, mode: 0o700 });
   const store = (input.initStore ?? initRunStateStore)(stateDbPath);
   try {
     return {
@@ -62,7 +63,8 @@ function nearestExistingAncestor(path) {
   return candidate;
 }
 
-function inspectWritablePath(path) {
+function inspectWritablePath(path, input = {}) {
+  const existingMode = input.existingMode ?? constants.W_OK;
   const exists = existsSync(path);
   if (!exists) {
     const ancestor = nearestExistingAncestor(path);
@@ -77,7 +79,7 @@ function inspectWritablePath(path) {
     }
   }
   try {
-    accessSync(path, constants.W_OK);
+    accessSync(path, existingMode);
     return { path, exists: true, writable: true, error: null };
   } catch (error) {
     return { path, exists: true, writable: false, error: errorDetail(error) };
@@ -159,7 +161,9 @@ export function inspectLaptopMode(input = {}) {
   const env = input.env ?? process.env;
   return {
     nodeVersion: process.version,
-    configDir: inspectWritablePath(resolveLaptopModeConfigDir(env)),
+    configDir: inspectWritablePath(resolveLaptopModeConfigDir(env), {
+      existingMode: constants.W_OK | constants.X_OK,
+    }),
     stateDb: inspectRunStateDb(resolveLaptopModeStateDbPath(env)),
     docker: probeDocker(input.spawnSyncFn),
   };

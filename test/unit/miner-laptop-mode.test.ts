@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -65,6 +65,37 @@ describe("gittensory-miner laptop mode bootstrap (#2329)", () => {
     });
 
     const db = new DatabaseSync(result.stateDbPath, { readOnly: true });
+    try {
+      const row = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'miner_run_state'")
+        .get();
+      expect(row).toEqual({ name: "miner_run_state" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("creates the config dir even when the run-state DB is overridden outside it", () => {
+    const root = tempRoot();
+    const configDir = join(root, "config");
+    const stateDbPath = join(root, "state", "run-state.sqlite3");
+
+    const result = initLaptopMode({
+      env: {
+        GITTENSORY_MINER_CONFIG_DIR: configDir,
+        GITTENSORY_MINER_RUN_STATE_DB: stateDbPath,
+      },
+    });
+
+    expect(result).toMatchObject({
+      configDir,
+      configDirExisted: false,
+      stateDbPath,
+      stateDbExisted: false,
+    });
+    expect(existsSync(configDir)).toBe(true);
+
+    const db = new DatabaseSync(stateDbPath, { readOnly: true });
     try {
       const row = db
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'miner_run_state'")

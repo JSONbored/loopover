@@ -18,6 +18,7 @@
     "selfhost:env-reference": "node scripts/gen-selfhost-env-reference.mjs",
     "selfhost:env-reference:check": "node scripts/gen-selfhost-env-reference.mjs --check",
     "selfhost:validate-observability": "node scripts/validate-observability-configs.mjs",
+    "selfhost:config-lint": "tsx scripts/gittensory-config-lint.ts",
     "cf-typegen": "wrangler types && perl -pi -e 's/[[:blank:]]+$//' worker-configuration.d.ts",
     "cf-typegen:check": "wrangler types --check",
     "db:migrate:local": "wrangler d1 migrations apply gittensory --local",

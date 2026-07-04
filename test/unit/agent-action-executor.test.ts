@@ -45,6 +45,7 @@ import {
   actionParams,
   clearInstallationHealthRefreshCooldownForTest,
   clearWritePermissionDenialCooldownForTest,
+  writePermissionDenialCooldownSizeForTest,
   executeAgentMaintenanceActions,
   executeIssueMaintenanceActions,
   pendingActionToPlanned,
@@ -722,6 +723,46 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
       expect(prA[0]).toMatchObject({ outcome: "denied", detail: "contents: write not granted — maintainer must re-consent" });
       expect(prB[0]).toMatchObject({ outcome: "denied", detail: "contents: write not granted — maintainer must re-consent" });
       expect(await auditCount(env, "merge")).toBe(2); // one audit row per PR, not one shared row
+    });
+
+    it("REGRESSION: prunes expired per-PR denial entries instead of retaining them for the process lifetime", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "write" as const, contents: "read" as const, issues: "write" as const };
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-03T00:00:00Z"));
+      try {
+        await executeAgentMaintenanceActions(env, ctx({ installationId: 206, pullNumber: 601, installationPermissions: perms }), [merge]);
+        await executeAgentMaintenanceActions(env, ctx({ installationId: 206, pullNumber: 602, installationPermissions: perms }), [merge]);
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(2);
+
+        vi.setSystemTime(new Date("2026-07-03T00:16:00Z"));
+        await executeAgentMaintenanceActions(env, ctx({ installationId: 206, pullNumber: 603, installationPermissions: perms }), [merge]);
+
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(1);
+        expect(await auditCount(env, "merge")).toBe(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("REGRESSION: caps active denial cooldown entries so unique denied PRs cannot grow memory without bound", async () => {
+      const env = createTestEnv({});
+      const perms = { pull_requests: "write" as const, contents: "read" as const, issues: "write" as const };
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-03T01:00:00Z"));
+      try {
+        for (let pullNumber = 1; pullNumber <= 1025; pullNumber++) {
+          await executeAgentMaintenanceActions(env, ctx({ installationId: 207, pullNumber, installationPermissions: perms }), [merge]);
+        }
+
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(1024);
+
+        const oldestPrRetry = await executeAgentMaintenanceActions(env, ctx({ installationId: 207, pullNumber: 1, installationPermissions: perms }), [merge]);
+        expect(oldestPrRetry[0]?.detail).toBe("contents: write not granted — maintainer must re-consent");
+        expect(writePermissionDenialCooldownSizeForTest()).toBe(1024);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

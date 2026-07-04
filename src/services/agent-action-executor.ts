@@ -87,6 +87,7 @@ export function clearInstallationHealthRefreshCooldownForTest(): void {
 // for one PR must never silently suppress the FIRST denial audit for a different PR in the same repo/window,
 // or that PR's maintainer never sees why it was denied.
 const PR_WRITE_DENIAL_COOLDOWN_MS = 15 * 60 * 1000;
+const PR_WRITE_DENIAL_COOLDOWN_MAX_ENTRIES = 1024;
 const writePermissionDenialCooldown = new Map<string, number>();
 
 function writePermissionDenialKey(installationId: number, repoFullName: string, pullNumber: number, actionClass: AgentActionClass): string {
@@ -99,7 +100,19 @@ function writePermissionDenialKey(installationId: number, repoFullName: string, 
  *  here -- arming the cooldown before that write lands would mean a transient audit DB failure on the first
  *  denial permanently swallows it (the retry within the window would see the cooldown already armed and never
  *  attempt the audit again). */
+function pruneWritePermissionDenialCooldown(nowMs: number): void {
+  for (const [key, lastDeniedMs] of writePermissionDenialCooldown) {
+    if (nowMs - lastDeniedMs >= PR_WRITE_DENIAL_COOLDOWN_MS) writePermissionDenialCooldown.delete(key);
+  }
+}
+
+function evictOldestWritePermissionDenialCooldownEntry(): void {
+  const oldestKey = writePermissionDenialCooldown.keys().next().value as string;
+  writePermissionDenialCooldown.delete(oldestKey);
+}
+
 function shouldSuppressWritePermissionDenial(key: string, nowMs: number): boolean {
+  pruneWritePermissionDenialCooldown(nowMs);
   const lastDeniedMs = writePermissionDenialCooldown.get(key);
   return lastDeniedMs !== undefined && nowMs - lastDeniedMs < PR_WRITE_DENIAL_COOLDOWN_MS;
 }
@@ -108,12 +121,19 @@ function shouldSuppressWritePermissionDenial(key: string, nowMs: number): boolea
  *  exact denial has actually succeeded, so a failed audit write is retried on the very next pass instead of
  *  being silently suppressed for the whole cooldown window. */
 function markWritePermissionDenialAudited(key: string, nowMs: number): void {
+  pruneWritePermissionDenialCooldown(nowMs);
+  if (writePermissionDenialCooldown.size >= PR_WRITE_DENIAL_COOLDOWN_MAX_ENTRIES) evictOldestWritePermissionDenialCooldownEntry();
   writePermissionDenialCooldown.set(key, nowMs);
 }
 
 /** Test-only: clear the module-level write-permission denial cooldown so each test starts fresh. */
 export function clearWritePermissionDenialCooldownForTest(): void {
   writePermissionDenialCooldown.clear();
+}
+
+/** Test-only: inspect the module-level write-permission denial cooldown size. */
+export function writePermissionDenialCooldownSizeForTest(): number {
+  return writePermissionDenialCooldown.size;
 }
 
 export type AgentActionExecutionContext = {
@@ -189,7 +209,7 @@ function coupledCloseOutcome(planned: PlannedAgentAction[], outcomes: AgentActio
  *   API budget) → label/close correlation → freshness → live-CI re-verification → the real mutation.
  * Only `live` mode performs a real mutation; `dry_run` records what it WOULD do. Every path writes one
  * `agent.action.<class>` audit record (#776) EXCEPT a write-permission denial repeated within
- * PR_WRITE_DENIAL_COOLDOWN_MS of the last one for the same installation/repo/action-class, which is counted but
+ * PR_WRITE_DENIAL_COOLDOWN_MS of the last one for the same installation/repo/PR/action-class, which is counted but
  * not re-audited (#selfhost-runtime-drift). A failed mutation is recorded as `error`, never swallowed.
  */
 export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {

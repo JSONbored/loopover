@@ -175,6 +175,29 @@ describe("check-docs-drift script", () => {
       expect(hit).toBeDefined();
     });
 
+    it("skips per-command checks for a page that delegates to the generated command-reference instead of listing commands itself", () => {
+      const files = baseFixtures();
+      // Replace the page's literal @gittensory lines with an import marker only -- none of the individual
+      // command ids appear in the page's own source anymore, mirroring docs.maintainer-workflow.tsx after
+      // it switched to `import { PUBLIC_COMMAND_LIST, MAINTAINER_COMMAND_LIST } from "@/lib/command-reference"`.
+      files["apps/gittensory-ui/src/routes/docs.maintainer-workflow.tsx"] =
+        'import { PUBLIC_COMMAND_LIST } from "@/lib/command-reference";';
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+
+      expect(result.failures).toEqual([]);
+    });
+
+    it("still checks a page for missing commands when it does NOT delegate to the generated command-reference", () => {
+      const files = baseFixtures();
+      files["apps/gittensory-ui/src/routes/docs.maintainer-install-trust.tsx"] = buildDocsPageText(
+        allBaseCommandIds.filter((id) => id !== "maint-2"),
+      );
+      const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
+
+      const hit = result.failures.find((failure) => failure.includes("docs.maintainer-install-trust.tsx") && failure.includes("maint-2"));
+      expect(hit).toBeDefined();
+    });
+
     it("catches a docs page missing a gate-mode alias", () => {
       const files = baseFixtures();
       const withoutSlop = GATE_MODE_MANIFEST.filter((row) => row.field !== "slopGateMode")

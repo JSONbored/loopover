@@ -97,6 +97,11 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }) {
   }
 
   // 2. @gittensory commands: src/github/commands.ts vs docs.maintainer-workflow.tsx + docs.maintainer-install-trust.tsx.
+  // A page can satisfy this either by literally mentioning "@gittensory <id>" in its own source, or by
+  // importing the generated command-reference constants (apps/gittensory-ui/src/lib/command-reference.ts,
+  // regenerated from the same catalogs via `npm run command-reference:check`) -- once a page delegates to the
+  // generator, per-id substring checks against its own source would always false-fail, since the literal
+  // "@gittensory <id>" text now lives in the generated file, not the page.
   const commandsSourceText = read("src/github/commands.ts");
   const publicCommandIds = extractCatalogIds(commandsSourceText, "PUBLIC_MENTION_COMMAND_CATALOG");
   const maintainerCommandIds = extractCatalogIds(commandsSourceText, "MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG");
@@ -105,9 +110,10 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }) {
     failures.push(`src/github/commands.ts: extraction found only ${allCommandIds.length} unique @gittensory command ids -- expected 15+; the extraction regex may be broken`);
   } else {
     const commandDocsPages = ["docs.maintainer-workflow.tsx", "docs.maintainer-install-trust.tsx"];
-    for (const id of allCommandIds) {
-      for (const page of commandDocsPages) {
-        const pageText = read(`${DOCS_ROUTES_DIR}/${page}`);
+    for (const page of commandDocsPages) {
+      const pageText = read(`${DOCS_ROUTES_DIR}/${page}`);
+      if (pageText.includes("@/lib/command-reference")) continue;
+      for (const id of allCommandIds) {
         if (!pageText.includes(`@gittensory ${id}`)) {
           failures.push(`${page}: missing documentation for command @gittensory ${id}`);
         }

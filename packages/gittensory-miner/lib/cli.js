@@ -25,6 +25,7 @@ export function printHelp(input) {
       "  gittensory-miner plan list [--status pending|running|completed|failed] [--json]",
       "  gittensory-miner plan show <planId> [--json]",
       "  gittensory-miner governor list [--repo <owner/repo>] [--type allowed|denied|throttled|kill_switch] [--json]",
+      "  gittensory-miner calibration pairwise score --input <json|@file> [--json]",
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",
       "  gittensory-miner state get <owner/repo> [--json]",
       "  gittensory-miner state set <owner/repo> <idle|discovering|planning|preparing> [--json]",

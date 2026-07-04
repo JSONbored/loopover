@@ -278,6 +278,13 @@ Config as code (`.gittensory.yml`) — every repository setting is controllable 
   `fields: { <row>: false }` to show/hide individual panel rows (`linkedIssue`, `relatedWork`, `reviewLoad`,
   `validationEvidence`, `openPrQueue`, `contributorContext`, `gateResult`). Maintainer text that fails the
   public-safe filter (reward/score/wallet/hotkey/etc.) is dropped, never published.
+- **`repoDocGeneration:`** opts a repo into the AGENTS.md/CLAUDE.md generation roadmap (#2993) — a
+  `.gittensory.yml`-only surface with no dashboard/DB counterpart. `enabled` (default `false`) turns it on;
+  `scope` (default `["agents"]`) picks which generated file types are in play (`"agents"` for
+  AGENTS.md/CLAUDE.md, plus `"skills"` once skill-file generation lands); `allowOverwriteExisting` (default
+  `false`) is a separate opt-in required before the engine proposes an overwrite for a repo that already has
+  a hand-maintained AGENTS.md/CLAUDE.md — absent it, an existing hand-written file is left alone and
+  generation is skipped.
 - Precedence: `.gittensory.yml` `gate:` > `.gittensory.yml` `settings:` > dashboard repository settings >
   safe defaults; unset fields fall back to the next layer. The committed root `.gittensory.yml` is the
   worked example. Resolved once in `resolveRepositorySettings`, so the whole app honours the file.

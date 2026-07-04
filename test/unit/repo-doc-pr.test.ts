@@ -6,6 +6,7 @@ import * as repositoriesModule from "../../src/db/repositories";
 import * as repoDocRenderModule from "../../src/review/repo-doc-render";
 import { renderRepoDocContent } from "../../src/review/repo-doc-render";
 import { extractRepoProfile } from "../../src/review/repo-profile";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
 function base64Utf8(text: string): string {
@@ -36,6 +37,18 @@ async function seedInstalledRepo(env: ReturnType<typeof createTestEnv>, options:
   await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: REPO, private: false, owner: { login: "owner" }, ...(options.defaultBranch !== undefined ? { default_branch: options.defaultBranch } : {}) }, 555);
 }
 
+// #3002: repo-doc generation is opt-in per repo via .gittensory.yml `repoDocGeneration:` -- defaults to fully
+// disabled, so every test exercising behavior PAST that gate needs it explicitly enabled. Defaults `enabled` to
+// true here (the common case for these tests) while letting callers override scope/allowOverwriteExisting.
+async function seedRepoDocGenerationConfig(env: ReturnType<typeof createTestEnv>, repoFullName: string, overrides: { enabled?: boolean; scope?: string[]; allowOverwriteExisting?: boolean } = {}): Promise<void> {
+  await upsertRepoFocusManifest(env, repoFullName, { repoDocGeneration: { enabled: true, ...overrides } });
+}
+
+// A fetch stub matching every candidate raw-content URL loadRepoFocusManifest's live fetcher tries when there is
+// no persisted manifest snapshot -- returning a plain 404-shaped failure degrades it to the default (disabled)
+// manifest, matching fetchRepoFocusManifestFile's own fail-safe "try the next candidate, then give up" behavior.
+const MANIFEST_RAW_CONTENT_URL = /raw\.githubusercontent\.com/;
+
 const TOKEN_URL = /\/access_tokens$/;
 
 describe("openRepoDocPullRequest (#3000)", () => {
@@ -56,9 +69,41 @@ describe("openRepoDocPullRequest (#3000)", () => {
     expect(result).toEqual({ opened: false, reason: "repository is not installed" });
   });
 
+  it("#3002: declines by default when repo-doc generation has no .gittensory.yml config at all", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedProfileData(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (MANIFEST_RAW_CONTENT_URL.test(url)) return new Response("not found", { status: 404 });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: false, reason: "repo-doc generation is not enabled for this repository (.gittensory.yml repoDocGeneration.enabled)" });
+  });
+
+  it("#3002: declines when explicitly disabled via .gittensory.yml", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO, { enabled: false });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: false, reason: "repo-doc generation is not enabled for this repository (.gittensory.yml repoDocGeneration.enabled)" });
+  });
+
+  it("#3002: declines when enabled but scope excludes \"agents\"", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO, { scope: ["skills"] });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: false, reason: 'repo-doc generation scope does not include "agents" for this repository (.gittensory.yml repoDocGeneration.scope)' });
+  });
+
   it("declines with the profile's own reason when the repo has no RAG index yet", async () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedRepoDocGenerationConfig(env, REPO);
     const result = await openRepoDocPullRequest(env, REPO, "live");
     expect(result).toEqual({ opened: false, reason: "no RAG index configured or populated for this repo yet" });
   });
@@ -67,6 +112,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     vi.spyOn(repoDocRenderModule, "renderRepoDocContent").mockReturnValueOnce(null);
     const result = await openRepoDocPullRequest(env, REPO, "live");
     expect(result).toEqual({ opened: false, reason: "no content rendered from profile" });
@@ -76,6 +122,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     let tokenMinted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -91,6 +138,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     const calls: Array<{ method: string; url: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -113,6 +161,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -154,6 +203,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     let treeAttempts = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -181,6 +231,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env);
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -206,6 +257,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
@@ -227,6 +279,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     const profile = await extractRepoProfile(env, REPO);
     const currentContent = renderRepoDocContent(profile)!;
     let wroteAnything = false;
@@ -248,6 +301,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
@@ -265,6 +319,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     let wroteAnything = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -280,10 +335,39 @@ describe("openRepoDocPullRequest (#3000)", () => {
     expect(wroteAnything).toBe(false);
   });
 
+  it("#3002: proceeds with a fresh wholesale generate (discarding the old hand-written content) when allowOverwriteExisting is set", async () => {
+    const env = envWithKey();
+    await seedInstalledRepo(env, { defaultBranch: "main" });
+    await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO, { allowOverwriteExisting: true });
+    const calls: Array<{ method: string; url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : {} });
+      if (url.includes("/pulls?") && method === "GET") return Response.json([]);
+      if (url.includes("/contents/AGENTS.md") && method === "GET") return Response.json({ content: base64Utf8("# Hand-written AGENTS.md\n\nNo markers here.\n"), encoding: "base64" });
+      if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
+      if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "overwrite-tree-sha" });
+      if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "overwrite-commit-sha" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({});
+      if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 71, html_url: "https://github.com/owner/widgets/pull/71" });
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await openRepoDocPullRequest(env, REPO, "live");
+    expect(result).toEqual({ opened: true, reused: false, pullNumber: 71, url: "https://github.com/owner/widgets/pull/71", claudeMode: "symlink" });
+    const treeCall = calls.find((c) => c.url.endsWith("/git/trees"));
+    const agentsEntry = (treeCall?.body.tree as Array<{ path: string; content: string }>).find((entry) => entry.path === "AGENTS.md");
+    expect(agentsEntry?.content).not.toContain("Hand-written AGENTS.md");
+    expect(agentsEntry?.content).toContain("# AGENTS.md");
+  });
+
   it("#3004: opens a refresh PR that preserves manual content outside the marker block", async () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     const profile = await extractRepoProfile(env, REPO);
     const staleGeneratedSection = renderRepoDocContent(profile)!.replace("`npm run lint`", "an older lint command");
     const currentContent = `# Preamble the maintainer added.\n\n${staleGeneratedSection}\nAn appendix the maintainer added.\n`;
@@ -317,6 +401,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
     const env = envWithKey();
     await seedInstalledRepo(env, { defaultBranch: "main" });
     await seedProfileData(env);
+    await seedRepoDocGenerationConfig(env, REPO);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (TOKEN_URL.test(url)) return Response.json({ token: "t" });
@@ -342,6 +427,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
   it("splits a bare repo name with no owner segment instead of throwing", async () => {
     const env = envWithKey();
     await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)").bind("bare::0", "", "widgets", "src/widget.ts", 0, "code", "export function widget() {}").run();
+    await seedRepoDocGenerationConfig(env, "widgets");
     vi.spyOn(repositoriesModule, "getRepository").mockResolvedValueOnce({
       fullName: "widgets",
       owner: "",

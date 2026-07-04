@@ -10,9 +10,17 @@
 // generated section is unchanged gets NO pull request at all (no-op), a repo whose generated section changed
 // gets a pull request with everything outside the markers preserved byte-for-byte, and a repo whose marker
 // block is missing or malformed gets neither a silent overwrite nor a guess -- just a reported reason.
+//
+// CONFIG-AS-CODE GATE (#3002): this whole feature is opt-in per repo via `.gittensory.yml repoDocGeneration:`
+// (src/signals/focus-manifest.ts) -- a manifest-only surface with no DB-backed counterpart, since there is no
+// dashboard toggle for it. `enabled`/`scope` are checked BEFORE any profile extraction or GitHub call (the
+// common case is disabled, so this must be cheap); `allowOverwriteExisting` is checked later, once refresh
+// reports `manual-review-required` (the "this file looks hand-maintained" signal), and lets that specific case
+// proceed as a fresh wholesale generate instead of skipping.
 import { githubErrorStatus, withInstallationTokenRetry } from "./app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
 import { getRepository } from "../db/repositories";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { extractRepoProfile } from "../review/repo-profile";
 import { REPO_DOC_MARKERS, renderRepoDocContent } from "../review/repo-doc-render";
 import { refreshGeneratedDoc } from "../review/generated-doc-refresh";
@@ -96,7 +104,7 @@ Every fact above was read directly from this repository, not templated or guesse
 
 ## Opting out
 
-Disable repo-doc generation for this repository, or simply close this pull request -- no further action is taken until it is re-enabled.
+Set \`repoDocGeneration.enabled: false\` in this repository's \`.gittensory.yml\` (or simply close this pull request) -- no further action is taken until it is re-enabled.
 `;
 }
 
@@ -116,6 +124,10 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
   try {
     const repository = await getRepository(env, repoFullName);
     if (!repository?.installationId) return { opened: false, reason: "repository is not installed" };
+
+    const manifest = await loadRepoFocusManifest(env, repoFullName);
+    if (!manifest.repoDocGeneration.enabled) return { opened: false, reason: "repo-doc generation is not enabled for this repository (.gittensory.yml repoDocGeneration.enabled)" };
+    if (!manifest.repoDocGeneration.scope.includes("agents")) return { opened: false, reason: 'repo-doc generation scope does not include "agents" for this repository (.gittensory.yml repoDocGeneration.scope)' };
 
     const profile = await extractRepoProfile(env, repoFullName);
     if (!profile.present) return { opened: false, reason: profile.reason };
@@ -141,9 +153,16 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
       if (existing) return { opened: true, reused: true, pullNumber: existing.number, url: existing.html_url, claudeMode: "unknown" };
 
       const currentAgentsContent = await fetchExistingAgentsMdContent(octokit, owner, repo, baseBranch);
-      const refresh = refreshGeneratedDoc(currentAgentsContent, generatedSection, REPO_DOC_MARKERS);
+      let refresh = refreshGeneratedDoc(currentAgentsContent, generatedSection, REPO_DOC_MARKERS);
+      if (refresh.action === "manual-review-required") {
+        // "manual-review-required" is generated-doc-refresh.ts's proxy for "this file looks hand-maintained,
+        // not machine-generated" (no recognizable marker block). #3002's allowOverwriteExisting is the explicit
+        // opt-in required before that content is discarded in favor of a fresh generate -- without it, stay
+        // skipped exactly as #3004 already behaves.
+        if (!manifest.repoDocGeneration.allowOverwriteExisting) return { opened: false, reason: `AGENTS.md needs manual review before it can be refreshed: ${refresh.reason}` };
+        refresh = { action: "generate", content: generatedSection };
+      }
       if (refresh.action === "no-change") return { opened: false, reason: "no meaningful change since the last generated AGENTS.md" };
-      if (refresh.action === "manual-review-required") return { opened: false, reason: `AGENTS.md needs manual review before it can be refreshed: ${refresh.reason}` };
       const agentsContent = refresh.content;
 
       const branchInfo = await octokit.request("GET /repos/{owner}/{repo}/branches/{branch}", { owner, repo, branch: baseBranch });

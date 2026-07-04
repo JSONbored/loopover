@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runManageStatus } from "../lib/manage-status.js";
+import { runQueueCli } from "../lib/portfolio-queue-cli.js";
 import { runStateCli } from "../lib/run-state-cli.js";
 import { runDoctor, runStatus } from "../lib/status.js";
 import {
@@ -26,6 +27,10 @@ if (cliArgs[0] === "doctor") {
 
 if (cliArgs[0] === "manage" && cliArgs[1] === "status") {
   process.exit(runManageStatus(cliArgs.slice(2)));
+}
+
+if (cliArgs[0] === "queue") {
+  process.exit(runQueueCli(cliArgs[1], cliArgs.slice(2)));
 }
 
 const require = createRequire(import.meta.url);

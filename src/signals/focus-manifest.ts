@@ -271,6 +271,11 @@ export type FocusManifestReviewConfig = {
    *  comments = byte-identical behavior. Operator-gated too (GITTENSORY_REVIEW_INLINE_COMMENTS + allowlist).
    *  (#inline-comments) */
   inlineComments: boolean | null;
+  /** `review.effort_score`: when true, the unified review comment ALSO renders a compact
+   *  "review effort: N/5 (~M min)" line from the deterministic per-PR effort estimator. null/false (default,
+   *  absent) = no effort line = byte-identical comment. Display-only — does not affect the AI reviewer prompt.
+   *  (#2069) */
+  effortScore: boolean | null;
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
    *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
@@ -442,7 +447,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, effortScore: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   warnings: [],
@@ -471,7 +476,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, effortScore: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   };
@@ -1278,7 +1283,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, effortScore: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1314,6 +1319,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const profile = parseReviewProfile(r.profile, warnings);
   const securityFocus = normalizeOptionalBoolean(r.security_focus, "review.security_focus", warnings);
   const inlineComments = normalizeOptionalBoolean(r.inline_comments, "review.inline_comments", warnings);
+  const effortScore = normalizeOptionalBoolean(r.effort_score, "review.effort_score", warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
   const instructions = parsePublicSafeText(r.instructions, "review.instructions", warnings);
   const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
@@ -1325,6 +1331,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       profile !== null ||
       securityFocus !== null ||
       inlineComments !== null ||
+      effortScore !== null ||
       pathInstructions.length > 0 ||
       instructions !== null ||
       excludePaths.length > 0 ||
@@ -1338,6 +1345,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     profile,
     securityFocus,
     inlineComments,
+    effortScore,
     pathInstructions,
     instructions,
     excludePaths,
@@ -1485,6 +1493,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.profile !== null) out.profile = review.profile;
   if (review.securityFocus !== null) out.security_focus = review.securityFocus;
   if (review.inlineComments !== null) out.inline_comments = review.inlineComments;
+  if (review.effortScore !== null) out.effort_score = review.effortScore;
   if (review.instructions !== null) out.instructions = review.instructions;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
   if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];
@@ -1535,6 +1544,14 @@ export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { 
  *  than inline in the processor. (#review-pre-merge-checks) */
 export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): PreMergeCheck[] {
   return manifest?.review.preMergeChecks ?? [];
+}
+
+/** Resolve `review.effort_score` to a strict boolean from a possibly-null manifest (null = load failure ⇒ off,
+ *  byte-identical comment). True ONLY when the manifest explicitly set review.effort_score: true. Centralized so
+ *  the future unified-comment caller reads it in one place with the null-manifest branch covered here
+ *  (unit-tested) rather than inline at the call site. (#2069) */
+export function resolveReviewEffortScoreEnabled(manifest: FocusManifest | null): boolean {
+  return manifest?.review.effortScore === true;
 }
 
 /** Resolve `review.enrichment` analyzer toggles from a possibly-null manifest (null = load failure ⇒ no toggles ⇒

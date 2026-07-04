@@ -166,6 +166,11 @@ export interface UnifiedReviewInput {
   consensusBlocker?: boolean;
   /** Reviewers that produced no parseable verdict (a partial review → held, not ready). */
   failedCount?: number;
+  /** Optional per-PR review-effort estimate (config-gated: `review.effort_score`, default off). Presence renders
+   *  a compact "review effort: N/5 (~M min)" chip; omission keeps the comment byte-identical. The caller computes
+   *  this from the estimator (src/review/review-effort.ts) and passes the OUTPUT — this module never imports the
+   *  estimator itself, staying self-contained. (#2069) */
+  reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
 }
 
 /** One row of the readiness signal table (gittensory side, host-provided; the engine adds Code review). */
@@ -323,6 +328,7 @@ function statusChips(input: UnifiedReviewInput, ctx: UnifiedCommentContext): str
     chips.push(ci === "passed" ? "`CI green`" : ci === "failed" ? "`CI failing`" : "`CI pending`");
     if (input.readiness.mergeStateLabel) chips.push(`\`${escapePublicHtmlAngles(input.readiness.mergeStateLabel)}\``);
   }
+  if (input.reviewEffort) chips.push(`\`review effort: ${input.reviewEffort.band}/5 (~${input.reviewEffort.minutes} min)\``);
   return chips.join(" · ");
 }
 
@@ -544,6 +550,9 @@ export function buildUnifiedReviewInput(opts: {
   decision?: Verdict;
   merged?: boolean;
   verdictReason?: string;
+  /** The estimator's OUTPUT (src/review/review-effort.ts estimateReviewEffort), already computed by the caller
+   *  and gated on `review.effort_score` — omit to keep the comment byte-identical. (#2069) */
+  reviewEffort?: { band: 1 | 2 | 3 | 4 | 5; minutes: number };
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -560,6 +569,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.decision !== undefined ? { decision: opts.decision } : {}),
     ...(opts.merged !== undefined ? { merged: opts.merged } : {}),
     ...(opts.verdictReason !== undefined ? { verdictReason: opts.verdictReason } : {}),
+    ...(opts.reviewEffort !== undefined ? { reviewEffort: opts.reviewEffort } : {}),
   };
 }
 

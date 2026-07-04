@@ -154,6 +154,13 @@ describe("renderUnifiedReviewComment", () => {
     expect(md).toContain("Checked by Gittensory.");
   });
 
+  it("renders the compact review-effort chip only when input.reviewEffort is present — omitted keeps the comment byte-identical (#2069)", () => {
+    const withEffort = renderUnifiedReviewComment({ ...base, decision: "merge", reviewEffort: { band: 3, minutes: 15 } }, ctx);
+    expect(withEffort).toContain("`review effort: 3/5 (~15 min)`");
+    const withoutEffort = renderUnifiedReviewComment({ ...base, decision: "merge" }, ctx);
+    expect(withoutEffort).not.toContain("review effort:");
+  });
+
   it("does not describe a single reviewer as synthesized", () => {
     const md = renderUnifiedReviewComment({ ...base, reviewerCount: 1, decision: "manual", recommendations: ["manual_review"] }, ctx);
     expect(md).toContain("`1 AI reviewer`");
@@ -469,6 +476,13 @@ describe("buildUnifiedReviewInput", () => {
     expect(input.readiness).toEqual({ ciState: "passed" });
     expect(input.merged).toBe(true);
     expect(input.verdictReason).toBe("auto-merged after green CI");
+  });
+
+  it("threads the caller's reviewEffort estimator output through; omitted when absent (#2069)", () => {
+    const withEffort = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge")], reviewEffort: { band: 2, minutes: 8 } });
+    expect(withEffort.reviewEffort).toEqual({ band: 2, minutes: 8 });
+    const withoutEffort = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge")] });
+    expect(withoutEffort.reviewEffort).toBeUndefined();
   });
 });
 

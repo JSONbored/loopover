@@ -15,6 +15,7 @@ import {
   excludeReviewPaths,
   resolveReviewPathInstructions,
   resolveReviewPreMergeChecks,
+  resolveReviewEffortScoreEnabled,
   composeRepoReviewContext,
   resolveReviewPromptOverrides,
   reviewConfigToJson,
@@ -518,7 +519,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, effortScore: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       warnings: [],
@@ -2216,6 +2217,31 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     const bad = parseFocusManifest({ review: { inline_comments: "yes" } });
     expect(bad.review.inlineComments).toBeNull();
     expect(bad.warnings.some((w) => /review\.inline_comments.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("parses review.effort_score (default OFF), marks present, round-trips, and warns on a non-boolean (#2069)", () => {
+    expect(parseFocusManifest({ review: { effort_score: true } }).review.effortScore).toBe(true);
+    const on = parseFocusManifest({ review: { effort_score: true } });
+    expect(on.review.present).toBe(true); // an effort-score-only manifest IS present
+    expect(parseFocusManifest({ review: reviewConfigToJson(on.review) }).review).toEqual(on.review); // survives round-trip
+    // Explicit false is retained (and marks present, since the maintainer set it).
+    const off = parseFocusManifest({ review: { effort_score: false } });
+    expect(off.review.effortScore).toBe(false);
+    expect(off.review.present).toBe(true);
+    // Absent ⇒ null (the byte-identical default), config not present.
+    expect(parseFocusManifest({ review: {} }).review.effortScore).toBeNull();
+    expect(parseFocusManifest({ review: {} }).review.present).toBe(false);
+    // A non-boolean is ignored with a warning.
+    const bad = parseFocusManifest({ review: { effort_score: "yes" } });
+    expect(bad.review.effortScore).toBeNull();
+    expect(bad.warnings.some((w) => /review\.effort_score.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("resolveReviewEffortScoreEnabled: true only when the manifest explicitly set review.effort_score: true; null manifest → false (#2069)", () => {
+    expect(resolveReviewEffortScoreEnabled(parseFocusManifest({ review: { effort_score: true } }))).toBe(true);
+    expect(resolveReviewEffortScoreEnabled(parseFocusManifest({ review: { effort_score: false } }))).toBe(false);
+    expect(resolveReviewEffortScoreEnabled(parseFocusManifest({ review: {} }))).toBe(false);
+    expect(resolveReviewEffortScoreEnabled(null)).toBe(false);
   });
 });
 

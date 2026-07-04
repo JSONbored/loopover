@@ -265,8 +265,8 @@ ORB_RELAY_MODE=pull  # or omit for push (the default) -- see "Choosing a relay m
       <p>
         See <Link to="/docs/self-hosting-troubleshooting">Troubleshooting</Link> for what a degraded
         brokered relay looks like in logs today, and{" "}
-        <Link to="/docs/self-hosting-release-checklist">the beta release checklist</Link>'s
-        brokered-mode scenario for the smoke tests that exercise both relay modes.
+        <Link to="/docs/self-hosting-release-checklist">the release checklist</Link>'s brokered-mode
+        scenario for the smoke tests that exercise both relay modes.
       </p>
 
       <h2>Webhook checks</h2>

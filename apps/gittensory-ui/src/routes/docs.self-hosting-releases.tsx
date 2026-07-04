@@ -73,9 +73,9 @@ docker pull ghcr.io/jsonbored/gittensory-selfhost:latest`}
       </Callout>
       <Callout variant="safety">
         Before tagging any <code>orb-v*</code> release or prerelease, run the{" "}
-        <Link to="/docs/self-hosting-release-checklist">beta release checklist</Link> against the
-        built image — CI only smoke-tests the plain SQLite + Redis + direct-App default, not
-        brokered mode, air-gapped mode, or any AI provider.
+        <Link to="/docs/self-hosting-release-checklist">release checklist</Link> against the built
+        image — CI only smoke-tests the plain SQLite + Redis + direct-App default, not brokered
+        mode, air-gapped mode, or any AI provider.
       </Callout>
 
       <h2>Upgrade flow</h2>

@@ -94,8 +94,8 @@ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1`}
       />
       <p>
         Set <code>AI_DUAL_REVIEW=1</code> only when you want the first two providers to run as
-        independent reviewers on every PR. In dual-review mode, <code>AI_COMBINE</code> controls
-        how decisions are combined.
+        independent reviewers on every PR. In dual-review mode, <code>AI_COMBINE</code> controls how
+        decisions are combined.
       </p>
       <CodeBlock
         filename=".env — dual review"

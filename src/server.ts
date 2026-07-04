@@ -98,6 +98,7 @@ import {
   setLocalReviewContextReader,
 } from "./signals/focus-manifest-loader";
 import { probeReesSecretAtStartup } from "./review/enrichment-wire";
+import { sampleRecentDeadLetters } from "./selfhost/dlq-recent";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -621,6 +622,7 @@ async function main(): Promise<void> {
 
   gauge("gittensory_queue_pending", () => backend.queue.size());
   gauge("gittensory_queue_dead", () => backend.queue.deadCount());
+  gauge("gittensory_dlq_dead_lettered_recent", () => sampleRecentDeadLetters(env));
   gauge("gittensory_queue_processing", () => backend.queue.processingCount());
   const durableJobMetric = async (name: string): Promise<number> =>
     Number((await backend.queue.stats())[name] ?? 0);

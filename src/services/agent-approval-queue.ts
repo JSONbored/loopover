@@ -176,14 +176,19 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // mutation call independently needs a valid token/state and will fail cleanly if something is actually wrong).
   // (#2126, #2478)
   let liveParams: AgentPendingActionParams = pending.params;
-  // For close, scoped to closeRequiresMergeableState === true (a base-conflict-justified heuristic close) --
-  // NOT the broader closeRequiresCiState === "not_required" (any non-CI reason). A duplicate/slop/blocker-only
-  // close has no cheap live re-derivation, so it is intentionally left out of this recheck entirely (see the
-  // field's doc comment on AgentPendingActionParams in types.ts).
+  // For close, scoped to closeRequiresMergeableState !== false -- i.e. `true` (a base-conflict-justified
+  // heuristic close) OR `undefined` (a LEGACY row staged before this field existed, whose original
+  // justification is unknown). NOT the broader closeRequiresCiState === "not_required" (any non-CI reason).
+  // A duplicate/slop/blocker-only close (closeRequiresMergeableState === false, always explicit per the
+  // field's own doc comment) has no cheap live re-derivation, so it is intentionally left out of this
+  // recheck. But `undefined` must NOT be treated the same as `false`: a strict `=== true` comparison would
+  // silently skip the live recheck for any pre-existing auto_with_approval close row staged before this
+  // field was introduced, even one that WAS originally conflict-justified -- exactly the safety gap this
+  // recheck exists to close. Fail toward "revalidate" for the unknown case, not "skip" (gate review finding).
   const shouldRecheckLiveDisposition =
     pr?.headSha &&
     (pending.actionClass === "merge" ||
-      (pending.actionClass === "close" && pending.params.closeKind === "heuristic" && pending.params.closeRequiresMergeableState === true));
+      (pending.actionClass === "close" && pending.params.closeKind === "heuristic" && pending.params.closeRequiresMergeableState !== false));
   if (shouldRecheckLiveDisposition) {
     const token = await createInstallationToken(env, pending.installationId).catch(() => undefined);
     const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, pending.installationId);
@@ -219,7 +224,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
             : reviewDecision === "CHANGES_REQUESTED"
               ? "a reviewer has since requested changes"
               : null
-        : // Only reached when closeRequiresMergeableState === true (see shouldRecheckLiveDisposition above), so
+        : // Only reached when closeRequiresMergeableState !== false (see shouldRecheckLiveDisposition above), so
           // CI state is irrelevant to this specific close's justification and the only live signal that matters
           // is whether the conflict has cleared. reviewFetchSucceeded is required alongside the value check --
           // see its own comment above -- so a failed live-review read fails open instead of masquerading as

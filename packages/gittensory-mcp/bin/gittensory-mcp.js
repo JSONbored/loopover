@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -1503,7 +1503,19 @@ function readCliTextFile(path, label) {
     const stats = fstatSync(fd);
     if (!stats.isFile()) throw new Error(`${label} file must be a regular file: ${path}`);
     if (stats.size > cliTextFileMaxBytes) throw new Error(`${label} file is too large: ${path} (max ${cliTextFileMaxBytes} bytes)`);
-    return readFileSync(fd, "utf8");
+    // Bound the READ itself rather than trusting stats.size alone: a regular file can grow between fstatSync
+    // and the read below (the fd is the same, but nothing stops another process from appending to the file
+    // in between), so read at most cliTextFileMaxBytes + 1 bytes directly from the descriptor and fail if that
+    // cap is exceeded, instead of handing the now-possibly-stale size to an unbounded readFileSync.
+    const buffer = Buffer.alloc(cliTextFileMaxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const n = readSync(fd, buffer, bytesRead, buffer.length - bytesRead, null);
+      if (n === 0) break;
+      bytesRead += n;
+    }
+    if (bytesRead > cliTextFileMaxBytes) throw new Error(`${label} file is too large: ${path} (max ${cliTextFileMaxBytes} bytes)`);
+    return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
     closeSync(fd);
   }

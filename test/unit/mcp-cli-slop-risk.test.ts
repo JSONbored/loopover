@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -74,6 +74,29 @@ describe("gittensory-mcp CLI — slop-risk", () => {
       ),
     ) as { band: string };
     expect(json.band).toBe("clean");
+  });
+
+  it("rejects non-regular and oversized --description-file inputs before posting", async () => {
+    const e = await env();
+    const directoryPath = join(tempDir!, "description-dir");
+    mkdirSync(directoryPath);
+    await expect(runAsync(["slop-risk", "--changed-file", "src/widget.ts:80:2", "--description-file", directoryPath], e)).rejects.toThrow(
+      /Description file must be a regular file/,
+    );
+
+    const targetPath = join(tempDir!, "target.md");
+    const symlinkPath = join(tempDir!, "symlink.md");
+    writeFileSync(targetPath, "Fixes #7", "utf8");
+    symlinkSync(targetPath, symlinkPath);
+    await expect(runAsync(["slop-risk", "--changed-file", "src/widget.ts:80:2", "--description-file", symlinkPath], e)).rejects.toThrow(
+      /Description file must be a regular file/,
+    );
+
+    const oversizedPath = join(tempDir!, "oversized.md");
+    writeFileSync(oversizedPath, "x".repeat(1024 * 1024 + 1), "utf8");
+    await expect(runAsync(["slop-risk", "--changed-file", "src/widget.ts:80:2", "--description-file", oversizedPath], e)).rejects.toThrow(
+      /Description file is too large/,
+    );
   });
 
   it("surfaces elevated slop findings in plain output", async () => {

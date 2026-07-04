@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -58,6 +58,23 @@ describe("gittensory-mcp CLI — issue-slop", () => {
       band: string;
     };
     expect(json.band).toBe("clean");
+  });
+
+  it("rejects non-regular and oversized --body-file inputs before posting", async () => {
+    const e = await env();
+    const directoryPath = join(tempDir!, "body-dir");
+    mkdirSync(directoryPath);
+    await expect(runAsync(["issue-slop", "--title", "Add retries", "--body-file", directoryPath], e)).rejects.toThrow(/Body file must be a regular file/);
+
+    const targetPath = join(tempDir!, "target.md");
+    const symlinkPath = join(tempDir!, "symlink.md");
+    writeFileSync(targetPath, "Retry widget reconnects.", "utf8");
+    symlinkSync(targetPath, symlinkPath);
+    await expect(runAsync(["issue-slop", "--title", "Add retries", "--body-file", symlinkPath], e)).rejects.toThrow(/Body file must be a regular file/);
+
+    const oversizedPath = join(tempDir!, "oversized.md");
+    writeFileSync(oversizedPath, "x".repeat(1024 * 1024 + 1), "utf8");
+    await expect(runAsync(["issue-slop", "--title", "Add retries", "--body-file", oversizedPath], e)).rejects.toThrow(/Body file is too large/);
   });
 
   it("surfaces elevated issue slop findings in plain output", async () => {

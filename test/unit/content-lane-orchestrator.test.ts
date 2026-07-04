@@ -175,19 +175,21 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     expect(r?.verdict).toBe("merge");
   });
 
-  it("[test 3] merges an entry submission accompanied ONLY by an artifactPattern companion, without validating it as a provider", async () => {
+  it("[test 3] routes an entry submission with an artifactPattern companion to manual review", async () => {
     const calls: string[] = [];
     const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
       changedFiles: [SUBNET, ARTIFACT],
       loadFile: (path, ref) => {
         calls.push(`${ref}:${path}`);
-        if (path === ARTIFACT) return Promise.resolve("<<not even valid json>>"); // garbage content, never read
+        if (path === ARTIFACT) return Promise.resolve("<<not even valid json>>");
         return Promise.resolve(ref === "head" ? doc([existing, newEntry]) : doc([existing]));
       },
     });
-    expect(r?.verdict).toBe("merge");
-    // The artifact companion is allowed as-is (generated build output) — never loaded/validated.
-    expect(calls.some((c) => c.includes(ARTIFACT))).toBe(false);
+    expect(r).toEqual({
+      verdict: "manual",
+      summary: "Registry submission includes companion file changes — routing to review.",
+    });
+    expect(calls).toEqual([]);
   });
 
   it("[test 4] a companion file matching NEITHER providerFilePattern NOR artifactPattern is still mixed-files (close), unchanged", async () => {

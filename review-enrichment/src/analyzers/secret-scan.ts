@@ -51,9 +51,10 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
-    // Stripe live secret / restricted key: `sk_live_` / `rk_live_` + >=24 base62.
+    // Stripe secret / restricted key: `sk_`/`rk_` + `live` or `test` + >=24 base62.
+    // Test-mode keys (`sk_test_` / `rk_test_`) are still credentials and must not be committed.
     kind: "stripe_secret_key",
-    re: /\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b/,
+    re: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{24,}\b/,
     confidence: "high",
   },
   {

@@ -320,3 +320,22 @@ test("scanPatch does not flag near-miss tokens with the wrong length as the new 
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags Stripe test-mode secret and restricted keys", () => {
+  // `sk_test_` / `rk_test_` are still credentials — the prior rule only matched `*_live_*`.
+  const skTest = ["sk_test_", "abcdefghijklmnop1234567890"].join("");
+  const rkTest = ["rk_test_", "abcdefghijklmnop1234567890"].join("");
+  const skFindings = scanPatch("src/config.ts", hunk([`const key = "${skTest}";`]));
+  assert.equal(skFindings.length, 1);
+  assert.equal(skFindings[0].kind, "stripe_secret_key");
+  assert.equal(skFindings[0].confidence, "high");
+  const rkFindings = scanPatch("src/config.ts", hunk([`const key = "${rkTest}";`]));
+  assert.equal(rkFindings.length, 1);
+  assert.equal(rkFindings[0].kind, "stripe_secret_key");
+});
+
+test("scanPatch still flags Stripe live-mode keys", () => {
+  const findings = scanPatch("src/config.ts", hunk([`const key = "${fakeStripeKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "stripe_secret_key");
+});

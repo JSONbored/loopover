@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { scanPatchForIacMisconfig } from "../dist/analyzers/iac-misconfig.js";
+import {
+  isRelevantConfigPath,
+  scanIacMisconfig,
+  scanPatchForIacMisconfig,
+} from "../dist/analyzers/iac-misconfig.js";
 
 test("scanPatchForIacMisconfig flags hostNetwork and compose host network mode", () => {
   const k8s = scanPatchForIacMisconfig(
@@ -84,6 +88,32 @@ test("scanPatchForIacMisconfig does not flag NODE_TLS_REJECT_UNAUTHORIZED when T
     ),
     [],
   );
+});
+
+test("isRelevantConfigPath recognizes environment-specific dotenv files", async () => {
+  // The path gate must admit mode-suffixed dotenv files (`.env.production`, `.env.local`,
+  // `apps/api/.env.staging`) — the canonical home of `NODE_TLS_REJECT_UNAUTHORIZED=0` — not only a bare `.env`.
+  // Otherwise the analyzer entrypoint skips them and the TLS/CORS/secret findings never fire in real use.
+  assert.equal(isRelevantConfigPath(".env"), true);
+  assert.equal(isRelevantConfigPath(".env.production"), true);
+  assert.equal(isRelevantConfigPath(".env.local"), true);
+  assert.equal(isRelevantConfigPath("apps/api/.env.staging"), true);
+  // Must not over-match a non-dotenv name that merely contains "env".
+  assert.equal(isRelevantConfigPath(".environment"), false);
+  assert.equal(isRelevantConfigPath("src/index.ts"), false);
+
+  // End-to-end through the gated entrypoint: a mode-suffixed dotenv file must actually be scanned.
+  const findings = await scanIacMisconfig({
+    files: [
+      {
+        path: ".env.production",
+        patch: "@@ -1,0 +7,1 @@\n+NODE_TLS_REJECT_UNAUTHORIZED=0",
+      },
+    ],
+  });
+  assert.deepEqual(findings, [
+    { file: ".env.production", line: 7, kind: "tls-verification-disabled" },
+  ]);
 });
 
 test("scanPatchForIacMisconfig ignores unchanged lines and honors maxFindings", () => {

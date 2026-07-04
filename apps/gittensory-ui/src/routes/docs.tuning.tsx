@@ -78,6 +78,11 @@ function Tuning() {
         <li>built-in safe defaults.</li>
       </ul>
       <p>
+        Path holds are explicit config-as-code only: omitted or empty{" "}
+        <code>settings.hardGuardrailGlobs</code> means no path guardrails, not a hidden engine
+        fallback.
+      </p>
+      <p>
         The friendly <code>gate:</code> block in <code>.gittensory.yml</code> is a typed alias for
         the gate-related fields and wins over the generic <code>settings:</code> block for those
         same fields. Gittensory looks for the manifest at the first match of{" "}

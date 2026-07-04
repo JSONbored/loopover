@@ -421,9 +421,11 @@ function computeScoreCore(
   const issueCredibilityFloor = constant(constants, "MIN_ISSUE_CREDIBILITY");
   const validSolvedIssuesObserved = input.validSolvedIssues !== undefined ? nonNegative(input.validSolvedIssues) : undefined;
   const issueCredibilityObserved = input.issueCredibility !== undefined ? clamp(input.issueCredibility, 0, 1) : undefined;
-  // Issue-discovery validity mirrors upstream's separate issue lane — only gate previews that
-  // actually claim linked-issue / issue-discovery scoring, not every repo with a non-zero share.
-  const issueDiscoveryRelevant = (input.linkedIssueMode ?? "none") !== "none";
+  // Issue-discovery validity mirrors upstream's separate issue lane, which is the `standard` linked-issue
+  // lane only. The `maintainer` lane explicitly does not require solved-by-PR issue linkage (see
+  // decideLinkedIssueMultiplier), so it must not be gated by the solved-issue history floor — otherwise a
+  // maintainer preview with sparse issue history is wrongly zeroed and flagged issue_discovery_validity_floor.
+  const issueDiscoveryRelevant = (input.linkedIssueMode ?? "none") === "standard";
   const issueDiscoveryHistoryKnown = validSolvedIssuesObserved !== undefined && issueCredibilityObserved !== undefined;
   const issueDiscoveryHistoryMultiplier =
     !issueDiscoveryRelevant || !issueDiscoveryHistoryKnown

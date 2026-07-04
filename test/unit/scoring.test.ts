@@ -1590,6 +1590,34 @@ NOVELTY_BONUS_SCALAR = 3
       ).toBe(true);
     });
 
+    it("does not gate the maintainer lane by the issue-discovery validity floor (#808)", () => {
+      const issueDiscoveryRepo: RepositoryRecord = {
+        ...repo,
+        registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+      };
+      // The same sparse solved-issue history that zeroes a `standard` preview must not gate the maintainer
+      // lane, which does not require solved-by-PR issue linkage.
+      const maintainer = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: {
+          repoFullName: issueDiscoveryRepo.fullName,
+          sourceTokenScore: 60,
+          totalTokenScore: 90,
+          sourceLines: 50,
+          openPrCount: 0,
+          credibility: 1,
+          mergedPullRequests: 5,
+          linkedIssueMode: "maintainer" as const,
+          validSolvedIssues: 2,
+          issueCredibility: 0.9,
+        },
+      });
+      expect(maintainer.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+      expect(maintainer.effectiveEstimatedScore).toBeGreaterThan(0);
+      expect(maintainer.blockedBy.some((b) => b.code === "issue_discovery_validity_floor")).toBe(false);
+    });
+
     it("issue-discovery validity floor is skipped when issue-discovery is not relevant or history is unknown", () => {
       const issueDiscoveryRepo: RepositoryRecord = {
         ...repo,

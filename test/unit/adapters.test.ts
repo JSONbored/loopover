@@ -22,6 +22,9 @@ describe("small adapters and normalizers", () => {
 
   it("normalizes gitt bounty snapshots and drops incomplete rows", () => {
     expect(normalizeGittBountySnapshot({})).toEqual([]);
+    // The import route feeds `null` when the request body is empty/malformed — degrade to [], never throw.
+    expect(normalizeGittBountySnapshot(null)).toEqual([]);
+    expect(normalizeGittBountySnapshot(undefined)).toEqual([]);
     const records = normalizeGittBountySnapshot({
       success: true,
       issues: [

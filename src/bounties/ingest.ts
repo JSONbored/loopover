@@ -16,8 +16,11 @@ type GittIssueListPayload = {
 };
 
 export function normalizeGittBountySnapshot(payload: unknown): BountyRecord[] {
-  const data = payload as GittIssueListPayload;
-  return (data.issues ?? []).flatMap((issue) => {
+  // `payload` is `unknown` and reaches here as `null` when the import route's `c.req.json()` rejects on an
+  // empty/malformed body (`.catch(() => null)`). Optional-chain so a null/undefined payload degrades to an
+  // empty list — matching how every other non-object value already yields `[]` — instead of throwing.
+  const data = payload as GittIssueListPayload | null | undefined;
+  return (data?.issues ?? []).flatMap((issue) => {
     if (issue.id === undefined || !issue.repository_full_name || !issue.issue_number || !issue.status) return [];
     const amountText = issue.bounty_alpha ?? (issue.bounty_amount === undefined ? undefined : String(issue.bounty_amount));
     return [

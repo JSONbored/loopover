@@ -29,8 +29,8 @@ function normalizeCandidate(candidate) {
         .map((label) => label.trim())
     : [];
   return {
-    owner: typeof candidate.owner === "string" ? candidate.owner : owner,
-    repo: typeof candidate.repo === "string" ? candidate.repo : repo,
+    owner,
+    repo,
     repoFullName: canonicalRepoFullName,
     issueNumber,
     title,

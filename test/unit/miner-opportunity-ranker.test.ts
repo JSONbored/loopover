@@ -230,6 +230,22 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     expect(ranked[0]?.aiPolicySource).toBe("AI-USAGE.md");
   });
 
+  it("ignores conflicting owner/repo fields when repoFullName is valid", () => {
+    const ranked = rankCandidateIssues(
+      [
+        rawIssue({
+          owner: "wrong",
+          repo: "name",
+          repoFullName: "acme/widgets",
+        }),
+      ],
+      { nowMs: NOW },
+    );
+    expect(ranked[0]?.owner).toBe("acme");
+    expect(ranked[0]?.repo).toBe("widgets");
+    expect(ranked[0]?.repoFullName).toBe("acme/widgets");
+  });
+
   it("uses Date.now when nowMs is not finite", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-03T12:00:00.000Z"));

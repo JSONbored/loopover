@@ -92,6 +92,10 @@ export function extractVersionPins(
         // `.node-version` (nodenv/asdf) carries the same leading-version pin as `.nvmrc`.
         const version = leadingVersion(line);
         if (version) pins.push({ file: file.path, product: "nodejs", version });
+      } else if (base === ".python-version") {
+        // pyenv/asdf pin file — same leading-version format, product is Python.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "python", version });
       } else if (base === "go.mod") {
         const match = /^go\s+(\d+\.\d+)/.exec(line);
         if (match)

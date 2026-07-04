@@ -51,6 +51,13 @@ test("extractVersionPins reads .node-version pins like .nvmrc", () => {
   ]);
 });
 
+test("extractVersionPins reads .python-version pins as Python", () => {
+  // pyenv/asdf use `.python-version` with the same leading-version format.
+  assert.deepEqual(extractVersionPins([added(".python-version", "3.11.0")]), [
+    { file: ".python-version", product: "python", version: "3.11.0" },
+  ]);
+});
+
 test("extractVersionPins ignores removed/context lines and files with no patch", () => {
   const patch = ["@@ -1 +1,2 @@", "-FROM python:3.7", " FROM python:3.9"].join(
     "\n",

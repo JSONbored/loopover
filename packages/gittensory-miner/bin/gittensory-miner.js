@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { printHelp, printVersion, runCli } from "../lib/cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
+import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
 import { runManagePoll } from "../lib/manage-poll.js";
 import { runManageStatus } from "../lib/manage-status.js";
@@ -42,6 +43,10 @@ if (cliArgs[0] === "ledger") {
 
 if (cliArgs[0] === "plan") {
   process.exit(runPlanCli(cliArgs[1], cliArgs.slice(2)));
+}
+
+if (cliArgs[0] === "governor") {
+  process.exit(runGovernorCli(cliArgs[1], cliArgs.slice(2)));
 }
 
 const require = createRequire(import.meta.url);

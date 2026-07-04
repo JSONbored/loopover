@@ -26,6 +26,7 @@ import { scanSecretLog } from "./secret-log.js";
 import { scanStaleBranch } from "./stale-branch.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
+import { scanUnsafeAny } from "./unsafe-any.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -679,6 +680,36 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanPendingReviewRequests(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "unsafeAny",
+    title: "Unsafe `any` usage",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags explicit `any` type usages newly introduced in TypeScript diffs, which opt out of type checking.",
+      looksAt:
+        "Added lines in .ts/.tsx files for a `: any` annotation, an `as any` cast, or an `<any>` assertion.",
+      reports: "File, line, and which of the three `any` shapes was introduced.",
+      network: "None — pure local diff analysis.",
+      notes:
+        "Structural regex only, no type-checker; best-effort comment handling skips comment lines but does not parse string literals, and generated `.d.ts` files are excluded.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Unsafe `any` usage"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} introduces an \`${item.kind}\` \`any\` usage`,
+        );
+      }
+      return lines;
+    },
+    run: (req) => scanUnsafeAny(req),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

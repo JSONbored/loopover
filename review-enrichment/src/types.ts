@@ -137,6 +137,14 @@ export interface RedosFinding {
   pattern: string;
 }
 
+/** An explicit `any` type usage introduced by the PR in a `.ts`/`.tsx` diff — a `: any` annotation, an `as any`
+ *  cast, or an `<any>` assertion. Each opts out of the type checker. Reports the location + which shape only. (#2017) */
+export interface UnsafeAnyFinding {
+  file: string;
+  line: number;
+  kind: "annotation" | "cast" | "assertion";
+}
+
 /** A newly-added dependency (npm/PyPI) lacking a published provenance attestation, or a binary/vendored file
  *  committed without auditable source — supply-chain integrity risks the no-checkout reviewer cannot verify. */
 export interface ProvenanceFinding {
@@ -412,6 +420,7 @@ export interface BriefFindings {
   staleBranch?: StaleBranchFinding[];
   commitHygiene?: CommitHygieneFinding[];
   pendingReviewRequests?: PendingReviewRequestFinding[];
+  unsafeAny?: UnsafeAnyFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

@@ -188,6 +188,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Resend API key: `re_` + >=24 base62 chars.
+    kind: "resend_api_key",
+    re: /\bre_[A-Za-z0-9]{24,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Mapbox secret access token: `sk.eyJ` JWT-shaped token (distinct from Stripe `sk_live_` / `sk_test_`).
+    kind: "mapbox_secret_token",
+    re: /\bsk\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

@@ -4,6 +4,12 @@ const LOCKFILE_NAMES = new Set([
   "pnpm-lock.yaml",
   "poetry.lock",
   "go.sum",
+  // Classification-only (not in the parseable set below): Rust, PHP, and Bun lockfiles, matching the
+  // lockfile inventory already recognized in src/review/rag.ts. Categorizing them keeps a Cargo/Composer/Bun
+  // lockfile bump from being mistaken for a source change.
+  "cargo.lock",
+  "composer.lock",
+  "bun.lockb",
 ]);
 
 /** Lockfiles the drift analyzer can actually parse today — narrower than categorization. */

@@ -21,8 +21,9 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Slack tokens: bot/user/app/refresh/session (`baprs`) plus enterprise (`e`) and cookie (`c`).
     kind: "slack_token",
-    re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+    re: /\bxox[baprsec]-[A-Za-z0-9-]{10,}\b/,
     confidence: "high",
   },
   {

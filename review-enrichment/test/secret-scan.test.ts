@@ -202,3 +202,24 @@ test("scanPatch does not let a no-newline marker skew the line number", () => {
   assert.equal(findings[0].kind, "aws_access_key_id");
   assert.equal(findings[0].line, 2);
 });
+
+test("scanPatch flags Slack enterprise and cookie tokens", () => {
+  // `xoxe-` (enterprise) and `xoxc-` (cookie) were missing from `xox[baprs]`.
+  // Built from fragments so push protection never sees a contiguous secret-shaped literal.
+  const enterprise = ["xoxe", "1234567890", "ABCDEFabcdef"].join("-");
+  const cookie = ["xoxc", "1234567890", "ABCDEFabcdef"].join("-");
+  const entFindings = scanPatch("src/config.ts", hunk([`const slack = "${enterprise}";`]));
+  assert.equal(entFindings.length, 1);
+  assert.equal(entFindings[0].kind, "slack_token");
+  assert.equal(entFindings[0].confidence, "high");
+  const cookieFindings = scanPatch("src/config.ts", hunk([`const slack = "${cookie}";`]));
+  assert.equal(cookieFindings.length, 1);
+  assert.equal(cookieFindings[0].kind, "slack_token");
+});
+
+test("scanPatch still flags classic Slack bot tokens", () => {
+  const bot = ["xoxb", "1234567890", "ABCDEFabcdef"].join("-");
+  const findings = scanPatch("src/config.ts", hunk([`const slack = "${bot}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "slack_token");
+});

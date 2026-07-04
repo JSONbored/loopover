@@ -908,13 +908,26 @@ function deltaExplanationFor(core: ScoreCore, blockedBy: ScoreGateBlocker[]): st
   return `Effective score ${core.scoreEstimate.estimatedMergedScore}; underlying potential ${core.scoreEstimate.pendingSaturationScore}; blocked or reduced by ${blockedBy.map((blocker) => blocker.code).join(", ")}.`;
 }
 
+// A label multiplier must be a positive, finite number (mirrors the validity rule signals/engine.ts's own
+// config-quality check already documents and enforces for its ADVISORY health score: "0, negative, NaN, or
+// Infinity are config errors that would silently misweight scoring"). That check only ever adjusted a
+// repo's informational config-quality score -- it never stopped an invalid value from reaching the REAL
+// scoring formula here, where `labelMultiplier` multiplies directly into `estimatedMergedScore`. A
+// registry-sourced label multiplier of 0 or a negative number is valid JSON and passed neither `numberValue`
+// (only applied to the scalar overrides, not this map) nor any check in this function, so it would zero out
+// or invert any PR/issue score for a matching label. Filtering here closes the gap where it actually matters.
+function isValidLabelMultiplier(value: number): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function selectLabelMultiplier(labels: string[], multipliers: Record<string, number>, fallback: number): number {
   const normalized = labels.map((label) => label.toLowerCase());
   const matched = Object.entries(multipliers).flatMap(([pattern, multiplier]) => {
+    if (!isValidLabelMultiplier(multiplier)) return [];
     const matcher = labelPatternToRegExp(pattern.toLowerCase());
     return normalized.some((label) => matcher.test(label)) ? [multiplier] : [];
   });
-  return matched.length > 0 ? Math.max(...matched) : fallback || 1;
+  return matched.length > 0 ? Math.max(...matched) : isValidLabelMultiplier(fallback) ? fallback : 1;
 }
 
 /** True when `label` matches the configured multiplier `pattern` under the SAME case-insensitive fnmatch glob

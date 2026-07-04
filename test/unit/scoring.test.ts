@@ -791,6 +791,50 @@ NOVELTY_BONUS_SCALAR = 3
     expect(preview.scoreEstimate.labelMultiplier).toBe(1);
   });
 
+  it("REGRESSION: ignores a non-positive or non-finite label multiplier instead of letting it corrupt the score", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    // A registry-sourced label multiplier of 0 or negative is valid JSON and previously reached
+    // Math.max(...) unfiltered, zeroing out or inverting the whole estimatedMergedScore for a matching label.
+    const zeroMultiplier = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { bug: 0 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["bug"] },
+    });
+    const negativeMultiplier = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { bug: -2 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["bug"] },
+    });
+    // An invalid entry alongside a valid one: the valid one still wins, the invalid one is simply excluded
+    // from the candidate set (not treated as 0 or as a Math.max(...) contender).
+    const mixedValidity = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, labelMultipliers: { bug: -2, refactor: 1.4 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["bug", "refactor"] },
+    });
+    // A negative fallback (defaultLabelMultiplier) is truthy in JS, so the old `fallback || 1` never caught it.
+    const negativeFallback = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier: -3, labelMultipliers: {} } },
+      snapshot,
+      input: { ...baseInput, labels: ["unmatched"] },
+    });
+
+    expect(zeroMultiplier.scoreEstimate.labelMultiplier).toBe(1);
+    expect(negativeMultiplier.scoreEstimate.labelMultiplier).toBe(1);
+    expect(mixedValidity.scoreEstimate.labelMultiplier).toBe(1.4);
+    expect(negativeFallback.scoreEstimate.labelMultiplier).toBe(1);
+    expect(zeroMultiplier.scoreEstimate.estimatedMergedScore).toBeGreaterThan(0);
+    expect(negativeMultiplier.scoreEstimate.estimatedMergedScore).toBeGreaterThan(0);
+  });
+
   it("applies penalty label multipliers instead of flooring them to 1 (#994)", () => {
     const baseInput: ScorePreviewInput = {
       repoFullName: repo.fullName,

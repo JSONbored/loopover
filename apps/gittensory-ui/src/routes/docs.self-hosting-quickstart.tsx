@@ -117,7 +117,11 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         Contributors and anyone customizing the Dockerfile can still build locally —{" "}
         <code>docker compose up -d --build</code> builds the <code>gittensory</code> service from
         the checkout instead of pulling a published image. Everything else in this quickstart (env,
-        health checks, GitHub App) is identical either way.
+        health checks, GitHub App) is identical either way. Two build-args trim the image:{" "}
+        <code>--build-arg INSTALL_AI_CLIS=false</code> skips the Claude Code/Codex CLIs (default{" "}
+        <code>true</code>), and <code>--build-arg INSTALL_VISUAL_REVIEW=true</code> adds{" "}
+        <code>puppeteer-core</code> for visual capture (default <code>false</code> — needs a{" "}
+        <code>BROWSER_WS_ENDPOINT</code> at runtime).
       </Callout>
       <FeatureRow
         items={[
@@ -144,6 +148,11 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/depl
         and open a small PR. The direct App and Orb modes are covered in{" "}
         <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link>.
       </p>
+      <Callout variant="note">
+        Set <code>ADMIN_GITHUB_LOGINS</code> to a comma/whitespace-separated list of GitHub logins
+        before signing in to the control panel — it's the only allowlist for the operator role
+        (operator dashboard, drift status). No login is authorized as operator without it.
+      </Callout>
 
       <h2>5. Watch the first review</h2>
       <p>Look for these logs during boot and the first webhook:</p>

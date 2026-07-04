@@ -248,6 +248,11 @@ volumes:
             description:
               "The pull-mode relay loop for installations that receive events outbound from Orb.",
           },
+          {
+            title: "Orb relay register",
+            description:
+              "The recurring retry loop that (re-)registers this instance with the relay broker.",
+          },
         ]}
       />
       <p>

@@ -291,7 +291,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "PGPOOL_MAX",
-    firstReference: "src/selfhost/queue-common.ts:710",
+    firstReference: "src/selfhost/queue-common.ts:713",
   },
   {
     name: "PGVECTOR_ENABLED",
@@ -327,11 +327,11 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS",
-    firstReference: "src/selfhost/queue-common.ts:718",
+    firstReference: "src/selfhost/queue-common.ts:721",
   },
   {
     name: "QUEUE_STARTUP_JITTER_MIN_JOBS",
-    firstReference: "src/selfhost/queue-common.ts:699",
+    firstReference: "src/selfhost/queue-common.ts:702",
   },
   {
     name: "REDIS_URL",
@@ -457,7 +457,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_EXPORTER` | `src/selfhost/otel.ts:40` |",
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts:74` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts:76` |",
-  "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts:710` |",
+  "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts:713` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts:229` |",
   "| `PORT` | `src/server.ts:715` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:192` |",
@@ -466,8 +466,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `QDRANT_URL` | `src/server.ts:527` |",
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts:130` |",
   "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts:285` |",
-  "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts:718` |",
-  "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts:699` |",
+  "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts:721` |",
+  "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts:702` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts:144` |",
   "| `REVIEW_AUDIT_DIR` | `src/server.ts:572` |",
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.mjs:13` |",

@@ -169,9 +169,10 @@ GET /v1/installations/:id/repair`}
         <code>gateCheckMode</code> (<code>off</code> / <code>enabled</code>); each dimension then
         refines an already-enabled gate with a tri-state mode — <code>off</code> (not evaluated),{" "}
         <code>advisory</code> (surfaced, never blocks), or <code>block</code> (can become a hard{" "}
-        <strong>Gittensory Orb Review Agent</strong> blocker). Blocking is always
-        confirmed-contributor-gated: the mode chooses which deterministic checks are active, never{" "}
-        <em>who</em> can be blocked.
+        <strong>Gittensory Orb Review Agent</strong> blocker). A configured blocker fails the gate
+        for any author identically — confirmed-Gittensor-contributor status does not change{" "}
+        <em>who</em> can be blocked; it's carried through only for on-chain scoring, a separate
+        concern from the gate's own merge/close decision.
       </p>
       <ul>
         <li>
@@ -203,15 +204,37 @@ GET /v1/installations/:id/repair`}
         <li>
           <code>aiReviewMode</code> — AI review. Default <code>off</code>; <code>advisory</code>{" "}
           posts AI review notes only, <code>block</code> lets a dual-model high-confidence consensus
-          defect become a blocker (confirmed contributors only).
+          defect become a blocker.
+        </li>
+        <li>
+          <code>sizeGateMode</code> — PR-size hold. Default <code>off</code>; a PR at or above the
+          configured file/line thresholds is held for manual review rather than auto-merged, never a
+          hard failure.
+        </li>
+        <li>
+          <code>lockfileIntegrityGateMode</code> — lockfile-tamper-risk check (a resolved/integrity
+          change with no matching version bump, or a dependency pointed off the npm registry).
+          Default <code>off</code>.
+        </li>
+        <li>
+          <code>claGateMode</code> — CLA / license-compatibility gate. Default <code>off</code>.
+        </li>
+        <li>
+          <code>selfAuthoredLinkedIssueGateMode</code> — flags or blocks a PR whose author also
+          opened the linked issue. Default <code>advisory</code>.
+        </li>
+        <li>
+          <code>moderationGateMode</code> — whether the moderation-rules engine (contributor cap,
+          blacklist, review-nag feeding a shared cross-repo violation tally) runs on this repo.
+          Default <code>inherit</code> (defers to the instance-wide default); <code>off</code>/
+          <code>enabled</code> force it per repo.
         </li>
       </ul>
       <p>
         The policy pack (<code>gatePack</code>) selects which rule set runs: <code>gittensor</code>{" "}
-        (confirmed-contributor-gated, registry-aware) or <code>oss-anti-slop</code> (the
-        deterministic rules against any author on any repo). Enable{" "}
-        <code>firstTimeContributorGrace</code> to soften a would-be block to advisory for a genuine
-        newcomer.
+        (registry-aware, tracks confirmed-Gittensor-contributor status for scoring) or{" "}
+        <code>oss-anti-slop</code> (the deterministic rules against any author on any repo, with no
+        confirmed-contributor tracking at all).
       </p>
 
       <h2>
@@ -221,7 +244,7 @@ GET /v1/installations/:id/repair`}
         Every setting can be committed to <code>.gittensory.yml</code> at the repo root instead of,
         or layered over, the dashboard. Precedence is <code>.gittensory.yml</code> &gt; repository
         settings &gt; safe defaults; an unset field falls back to the next layer. It only chooses{" "}
-        <em>what</em> Gittensory does — only confirmed Gittensor contributors are ever hard-blocked,
+        <em>what</em> Gittensory does — a configured blocker gates every author identically,
         regardless of config.
       </p>
       <CodeBlock

@@ -128,15 +128,18 @@ POST /v1/repos/:owner/:repo/settings-preview`}
           {
             title: "Command access",
             description:
-              "PR-thread commands are maintainer-authorized. Untrusted contributors should not be able to trigger private maintainer packets.",
+              "PR-thread commands default to maintainers, collaborators, and confirmed miners. Untrusted contributors should not be able to trigger private maintainer packets.",
           },
         ]}
       />
 
       <h2>Command authorization</h2>
       <p>
-        Maintainer commands should be treated like privileged review actions. Use them to fetch
-        context on demand, not to create always-on public scoring.
+        Commands should be treated like privileged review actions. Use them to fetch context on
+        demand, not to create always-on public scoring. The default authorized roles are{" "}
+        <strong>maintainer</strong>, <strong>collaborator</strong>, and{" "}
+        <strong>confirmed miner</strong> — a repo can narrow (or further restrict) this per command
+        via <code>commandAuthorization</code> in its settings.
       </p>
       <CodeBlock code={PUBLIC_COMMAND_LIST} />
       <p>

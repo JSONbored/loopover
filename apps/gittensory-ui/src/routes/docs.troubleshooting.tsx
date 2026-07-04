@@ -99,7 +99,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`}
       <h2 id="api-status">API status &amp; offline mode</h2>
       <p>
         The site continuously monitors the Gittensory API and surfaces problems through a banner
-        under the header and a single deduped toast with a <strong>Retry</strong> button.
+        under the header and a single deduped toast with a <strong>Recheck</strong> button.
       </p>
       <h3 id="offline">You're offline</h3>
       <p>

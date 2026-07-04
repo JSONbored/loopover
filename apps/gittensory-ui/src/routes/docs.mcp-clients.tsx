@@ -39,11 +39,16 @@ function McpClients() {
         code={`gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
-gittensory-mcp init-client --print mcp`}
+gittensory-mcp init-client --print mcp
+gittensory-mcp init-client --print vscode`}
       />
       <p>
         <code>--print mcp</code> uses the same JSON snippet as Claude Desktop and Cursor for other
-        stdio MCP hosts that expect the <code>mcpServers</code> shape.
+        stdio MCP hosts that expect the <code>mcpServers</code> shape. Every generated snippet
+        assumes <code>gittensory-mcp</code> is on your <code>PATH</code> (install it globally first,
+        per <a href="/docs/quickstart">Quickstart</a>) — pass{" "}
+        <code>--command /absolute/path/to/gittensory-mcp</code> if your client doesn't inherit your
+        shell PATH.
       </p>
 
       <h2>Codex (OpenAI)</h2>
@@ -51,8 +56,8 @@ gittensory-mcp init-client --print mcp`}
         filename="~/.codex/config.toml"
         lang="toml"
         code={`[mcp_servers.gittensory]
-command = "npx"
-args = ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]`}
+command = "gittensory-mcp"
+args = ["--stdio"]`}
       />
 
       <h2>Claude Desktop</h2>
@@ -60,10 +65,10 @@ args = ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]`}
         filename="claude_desktop_config.json"
         lang="json"
         code={`{
-      "mcpServers": {
+  "mcpServers": {
     "gittensory": {
-      "command": "npx",
-      "args": ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]
+      "command": "gittensory-mcp",
+      "args": ["--stdio"]
     }
   }
 }`}
@@ -74,10 +79,29 @@ args = ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]`}
         filename=".cursor/mcp.json"
         lang="json"
         code={`{
-      "mcpServers": {
+  "mcpServers": {
     "gittensory": {
-      "command": "npx",
-      "args": ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]
+      "command": "gittensory-mcp",
+      "args": ["--stdio"]
+    }
+  }
+}`}
+      />
+
+      <h2>VS Code</h2>
+      <p>
+        VS Code's native MCP support uses a <code>servers</code> map with an explicit transport type
+        instead of the <code>mcpServers</code> shape the other JSON hosts use:
+      </p>
+      <CodeBlock
+        filename=".vscode/mcp.json"
+        lang="json"
+        code={`{
+  "servers": {
+    "gittensory": {
+      "type": "stdio",
+      "command": "gittensory-mcp",
+      "args": ["--stdio"]
     }
   }
 }`}

@@ -80,10 +80,10 @@ function HowReviewsWork() {
         </li>
       </ul>
       <p>
-        A <code>block</code> outcome is always <strong>confirmed-contributor-gated</strong>: the
-        mode chooses <em>which</em> checks are active, never <em>who</em> can be blocked. A genuine
-        newcomer can be softened from a block to an advisory when{" "}
-        <code>firstTimeContributorGrace</code> is on.
+        A <code>block</code> outcome fails the gate for any author identically — confirmed-
+        Gittensor-contributor status doesn't change <em>who</em> can be blocked, only the mode
+        chooses <em>which</em> checks are active. Confirmed status is carried through for on-chain
+        scoring, a separate concern from the gate's own merge/close decision.
       </p>
 
       <h3>The gate dimensions</h3>
@@ -119,11 +119,37 @@ function HowReviewsWork() {
           issue and test expectations) becomes enforceable. Manual-review path holds are controlled
           separately by <code>settings.hardGuardrailGlobs</code>.
         </li>
+        <li>
+          <strong>PR-size hold</strong> (<code>sizeGateMode</code>, default <code>off</code>) — a PR
+          at or above the configured file/line thresholds is held for manual review, never a hard
+          failure.
+        </li>
+        <li>
+          <strong>Lockfile-integrity gate</strong> (<code>lockfileIntegrityGateMode</code>, default{" "}
+          <code>off</code>) — flags a lockfile-tamper-risk finding (a resolved/integrity change with
+          no matching version bump, or a dependency pointed off the npm registry).
+        </li>
+        <li>
+          <strong>CLA / license gate</strong> (<code>claGateMode</code>, default <code>off</code>) —
+          CLA / license-compatibility check.
+        </li>
+        <li>
+          <strong>Self-authored-linked-issue gate</strong> (
+          <code>selfAuthoredLinkedIssueGateMode</code>, default <code>advisory</code>) — flags or
+          blocks a PR whose author also opened the linked issue.
+        </li>
+        <li>
+          <strong>Moderation-rules engine</strong> (<code>moderationGateMode</code>, default{" "}
+          <code>inherit</code>) — whether the contributor-cap / blacklist / review-nag mechanisms
+          feed a shared, cross-repo violation tally on this repo; <code>inherit</code> defers to the
+          instance-wide default, <code>off</code>/<code>enabled</code> force it per repo.
+        </li>
       </ul>
       <p>
         Which deterministic rules even apply is set by the <strong>policy pack</strong> (
-        <code>gatePack</code>): <code>gittensor</code> (confirmed-contributor-gated, registry-aware)
-        or <code>oss-anti-slop</code> (runs the rules against any author on any repo).
+        <code>gatePack</code>): <code>gittensor</code> (registry-aware, tracks confirmed-Gittensor-
+        contributor status for scoring) or <code>oss-anti-slop</code> (runs the rules against any
+        author on any repo, with no confirmed-contributor tracking at all).
       </p>
       <CodeBlock
         filename=".gittensory.yml"
@@ -139,8 +165,7 @@ function HowReviewsWork() {
     mode: block
     minScore: 60
   mergeReadiness: advisory
-  manifestPolicy: block
-  firstTimeContributorGrace: true`}
+  manifestPolicy: block`}
       />
 
       <h2>2. The dual-AI review and consensus</h2>
@@ -155,15 +180,17 @@ function HowReviewsWork() {
         </li>
         <li>
           <code>block</code> — a <strong>dual-model high-confidence consensus</strong> defect is
-          allowed to become a blocker (confirmed contributors only).
+          allowed to become a blocker.
         </li>
       </ul>
       <p>
-        The blocking decision always runs on a <strong>pair</strong> of free models and only blocks
-        when <em>both</em> models independently agree, with high confidence, on a real defect. Two
-        agreeing models is the bar — there is no single-model block and no tie-breaker third model.
-        That consensus requirement is what keeps a confident-but-wrong single model from blocking a
-        good PR.
+        By default, the blocking decision runs on a <strong>pair</strong> of free models and only
+        blocks when <em>both</em> models independently agree, with high confidence, on a real defect
+        — no single-model block and no tie-breaker third model, so a confident-but-wrong single
+        model can't block a good PR on its own. An operator can override this per repo (
+        <code>aiReviewCombine</code>: <code>single</code> / <code>consensus</code> /{" "}
+        <code>synthesis</code>); in <code>single</code> mode, one reviewer's verdict is the
+        decision.
       </p>
 
       <h3>Bring your own model (advisory only)</h3>

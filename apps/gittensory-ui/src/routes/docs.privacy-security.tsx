@@ -86,7 +86,18 @@ GITTENSORY_REVIEW_SAFETY="true"                  # prompt-injection defang + sec
 GITTENSORY_REVIEW_GROUNDING="true"               # CI status + full changed-file content
 GITTENSORY_REVIEW_RAG="true"                     # codebase vector-index context (needs index)
 GITTENSORY_REVIEW_REPUTATION="true"              # submitter-reputation spend control (never shown)
-GITTENSORY_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comment`}
+GITTENSORY_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comment
+GITTENSORY_REVIEW_ENRICHMENT="true"              # external analyzer registry (REES) findings
+GITTENSORY_REVIEW_INLINE_COMMENTS="true"         # diff-anchored inline PR review comments
+GITTENSORY_REVIEW_PLANNER="true"                 # @gittensory plan on-demand implementation plan
+GITTENSORY_REVIEW_SCREENSHOTS="true"             # before/after visual capture for UI changes
+
+# Global (cron / endpoint) flags, not scoped by GITTENSORY_REVIEW_REPOS.
+GITTENSORY_REVIEW_OPS="true"                     # read-only anomaly scan + outcome stats endpoint
+GITTENSORY_REVIEW_SELFTUNE="true"                # self-tightening tuning loop, never loosens
+GITTENSORY_REVIEW_PARITY_AUDIT="true"            # shadow-record gate-decision parity readiness
+GITTENSORY_REVIEW_CONTENT_LANE="true"            # dedicated content/registry-repo review lane
+GITTENSORY_REVIEW_DRAFT="true"                   # public draft-submission (contributor fork PR) flow`}
       />
       <p>
         The internal-only controls never surface publicly. Submitter reputation, for example, can

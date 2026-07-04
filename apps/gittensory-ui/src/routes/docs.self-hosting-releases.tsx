@@ -97,8 +97,11 @@ curl http://localhost:8787/ready`}
 
       <h2>Custom images</h2>
       <p>
-        Custom builds are useful for testing local changes or including subscription CLIs. They
-        should not contain secrets.
+        Custom builds are useful for testing local changes, including subscription CLIs, or trimming
+        the image. They should not contain secrets. <code>INSTALL_AI_CLIS</code> (default{" "}
+        <code>true</code>) installs the Claude Code and Codex CLIs; a sibling build-arg,{" "}
+        <code>INSTALL_VISUAL_REVIEW</code> (default <code>false</code>), adds{" "}
+        <code>puppeteer-core</code> for visual capture.
       </p>
       <CodeBlock
         lang="bash"

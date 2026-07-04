@@ -144,6 +144,23 @@ function Tuning() {
           off, the legacy comment is byte-identical.
         </li>
         <li>
+          <code>GITTENSORY_REVIEW_ENRICHMENT</code> — runs the review-enrichment analyzer registry
+          (duplication, churn hotspots, blame links, approval integrity, undocumented exports, and
+          more) and folds their findings into the review context. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_INLINE_COMMENTS</code> — posts AI-review findings as inline
+          diff-anchored PR review comments instead of (or alongside) the summary comment. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_PLANNER</code> — enables <code>@gittensory plan</code>, an
+          on-demand structured implementation plan posted to the PR thread. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_SCREENSHOTS</code> — visual capture: renders and attaches
+          before/after screenshots for PRs that change UI. Per-PR.
+        </li>
+        <li>
           <code>GITTENSORY_REVIEW_OPS</code> — observability, read-only. On the cron tick an anomaly
           scan over the gate-block ledger and calibration data emits a structured{" "}
           <code>ops_anomaly</code> log when something drifts, and a bearer-gated{" "}
@@ -205,9 +222,11 @@ function Tuning() {
         </li>
         <li>
           <code>block</code> — the finding can become a hard{" "}
-          <code>Gittensory Orb Review Agent</code> blocker. Blocking is always
-          confirmed-contributor-gated: the mode chooses <em>which</em> deterministic checks are
-          active, never <em>who</em> can be blocked.
+          <code>Gittensory Orb Review Agent</code> blocker. A block outcome fails the gate for any
+          author identically — confirmed-Gittensor-contributor status doesn&apos;t change{" "}
+          <em>who</em> can be blocked, only the mode chooses <em>which</em> deterministic checks are
+          active. Confirmed status is carried through for on-chain scoring, a separate concern from
+          the gate&apos;s own merge/close decision.
         </li>
       </ul>
       <p>
@@ -216,9 +235,10 @@ function Tuning() {
       </p>
       <ul>
         <li>
-          <code>gate.pack</code> — the policy pack: <code>gittensor</code> (default;
-          confirmed-contributor-gated, registry-aware) or <code>oss-anti-slop</code> (runs the
-          deterministic rules against any author on any repo).
+          <code>gate.pack</code> — the policy pack: <code>gittensor</code> (default; registry-aware,
+          tracks confirmed-Gittensor-contributor status for scoring) or <code>oss-anti-slop</code>{" "}
+          (runs the deterministic rules against any author on any repo, with no
+          confirmed-contributor tracking at all).
         </li>
         <li>
           <code>gate.duplicates</code> — duplicate / superseding-PR detection. Default{" "}
@@ -258,22 +278,41 @@ function Tuning() {
           <code>off</code>.
         </li>
         <li>
-          <code>gate.firstTimeContributorGrace</code> — when <code>true</code>, softens a would-be
-          block to advisory for a genuine newcomer (0 merged PRs, fewer than 3 closed-unmerged PRs).
-          Repeat offenders and authors with merge history are gated normally. Default{" "}
-          <code>false</code>.
+          <code>gate.size</code> — PR-size hold: flags an oversized diff. Default <code>off</code>.
+        </li>
+        <li>
+          <code>gate.lockfileIntegrity</code> — flags lockfile-tamper risk (a lockfile changed
+          without its matching manifest, or vice versa). Default <code>off</code>.
+        </li>
+        <li>
+          <code>gate.claMode</code> — CLA / license-acknowledgment gate. Default <code>off</code>.
+        </li>
+        <li>
+          <code>gate.selfAuthoredLinkedIssue</code> — whether a PR may link an issue opened by the
+          same author. Default <code>advisory</code>.
+        </li>
+        <li>
+          <code>settings.moderationGateMode</code> — whether the moderation-rules engine
+          (contributor cap, blacklist, review-nag feeding a shared cross-repo violation tally) runs
+          on this repo at all. <code>inherit</code> (default) defers to the instance-wide{" "}
+          <code>global_moderation_config.enabled</code>; <code>off</code>/<code>enabled</code> force
+          this repo regardless of the global default.
         </li>
         <li>
           <code>gate.aiReview.mode</code> — AI review. Default <code>off</code>.{" "}
           <code>advisory</code> posts AI review notes only; <code>block</code> lets a dual-model
-          high-confidence consensus defect become a blocker (confirmed contributors only).
+          high-confidence consensus defect become a blocker.
         </li>
       </ul>
 
       <h3>Bring your own model (AI review)</h3>
       <p>
-        The AI-review write-up can optionally use your own frontier model. The consensus blocker
-        always uses the free built-in model pair, so BYOK never changes who can be blocked.
+        The AI-review write-up can optionally use your own frontier model. By default the blocking
+        decision runs on a pair of free built-in models and requires agreement; an operator can
+        override this per repo with <code>aiReviewCombine</code> (<code>single</code> /{" "}
+        <code>consensus</code> / <code>synthesis</code>) — in <code>single</code> mode, one
+        reviewer's verdict is the decision. BYOK changes which model writes the advisory text, not
+        this combine behavior.
       </p>
       <ul>
         <li>
@@ -417,7 +456,6 @@ gate:
     aiAdvisory: true
   mergeReadiness: advisory
   manifestPolicy: block
-  firstTimeContributorGrace: true
   aiReview:
     mode: advisory
     byok: true

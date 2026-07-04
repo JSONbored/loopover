@@ -147,8 +147,10 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
 
       <h2>On-demand commands</h2>
       <p>
-        Maintainers (and only maintainers) can trigger context with a comment. Output is scoped to
-        maintainer-visible packets when appropriate.
+        By default, the public commands below are authorized for maintainers, collaborators, and
+        confirmed miners (not the general public) — output stays scoped to maintainer-visible
+        packets when appropriate. A repo can narrow this per command via{" "}
+        <code>commandAuthorization</code> in its settings.
       </p>
       <CodeBlock code={PUBLIC_COMMAND_LIST} />
       <p>

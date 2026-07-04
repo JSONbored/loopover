@@ -72,6 +72,8 @@ function collectEnvReads(source, fileName) {
       }
     } else if (ts.isCallExpression(node) && isStaticEnvHelperCall(node)) {
       addRead(node.arguments[1].text, node.arguments[1]);
+    } else if (ts.isCallExpression(node) && isProcessEnvNameHelperCall(node)) {
+      addRead(node.arguments[0].text, node.arguments[0]);
     }
     ts.forEachChild(node, visit);
   };
@@ -86,6 +88,21 @@ function isStaticEnvHelperCall(node) {
     node.arguments.length >= 2 &&
     isEnvContainer(node.arguments[0]) &&
     ts.isStringLiteralLike(node.arguments[1])
+  );
+}
+
+// Some self-host helpers read `process.env` internally by name rather than taking an env container argument --
+// e.g. `parsePositiveIntEnv("QUEUE_CONCURRENCY", { min: 1, fallback: 4 })`. Recognized separately from
+// isStaticEnvHelperCall above (envString) because these take the var NAME as arg[0], not arg[1] after a
+// container.
+const PROCESS_ENV_NAME_HELPERS = new Set(["parsePositiveIntEnv"]);
+
+function isProcessEnvNameHelperCall(node) {
+  return (
+    ts.isIdentifier(node.expression) &&
+    PROCESS_ENV_NAME_HELPERS.has(node.expression.text) &&
+    node.arguments.length >= 1 &&
+    ts.isStringLiteralLike(node.arguments[0])
   );
 }
 

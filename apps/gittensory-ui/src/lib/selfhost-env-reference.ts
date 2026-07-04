@@ -98,8 +98,20 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/services/notify-discord.ts:78",
   },
   {
+    name: "FOREGROUND_LIVENESS_CHECK_INTERVAL_MS",
+    firstReference: "src/selfhost/foreground-liveness.ts:52",
+  },
+  {
     name: "FOREGROUND_LIVENESS_ENABLED",
     firstReference: "src/selfhost/foreground-liveness.ts:41",
+  },
+  {
+    name: "FOREGROUND_LIVENESS_MAX_DEFER_MS",
+    firstReference: "src/selfhost/foreground-liveness.ts:51",
+  },
+  {
+    name: "FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP",
+    firstReference: "src/selfhost/foreground-liveness.ts:53",
   },
   {
     name: "GITHUB_APP_ID",
@@ -114,8 +126,16 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts:508",
   },
   {
+    name: "GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS",
+    firstReference: "src/selfhost/installation-concurrency-admission.ts:47",
+  },
+  {
     name: "GITHUB_INSTALLATION_CONCURRENCY_ENABLED",
     firstReference: "src/selfhost/installation-concurrency-admission.ts:34",
+  },
+  {
+    name: "GITHUB_INSTALLATION_CONCURRENCY_LIMIT",
+    firstReference: "src/selfhost/installation-concurrency-admission.ts:43",
   },
   {
     name: "GITTENSORY_REPO_CONFIG_DIR",
@@ -130,8 +150,36 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts:302",
   },
   {
+    name: "MAINTENANCE_ADMISSION_DEFER_MS",
+    firstReference: "src/selfhost/maintenance-admission.ts:171",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_DRAIN_AGE_MS",
+    firstReference: "src/selfhost/maintenance-admission.ts:145",
+  },
+  {
     name: "MAINTENANCE_ADMISSION_ENABLED",
     firstReference: "src/selfhost/maintenance-admission.ts:126",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING",
+    firstReference: "src/selfhost/maintenance-admission.ts:167",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS",
+    firstReference: "src/selfhost/maintenance-admission.ts:141",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS",
+    firstReference: "src/selfhost/maintenance-admission.ts:155",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_LIVE_PENDING",
+    firstReference: "src/selfhost/maintenance-admission.ts:151",
+  },
+  {
+    name: "MAINTENANCE_ADMISSION_MAX_PENDING",
+    firstReference: "src/selfhost/maintenance-admission.ts:159",
   },
   {
     name: "MIGRATIONS_DIR",
@@ -242,6 +290,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/otel.ts:76",
   },
   {
+    name: "PGPOOL_MAX",
+    firstReference: "src/selfhost/queue-common.ts:710",
+  },
+  {
     name: "PGVECTOR_ENABLED",
     firstReference: "src/server.ts:229",
   },
@@ -268,6 +320,18 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "QUEUE_BACKGROUND_CONCURRENCY",
     firstReference: "src/selfhost/queue-common.ts:130",
+  },
+  {
+    name: "QUEUE_CONCURRENCY",
+    firstReference: "src/selfhost/pg-queue.ts:285",
+  },
+  {
+    name: "QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS",
+    firstReference: "src/selfhost/queue-common.ts:718",
+  },
+  {
+    name: "QUEUE_STARTUP_JITTER_MIN_JOBS",
+    firstReference: "src/selfhost/queue-common.ts:699",
   },
   {
     name: "REDIS_URL",
@@ -345,15 +409,27 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `DATABASE_URL` | `src/selfhost/preflight.ts:201` |",
   "| `DISCORD_REPO_WEBHOOKS` | `src/services/notify-discord.ts:41` |",
   "| `DISCORD_WEBHOOK_URL` | `src/services/notify-discord.ts:78` |",
+  "| `FOREGROUND_LIVENESS_CHECK_INTERVAL_MS` | `src/selfhost/foreground-liveness.ts:52` |",
   "| `FOREGROUND_LIVENESS_ENABLED` | `src/selfhost/foreground-liveness.ts:41` |",
+  "| `FOREGROUND_LIVENESS_MAX_DEFER_MS` | `src/selfhost/foreground-liveness.ts:51` |",
+  "| `FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP` | `src/selfhost/foreground-liveness.ts:53` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts:166` |",
   "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:508` |",
+  "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts:47` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts:34` |",
+  "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts:43` |",
   "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts:288` |",
   "| `GITTENSORY_VERSION` | `src/selfhost/otel.ts:62` |",
   "| `HOME` | `src/selfhost/ai.ts:302` |",
+  "| `MAINTENANCE_ADMISSION_DEFER_MS` | `src/selfhost/maintenance-admission.ts:171` |",
+  "| `MAINTENANCE_ADMISSION_DRAIN_AGE_MS` | `src/selfhost/maintenance-admission.ts:145` |",
   "| `MAINTENANCE_ADMISSION_ENABLED` | `src/selfhost/maintenance-admission.ts:126` |",
+  "| `MAINTENANCE_ADMISSION_MAX_BACKLOG_CONVERGENCE_PENDING` | `src/selfhost/maintenance-admission.ts:167` |",
+  "| `MAINTENANCE_ADMISSION_MAX_DEFER_AGE_MS` | `src/selfhost/maintenance-admission.ts:141` |",
+  "| `MAINTENANCE_ADMISSION_MAX_LIVE_AGE_MS` | `src/selfhost/maintenance-admission.ts:155` |",
+  "| `MAINTENANCE_ADMISSION_MAX_LIVE_PENDING` | `src/selfhost/maintenance-admission.ts:151` |",
+  "| `MAINTENANCE_ADMISSION_MAX_PENDING` | `src/selfhost/maintenance-admission.ts:159` |",
   "| `MIGRATIONS_DIR` | `src/server.ts:392` |",
   "| `OBSERVABILITY_SMOKE_POLL_MS` | `scripts/smoke-observability-traces.mjs:8` |",
   "| `OBSERVABILITY_SMOKE_TIMEOUT_MS` | `scripts/smoke-observability-traces.mjs:6` |",
@@ -381,6 +457,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_EXPORTER` | `src/selfhost/otel.ts:40` |",
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts:74` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts:76` |",
+  "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts:710` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts:229` |",
   "| `PORT` | `src/server.ts:715` |",
   "| `PUBLIC_API_ORIGIN` | `src/selfhost/preflight.ts:192` |",
@@ -388,6 +465,9 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `QDRANT_DIM` | `src/selfhost/qdrant-vectorize.ts:71` |",
   "| `QDRANT_URL` | `src/server.ts:527` |",
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts:130` |",
+  "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts:285` |",
+  "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts:718` |",
+  "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts:699` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts:144` |",
   "| `REVIEW_AUDIT_DIR` | `src/server.ts:572` |",
   "| `SELFHOST_BUNDLE_ALL` | `scripts/build-selfhost.mjs:13` |",

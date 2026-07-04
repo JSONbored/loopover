@@ -3670,5 +3670,51 @@ describe("createSqliteQueue (durable #980)", () => {
       await q.drain();
       expect(seen).toEqual(["backfill-repo-segment", "backfill-repo-segment"]);
     });
+
+    it("skips the installation-concurrency-deferred metric when the defer update changes no rows", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const base = makeDriver();
+      // The row raced out from under this UPDATE (already claimed/mutated by another path) -- mirrors the
+      // maintenance-admission "changes no rows" test above, which intercepts the identical UPDATE shape.
+      const driver = {
+        exec: base.exec.bind(base),
+        query: vi.fn((sql: string, params: unknown[]) => {
+          if (sql.includes("SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?)")) {
+            return { rows: [], changes: 0 };
+          }
+          return base.query(sql, params);
+        }),
+      } as ReturnType<typeof nodeSqliteDriver>;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 0)`,
+        [JSON.stringify({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/b" }), Date.now()],
+      );
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        expect(await renderMetrics()).not.toContain("gittensory_jobs_installation_concurrency_deferred_total");
+        expect(await renderMetrics()).not.toContain("gittensory_jobs_installation_concurrency_deferred_by_reason_total");
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
   });
 });

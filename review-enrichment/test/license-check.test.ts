@@ -75,6 +75,35 @@ test("scanLicenses flags copyleft and unknown licenses while ignoring permissive
   ]);
 });
 
+test("scanLicenses flags GFDL/CC-BY-SA/QPL/Sleepycat copyleft families but not permissive CC-BY", async () => {
+  const responses = new Map([
+    ["gfdl-lib", ["GFDL-1.3-or-later"]],
+    ["ccbysa-lib", ["CC-BY-SA-4.0"]],
+    ["qpl-lib", ["QPL-1.0"]],
+    ["sleepycat-lib", ["Sleepycat"]],
+    ["ccby-lib", ["CC-BY-4.0"]], // attribution-only, NOT ShareAlike → permissive, must stay unflagged
+  ]);
+
+  const findings = await scanLicenses(
+    req([npmAdd("gfdl-lib"), npmAdd("ccbysa-lib"), npmAdd("qpl-lib"), npmAdd("sleepycat-lib"), npmAdd("ccby-lib")]),
+    async (url) => {
+      const match = /\/packages\/([^/]+)\/versions\//.exec(String(url));
+      return jsonResponse({ licenses: responses.get(decodeURIComponent(match?.[1] ?? "")) ?? [] });
+    },
+  );
+
+  assert.deepEqual(
+    findings.map((finding) => [finding.package, finding.classification]),
+    [
+      ["gfdl-lib", "copyleft"],
+      ["ccbysa-lib", "copyleft"],
+      ["qpl-lib", "copyleft"],
+      ["sleepycat-lib", "copyleft"],
+    ],
+  );
+  assert.ok(!findings.some((finding) => finding.package === "ccby-lib"));
+});
+
 test("scanLicenses treats an empty or absent license list as unknown", async () => {
   const findings = await scanLicenses(
     req([npmAdd("mystery-lib"), npmAdd("empty-license-lib")]),

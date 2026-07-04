@@ -14,8 +14,11 @@ import { boundedFetchJson } from "../external-fetch.js";
 // REES ecosystem label → deps.dev system path segment.
 const SYSTEM: Record<string, string> = { npm: "npm", PyPI: "pypi", Go: "go" };
 
-// Strong/weak copyleft families worth a compatibility check against a permissive project.
-const COPYLEFT = /^(A?GPL|LGPL|MPL|EPL|CDDL|EUPL|OSL|SSPL|CPAL|CECILL)/i;
+// Strong/weak copyleft families worth a compatibility check against a permissive project. GFDL (the GNU
+// documentation copyleft, sibling of the GPL/LGPL/AGPL families above), CC-BY-SA (Creative Commons
+// ShareAlike — the `-SA` variant is copyleft, unlike plain CC-BY/CC0), QPL, and Sleepycat are all
+// reciprocal/copyleft SPDX ids that were previously classified as permissive and slipped through unflagged.
+const COPYLEFT = /^(A?GPL|LGPL|MPL|EPL|CDDL|EUPL|OSL|SSPL|CPAL|CECILL|GFDL|CC-BY-SA|QPL|Sleepycat)/i;
 const MAX_LICENSE_LOOKUPS = 25;
 const LICENSE_LOOKUP_TIMEOUT_MS = 1500;
 

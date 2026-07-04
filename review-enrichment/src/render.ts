@@ -441,6 +441,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("pendingReviewRequests", findings.pendingReviewRequests));
   lines.push(...renderDescriptorSection("testRatio", findings.testRatio));
   lines.push(...renderDescriptorSection("migrationSafety", findings.migrationSafety));
+  lines.push(...renderDescriptorSection("looseRange", findings.looseRange));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

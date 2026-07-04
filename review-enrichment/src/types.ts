@@ -402,6 +402,17 @@ export interface MigrationSafetyFinding {
   kind: "drop" | "rename" | "not-null-no-default" | "blocking-rewrite";
 }
 
+/** A newly-added/changed npm dependency whose version specifier is dangerously loose — a wildcard, the
+ *  `latest` dist-tag, an unbounded `>=` range, or a bare major — letting any future publish flow into the
+ *  next install (#2036, part of #1499). Reports the manifest location, package, raw specifier, and kind. */
+export interface LooseRangeFinding {
+  file: string;
+  line: number;
+  package: string;
+  range: string;
+  kind: "wildcard" | "latest" | "unbounded-gte" | "bare";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -434,6 +445,7 @@ export interface BriefFindings {
   pendingReviewRequests?: PendingReviewRequestFinding[];
   testRatio?: TestRatioFinding[];
   migrationSafety?: MigrationSafetyFinding[];
+  looseRange?: LooseRangeFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

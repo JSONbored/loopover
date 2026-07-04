@@ -143,8 +143,10 @@ export function scanPatch(path: string, patch: string): SecretFinding[] {
       }
       previousLiterals = currentLiterals;
       newLine++;
-    } else if (!line.startsWith("-")) {
-      newLine++; // context line advances the new-file counter; removed lines do not
+    } else if (!line.startsWith("-") && !line.startsWith("\\")) {
+      // Context line advances the new-file counter; removed lines and `\ No newline at end of
+      // file` markers do not (same class as the iac-misconfig / redos / secret-log fix).
+      newLine++;
       previousLiterals = [];
     } else {
       previousLiterals = [];

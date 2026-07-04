@@ -7,6 +7,7 @@
 // aggregate symbols documented at their definition); a missing token/head-sha, an unresolvable repo slug, or any
 // fetch error yields no finding rather than an error.
 import type { EnrichRequest, UndocumentedExportFinding } from "../types.js";
+import { isDiffFileHeaderLine } from "./diff-lines.js";
 
 const GITHUB_API = "https://api.github.com";
 const MAX_FILES = 10;
@@ -104,7 +105,11 @@ export function parseAddedExports(patch: string): Array<{ symbol: string; newLin
       continue;
     }
     if (raw.startsWith("+")) {
-      if (!raw.startsWith("+++")) {
+      // Skip only a real unified-diff file header (`+++ b/path`), not added CONTENT that merely starts with
+      // `++` (git renders `++x;` as `+++x;`). The bespoke startsWith("+++") guard dropped such a line and left
+      // the new-file cursor un-advanced, mis-numbering (and thus losing) every export after it. Use the shared
+      // header predicate the sibling diff analyzers rely on.
+      if (!isDiffFileHeaderLine(raw)) {
         for (const symbol of exportedSymbols(raw.slice(1))) out.push({ symbol, newLine });
         newLine += 1;
       }

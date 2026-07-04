@@ -122,6 +122,22 @@ describe("pickBacklogRepo (#selfhost-backlog-convergence)", () => {
     expect(pickBacklogRepo(candidates, "owner/a")).toBe("owner/b");
   });
 
+  it("serves the stalest repo (not the successor of the last-claimed one) when the last-claimed repo is not itself the stalest", () => {
+    const candidates = [
+      { repo: "owner/a", oldestPendingAgeMs: 5000 },
+      { repo: "owner/b", oldestPendingAgeMs: 3000 },
+      { repo: "owner/c", oldestPendingAgeMs: 1000 },
+    ];
+    // sorted stalest-first: a(5000), b(3000), c(1000). Last-claimed b was NOT the stalest, so the stalest (a)
+    // was not just served and must be served now — rotation only applies when the stalest itself was last served.
+    expect(pickBacklogRepo(candidates, "owner/b")).toBe("owner/a");
+  });
+
+  it("re-serves the only candidate even when it was the last-claimed repo (nothing else to rotate to)", () => {
+    const candidates = [{ repo: "owner/b", oldestPendingAgeMs: 5000 }];
+    expect(pickBacklogRepo(candidates, "owner/b")).toBe("owner/b");
+  });
+
   it("falls back to the stalest repo when the last-claimed repo has since drained (no longer a candidate)", () => {
     const candidates = [{ repo: "owner/b", oldestPendingAgeMs: 5000 }];
     expect(pickBacklogRepo(candidates, "owner/a")).toBe("owner/b");

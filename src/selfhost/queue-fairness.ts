@@ -82,10 +82,14 @@ export function pickBacklogRepo(candidates: readonly BacklogRepoCandidate[], las
   const sorted = [...candidates].sort((a, b) => b.oldestPendingAgeMs - a.oldestPendingAgeMs || a.repo.localeCompare(b.repo));
   // sorted.length is provably >0 past the early return above, so every index below is in bounds.
   const stalest = sorted[0] as BacklogRepoCandidate;
-  if (!lastClaimedRepo) return stalest.repo;
-  const lastIndex = sorted.findIndex((candidate) => candidate.repo === lastClaimedRepo);
-  if (lastIndex === -1) return stalest.repo;
-  return (sorted[(lastIndex + 1) % sorted.length] as BacklogRepoCandidate).repo;
+  // Serve the stalest repo, EXCEPT when it is the one served last cycle — only then rotate to the
+  // next-stalest, so a single deep-backlog repo cannot monopolize the lane. When `lastClaimedRepo` is null,
+  // has since drained, or is simply some OTHER (less-stale) repo, the stalest was NOT just served, so it is
+  // served now — anything else would skip past the oldest backlog the lane exists to drain. (A positional
+  // "successor of the last-claimed repo" rotation would instead skip the stalest whenever the last-claimed
+  // repo sat at a middle rank, starving the very repo this mechanism is meant to protect.)
+  if (stalest.repo !== lastClaimedRepo) return stalest.repo;
+  return (sorted[1] ?? stalest).repo;
 }
 
 // Exported so the queue backends' own topBacklogRepos SQL (COUNT/GROUP BY/ORDER BY/LIMIT pushed into the

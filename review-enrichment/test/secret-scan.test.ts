@@ -442,3 +442,48 @@ test("scanPatch does not flag near-miss variants of the new SaaS/cloud credentia
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags additional high-confidence AI-provider and SaaS/CI credential formats", () => {
+  const cases = [
+    // The base64url-body formats deliberately END IN `-` to prove the rule terminates on a
+    // negative-lookahead, not `\b` (a `\b` terminator silently misses a real token ending in `-`).
+    ["dropbox_token", "sl." + b62(139) + "-"],
+    ["jfrog_api_key", "AKCp8" + b62(70)],
+    ["duffel_token", "duffel_test_" + b62(42) + "-"],
+    ["easypost_key", "EZAK" + b62(54)],
+    ["frameio_token", "fio-u-" + b62(63) + "-"],
+    ["contentful_token", "CFPAT-" + b62(42) + "-"],
+    ["sonarqube_token", "sqp_" + hex(40)],
+    ["pulumi_token", "pul-" + hex(40)],
+    ["adafruit_io_key", "aio_" + b62(28)],
+    ["readme_api_key", "rdme_" + hex(70)],
+    ["typeform_token", "tfp_" + b62(40)],
+    ["sentry_dsn", "https://" + hex(32) + "@o0.ingest.sentry.io/12345"],
+    ["groq_api_key", "gsk_" + b62(52)],
+    ["perplexity_api_key", "pplx-" + b62(40)],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-miss variants of the new AI/SaaS credential formats", () => {
+  // One char short of the fixed/minimum length must produce no finding.
+  const nearMisses = [
+    "AKCp8" + b62(68),
+    "duffel_test_" + b62(42),
+    "EZAK" + b62(53),
+    "CFPAT-" + b62(42),
+    "pul-" + hex(39),
+    "aio_" + b62(27),
+    "gsk_" + b62(51),
+    "sqp_" + hex(39),
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

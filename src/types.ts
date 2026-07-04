@@ -823,9 +823,9 @@ export type RepositorySettings = {
    *  on top of the standing owner/admin/automation-bot exemption. Always populated by the DB layer (default
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
-  /** Hard manual-review guardrail globs. Config-as-code only: set in private/global or per-repo
-   *  `.gittensory.yml` under `settings.hardGuardrailGlobs`. Absent means no path guardrails. Arrays are
-   *  replacement overlays, so a repo can clear a global default with `[]`. */
+  /** Hard manual-review guardrail globs. Set in private/global or per-repo `.gittensory.yml` under
+   *  `settings.hardGuardrailGlobs`. Absent/null settings keep built-in defense-in-depth guardrails. Arrays
+   *  are replacement overlays, so a repo can explicitly clear defaults with `[]`. */
   hardGuardrailGlobs?: string[] | null | undefined;
   /** Label applied when an otherwise-ready PR is held for manual review by a guardrail. Config-as-code only;
    *  `null` disables the label while keeping the hold. Distinct from `review_state_label`, so operators can

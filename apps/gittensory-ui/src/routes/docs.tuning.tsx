@@ -78,9 +78,8 @@ function Tuning() {
         <li>built-in safe defaults.</li>
       </ul>
       <p>
-        Path holds are explicit config-as-code only: omitted or empty{" "}
-        <code>settings.hardGuardrailGlobs</code> means no path guardrails, not a hidden engine
-        fallback.
+        Path holds use defense-in-depth defaults when omitted or null; an explicit empty{" "}
+        <code>settings.hardGuardrailGlobs</code> list is the config-as-code opt-out.
       </p>
       <p>
         The friendly <code>gate:</code> block in <code>.gittensory.yml</code> is a typed alias for
@@ -468,7 +467,7 @@ settings:
   checkRunMode: enabled
   checkRunDetailLevel: standard
   badgeEnabled: true
-  # Optional path holds. Omitted or [] means no path guardrails.
+  # Optional path holds. Omitted keeps built-in guardrails; [] explicitly disables them.
   # hardGuardrailGlobs:
   #   - "src/selfhost/**"`}
       />

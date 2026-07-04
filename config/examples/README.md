@@ -130,9 +130,7 @@ Two `autonomy` classes govern every label the bot can apply, and they are **inde
   to `auto` only if you specifically want that commentary as GitHub labels too.
 
 All disposition labels are configurable under `settings.*Label`, and explicit `null` disables the
-label without disabling the underlying merge/close/hold decision. Hard path guardrails are
-config-as-code only: omitting `settings.hardGuardrailGlobs` or setting it to `[]` means no path
-guardrails, and a concrete list replaces any lower-layer private global default.
+label without disabling the underlying merge/close/hold decision. Hard path guardrails keep built-in defense-in-depth defaults when `settings.hardGuardrailGlobs` is omitted or null. Set `[]` only as an explicit opt-out, or set a concrete list to replace any lower-layer private global/default guardrails.
 
 ```yaml
 # .gittensory.yml (global default) — recommended one-shot baseline

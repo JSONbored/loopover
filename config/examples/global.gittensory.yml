@@ -48,8 +48,9 @@ settings:
   autoCloseExemptLogins:
     - your-admin-login
 
-  # Hard manual-review path guardrails are config-as-code only. Omit or use [] for no path
-  # guardrails; set a concrete list when you want otherwise-mergeable PRs held for a person.
+  # Hard manual-review path guardrails have built-in defense-in-depth defaults when omitted/null;
+  # use [] only as an explicit opt-out, or set a concrete replacement list when you want
+  # otherwise-mergeable PRs held for a person.
   hardGuardrailGlobs: []
 
   # Disposition label names are config-as-code, not engine identity. Set any value to your repo's

@@ -13,8 +13,8 @@
 #   this file  >  per-repo dashboard/API settings  >  built-in safe defaults
 #   The typed `gate:` block below is an alias for the gate fields and wins over
 #   the generic `settings:` block for those same fields.
-#   Hard path guardrails are an explicit config-as-code exception: omitted or
-#   [] means no path guardrails, never hidden engine defaults.
+#   Hard path guardrails keep built-in defense-in-depth defaults when omitted/null;
+#   [] is the explicit opt-out.
 #
 # SAFE BY DEFAULT: with no file and no dashboard row, a repo falls back to a
 # quiet, non-blocking profile — gate off, AI review off, slop scoring off,
@@ -392,9 +392,9 @@ settings:
   # of this setting. Bool. Default: false.
   closeOwnerAuthors: false
 
-  # Hard manual-review path guardrails are config-as-code only. Omit or use [] for no path guardrails;
-  # set concrete globs when otherwise-mergeable PRs touching those paths must be held for a person.
-  # This never falls back to hidden engine path defaults.
+  # Hard manual-review path guardrails have built-in defense-in-depth defaults when omitted/null;
+  # use [] only as an explicit opt-out. Set concrete globs to replace the default list when
+  # otherwise-mergeable PRs touching those paths must be held for a person.
   hardGuardrailGlobs: []
 
   # Require a linked issue on every PR (dashboard equivalent of the toggle that

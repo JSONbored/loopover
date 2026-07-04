@@ -80,6 +80,14 @@ const BINARY_EXTS = new Set([
   "pt",
   "pth",
   "ckpt",
+  // Scientific / ML data artifacts — columnar, tensor, and HDF5 blobs whose bytes never appear in the diff.
+  "h5",
+  "hdf5",
+  "pb",
+  "npy",
+  "npz",
+  "parquet",
+  "feather",
 ]);
 
 interface ScanOptions {

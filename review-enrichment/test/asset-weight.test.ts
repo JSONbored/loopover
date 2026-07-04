@@ -41,6 +41,19 @@ test("isBinaryAsset flags genuine binary extensions and ignores text/case", () =
   ]) {
     assert.equal(isBinaryAsset(p), true, p);
   }
+  // Scientific / ML data artifacts (HDF5, NumPy, TensorFlow, columnar) are heavy opaque binary blobs.
+  for (const p of [
+    "data/train.h5",
+    "data/features.hdf5",
+    "models/saved_model.pb",
+    "data/embeddings.npy",
+    "data/batch.npz",
+    "warehouse/events.parquet",
+    "warehouse/snapshot.feather",
+    "data/TRAIN.H5",
+  ]) {
+    assert.equal(isBinaryAsset(p), true, p);
+  }
   // Extension match is case-insensitive.
   assert.equal(isBinaryAsset("assets/HERO.PNG"), true);
   // Text formats whose bytes are already in the diff are NOT binary assets.

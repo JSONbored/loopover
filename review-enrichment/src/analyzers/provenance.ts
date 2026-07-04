@@ -21,9 +21,10 @@ const MAX_FINDINGS = 30; // keep the brief bounded
 // binary set in asset-weight.ts) and `pyd` is a Windows Python extension DLL (the sibling of the pyc/pyo/so
 // entries) — both are unauditable prebuilt binaries a PR should not check in without source. ML checkpoint
 // formats (`safetensors`, `gguf`, `onnx`, `pt`, `pth`, `ckpt`) mirror asset-weight.ts — unauditable weight
-// blobs a PR should not commit without reproducible training source.
+// blobs a PR should not commit without reproducible training source. Scientific data artifacts (HDF5, NumPy,
+// TensorFlow SavedModel, Parquet/Feather) are likewise opaque binary payloads.
 const BINARY_EXT_RE =
-  /\.(?:exe|dll|so|dylib|bin|pyc|pyo|pyd|class|jar|war|ear|wasm|node|o|a|safetensors|gguf|onnx|pt|pth|ckpt)$/i;
+  /\.(?:exe|dll|so|dylib|bin|pyc|pyo|pyd|class|jar|war|ear|wasm|node|o|a|safetensors|gguf|onnx|pt|pth|ckpt|h5|hdf5|pb|npy|npz|parquet|feather)$/i;
 // Vendored / embedded third-party source trees. bower_components (Bower) and jspm_packages (JSPM) are
 // installed-dependency directories — the same vendored case as node_modules — so a committed tree under either
 // is a vendored artifact, not contributor source (mirrors src/signals/path-matchers.ts's vendored classifier).

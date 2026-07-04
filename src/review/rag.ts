@@ -120,7 +120,7 @@ const SKIP_DIR_RE =
 const SKIP_FILE_RE =
   /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|cargo\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.(min\.(js|css)|map|lock|snap)$/i;
 const BINARY_EXT_RE =
-  /\.(png|jpe?g|gif|webp|avif|svg|ico|pdf|zip|gz|tgz|tar|wasm|woff2?|ttf|eot|mp4|mov|mp3|wav|bin|exe|dll|so|dylib|node|parquet|onnx)$/i;
+  /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|psd|svg|ico|pdf|zip|gz|tgz|tar|bz2|xz|zst|7z|rar|wasm|woff2?|otf|ttf|eot|mp4|mov|webm|mkv|mp3|wav|flac|ogg|opus|bin|exe|dll|so|dylib|node|class|jar|pyc|sqlite|db|parquet|onnx|gguf|safetensors|pt|pth|ckpt|npy|npz)$/i;
 const CODE_EXT_RE =
   /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|sh|bash|zsh|sql|graphql|proto|toml|yaml|yml|json|jsonc|css|scss|less|vue|svelte|astro|tf|hcl|dart|lua|ex|exs|clj|cljs|cljc|hs|jl|nim|zig|groovy)$/i;
 // Doc extensions mirror the canonical DOCS_EXTENSIONS set in signals/path-matchers.ts

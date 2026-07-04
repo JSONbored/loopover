@@ -75,6 +75,26 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
     expect(classifyRepoFile("pnpm-lock.yaml")).toBe("skip");
     expect(classifyRepoFile("public/logo.png")).toBe("skip");
     expect(classifyRepoFile("app.min.js")).toBe("skip");
+    // more binary blobs: media/archives/fonts/compiled artifacts and ML model weights
+    for (const p of [
+      "assets/photo.bmp",
+      "assets/scan.tiff",
+      "media/clip.webm",
+      "audio/track.flac",
+      "release/app.7z",
+      "release/pkg.zst",
+      "fonts/Inter.otf",
+      "build/App.class",
+      "lib/app.jar",
+      "cache/mod.pyc",
+      "db/local.sqlite",
+      "models/qwen3.gguf",
+      "models/weights.safetensors",
+      "checkpoints/model.ckpt",
+      "data/embeddings.npy",
+    ]) {
+      expect(classifyRepoFile(p)).toBe("skip");
+    }
   });
 
   it("skips oversized files and orders source before docs", () => {

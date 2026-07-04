@@ -138,6 +138,7 @@ import {
 } from "./maintenance-admission";
 import {
   AGENT_REGATE_PR_JOB_KEY_PREFIX,
+  DEFAULT_FOREGROUND_LANE_RATIO,
   backlogRepoCandidatesFromJobKeys,
   foregroundLaneForJob,
   nextForegroundLane,
@@ -676,14 +677,22 @@ export function createPgQueue(
    *  against CURRENT observations, independent of how long ago it was deferred. Returns true when it would be
    *  admitted right now (no longer blocked); false when still blocked OR the payload is unparseable (best-
    *  effort -- an unparseable payload is left for the normal dead-letter path, never force-released here). */
-  async function isRateLimitAdmissionNowClear(payload: string): Promise<boolean> {
+  async function isRateLimitAdmissionNowClear(payload: string, admissionCache: Map<string, Promise<boolean>>): Promise<boolean> {
     let message: JobMessage;
     try {
       message = JSON.parse(payload) as JobMessage;
     } catch {
       return false;
     }
-    return (await rateLimitAdmissionDelayMs(message)) === null;
+    const target = githubRateLimitAdmissionTargetForJob(message);
+    if (target === null) return true;
+    const cacheKey = `${target.kind}:${target.admissionKey ?? ""}`;
+    let cached = admissionCache.get(cacheKey);
+    if (cached === undefined) {
+      cached = rateLimitAdmissionDelayMs(message).then((delay) => delay === null);
+      admissionCache.set(cacheKey, cached);
+    }
+    return cached;
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
@@ -700,19 +709,41 @@ export function createPgQueue(
    *  maxReleasePerSweep allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited
    *  backlog drains gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once.
    *  Logs + records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam
-   *  the log. */
+   *  the log.
+   *
+   *  Candidate selection queries an OLDEST window AND a NEWEST window (#selfhost-queue-liveness clear-bucket
+   *  starvation fix), not just one oldest-first window. A single `ORDER BY created_at ASC LIMIT` window can be
+   *  filled ENTIRELY by older still-rate-limited jobs once the backlog exceeds the limit -- selectForegroundDeferralsToRelease's
+   *  clear-bucket-priority sort can only prioritize candidates it is actually shown, so a large-enough glut of
+   *  older blocked jobs would permanently hide every newer, already-admittable candidate from it, defeating the
+   *  whole point of the clear-bucket check. The newest window guarantees a fresh clear-bucket candidate is
+   *  always represented in `eligible` regardless of how large the older-blocked backlog grows, at the same
+   *  total worst-case row/admission-check budget as before (still `maxReleasePerSweep * 2` candidates, just
+   *  split fairly across both ends of the age spectrum instead of packed entirely into the oldest end). */
   async function releaseStaleForegroundDeferrals(): Promise<number> {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
-    const res = await pool.query(
-      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2`,
-      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
-    );
+    const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
+    const [oldestRes, newestRes] = await Promise.all([
+      pool.query(
+        `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at ASC, id ASC LIMIT $3`,
+        [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+      ),
+      pool.query(
+        `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=$1 AND run_after>$2 ORDER BY created_at DESC, id DESC LIMIT $3`,
+        [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+      ),
+    ]);
+    const candidateRowsById = new Map<string, { id: string; payload: string; created_at: number | string }>();
+    for (const row of [...oldestRes.rows, ...newestRes.rows] as Array<{ id: string; payload: string; created_at: number | string }>) {
+      candidateRowsById.set(row.id, row);
+    }
     const eligible: Array<{ id: string; pendingSinceMs: number; ageStale: boolean; rateLimitClear: boolean }> = [];
-    for (const row of res.rows as Array<{ id: string; payload: string; created_at: number | string }>) {
+    const admissionCache = new Map<string, Promise<boolean>>();
+    for (const row of candidateRowsById.values()) {
       const pendingSinceMs = Number(row.created_at);
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, pendingSinceMs, now);
-      const rateLimitClear = await isRateLimitAdmissionNowClear(row.payload);
+      const rateLimitClear = await isRateLimitAdmissionNowClear(row.payload, admissionCache);
       if (!ageStale && !rateLimitClear) continue;
       eligible.push({ id: row.id, pendingSinceMs, ageStale, rateLimitClear });
     }
@@ -944,8 +975,11 @@ export function createPgQueue(
   /** Claim-time backlog-vs-fresh-intake fairness (#selfhost-backlog-convergence, see queue-fairness.ts). Tries
    *  ONE lane-scoped claim before falling back to the plain unscoped foreground claim (claimNext() falls back to
    *  claimNextWhere(now, "priority >= $2") when this returns null) -- a null here just means "no work to prefer
-   *  this cycle," never "no foreground work at all." The fairness singleton's claim_sequence always advances
-   *  (best-effort, hit or miss) so the ratio cycle keeps progressing even through empty cycles. Sequence
+   *  this cycle," never "no foreground work at all." One slot per fairness window is deliberately left unscoped,
+   *  and lane-scoped claims must beat the best unclassified foreground priority, so manual/repair work the
+   *  classifier intentionally leaves as lane `null` keeps its plain priority ordering instead of sitting behind a
+   *  perpetually non-empty classified lane. The fairness singleton's claim_sequence always advances (best-effort,
+   *  hit or miss) so the ratio cycle keeps progressing even through empty cycles. Sequence
    *  allocation is a single atomic UPDATE ... RETURNING (not a separate SELECT-then-UPDATE): this backend is
    *  the multi-instance one (multiple app instances can share one Postgres, see the file header), so two
    *  concurrent callers reading the same pre-increment value would both compute the SAME lane and defeat the
@@ -956,9 +990,15 @@ export function createPgQueue(
     );
     const fairness = fairnessRes.rows[0] as { claim_sequence: number | string; last_backlog_repo: string | null } | undefined;
     const sequence = fairness ? Number(fairness.claim_sequence) : 0;
+    const fairnessWindow = DEFAULT_FOREGROUND_LANE_RATIO.backlogPer + DEFAULT_FOREGROUND_LANE_RATIO.freshPer;
     const lane: ForegroundLane = nextForegroundLane(sequence);
+    if (sequence % (fairnessWindow + 1) === fairnessWindow) return null;
+    const unclassifiedPriority = await maxDueUnclassifiedForegroundPriority(now);
+    const lanePriorityPredicate =
+      unclassifiedPriority === null ? "candidate.priority >= $2" : "candidate.priority > $2";
+    const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
-      const freshRow = await claimNextWhere(now, "candidate.priority >= $2", { sql: "candidate.foreground_lane='fresh'", params: [] });
+      const freshRow = await claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
       if (freshRow) incr("gittensory_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
     }
@@ -975,10 +1015,10 @@ export function createPgQueue(
     );
     const repo = pickBacklogRepo(candidates, fairness?.last_backlog_repo ?? null);
     if (!repo) return null;
-    const row = await claimNextWhere(now, "candidate.priority >= $2", {
+    const row = await claimNextWhere(now, lanePriorityPredicate, {
       sql: "candidate.foreground_lane='backlog' AND candidate.job_key LIKE $3",
       params: [`agent-regate-pr:${repo}#%`],
-    });
+    }, lanePriorityFloor);
     if (row) {
       await pool.query(`UPDATE ${FAIRNESS_TABLE} SET last_backlog_repo=$1 WHERE id='singleton'`, [repo]);
       incr("gittensory_jobs_claimed_by_lane_total", { lane: "backlog" });
@@ -986,10 +1026,20 @@ export function createPgQueue(
     return row;
   }
 
+  async function maxDueUnclassifiedForegroundPriority(now: number): Promise<number | null> {
+    const res = await pool.query(
+      `SELECT MAX(priority) AS priority FROM ${TABLE} WHERE status='pending' AND run_after<=$1 AND priority>=$2 AND foreground_lane IS NULL`,
+      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
+    );
+    const row = res.rows[0] as { priority: number | string | null } | undefined;
+    return row?.priority === null || row?.priority === undefined ? null : Number(row.priority);
+  }
+
   async function claimNextWhere(
     now: number,
     priorityPredicate: string,
     extra?: { sql: string; params: readonly unknown[] },
+    priorityFloor = FOREGROUND_QUEUE_PRIORITY_FLOOR,
   ): Promise<JobRow | null> {
     const extraSql = extra ? ` AND ${extra.sql}` : "";
     // Atomic, multi-instance-safe: lock + claim one due job, skipping rows another instance already locked.
@@ -1015,7 +1065,7 @@ export function createPgQueue(
           LIMIT 1
        )
        RETURNING id, payload, attempts, job_key, priority, created_at`,
-      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR, ...(extra?.params ?? [])],
+      [now, priorityFloor, ...(extra?.params ?? [])],
     );
     return (res.rows[0] as JobRow | undefined) ?? null;
   }

@@ -60,6 +60,7 @@ import {
 } from "./installation-concurrency-admission";
 import {
   AGENT_REGATE_PR_JOB_KEY_PREFIX,
+  DEFAULT_FOREGROUND_LANE_RATIO,
   backlogRepoCandidatesFromJobKeys,
   foregroundLaneForJob,
   nextForegroundLane,
@@ -365,14 +366,21 @@ export function createSqliteQueue(
    *  against CURRENT observations, independent of how long ago it was deferred. Returns true when it would be
    *  admitted right now (no longer blocked); false when still blocked OR the payload is unparseable (best-
    *  effort -- an unparseable payload is left for the normal dead-letter path, never force-released here). */
-  function isRateLimitAdmissionNowClear(payload: string): boolean {
+  function isRateLimitAdmissionNowClear(payload: string, admissionCache: Map<string, boolean>): boolean {
     let message: JobMessage;
     try {
       message = JSON.parse(payload) as JobMessage;
     } catch {
       return false;
     }
-    return rateLimitAdmissionDelayMs(driver, message) === null;
+    const target = githubRateLimitAdmissionTargetForJob(message);
+    if (target === null) return true;
+    const cacheKey = `${target.kind}:${target.admissionKey ?? ""}`;
+    const cached = admissionCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const clear = rateLimitAdmissionDelayMs(driver, message) === null;
+    admissionCache.set(cacheKey, clear);
+    return clear;
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
@@ -389,18 +397,38 @@ export function createSqliteQueue(
    *  allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited backlog drains
    *  gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once. Logs +
    *  records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam the
-   *  log. */
+   *  log.
+   *
+   *  Candidate selection queries an OLDEST window AND a NEWEST window (#selfhost-queue-liveness clear-bucket
+   *  starvation fix), not just one oldest-first window. A single `ORDER BY created_at ASC LIMIT` window can be
+   *  filled ENTIRELY by older still-rate-limited jobs once the backlog exceeds the limit -- selectForegroundDeferralsToRelease's
+   *  clear-bucket-priority sort can only prioritize candidates it is actually shown, so a large-enough glut of
+   *  older blocked jobs would permanently hide every newer, already-admittable candidate from it, defeating the
+   *  whole point of the clear-bucket check. The newest window guarantees a fresh clear-bucket candidate is
+   *  always represented in `eligible` regardless of how large the older-blocked backlog grows, at the same
+   *  total worst-case row/admission-check budget as before (still `maxReleasePerSweep * 2` candidates, just
+   *  split fairly across both ends of the age spectrum instead of packed entirely into the oldest end). */
   function releaseStaleForegroundDeferrals(): number {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
-    const { rows } = driver.query(
-      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>?`,
-      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
-    );
+    const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
+    const oldest = driver.query(
+      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? ORDER BY created_at ASC, id ASC LIMIT ?`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+    ).rows;
+    const newest = driver.query(
+      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? ORDER BY created_at DESC, id DESC LIMIT ?`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+    ).rows;
+    const candidateRowsById = new Map<number, { id: number; payload: string; created_at: number }>();
+    for (const row of [...oldest, ...newest] as Array<{ id: number; payload: string; created_at: number }>) {
+      candidateRowsById.set(row.id, row);
+    }
     const eligible: Array<{ id: number; pendingSinceMs: number; ageStale: boolean; rateLimitClear: boolean }> = [];
-    for (const row of rows as Array<{ id: number; payload: string; created_at: number }>) {
+    const admissionCache = new Map<string, boolean>();
+    for (const row of candidateRowsById.values()) {
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, row.created_at, now);
-      const rateLimitClear = isRateLimitAdmissionNowClear(row.payload);
+      const rateLimitClear = isRateLimitAdmissionNowClear(row.payload, admissionCache);
       if (!ageStale && !rateLimitClear) continue;
       eligible.push({ id: row.id, pendingSinceMs: row.created_at, ageStale, rateLimitClear });
     }
@@ -598,18 +626,27 @@ export function createSqliteQueue(
   /** Claim-time backlog-vs-fresh-intake fairness (#selfhost-backlog-convergence, see queue-fairness.ts). Tries
    *  ONE lane-scoped claim before falling back to the plain unscoped foreground claim (claimNext() OR's this
    *  return value with claimNextWhere(now, "priority>=?")) -- a null here just means "no work to prefer this
-   *  cycle," never "no foreground work at all." The fairness singleton's claim_sequence always advances (best-
-   *  effort, hit or miss) so the ratio cycle keeps progressing even through empty cycles. */
+   *  cycle," never "no foreground work at all." One slot per fairness window is deliberately left unscoped, and
+   *  lane-scoped claims must beat the best unclassified foreground priority, so manual/repair work the classifier
+   *  intentionally leaves as lane `null` keeps its plain priority ordering instead of sitting behind a perpetually
+   *  non-empty classified lane. The fairness singleton's claim_sequence always advances (best-effort, hit or
+   *  miss) so the ratio cycle keeps progressing even through empty cycles. */
   function claimNextForegroundLane(now: number): JobRow | null {
     const fairness = driver.query(
       `SELECT claim_sequence, last_backlog_repo FROM ${FAIRNESS_TABLE} WHERE id='singleton'`,
       [],
     ).rows[0] as { claim_sequence: number; last_backlog_repo: string | null } | undefined;
     const sequence = fairness?.claim_sequence ?? 0;
+    const fairnessWindow = DEFAULT_FOREGROUND_LANE_RATIO.backlogPer + DEFAULT_FOREGROUND_LANE_RATIO.freshPer;
     const lane: ForegroundLane = nextForegroundLane(sequence);
     driver.query(`UPDATE ${FAIRNESS_TABLE} SET claim_sequence=claim_sequence+1 WHERE id='singleton'`, []);
+    if (sequence % (fairnessWindow + 1) === fairnessWindow) return null;
+    const unclassifiedPriority = maxDueUnclassifiedForegroundPriority(now);
+    const lanePriorityPredicate =
+      unclassifiedPriority === null ? "candidate.priority>=?" : "candidate.priority>?";
+    const lanePriorityFloor = unclassifiedPriority ?? FOREGROUND_QUEUE_PRIORITY_FLOOR;
     if (lane === "fresh") {
-      const freshRow = claimNextWhere(now, "candidate.priority>=?", { sql: "candidate.foreground_lane='fresh'", params: [] });
+      const freshRow = claimNextWhere(now, lanePriorityPredicate, { sql: "candidate.foreground_lane='fresh'", params: [] }, lanePriorityFloor);
       if (freshRow) incr("gittensory_jobs_claimed_by_lane_total", { lane: "fresh" });
       return freshRow;
     }
@@ -626,15 +663,23 @@ export function createSqliteQueue(
     );
     const repo = pickBacklogRepo(candidates, fairness?.last_backlog_repo ?? null);
     if (!repo) return null;
-    const row = claimNextWhere(now, "candidate.priority>=?", {
+    const row = claimNextWhere(now, lanePriorityPredicate, {
       sql: "candidate.foreground_lane='backlog' AND candidate.job_key LIKE ?",
       params: [`agent-regate-pr:${repo}#%`],
-    });
+    }, lanePriorityFloor);
     if (row) {
       driver.query(`UPDATE ${FAIRNESS_TABLE} SET last_backlog_repo=? WHERE id='singleton'`, [repo]);
       incr("gittensory_jobs_claimed_by_lane_total", { lane: "backlog" });
     }
     return row;
+  }
+
+  function maxDueUnclassifiedForegroundPriority(now: number): number | null {
+    const row = driver.query(
+      `SELECT MAX(priority) AS priority FROM ${TABLE} WHERE status='pending' AND run_after<=? AND priority>=? AND foreground_lane IS NULL`,
+      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR],
+    ).rows[0] as { priority: number | null } | undefined;
+    return row?.priority === null || row?.priority === undefined ? null : Number(row.priority);
   }
 
   /** Top-N repos by backlog-convergence pending DEPTH, for the observability dashboard's per-repo backlog panel
@@ -733,6 +778,7 @@ export function createSqliteQueue(
     now: number,
     priorityPredicate: string,
     extra?: { sql: string; params: readonly unknown[] },
+    priorityFloor = FOREGROUND_QUEUE_PRIORITY_FLOOR,
   ): JobRow | null {
     const extraSql = extra ? ` AND ${extra.sql}` : "";
     const { rows } = driver.query(
@@ -747,7 +793,7 @@ export function createSqliteQueue(
           )
         ORDER BY candidate.priority DESC, candidate.claim_sort_key, candidate.run_after, candidate.id
         LIMIT 1`,
-      [now, FOREGROUND_QUEUE_PRIORITY_FLOOR, ...(extra?.params ?? [])],
+      [now, priorityFloor, ...(extra?.params ?? [])],
     );
     const row = rows[0] as JobRow | undefined;
     if (!row) return null;

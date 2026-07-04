@@ -5,6 +5,9 @@ import assert from "node:assert/strict";
 import {
   extractVersionPins,
   isDockerfile,
+  isRuntimePinPath,
+  parseGemfileRubyLine,
+  parseRuntimeTxtLine,
   parseToolVersionLine,
 } from "../dist/analyzers/eol-check.js";
 
@@ -110,6 +113,99 @@ test("extractVersionPins reads .terraform-version pins as Terraform", () => {
   assert.deepEqual(extractVersionPins([added(".terraform-version", "1.5.7")]), [
     { file: ".terraform-version", product: "terraform", version: "1.5.7" },
   ]);
+});
+
+test("extractVersionPins reads .swift-version, .perl-version, and .erlang-version pins", () => {
+  assert.deepEqual(extractVersionPins([added(".swift-version", "5.9.2")]), [
+    { file: ".swift-version", product: "swift", version: "5.9.2" },
+  ]);
+  assert.deepEqual(extractVersionPins([added(".perl-version", "5.38.0")]), [
+    { file: ".perl-version", product: "perl", version: "5.38.0" },
+  ]);
+  assert.deepEqual(extractVersionPins([added(".erlang-version", "26.2.1")]), [
+    { file: ".erlang-version", product: "erlang", version: "26.2.1" },
+  ]);
+});
+
+test("parseRuntimeTxtLine maps Heroku runtime.txt prefixes to endoflife.date products", () => {
+  assert.deepEqual(parseRuntimeTxtLine("python-3.11.6"), {
+    product: "python",
+    version: "3.11.6",
+  });
+  assert.deepEqual(parseRuntimeTxtLine("ruby-3.2.2"), {
+    product: "ruby",
+    version: "3.2.2",
+  });
+  assert.deepEqual(parseRuntimeTxtLine("nodejs-18.17.0"), {
+    product: "nodejs",
+    version: "18.17.0",
+  });
+  assert.deepEqual(parseRuntimeTxtLine("node-20.11.0"), {
+    product: "nodejs",
+    version: "20.11.0",
+  });
+  assert.equal(parseRuntimeTxtLine("# python-3.10.0"), null);
+  assert.equal(parseRuntimeTxtLine("unknown-1.2.3"), null);
+  assert.equal(parseRuntimeTxtLine(""), null);
+});
+
+test("extractVersionPins reads Heroku runtime.txt pins from added lines", () => {
+  assert.deepEqual(
+    extractVersionPins([added("runtime.txt", "python-3.11.6", "# ruby-3.2.2")]),
+    [{ file: "runtime.txt", product: "python", version: "3.11.6" }],
+  );
+});
+
+test("parseGemfileRubyLine maps Bundler ruby directives to Ruby runtime pins", () => {
+  assert.deepEqual(parseGemfileRubyLine('ruby "3.2.2"'), {
+    product: "ruby",
+    version: "3.2.2",
+  });
+  assert.deepEqual(parseGemfileRubyLine("ruby '~> 3.2.2'"), {
+    product: "ruby",
+    version: "3.2.2",
+  });
+  assert.deepEqual(parseGemfileRubyLine('ruby ">= 3.2.0"'), {
+    product: "ruby",
+    version: "3.2.0",
+  });
+  assert.equal(parseGemfileRubyLine("# ruby \"2.7.0\""), null);
+  assert.equal(parseGemfileRubyLine('source "https://rubygems.org"'), null);
+});
+
+test("extractVersionPins reads Gemfile ruby directives from added lines", () => {
+  assert.deepEqual(
+    extractVersionPins([
+      added("Gemfile", 'source "https://rubygems.org"', 'ruby "3.2.2"'),
+    ]),
+    [{ file: "Gemfile", product: "ruby", version: "3.2.2" }],
+  );
+});
+
+test("parseToolVersionLine maps swift, perl, and erlang asdf plugin names", () => {
+  assert.deepEqual(parseToolVersionLine("swift 5.9.2"), {
+    product: "swift",
+    version: "5.9.2",
+  });
+  assert.deepEqual(parseToolVersionLine("perl 5.38.0"), {
+    product: "perl",
+    version: "5.38.0",
+  });
+  assert.deepEqual(parseToolVersionLine("erlang 26.2.1"), {
+    product: "erlang",
+    version: "26.2.1",
+  });
+});
+
+test("isRuntimePinPath recognizes new pin locations and rejects unrelated paths", () => {
+  assert.equal(isRuntimePinPath("runtime.txt"), true);
+  assert.equal(isRuntimePinPath("Gemfile"), true);
+  assert.equal(isRuntimePinPath(".swift-version"), true);
+  assert.equal(isRuntimePinPath(".perl-version"), true);
+  assert.equal(isRuntimePinPath(".erlang-version"), true);
+  assert.equal(isRuntimePinPath("deploy/runtime.txt"), true);
+  assert.equal(isRuntimePinPath("src/app.ts"), false);
+  assert.equal(isRuntimePinPath("Gemfile.lock"), false);
 });
 
 test("extractVersionPins reads .elixir-version and .kotlin-version pins", () => {

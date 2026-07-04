@@ -327,7 +327,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "QUEUE_CONCURRENCY",
-    firstReference: "src/selfhost/pg-queue.ts:285",
+    firstReference: "src/selfhost/pg-queue.ts:286",
   },
   {
     name: "QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS",
@@ -470,7 +470,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `QDRANT_DIM` | `src/selfhost/qdrant-vectorize.ts:71` |",
   "| `QDRANT_URL` | `src/server.ts:528` |",
   "| `QUEUE_BACKGROUND_CONCURRENCY` | `src/selfhost/queue-common.ts:130` |",
-  "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts:285` |",
+  "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts:286` |",
   "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts:721` |",
   "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts:702` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts:144` |",

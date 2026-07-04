@@ -57,7 +57,7 @@ export const docsNav: DocsGroup[] = [
         title: "Self-hosting: release & security",
         items: [
           { to: "/docs/self-hosting-releases", label: "Releases & images" },
-          { to: "/docs/self-hosting-release-checklist", label: "Beta release checklist" },
+          { to: "/docs/self-hosting-release-checklist", label: "Release checklist" },
           { to: "/docs/self-hosting-security", label: "Security" },
         ],
       },

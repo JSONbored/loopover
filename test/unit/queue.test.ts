@@ -8,6 +8,7 @@ import * as repositoriesModule from "../../src/db/repositories";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import * as sentryModule from "../../src/selfhost/sentry";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { jobCoalesceKey } from "../../src/selfhost/queue-common";
 import {
   listCollisionEdges,
   createAgentRun,
@@ -16974,6 +16975,48 @@ describe("queue processors", () => {
 
     const detected = await env.DB.prepare("select metadata_json from audit_events where event_type = 'notification.event_detected' and target_key = ?").bind("watcher-001").first<{ metadata_json: string }>();
     expect(JSON.parse(detected!.metadata_json)).toMatchObject({ eventType: "issue_watch_match", recipientLogin: "watcher-001", repoFullName: "JSONbored/gittensory" });
+  });
+
+  it("REGRESSION (#3218 review): chunk membership across a >100-watcher batch is order-independent -- the SAME watcher set in a different arrival order still produces the SAME set of chunk coalesce keys", async () => {
+    const watcherLogins = Array.from({ length: 205 }, (_, index) => `watcher-${String(index + 1).padStart(3, "0")}`);
+
+    const enqueueNotifyEvaluateJobs = async (loginOrder: string[]): Promise<Array<{ type: string; events: Array<{ dedupKey: string }> }>> => {
+      const enqueued: Array<{ type: string; events?: Array<{ dedupKey: string }> }> = [];
+      const env = createTestEnv({ JOBS: { async send(message: { type: string }) { enqueued.push(message); } } as unknown as Queue });
+      vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+      // listIssueWatchersForRepo has no ORDER BY -- insertion order IS read-back order, so inserting in a
+      // different order here genuinely reproduces two logically-identical detection passes disagreeing on
+      // notificationEvents' arrival order, exactly the redelivery scenario the review is concerned about.
+      for (const login of loginOrder) {
+        await upsertIssueWatchSubscription(env, { login, repoFullName: "JSONbored/gittensory" });
+      }
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: `issue-watch-open-${loginOrder[0]}`,
+        eventName: "issues",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 91, title: "Add caching to the registry sync", state: "open", user: { login: "maintainer" }, author_association: "OWNER", body: "We should cache the registry fetch." },
+        },
+      });
+      vi.unstubAllGlobals();
+      return enqueued.filter((m): m is { type: "notify-evaluate"; events: Array<{ dedupKey: string }> } => m.type === "notify-evaluate");
+    };
+
+    const coalesceKeysFor = (jobs: Array<{ type: string; events: Array<{ dedupKey: string }> }>): Array<string | null> =>
+      jobs.map((job) => jobCoalesceKey(JSON.stringify(job))).sort();
+
+    const forwardJobs = await enqueueNotifyEvaluateJobs(watcherLogins);
+    const reversedJobs = await enqueueNotifyEvaluateJobs([...watcherLogins].reverse());
+
+    // Same chunk SIZES either way (chunking itself is unaffected -- only membership was the risk).
+    expect(forwardJobs.map((job) => job.events.length)).toEqual([100, 100, 5]);
+    expect(reversedJobs.map((job) => job.events.length)).toEqual([100, 100, 5]);
+    // The set of chunk-level coalesce keys must match -- proving a redelivery whose events resolve in a
+    // different order still coalesces with the original batch instead of silently re-running as "new" work.
+    expect(coalesceKeysFor(reversedJobs)).toEqual(coalesceKeysFor(forwardJobs));
   });
 
   it("appends issue-side slop findings to the issue advisory only when slop is opted in (#533)", async () => {

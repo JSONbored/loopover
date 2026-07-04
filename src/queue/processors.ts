@@ -5597,7 +5597,14 @@ async function processGitHubWebhook(
     }
     // Batched, but bounded (#selfhost-maintenance-self-pin): a popular issue can have thousands of watchers,
     // so keep queue payloads comfortably below backend message limits while still avoiding one row per event.
-    for (const events of chunkNotificationEvents(notificationEvents)) {
+    // Sorted by dedupKey BEFORE chunking (#3218 review): jobCoalesceKey hashes each chunk's OWN sorted dedup-key
+    // set, so it's already order-independent WITHIN a chunk -- but chunk MEMBERSHIP itself was still built from
+    // notificationEvents' arrival order, so a redelivery whose events resolved in a different order could split
+    // across a different 100-event boundary and never coalesce with the earlier attempt. Sorting first makes
+    // chunk membership a pure function of the detected event SET, not its arrival order, restoring the "same
+    // full set in any order" coalescing guarantee across chunk boundaries too.
+    const notificationEventsForChunking = [...notificationEvents].sort((a, b) => a.dedupKey.localeCompare(b.dedupKey));
+    for (const events of chunkNotificationEvents(notificationEventsForChunking)) {
       await env.JOBS.send({
         type: "notify-evaluate",
         requestedBy: "webhook",

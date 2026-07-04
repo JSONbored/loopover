@@ -397,8 +397,9 @@ describe("retryFailedRelays", () => {
     await enroll(e, 9602); // enrolled push mode, relay not registered yet
     await storeRelayFailure(e, { deliveryId: "transient-skip", eventName: "pull_request", installationId: 9602, rawBody: "{}" });
     await retryFailedRelays(e);
-    const row = await db(e).prepare("SELECT attempts FROM orb_relay_failures WHERE delivery_id='transient-skip'").first<{ attempts: number }>();
+    const row = await db(e).prepare("SELECT attempts, last_attempt_at FROM orb_relay_failures WHERE delivery_id='transient-skip'").first<{ attempts: number; last_attempt_at: string | null }>();
     expect(row?.attempts).toBe(1); // transient skip must not delete the row — backoff and retry
+    expect(row?.last_attempt_at).toBeTruthy(); // follows normal retry bookkeeping, not a silent delete
     expect(warnLog.mock.calls.some(([line]) => String(line).includes("orb_relay_transient_skip") && String(line).includes('"phase":"retry"'))).toBe(true);
     warnLog.mockRestore();
   });

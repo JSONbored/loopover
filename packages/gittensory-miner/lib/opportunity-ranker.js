@@ -84,6 +84,16 @@ function collectCandidates(candidates) {
   return { normalized, skippedInvalid };
 }
 
+function rankedUsesDefaultGoalSpec(ranked, options = {}) {
+  const goalSpecsByRepo = buildGoalSpecsByRepo(options);
+  const specRepos = Object.keys(goalSpecsByRepo);
+  if (ranked.length === 0) return specRepos.length === 0;
+  return ranked.some((issue) => {
+    const target = issue.repoFullName.trim().toLowerCase();
+    return !specRepos.some((repo) => repo.trim().toLowerCase() === target);
+  });
+}
+
 /**
  * Rank metadata-only fan-out candidates locally. Never clones source, never uploads metadata, and never writes to
  * GitHub — it only composes deterministic engine signals and returns the sorted list.
@@ -99,7 +109,7 @@ export function rankCandidateIssuesWithSummary(candidates, options = {}) {
   return {
     issues: ranked,
     skippedInvalid,
-    usedDefaultGoalSpec: Object.keys(buildGoalSpecsByRepo(options)).length === 0,
+    usedDefaultGoalSpec: rankedUsesDefaultGoalSpec(ranked, options),
     defaultGoalSpec: DEFAULT_MINER_GOAL_SPEC,
   };
 }

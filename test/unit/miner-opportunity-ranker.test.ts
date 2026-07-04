@@ -100,6 +100,42 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
     expect(summary.skippedInvalid).toBe(0);
   });
 
+  it("summary reports default goal-spec usage when supplied specs do not match ranked repos", () => {
+    const summary = rankCandidateIssuesWithSummary([rawIssue()], {
+      nowMs: NOW,
+      goalSpecsByRepo: {
+        "other/repo": {
+          minerEnabled: true,
+          wantedPaths: [],
+          blockedPaths: [],
+          preferredLabels: ["feature"],
+          blockedLabels: [],
+          maxConcurrentClaims: 2,
+          issueDiscoveryPolicy: "neutral",
+        },
+      },
+    });
+    expect(summary.usedDefaultGoalSpec).toBe(true);
+  });
+
+  it("summary reports custom goal-spec usage when a ranked repo has a matching spec", () => {
+    const summary = rankCandidateIssuesWithSummary([rawIssue()], {
+      nowMs: NOW,
+      goalSpecsByRepo: {
+        "acme/widgets": {
+          minerEnabled: true,
+          wantedPaths: [],
+          blockedPaths: [],
+          preferredLabels: ["help wanted"],
+          blockedLabels: [],
+          maxConcurrentClaims: 2,
+          issueDiscoveryPolicy: "neutral",
+        },
+      },
+    });
+    expect(summary.usedDefaultGoalSpec).toBe(false);
+  });
+
   it("prefers fresher, better-labeled opportunities over stale question threads", () => {
     const ranked = rankCandidateIssues(
       [

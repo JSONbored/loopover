@@ -22,8 +22,13 @@ test("computeOpportunityCompetition: scales high-risk clusters against open PR v
   assert.equal(computeOpportunityCompetition(10, 4), 1);
 });
 
-test("computeOpportunityCompetition: non-finite and negative inputs degrade safely", () => {
-  assert.equal(computeOpportunityCompetition(Number.NaN, 4), 0);
+test("computeOpportunityCompetition: non-finite cluster pressure fails closed", () => {
+  assert.equal(computeOpportunityCompetition(Number.NaN, 4), 1);
+  assert.equal(computeOpportunityCompetition(Number.POSITIVE_INFINITY, 4), 1);
+  assert.equal(computeOpportunityCompetition(Number.NEGATIVE_INFINITY, 4), 1);
+});
+
+test("computeOpportunityCompetition: non-finite open PR volume and negative inputs degrade safely", () => {
   assert.equal(computeOpportunityCompetition(2, Number.POSITIVE_INFINITY), 1);
   assert.equal(computeOpportunityCompetition(-3, 4), 0);
   assert.equal(computeOpportunityCompetition(2, -1), 1);

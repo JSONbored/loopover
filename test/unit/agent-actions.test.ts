@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
@@ -907,13 +908,18 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
     expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
   });
 
-  it("a dual-model AI CONSENSUS defect (ai_consensus_defect) is concrete evidence — both reviewers independently agreed", () => {
+  it("a dual-model AI CONSENSUS defect (ai_consensus_defect) is deliberately NOT concrete — two models agreeing is still a judgment call, not deterministic evidence (gate review finding, round 2)", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_consensus_defect"], blockerTitles: ["AI review found a defect"], pr: { labels: [] } }));
-    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: true });
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
   });
 
-  it("a SPLIT AI review (ai_review_split) is deliberately NOT concrete — the reviewers disagreed, stays ambiguous", () => {
+  it("a SPLIT AI review (ai_review_split) is also NOT concrete — the reviewers disagreed, an even more ambiguous case than consensus", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_review_split"], blockerTitles: ["AI reviewers disagreed"], pr: { labels: [] } }));
+    expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
+  });
+
+  it("a would-close justified ONLY by AI verdicts (consensus + split together) is still not concrete — no deterministic signal present", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, ciState: "passed", gateBlockerCodes: ["ai_consensus_defect", "ai_review_split"], blockerTitles: ["x", "y"], pr: { labels: [] } }));
     expect(closeOf(plan)).toMatchObject({ closeKind: "heuristic", closeConcreteEvidence: false });
   });
 
@@ -937,16 +943,46 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(false);
   });
 
-  it("downgradeCloseToHold still downgrades a non-concrete heuristic close alongside a KEPT concrete one", () => {
+  // Defensive/API-contract test on downgradeCloseToHold's PREDICATE itself, not a claim about what the live
+  // planner emits: planAgentMaintenanceActions's disposition branch is an if/else-if chain
+  // (flagForLinkedIssue / willCloseForLinkedIssue / canMerge / willClose are mutually exclusive), so it can
+  // never plan two `close` actions in one pass — see the real single-close planner-path tests above and in
+  // the closeConcreteEvidence describe block below for the actual planner contract. This synthetic two-close
+  // input exists purely to prove downgradeCloseToHold discriminates on closeConcreteEvidence alone (not on
+  // closeKind or array position), the same "kept deterministic + dropped heuristic" shape that
+  // precisionBreakerDowngradeDirections (test/unit/precision-breakers-chain.test.ts) must also get right.
+  it("downgradeCloseToHold's predicate discriminates on closeConcreteEvidence alone: a non-concrete heuristic close is downgraded even alongside a KEPT concrete one", () => {
     const concreteClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "secret leaked", closeKind: "heuristic", closeConcreteEvidence: true };
     const ambiguousClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "verdict failed", closeKind: "heuristic", closeConcreteEvidence: false };
     const held = downgradeCloseToHold([concreteClose, ambiguousClose], true);
-    // Both are `closeKind: "heuristic"`, but only the non-concrete one gets swept (+ its replacement label) —
-    // this can't happen in a real plan (the planner emits at most one close), but proves the predicate
-    // discriminates on closeConcreteEvidence alone, not on closeKind or array position.
     expect(held.some((a) => a === concreteClose)).toBe(true);
     expect(held.some((a) => a === ambiguousClose)).toBe(false);
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(true);
+  });
+});
+
+// #hard-blockers-not-ai-judgment parity guard (nit): CONCRETE_EVIDENCE_BLOCKER_CODES hand-types 7 of its 9
+// literals (the other 2 -- duplicate_pr_risk, pre_merge_check_required -- are imported directly from
+// advisory.ts/pre-merge-checks.ts, so a rename there is a compile error, not silent drift). Each of these 7
+// producer files defines its code as either a module-private const or a raw literal duplicated across several
+// unrelated call sites, so there is no single canonical export worth centralizing around (see the doc comment
+// on CONCRETE_EVIDENCE_BLOCKER_CODES). This test reads the real producer source text and asserts each literal
+// still appears there, so a future rename/removal at the producer fails this test immediately instead of
+// silently turning a "concrete evidence" code into a permanently-unreachable Set entry.
+describe("CONCRETE_EVIDENCE_BLOCKER_CODES parity — hand-typed literals still match their producers", () => {
+  const HAND_TYPED_CODES_AND_PRODUCERS: Array<{ code: string; file: string }> = [
+    { code: "secret_leak", file: "src/review/safety.ts" },
+    { code: "surface_lane_reject", file: "src/review/content-lane-wire.ts" },
+    { code: "manifest_missing_tests", file: "src/signals/focus-manifest.ts" },
+    { code: "manifest_linked_issue_required", file: "src/signals/focus-manifest.ts" },
+    { code: "lockfile_tamper_risk", file: "src/review/lockfile-tamper.ts" },
+    { code: "missing_linked_issue", file: "src/rules/advisory.ts" },
+    { code: "self_authored_linked_issue", file: "src/rules/advisory.ts" },
+  ];
+
+  it.each(HAND_TYPED_CODES_AND_PRODUCERS)("$code still appears as a literal in its producer ($file)", ({ code, file }) => {
+    const source = readFileSync(file, "utf8");
+    expect(source).toContain(`"${code}"`);
   });
 });
 

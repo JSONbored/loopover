@@ -1,5 +1,6 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
-import type { GateCheckConclusion } from "../rules/advisory";
+import { AI_JUDGMENT_BLOCKER_CODES, DUPLICATE_ONLY_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
+import { PRE_MERGE_CHECK_BLOCKING_CODE } from "../review/pre-merge-checks";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
@@ -98,11 +99,14 @@ export type PlannedAgentAction = {
   closeRequiresCiState?: "failed" | "not_required";
   // For a "heuristic" close: true when the close is backed by CONCRETE, non-judgment evidence — a committed
   // secret, a failing/red CI run, a base conflict, a deterministic linked-issue-overlap duplicate, or a
-  // rule-based lane/manifest/pre-merge rejection — rather than a single fuzzy score or an unconfirmed AI
-  // verdict. The close-precision circuit-breaker (downgradeCloseToHold) EXEMPTS a concrete-evidence close: it
-  // only exists to catch the class of error where a heuristic call turned out to be wrong, and a committed
-  // secret or a red CI run is not a plausible false positive. Absent/false ⇒ the close stays subject to the
-  // breaker like any other heuristic close (the conservative default).
+  // rule-based lane/manifest/pre-merge rejection — rather than any AI/model-derived verdict or a fuzzy score.
+  // The close-precision circuit-breaker (downgradeCloseToHold) EXEMPTS a concrete-evidence close: it only
+  // exists to catch the class of error where a heuristic call turned out to be wrong, and a committed secret
+  // or a red CI run is not a plausible false positive. An AI verdict — even a dual-model CONSENSUS — is
+  // deliberately NOT concrete: two models agreeing is still a judgment call, not deterministic evidence, and a
+  // systematically wrong AI-driven close is exactly the failure mode this breaker exists to catch (gate review
+  // finding, round 2 — an AI-only blocker must not bypass its own precision safety net). Absent/false ⇒ the
+  // close stays subject to the breaker like any other heuristic close (the conservative default).
   closeConcreteEvidence?: boolean;
   expectedHeadSha?: string;
   // For an `approve` action: retract the bot's own prior approval instead of posting a new one — a later commit
@@ -113,34 +117,45 @@ export type PlannedAgentAction = {
 };
 
 // Gate-blocker codes backed by CONCRETE, non-judgment evidence: a committed secret, a deterministic
-// linked-issue-overlap duplicate, a rule-based content/surface-lane or manifest/pre-merge rejection, or a
-// dual-model AI CONSENSUS (both independent reviewers agree) — as opposed to a single fuzzy score or an
-// unconfirmed/ambiguous verdict. `ai_review_split` is deliberately excluded: the two reviewers DISAGREED,
-// which is exactly the ambiguous case the close-precision breaker exists to catch. Kept here (not in
+// linked-issue-overlap duplicate, or a rule-based content/surface-lane or manifest/pre-merge rejection — every
+// entry here is produced by an exact match / regex / deterministic rule, never by a model's output. NO AI- or
+// model-derived code belongs in this set, no matter how the verdict was reached (including a dual-model
+// CONSENSUS): the close-precision breaker exists specifically to catch a systematically-wrong AI/heuristic
+// judgment, and an AI-only blocker that could bypass its own precision safety net would defeat the point (gate
+// review finding, round 2 — `ai_consensus_defect` was wrongly included here and has been removed; both
+// `ai_consensus_defect` and `ai_review_split` stay fully subject to the breaker, defended below by explicitly
+// excluding advisory.ts's own AI_JUDGMENT_BLOCKER_CODES so this can't silently regress). Kept here (not in
 // rules/advisory.ts) because "which findings are trustworthy enough to survive the breaker" is a
 // disposition-planning concern, not a gate-evaluation one — the set of finding codes is itself generic
-// self-host engine vocabulary (src/rules/advisory.ts), not specific to any one repository.
+// self-host engine vocabulary (src/rules/advisory.ts), not specific to any one repository. Two entries reuse
+// advisory.ts's own exported code constants (DUPLICATE_ONLY_BLOCKER_CODES, PRE_MERGE_CHECK_BLOCKING_CODE)
+// rather than retyping their literals; the rest have no single canonical export to import (each is either a
+// module-private const or a raw literal duplicated across several unrelated producer files), so a source-text
+// parity test in the test file below guards against drift for all nine instead of a broader cross-module
+// refactor.
 const CONCRETE_EVIDENCE_BLOCKER_CODES = new Set<string>([
   "secret_leak",
-  "duplicate_pr_risk",
+  ...DUPLICATE_ONLY_BLOCKER_CODES,
   "surface_lane_reject",
   "manifest_missing_tests",
   "manifest_linked_issue_required",
-  "pre_merge_check_required",
+  PRE_MERGE_CHECK_BLOCKING_CODE,
   "lockfile_tamper_risk",
   "missing_linked_issue",
   "self_authored_linked_issue",
-  "ai_consensus_defect",
 ]);
 
 /** True when a would-CLOSE is justified by at least one piece of concrete, non-judgment evidence: red CI, a
  *  base conflict, a deterministic duplicate-PR link, or a gate-blocker code in {@link CONCRETE_EVIDENCE_BLOCKER_CODES}.
  *  Mixed blockers (one concrete + one ambiguous) still count as concrete — the concrete signal alone already
- *  justifies the close regardless of what else is present. */
+ *  justifies the close regardless of what else is present. Defensively excludes advisory.ts's own
+ *  {@link AI_JUDGMENT_BLOCKER_CODES} even though none should ever land in CONCRETE_EVIDENCE_BLOCKER_CODES — a
+ *  belt-and-suspenders guard against exactly the regression a gate review already caught once (`ai_consensus_defect`
+ *  wrongly classified as concrete). */
 function hasConcreteCloseEvidence(input: AgentActionPlanInput, ciFailed: boolean, isConflict: boolean): boolean {
   if (ciFailed || isConflict) return true;
   if ((input.pr.linkedDuplicateCount ?? 0) > 0) return true;
-  return (input.gateBlockerCodes ?? []).some((code) => CONCRETE_EVIDENCE_BLOCKER_CODES.has(code));
+  return (input.gateBlockerCodes ?? []).some((code) => CONCRETE_EVIDENCE_BLOCKER_CODES.has(code) && !AI_JUDGMENT_BLOCKER_CODES.has(code));
 }
 
 export type AgentActionPlanInput = {

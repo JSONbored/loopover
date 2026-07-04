@@ -74,4 +74,19 @@ describe("precisionBreakerDowngradeDirections — bounded-cardinality breaker-do
     const planned = [changesLabel];
     expect(precisionBreakerDowngradeDirections(planned, applyPrecisionBreakers(planned, true, true))).toEqual([]);
   });
+
+  // REGRESSION (gate review finding, round 2): a plan can carry TWO close actions — a KEPT deterministic close
+  // (e.g. linked-issue-hard-rule, per downgradeCloseToHold's own "when BOTH a heuristic and a deterministic
+  // close are present, drops ONLY the heuristic one" contract) alongside a DROPPED heuristic one. A coarse
+  // `!breakerOnPlan.some(actionClass === "close")` check would never fire here, since the surviving
+  // deterministic close keeps a "close" action in breakerOnPlan even though the breaker DID rewrite the plan.
+  it("['close'] when a KEPT deterministic close and a DROPPED heuristic close are both present in the same plan", () => {
+    const deterministicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "ineligible issue", closeKind: "linked-issue-hard-rule" };
+    const planned = [deterministicClose, heuristicClose];
+    const breakerOnPlan = applyPrecisionBreakers(planned, false, true);
+    // Sanity: the deterministic close really does survive alongside the dropped heuristic one.
+    expect(breakerOnPlan.some((a) => a.actionClass === "close" && a.closeKind === "linked-issue-hard-rule")).toBe(true);
+    expect(breakerOnPlan.some((a) => a.actionClass === "close" && a.closeKind === "heuristic")).toBe(false);
+    expect(precisionBreakerDowngradeDirections(planned, breakerOnPlan)).toEqual(["close"]);
+  });
 });

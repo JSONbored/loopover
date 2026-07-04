@@ -1856,13 +1856,17 @@ export function applyPrecisionBreakers(
  *  way applyPrecisionBreakers itself is. Returns at most one entry per direction, in a stable merge-then-close
  *  order; empty on the common (not-engaged, or nothing downgraded) path. */
 export function precisionBreakerDowngradeDirections(planned: PlannedAgentAction[], breakerOnPlan: PlannedAgentAction[]): Array<"merge" | "close"> {
+  // Reference identity, not "is the class still present anywhere in the array": downgradeMergeToHold /
+  // downgradeCloseToHold both filter() the input (preserving object identity for every KEPT action) and only
+  // ever push brand-new label actions, so a specific planned action survives iff the SAME object reference is
+  // still in breakerOnPlan. A coarse `!breakerOnPlan.some(actionClass === "close")` check would miss a downgrade
+  // when a plan carries TWO close actions and only one (the heuristic one) is dropped — the surviving
+  // deterministic close keeps that check from ever firing even though the breaker did rewrite the plan (gate
+  // review finding, round 2).
+  const kept = new Set(breakerOnPlan);
   const directions: Array<"merge" | "close"> = [];
-  if (planned.some((action) => action.actionClass === "merge") && !breakerOnPlan.some((action) => action.actionClass === "merge")) {
-    directions.push("merge");
-  }
-  if (planned.some((action) => action.actionClass === "close") && !breakerOnPlan.some((action) => action.actionClass === "close")) {
-    directions.push("close");
-  }
+  if (planned.some((action) => action.actionClass === "merge" && !kept.has(action))) directions.push("merge");
+  if (planned.some((action) => action.actionClass === "close" && !kept.has(action))) directions.push("close");
   return directions;
 }
 

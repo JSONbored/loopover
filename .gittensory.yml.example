@@ -165,9 +165,9 @@ gate:
     # the gate. Bool. Default: false.
     aiAdvisory: false
 
-  # Oversized-PR gate. A PR at/above BOTH the file-count and line-count thresholds
+  # Oversized-PR gate. A PR at/above EITHER the file-count or line-count threshold
   # (engine defaults, not configurable here) gets a manual-review HOLD finding —
-  # never a hard blocker, so it's dry-run/advisory friendly regardless of mode.
+  # never a hard blocker; mode only turns this hold signal on or off.
   # off | advisory | block. Default: off. Config-as-code only — no DB column or
   # dashboard toggle; this can only be set here.
   size:
@@ -232,11 +232,12 @@ gate:
   # DB-backed (dashboard-settable too); this overrides the stored value.
   selfAuthoredLinkedIssue: advisory
 
-  # Gate-wide dry-run. When true, the gate evaluates and posts its verdict as
-  # normal but never actually blocks/merges/closes based on it — useful for
-  # trialing a stricter pack or mode change against real traffic before
-  # enforcing it. Bool. Default: false. Config-as-code only — no DB column or
-  # dashboard toggle; this can only be set here.
+  # Gate-check dry-run. When true, the posted check conclusion remains the real
+  # non-enforcing verdict while comments/check text may also show the would-be
+  # stricter verdict for AI-review blocker mode. It does not disable downstream
+  # merge/close planning for failures from already-enforced gates. Bool.
+  # Default: false. Config-as-code only — no DB column or dashboard toggle;
+  # this can only be set here.
   dryRun: false
 
   # First-time-contributor grace. RESERVED / currently INERT: this value is
@@ -291,8 +292,9 @@ gate:
     # String or null. Default: null (the key record's model, else a conservative
     # per-provider default).
     model: null
-    # Minimum calibrated AI-reviewer confidence (0-1) for a consensus defect to
-    # become a blocker; below this it stays advisory-only. Number 0–1, or null.
+    # Minimum calibrated AI-reviewer confidence (0-1) recorded for cache and
+    # calibration context. Under `mode: block`, consensus and split AI-review
+    # defects still block regardless of this floor. Number 0–1, or null.
     # Default: null (engine uses 0.93). Config-as-code only — no DB column or
     # dashboard toggle; this can only be set here.
     closeConfidence: null

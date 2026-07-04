@@ -9600,14 +9600,17 @@ async function recloseDisallowedReopenIfNeeded(
     pr.number,
   );
   const latestReopenerLogin = latestReopener.login?.toLowerCase() ?? null;
-  // A bounded scan that ran to completion but did NOT cover every page is still ambiguous when it finds no
-  // reopened event: an unread older page may contain either the original contributor reopen or a later maintainer
-  // reopen hidden by padding. Only a visible matching reopener proves this webhook is still the live disallowed
-  // reopen; every other shape fails closed, because wrongly re-closing a maintainer-authorized PR is worse than
-  // leaving a disallowed reopen open for one more tick. (#2369)
+  // A bounded scan that did NOT cover every page and found no reopened event is attacker-controllable: the
+  // original contributor can pad newer issue events until their reopen falls outside the inspected window. Treat
+  // only a visible different reopener (or a fully covered no-match) as superseding; an incomplete unknown result
+  // keeps enforcing the one-shot close. A read error remains distinct because it proves no timeline facts. (#2369)
+  const latestReopenerUnknownInPartialWindow =
+    latestReopenerLogin === null &&
+    !latestReopener.coveredAllPages &&
+    !latestReopener.errored;
   const reopenerSuperseded =
     latestReopener.errored ||
-    latestReopenerLogin !== reopener;
+    (!latestReopenerUnknownInPartialWindow && latestReopenerLogin !== reopener);
   if (reopenerSuperseded) {
     await recordAuditEvent(env, {
       eventType: "github_app.reopen_reclosed",

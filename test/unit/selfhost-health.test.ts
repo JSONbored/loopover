@@ -2,74 +2,19 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import {
   buildHealthBody,
   codexAuthReadinessProbe,
   githubAppReadinessProbe,
   readiness,
-  resolveHealthVersion,
   sqliteBackupAdvisory,
 } from "../../src/selfhost/health";
 
 describe("buildHealthBody (#2077)", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("reports the configured version, rounded uptime, and Postgres backend", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-02T12:00:10.900Z"));
-
-    expect(
-      buildHealthBody({
-        version: "2026.7.2",
-        startedAt: Date.parse("2026-07-02T12:00:00.100Z"),
-        dbBackend: "postgres",
-      }),
-    ).toEqual({
-      status: "ok",
-      version: "2026.7.2",
-      uptimeSeconds: 10,
-      backend: "postgres",
-    });
-  });
-
-  it("falls back to unknown and never reports negative uptime", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-02T12:00:00.000Z"));
-
-    expect(
-      buildHealthBody({
-        version: "   ",
-        startedAt: Date.parse("2026-07-02T12:00:02.000Z"),
-        dbBackend: "sqlite",
-      }),
-    ).toEqual({
-      status: "ok",
-      version: "unknown",
-      uptimeSeconds: 0,
-      backend: "sqlite",
-    });
-  });
-});
-
-describe("resolveHealthVersion (#2077)", () => {
-  it("prefers the image version over the package fallback", () => {
-    expect(resolveHealthVersion({ GITTENSORY_VERSION: "  image-2026.07.02  " }, "0.1.0")).toBe(
-      "image-2026.07.02",
-    );
-  });
-
-  it("uses the package fallback when the image version is absent or blank", () => {
-    expect(resolveHealthVersion({}, "0.1.0")).toBe("0.1.0");
-    expect(resolveHealthVersion({ GITTENSORY_VERSION: "   " }, "0.1.0")).toBe("0.1.0");
-  });
-
-  it("reports unknown when no nonblank version is available", () => {
-    expect(resolveHealthVersion({}, undefined)).toBe("unknown");
-    expect(resolveHealthVersion({ GITTENSORY_VERSION: "" }, "   ")).toBe("unknown");
+  it("keeps unauthenticated liveness responses minimal", () => {
+    expect(buildHealthBody()).toEqual({ status: "ok" });
   });
 });
 

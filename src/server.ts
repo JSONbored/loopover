@@ -47,7 +47,6 @@ import {
   codexAuthReadinessProbe,
   githubAppReadinessProbe,
   readiness,
-  resolveHealthVersion,
   sqliteBackupAdvisory,
   type ReadinessProbe,
 } from "./selfhost/health";
@@ -350,10 +349,6 @@ async function main(): Promise<void> {
     ? await buildPostgresBackend(databaseUrl as string, consume)
     : buildSqliteBackend(consume);
   const dbBackend = usePostgres ? "postgres" : "sqlite";
-  const healthVersion = resolveHealthVersion(
-    { GITTENSORY_VERSION: process.env.GITTENSORY_VERSION },
-    packageJson.version,
-  );
   console.log(
     JSON.stringify({
       event: "selfhost_backend",
@@ -707,7 +702,7 @@ async function main(): Promise<void> {
         const path = new URL(request.url).pathname;
         if (path === "/health")
           return new Response(
-            JSON.stringify(buildHealthBody({ version: healthVersion, startedAt, dbBackend })),
+            JSON.stringify(buildHealthBody()),
             { headers: { "content-type": "application/json" } },
           );
         if (path === "/ready") {

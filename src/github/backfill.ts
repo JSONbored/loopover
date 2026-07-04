@@ -628,7 +628,7 @@ export async function backfillOpenPullRequestDetails(
   await mapWithConcurrency(batch, 2, async (pr) => {
     await upsertPullRequestDetailSyncState(env, { repoFullName: repo.fullName, pullNumber: pr.number, status: "running" });
     const before = warnings.length;
-    const { headSha, filesSyncedAt, reviewsSyncedAt } = await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
+    const { headSha, filesSyncedAt, reviewsSyncedAt, checksSyncedAt } = await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
     const syncedAt = nowIso();
     const newWarnings = warnings.slice(before);
     await upsertPullRequestDetailSyncState(env, {
@@ -638,7 +638,7 @@ export async function backfillOpenPullRequestDetails(
       headSha,
       filesSyncedAt,
       reviewsSyncedAt,
-      checksSyncedAt: syncedAt,
+      checksSyncedAt,
       lastSyncedAt: syncedAt,
       errorSummary: newWarnings.at(-1),
     });
@@ -704,7 +704,7 @@ export async function refreshPullRequestDetails(
   const admissionKey = repoAdmissionKeyForToken(env, repo, token);
   const warnings: string[] = [];
   await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
-  const { headSha, filesSyncedAt, reviewsSyncedAt } = await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey, "live_review", { forceFiles: options.force });
+  const { headSha, filesSyncedAt, reviewsSyncedAt, checksSyncedAt } = await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings, admissionKey, "live_review", { forceFiles: options.force });
   const syncedAt = nowIso();
   const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
   await upsertPullRequestDetailSyncState(env, {
@@ -714,7 +714,7 @@ export async function refreshPullRequestDetails(
     headSha,
     filesSyncedAt,
     reviewsSyncedAt,
-    checksSyncedAt: syncedAt,
+    checksSyncedAt,
     lastSyncedAt: syncedAt,
     errorSummary: warnings.at(-1),
   });
@@ -1991,7 +1991,7 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     const detailWarningStart = warnings.length;
     await mapWithConcurrency(detailTargets, limits.detailConcurrency, async (pr) => {
       const before = warnings.length;
-      const { headSha, filesSyncedAt, reviewsSyncedAt } = await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
+      const { headSha, filesSyncedAt, reviewsSyncedAt, checksSyncedAt } = await fetchAndStorePullRequestDetails(env, repo.fullName, pr, token, warnings, admissionKey, "backfill_open_pr_details");
       // Persist the repo+PR+headSha snapshot marker (#audit-rate-headroom) so a later call through ANY
       // cache-aware path (open-PR convergence, live review) can skip refetching this PR's files while its
       // head is unchanged — without this write, fetchAndStorePullRequestDetails's cache check always misses
@@ -2005,7 +2005,7 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
         headSha,
         filesSyncedAt,
         reviewsSyncedAt,
-        checksSyncedAt: syncedAt,
+        checksSyncedAt,
         lastSyncedAt: syncedAt,
         errorSummary: newWarnings.at(-1),
       });
@@ -2191,7 +2191,7 @@ async function fetchAndStorePullRequestDetails(
   admissionKey: GitHubRateLimitAdmissionKey | undefined,
   caller: PullRequestFilesFetchCaller,
   options: { forceFiles?: boolean | undefined } = {},
-): Promise<{ headSha: string | null | undefined; filesSyncedAt: string | null | undefined; reviewsSyncedAt: string | null | undefined }> {
+): Promise<{ headSha: string | null | undefined; filesSyncedAt: string | null | undefined; reviewsSyncedAt: string | null | undefined; checksSyncedAt: string | null | undefined }> {
   // Durable repo+PR+headSha file snapshot (#audit-rate-headroom): a bare URL cache is insufficient because
   // `/pulls/{n}/files` has the SAME url across different heads. Reuse the stored `pull_request_files` rows
   // instead of refetching when the last successful files sync already covered the PR's CURRENT head SHA —
@@ -2223,6 +2223,7 @@ async function fetchAndStorePullRequestDetails(
   // fetch even starts, so it's safe: any invalidation racing in from this instant onward still leaves
   // `reviewsInvalidatedAt` newer than whatever we return below, forcing a correct refetch on the NEXT pass.
   const reviewFetchStartedAt = nowIso();
+  const checkFetchStartedAt = nowIso();
   const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([
     filesUpToDate ? Promise.resolve<GitHubFilePayload[]>([]) : fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings, admissionKey, caller),
@@ -2251,6 +2252,17 @@ async function fetchAndStorePullRequestDetails(
   // snapshot) so a skipped/failed pass never regresses a marker a concurrent call has since advanced.
   const reviewSyncFailedThisCall = !reviewsUpToDate && warnings.slice(warningStart).some((warning) => warning.startsWith(`Review sync failed for #${pr.number}:`));
   const reviewsSyncedAtResult = !reviewsUpToDate && !reviewSyncFailedThisCall ? reviewFetchStartedAt : undefined;
+  // checksSyncedAt is a "last confirmed successful checks sync" marker, exactly like filesSyncedAt (#2765) and
+  // reviewsSyncedAt (#2537) -- and the completeness signal consumes all three symmetrically
+  // (`Boolean(filesSyncedAt && reviewsSyncedAt && checksSyncedAt)` in signals/engine.ts). Checks are never
+  // cached (they refresh every call at the current head, so there is no skip path), but on a fetch FAILURE
+  // fetchPullRequestChecks pushes "Check sync failed for #N:" and stores no runs -- so the marker must NOT
+  // advance, or a PR whose checks never synced would still count as fully detailed. Returning undefined leaves
+  // the caller's upsert column untouched (partial-update contract), never stamping a "checks synced" time over
+  // a sync that did not land. This was the lone un-guarded sibling: the two callers previously stamped it to a
+  // fresh `now` unconditionally.
+  const checkSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`Check sync failed for #${pr.number}:`));
+  const checksSyncedAtResult = checkSyncFailed ? undefined : checkFetchStartedAt;
 
   if (!filesUpToDate && !fileSyncFailed) {
     await deletePullRequestFiles(env, repoFullName, pr.number);
@@ -2295,7 +2307,7 @@ async function fetchAndStorePullRequestDetails(
       payload: check as unknown as Record<string, JsonValue>,
     });
   }
-  return { headSha: headShaResult, filesSyncedAt: filesSyncedAtResult, reviewsSyncedAt: reviewsSyncedAtResult };
+  return { headSha: headShaResult, filesSyncedAt: filesSyncedAtResult, reviewsSyncedAt: reviewsSyncedAtResult, checksSyncedAt: checksSyncedAtResult };
 }
 
 // GitHub caps list endpoints at 100 items/page, so a single `per_page=100` fetch silently truncates a

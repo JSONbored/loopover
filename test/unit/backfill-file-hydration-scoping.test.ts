@@ -320,6 +320,59 @@ describe("GitHub PR file hydration scoping (#audit-rate-headroom)", () => {
     });
   });
 
+  it("does not advance checksSyncedAt when the check-run fetch fails, even though files and reviews sync (marker parity with filesSyncedAt/reviewsSyncedAt)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 35,
+      title: "Open PR whose check-run fetch fails while files/reviews succeed",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "head-1" },
+      labels: [],
+      body: "",
+    });
+    // Prior successful sync at an older head; checksSyncedAt is a known past value we assert stays put.
+    await upsertPullRequestDetailSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 35,
+      status: "complete",
+      headSha: "head-0",
+      filesSyncedAt: "2026-05-20T00:00:00.000Z",
+      reviewsSyncedAt: "2026-05-20T00:00:00.000Z",
+      checksSyncedAt: "2026-05-20T00:00:00.000Z",
+    });
+    let failChecks = true;
+    const urls = stubFetchTracking((url) => {
+      // Files and reviews succeed; only the check-runs endpoint fails on the first pass.
+      if (url.includes("/pulls/35/files")) return Response.json([{ filename: "src/new.ts", status: "added", additions: 5, deletions: 0, changes: 5 }]);
+      if (url.includes("/pulls/35/reviews")) return Response.json([]);
+      if (url.includes("/commits/head-1/check-runs")) {
+        return failChecks ? new Response("transient REST failure", { status: 503 }) : Response.json({ check_runs: [] });
+      }
+      return Response.json([]);
+    });
+
+    const failed = await refreshPullRequestDetails(env, "JSONbored/gittensory", 35);
+
+    expect(failed).toMatchObject({ status: "partial", warnings: [expect.stringContaining("Check sync failed for #35")] });
+    const afterFailure = await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 35);
+    // The failed check fetch must leave checksSyncedAt exactly where it was -- never stamp a fresh "synced now"
+    // over a sync that did not land -- while the successful files/reviews fetches DO advance their own markers.
+    expect(afterFailure?.checksSyncedAt).toBe("2026-05-20T00:00:00.000Z");
+    expect(afterFailure?.filesSyncedAt).not.toBe("2026-05-20T00:00:00.000Z");
+    expect(afterFailure?.reviewsSyncedAt).not.toBe("2026-05-20T00:00:00.000Z");
+
+    failChecks = false;
+    urls.length = 0;
+    const retried = await refreshPullRequestDetails(env, "JSONbored/gittensory", 35);
+
+    expect(retried).toMatchObject({ status: "complete", warnings: [] });
+    expect(urls.some((url) => url.includes("/commits/head-1/check-runs"))).toBe(true);
+    // Once the check fetch succeeds, the marker advances past its seeded value.
+    expect((await getPullRequestDetailSyncState(env, "JSONbored/gittensory", 35))?.checksSyncedAt).not.toBe("2026-05-20T00:00:00.000Z");
+  });
+
   it("defers historical merged-PR file hydration when the REST budget is below the historical-backfill floor, while cheap metadata still syncs", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

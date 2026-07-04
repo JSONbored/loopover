@@ -18,6 +18,7 @@ import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
 import { fetchLiveCiAggregate, mergeRequiredCiContexts, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
+import { ensurePullRequestAssignee } from "../github/assignees";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { fetchPullRequestFreshness, pullRequestFreshnessDetail } from "../github/pr-freshness";
@@ -696,6 +697,18 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
        * action.expectedHeadSha ?? ctx.headSha is falsy, so updateSha (the same expression) is always a
        * truthy string here; the ?? undefined only satisfies updatePullRequestBranch's string|undefined type. */
       await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, updateSha ?? undefined);
+      return;
+    }
+    case "assign": {
+      const login = action.assignee ?? "";
+      if (!login) return;
+      const result = await ensurePullRequestAssignee(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, login);
+      if (!result.applied) {
+        // GitHub silently drops an assignee lacking push/triage access to the repo -- the common case for an
+        // external contributor. Fall back to a per-login label instead of a comment: ensurePullRequestLabel's
+        // own GET dedup makes this idempotent, so a repeated sweep never re-posts/spams once the label exists.
+        await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, `contributor:${login}`, { createMissingLabel: true });
+      }
       return;
     }
   }

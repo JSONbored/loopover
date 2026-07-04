@@ -2553,6 +2553,7 @@ async function runAgentMaintenancePlanAndExecute(
       headSha: pr.headSha,
       mergeBlockedSha: pr.mergeBlockedSha,
       approvedHeadSha: pr.approvedHeadSha,
+      authorLogin: pr.authorLogin,
     },
   });
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.

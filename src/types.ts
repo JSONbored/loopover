@@ -985,8 +985,10 @@ export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_appro
  *  labels (ready-to-merge / changes-requested / manual-review / migration-collision / the linked-issue
  *  pending-closure flag / the account-age new-account label) -- these are advisory signals about the bot's own
  *  verdict, not enforcement actions, and default OFF (`observe`) like every other class so a one-shot-mode repo
- *  never sees them without an explicit opt-in. */
-export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch";
+ *  never sees them without an explicit opt-in. `assign` (#3182) sets the PR's opening contributor as the GitHub
+ *  assignee -- an independent, always-safe triage action with no bearing on merge/close/approve, gated purely
+ *  on its own dial like `review_state_label`. */
+export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "review_state_label" | "update_branch" | "assign";
 
 /** Per-action-class autonomy. An unset class resolves to `observe` (deny-by-default). */
 export type AutonomyPolicy = Partial<Record<AgentActionClass, AutonomyLevel>>;

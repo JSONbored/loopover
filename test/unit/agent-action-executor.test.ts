@@ -13,6 +13,9 @@ vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
   removePullRequestLabel: vi.fn(async () => undefined),
 }));
+vi.mock("../../src/github/assignees", () => ({
+  ensurePullRequestAssignee: vi.fn(async () => ({ applied: true })),
+}));
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
   return {
@@ -38,6 +41,7 @@ vi.mock("../../src/github/backfill", async (importOriginal) => ({
 
 import { closeIssue, closePullRequest, createIssueComment, createPullRequestReview, dismissLatestBotApproval, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
+import { ensurePullRequestAssignee } from "../../src/github/assignees";
 import { fetchPullRequestFreshness } from "../../src/github/pr-freshness";
 import { createInstallationToken } from "../../src/github/app";
 import { fetchLiveCiAggregate, refreshInstallationHealthForInstallation } from "../../src/github/backfill";
@@ -491,6 +495,40 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   it("actionParams threads labelOp + comment so a staged flag replays faithfully", () => {
     const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "pending-closure", labelOp: "add", comment: "⚠️ flagged" };
     expect(actionParams(flag)).toEqual({ label: "pending-closure", labelOp: "add", comment: "⚠️ flagged" });
+  });
+
+  it("LIVE assign (#3182): calls ensurePullRequestAssignee with the planned login and does not fall back to a label when it sticks", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestAssignee).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "alice");
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(outcomes[0]?.outcome).toBe("completed");
+  });
+
+  it("LIVE assign (#3182): falls back to a per-login label when GitHub silently drops an ineligible assignee", async () => {
+    const env = createTestEnv({});
+    vi.mocked(ensurePullRequestAssignee).mockResolvedValueOnce({ applied: false });
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "external-contributor" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "contributor:external-contributor", { createMissingLabel: true });
+    expect(outcomes[0]?.outcome).toBe("completed");
+  });
+
+  it("assign with no login is a no-op (defensive — the planner always sets it, but the executor must not call GitHub with an empty login)", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener" };
+    await executeAgentMaintenanceActions(env, ctx({ autonomy: { assign: "auto" } }), [assign]);
+    expect(ensurePullRequestAssignee).not.toHaveBeenCalled();
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+  });
+
+  it("assign is denied when the assign autonomy class is not acting", async () => {
+    const env = createTestEnv({});
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" };
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: {} }), [assign]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(ensurePullRequestAssignee).not.toHaveBeenCalled();
   });
 
   it("LIVE approve persists the approved head SHA for re-approval idempotency", async () => {

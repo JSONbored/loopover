@@ -243,6 +243,43 @@ test("shouldScheduleHistoricalReplayRun stays quiet when the loop is disabled", 
   );
 });
 
+test("README-shaped input passes raw pr_outcome counters so both sources contribute", () => {
+  const prOutcome = {
+    mergeConfirmed: 74,
+    mergeFalse: 26,
+    closeConfirmed: 0,
+    closeFalse: 0,
+    observedAt: "2026-07-04T18:00:00Z",
+  };
+
+  const loop = computePhase7CalibrationLoop({
+    config: resolvePhase7CalibrationConfig({
+      miner: {
+        calibration: {
+          phase7LoopEnabled: true,
+          autonomyIncreaseMinAccuracy: 0.7,
+          replayFreshnessMaxAgeHours: 168,
+          historicalReplayWeight: 0.5,
+          prOutcomeWeight: 0.5,
+          prOutcomeMinDecided: 10,
+        },
+      },
+    }),
+    prOutcome,
+    historicalReplay: {
+      compositeScore: 0.82,
+      replayRunId: "replay-2026-07-04",
+      observedAt: "2026-07-04T12:00:00Z",
+      harnessStatus: "healthy",
+    },
+    now: "2026-07-04T18:00:00Z",
+  });
+
+  assert.deepEqual(loop.audit.contributingSources, ["pr_outcome", "historical_replay"]);
+  assert.equal(loop.bySource.pr_outcome.accuracy, 0.74);
+  assert.equal(loop.bySource.pr_outcome.sampleSize, 100);
+});
+
 test("computePhase7CalibrationLoop combines historical-replay and pr_outcome signals with provenance", () => {
   const composite = computeGateVerdictCompositeCalibrationScore({
     objectiveAnchor: 0.8,

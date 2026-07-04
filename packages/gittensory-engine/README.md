@@ -270,16 +270,16 @@ to pr_outcome-only gating.
 ```ts
 import {
   computePhase7CalibrationLoop,
-  computePrOutcomeCalibrationAccuracy,
   shouldScheduleHistoricalReplayRun,
 } from "@jsonbored/gittensory-engine";
 
-const prOutcome = computePrOutcomeCalibrationAccuracy({
+const prOutcome = {
   mergeConfirmed: 74,
   mergeFalse: 26,
   closeConfirmed: 0,
   closeFalse: 0,
-});
+  observedAt: "2026-07-04T18:00:00Z",
+};
 
 const loop = computePhase7CalibrationLoop({
   config: {
@@ -291,7 +291,7 @@ const loop = computePhase7CalibrationLoop({
     prOutcomeMinDecided: 10,
     warnings: [],
   },
-  prOutcome: { ...prOutcome, observedAt: "2026-07-04T18:00:00Z" },
+  prOutcome,
   historicalReplay: {
     compositeScore: 0.82,
     replayRunId: "replay-2026-07-04",
@@ -319,6 +319,9 @@ const schedule = shouldScheduleHistoricalReplayRun({
 
 `renderPhase7CalibrationAuditMarkdown(loop)` turns the result into a deterministic local artifact with the combined
 metric, baseline delta, per-source breakdown, hold reasons, and replay cadence state.
+
+`computePrOutcomeCalibrationAccuracy()` is a read-only helper for inspecting derived accuracy from raw gate-eval
+counters; pass the counters themselves into `computePhase7CalibrationLoop()`, not the helper result.
 
 ## Track-record summary
 

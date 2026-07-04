@@ -7,7 +7,7 @@ import {
   buildContributorOutcomeHistory,
   buildContributorProfile,
 } from "../../src/signals/engine";
-import { buildRepoRewardRisk } from "../../src/signals/reward-risk";
+import { buildRepoRewardRisk, rewardRiskFreshnessInternals } from "../../src/signals/reward-risk";
 import type { IssueRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
 function scoringSnapshot(): ScoringModelSnapshotRecord {
@@ -133,5 +133,48 @@ describe("reward-risk freshness parity with gittensory-engine", () => {
     ];
     const result = buildRepoRewardRisk({ ...base, issues: issuesForRisk, pullRequests: [] });
     expect(result.rewardUpside.opportunityFactors.freshnessFactor).toBeGreaterThan(0.7);
+  });
+
+  it("pickIssueTimestamp and issueAgeDays cover defensive timestamp branches", () => {
+    const { pickIssueTimestamp, issueAgeDays } = rewardRiskFreshnessInternals;
+    expect(
+      pickIssueTimestamp({
+        repoFullName: collab.fullName,
+        number: 1,
+        title: "t",
+        state: "open",
+        labels: [],
+        linkedPrs: [],
+        updatedAt: "2026-07-03T00:00:00.000Z",
+        createdAt: "2020-01-01T00:00:00.000Z",
+      }),
+    ).toBe("2026-07-03T00:00:00.000Z");
+    expect(
+      pickIssueTimestamp({
+        repoFullName: collab.fullName,
+        number: 2,
+        title: "t",
+        state: "open",
+        labels: [],
+        linkedPrs: [],
+        updatedAt: "   ",
+        createdAt: "2026-07-03T00:00:00.000Z",
+      }),
+    ).toBe("2026-07-03T00:00:00.000Z");
+    expect(
+      pickIssueTimestamp({
+        repoFullName: collab.fullName,
+        number: 3,
+        title: "t",
+        state: "open",
+        labels: [],
+        linkedPrs: [],
+        updatedAt: null,
+        createdAt: null,
+      }),
+    ).toBeNull();
+    expect(issueAgeDays(null)).toBe(Number.POSITIVE_INFINITY);
+    expect(issueAgeDays("not-a-date")).toBe(Number.POSITIVE_INFINITY);
+    expect(issueAgeDays("2026-07-03T00:00:00.000Z")).toBeGreaterThanOrEqual(0);
   });
 });

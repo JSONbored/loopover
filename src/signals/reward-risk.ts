@@ -910,3 +910,10 @@ function round(value: number): number {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+/* v8 ignore start -- Test-only export surface for branch coverage. */
+export const rewardRiskFreshnessInternals = {
+  pickIssueTimestamp,
+  issueAgeDays,
+};
+/* v8 ignore stop */

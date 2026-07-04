@@ -1180,6 +1180,57 @@ describe("createPgQueue (durable #977)", () => {
       expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
     });
 
+    it("does not let a lower-priority classified lane starve a higher-priority manual regate", async () => {
+      const claimSql: string[] = [];
+      let claimed = false;
+      const manual = {
+        type: "agent-regate-pr",
+        deliveryId: "manual-regate:owner/repo#1:operator",
+        repoFullName: "owner/repo",
+        prNumber: 1,
+        installationId: 1,
+      };
+      const fn = vi.fn().mockImplementation(async (sql: unknown, params?: unknown[]) => {
+        const q = String(sql);
+        if (q.includes("UPDATE _selfhost_queue_fairness SET claim_sequence=claim_sequence+1") && q.includes("RETURNING claim_sequence, last_backlog_repo")) {
+          return { rows: [{ claim_sequence: 0, last_backlog_repo: null }], rowCount: 1 };
+        }
+        if (q.includes("SELECT MAX(priority) AS priority") && q.includes("foreground_lane IS NULL")) {
+          return { rows: [{ priority: 99 }], rowCount: 1 };
+        }
+        if (q.includes("SELECT job_key, created_at") && q.includes("foreground_lane='backlog'")) {
+          return { rows: [{ job_key: "agent-regate-pr:owner/repo#2", created_at: 1000 }], rowCount: 1 };
+        }
+        if (q.includes("UPDATE _selfhost_jobs SET status='processing'")) {
+          claimSql.push(q);
+          if (!claimed && q.includes("foreground_lane='backlog'")) {
+            expect((params as unknown[])[1]).toBe(99);
+            return { rows: [], rowCount: 0 };
+          }
+          if (!claimed && !q.includes("foreground_lane")) {
+            claimed = true;
+            return {
+              rows: [{ id: "manual-1", payload: JSON.stringify(manual), attempts: 0, job_key: "agent-regate-pr:owner/repo#1", priority: 99, created_at: 1000 }],
+              rowCount: 1,
+            };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      });
+      const seen: string[] = [];
+      const q = createPgQueue({ query: fn } as unknown as Pool, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId));
+
+      await q.init();
+      await q.drain();
+
+      expect(seen).toEqual(["manual-regate:owner/repo#1:operator"]);
+      expect(claimSql[0]).toContain("foreground_lane='backlog'");
+      expect(claimSql[0]).toContain("candidate.priority > $2");
+      expect(claimSql[1]).not.toContain("foreground_lane");
+      expect(await renderMetrics()).not.toContain("gittensory_jobs_claimed_by_lane_total");
+    });
+
     it("records the fresh-intake lane-claim counter on a successful fresh-lane claim (#selfhost-lane-observability)", async () => {
       let claimed = false; // one-shot: the row is only claimable until the first successful claim
       const fn = vi.fn().mockImplementation(async (sql: unknown) => {

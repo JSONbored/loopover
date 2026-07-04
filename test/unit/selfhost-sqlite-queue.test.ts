@@ -1394,7 +1394,7 @@ describe("createSqliteQueue (durable #980)", () => {
       ]);
     });
 
-    it("repeats the ratio cycle across a longer run (6 backlog : 2 fresh -> B,B,B,F,B,B,B,F)", async () => {
+    it("repeats the ratio cycle with one plain-priority slot per fairness window", async () => {
       const driver = makeDriver();
       const seen: string[] = [];
       const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
@@ -1409,11 +1409,24 @@ describe("createSqliteQueue (durable #980)", () => {
         "backlog-convergence:owner/repo#2",
         "backlog-convergence:owner/repo#3",
         "fresh-1",
+        "fresh-2",
         "backlog-convergence:owner/repo#4",
         "backlog-convergence:owner/repo#5",
         "backlog-convergence:owner/repo#6",
-        "fresh-2",
       ]);
+    });
+
+    it("does not let a lower-priority classified lane starve a higher-priority manual regate", async () => {
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push((m as unknown as { deliveryId: string }).deliveryId), { concurrency: 1 });
+      await q.binding.send({
+        ...backlogJob("owner/repo", 1),
+        deliveryId: "manual-regate:owner/repo#1:operator",
+      } as JobMessage);
+      await q.binding.send(backlogJob("owner/repo", 2));
+      await q.drain();
+      expect(seen).toEqual(["manual-regate:owner/repo#1:operator", "backlog-convergence:owner/repo#2"]);
     });
 
     it("falls through to the plain unscoped foreground claim when the preferred lane has nothing pending", async () => {

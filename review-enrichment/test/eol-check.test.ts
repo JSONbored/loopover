@@ -104,6 +104,13 @@ test("extractVersionPins reads .java-version pins as oracle-jdk", () => {
   ]);
 });
 
+test("extractVersionPins reads .terraform-version pins as Terraform", () => {
+  // tfenv/asdf use `.terraform-version` with the same leading-version format.
+  assert.deepEqual(extractVersionPins([added(".terraform-version", "1.5.7")]), [
+    { file: ".terraform-version", product: "terraform", version: "1.5.7" },
+  ]);
+});
+
 test("extractVersionPins ignores removed/context lines and files with no patch", () => {
   const patch = ["@@ -1 +1,2 @@", "-FROM python:3.7", " FROM python:3.9"].join(
     "\n",

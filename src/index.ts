@@ -189,6 +189,13 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isHourly && hour === 3) {
     jobs.push({ type: "prune-retention", requestedBy: "schedule" });
   }
+  // Repo-doc refresh sweep (#3003, part of #2993) -- once a day (09:00 UTC, distinct from prune-retention's
+  // 03:00 and the weekly report's Monday-12:00). The fan-out itself checks each opted-in repo's own
+  // repoDocGeneration.refreshIntervalDays (default weekly) before enqueuing a per-repo job, so this daily
+  // cadence is just how often eligibility is RE-CHECKED, not how often a repo is actually refreshed.
+  if (isHourly && hour === 9 && selfHostedReviews) {
+    jobs.push({ type: "repo-doc-refresh-sweep", requestedBy: "schedule" });
+  }
   if (isFullSyncWindow) {
     jobs.push({ type: "generate-signal-snapshots", requestedBy: "schedule" });
     jobs.push({ type: "build-burden-forecasts", requestedBy: "schedule" });

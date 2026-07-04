@@ -444,7 +444,7 @@ function categorizeFile(path: string): FileCategory {
     return { path, extension, category: "docs" };
   }
   if (
-    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".zip", ".gz"].includes(
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".zip", ".gz", ".zst"].includes(
       extension,
     )
   ) {

@@ -7,6 +7,7 @@ import {
   createAnalysisContext,
   filesHaveAddedLines,
 } from "../dist/analysis-context.js";
+import { planAnalyzers } from "../dist/scheduler.js";
 import {
   queryOsvBatch,
   scanDependencyChanges,
@@ -495,6 +496,53 @@ test("createAnalysisContext classifies workflow paths case-insensitively", () =>
       ["docs/readme.md", "docs"],
     ],
   );
+});
+
+test("createAnalysisContext classifies Zstandard archives as assets for scheduler gating", () => {
+  const context = createAnalysisContext({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 3128,
+    headSha: "abcdef1234567890",
+    githubToken: "github_pat_test",
+    analyzers: ["assetWeight"],
+    files: [
+      {
+        path: "cache/model.zst",
+        patch: null,
+        status: "added",
+      },
+      {
+        path: "dist/bundle.tar.ZST",
+        patch: null,
+        status: "added",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    context.fileCategories.map((file) => [file.path, file.extension, file.category]),
+    [
+      ["cache/model.zst", ".zst", "asset"],
+      ["dist/bundle.tar.ZST", ".zst", "asset"],
+    ],
+  );
+
+  const plan = planAnalyzers(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 3128,
+      headSha: "abcdef1234567890",
+      githubToken: "github_pat_test",
+      analyzers: ["assetWeight"],
+      files: context.changedFiles,
+    },
+    { assetWeight: async () => [] },
+    context,
+    { budgetMs: 5_000, startedAtMs: 0 },
+  );
+
+  assert.deepEqual(plan.runnable.map((item) => item.name), ["assetWeight"]);
+  assert.deepEqual(plan.skipped.map((item) => [item.name, item.skipReason]), []);
 });
 
 test("createAnalysisContext classifies lockfile paths case-insensitively", () => {

@@ -244,6 +244,85 @@ rejected because the repo was not opted in, had invalid ids, or exposed no recog
 component scores, effective weights, contributing repos, dimension tables, rejected rows, and a contributing-repo
 summary. All caller-supplied ids and repo names are Markdown-escaped and newline-collapsed before rendering.
 
+## Phase 7 calibration loop
+
+`computePhase7CalibrationLoop()` wires the historical-replay composite score into the live Phase 7 calibration loop
+alongside the passive pr_outcome signal. The module tracks a combined calibration-accuracy metric against the
+documented 62% baseline, records provenance per source, recommends replay-run cadence, and fail-closes autonomy-level
+increases when the replay harness is missing, stale, degraded, or below the configured threshold.
+
+The loop is default-off and must be enabled explicitly:
+
+```yaml
+miner:
+  calibration:
+    phase7LoopEnabled: true
+    autonomyIncreaseMinAccuracy: 0.70
+    replayFreshnessMaxAgeHours: 168
+    historicalReplayWeight: 0.5
+    prOutcomeWeight: 0.5
+```
+
+When enabled, autonomy-level increases require a fresh healthy historical-replay run plus enough live pr_outcome samples.
+If the replay harness is degraded or unavailable, the loop sets an explicit hold flag instead of silently falling back
+to pr_outcome-only gating.
+
+```ts
+import {
+  computePhase7CalibrationLoop,
+  shouldScheduleHistoricalReplayRun,
+} from "@jsonbored/gittensory-engine";
+
+const prOutcome = {
+  mergeConfirmed: 74,
+  mergeFalse: 26,
+  closeConfirmed: 0,
+  closeFalse: 0,
+  observedAt: "2026-07-04T18:00:00Z",
+};
+
+const loop = computePhase7CalibrationLoop({
+  config: {
+    phase7LoopEnabled: true,
+    autonomyIncreaseMinAccuracy: 0.7,
+    replayFreshnessMaxAgeHours: 168,
+    historicalReplayWeight: 0.5,
+    prOutcomeWeight: 0.5,
+    prOutcomeMinDecided: 10,
+    warnings: [],
+  },
+  prOutcome,
+  historicalReplay: {
+    compositeScore: 0.82,
+    replayRunId: "replay-2026-07-04",
+    observedAt: "2026-07-04T12:00:00Z",
+    harnessStatus: "healthy",
+  },
+  now: "2026-07-04T18:00:00Z",
+});
+
+const schedule = shouldScheduleHistoricalReplayRun({
+  config: {
+    phase7LoopEnabled: true,
+    autonomyIncreaseMinAccuracy: 0.7,
+    replayFreshnessMaxAgeHours: 168,
+    historicalReplayWeight: 0.5,
+    prOutcomeWeight: 0.5,
+    prOutcomeMinDecided: 10,
+    warnings: [],
+  },
+  lastReplayObservedAt: loop.bySource.historical_replay.observedAt,
+  harnessStatus: loop.replayHarnessStatus,
+  now: "2026-07-04T18:00:00Z",
+});
+```
+
+`renderPhase7CalibrationAuditMarkdown(loop)` turns the result into a deterministic local artifact with the combined
+metric, baseline delta, per-source breakdown, hold reasons, and replay cadence state.
+
+`computePrOutcomeCalibrationAccuracy()` is a read-only helper for inspecting derived accuracy from raw gate-eval
+counters; pass the counters themselves into `computePhase7CalibrationLoop()`, not the helper result.
+
 ## Track-record summary
 
 `computeTrackRecordSummary()` and `renderTrackRecordSummaryMarkdown()` provide a portable first-contact summary for a

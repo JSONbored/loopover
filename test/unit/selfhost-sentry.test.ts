@@ -258,6 +258,23 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
     expect(ev.exception.values[0].stacktrace.frames[0].vars.safe).toBe("value");
   });
 
+  // Regression (#1825): the Orb broker's enrollment id/secret (createOpaqueToken("orbenr"/"orbsec"),
+  // src/orb/broker.ts) are bare opaque tokens with no "secret"/"token"-NAMED field for the key-based redaction
+  // to catch when a broker error message quotes one directly (e.g. an error string embedding the failed
+  // Authorization value) — the VALUE-based SECRET_VALUE pattern must recognize the orbenr_/orbsec_ shape too.
+  it("redacts a bare Orb enrollment id/secret value from an exception message (#1825)", () => {
+    const fakeEnrollId = `orbenr_${"c".repeat(64)}`;
+    const fakeSecret = `orbsec_${"d".repeat(64)}`;
+    const ev = scrubbedEvent({
+      exception: {
+        values: [{ value: `Orb broker rejected enrollment ${fakeEnrollId} using secret ${fakeSecret}` }],
+      },
+    }) as any;
+    expect(ev.exception.values[0].value).not.toContain(fakeEnrollId);
+    expect(ev.exception.values[0].value).not.toContain(fakeSecret);
+    expect(ev.exception.values[0].value).toBe("Orb broker rejected enrollment [redacted] using secret [redacted]");
+  });
+
   it("scrubs transaction span descriptions and data before sending transaction events", () => {
     const queryTokenKey = fakeQueryTokenKey();
     const ev = scrubbedEvent({
@@ -577,6 +594,92 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(resolveSentryMonitorSlug("orb-relay-drain", "x".repeat(60))).toBe(
       `gittensory-selfhost-${"x".repeat(48)}-orb-relay-drain`,
     );
+    expect(resolveSentryMonitorSlug("queue-dead-letter-revive", "prod")).toBe(
+      "gittensory-selfhost-prod-queue-dead-letter-revive",
+    );
+  });
+
+  it("records dead-letter-revive check-ins on the 30-minute schedule (#1824)", async () => {
+    await initSentry({
+      SENTRY_DSN: "d",
+      SENTRY_ENVIRONMENT: "prod",
+    } as unknown as NodeJS.ProcessEnv);
+
+    await expect(
+      withSentryMonitor(
+        "queue-dead-letter-revive",
+        { jobType: "queue-dead-letter-revive" },
+        async () => 3,
+      ),
+    ).resolves.toBe(3);
+
+    expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
+      1,
+      { monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
+      expect.objectContaining({
+        schedule: { type: "interval", value: 30, unit: "minute" },
+        checkinMargin: 10,
+        maxRuntime: 5,
+        failureIssueThreshold: 2,
+        recoveryThreshold: 1,
+      }),
+    );
+    expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive",
+        status: "ok",
+        checkInId: "check-in-id",
+        duration: expect.any(Number),
+      }),
+    );
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("derives the dead-letter-revive schedule from an operator's configured interval override (#1824 regression)", async () => {
+    process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = String(90 * 60_000);
+    try {
+      await initSentry({
+        SENTRY_DSN: "d",
+        SENTRY_ENVIRONMENT: "prod",
+      } as unknown as NodeJS.ProcessEnv);
+
+      await withSentryMonitor("queue-dead-letter-revive", { jobType: "queue-dead-letter-revive" }, async () => 1);
+
+      expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
+        1,
+        { monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
+        expect.objectContaining({
+          schedule: { type: "interval", value: 90, unit: "minute" },
+          checkinMargin: 30,
+        }),
+      );
+    } finally {
+      delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+    }
+  });
+
+  it("floors an operator's dead-letter-revive interval override to at least 1 minute for the monitor schedule", async () => {
+    process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+    try {
+      await initSentry({
+        SENTRY_DSN: "d",
+        SENTRY_ENVIRONMENT: "prod",
+      } as unknown as NodeJS.ProcessEnv);
+
+      await withSentryMonitor("queue-dead-letter-revive", { jobType: "queue-dead-letter-revive" }, async () => 1);
+
+      expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
+        1,
+        { monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
+        expect.objectContaining({
+          schedule: { type: "interval", value: 1, unit: "minute" },
+          checkinMargin: 5,
+        }),
+      );
+    } finally {
+      delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+    }
   });
 
   it("records successful Sentry cron monitor check-ins with the configured schedule", async () => {

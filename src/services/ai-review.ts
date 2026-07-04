@@ -339,6 +339,17 @@ export type AiReviewDiagnostic = {
   responseChars?: number | undefined;
   hasJsonObject?: boolean | undefined;
   error?: string | undefined;
+  usage?: AiReviewActualUsage | undefined;
+};
+
+export type AiReviewActualUsage = {
+  provider?: string | undefined;
+  model?: string | undefined;
+  effort?: string | undefined;
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  totalTokens?: number | undefined;
+  costUsd?: number | undefined;
 };
 
 type ReviewerOpinionOutcome = {
@@ -449,6 +460,35 @@ export function coerceAiText(result: unknown): string {
       return obj.output_text;
   }
   return "";
+}
+
+function finiteUsageNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function finiteUsageInteger(value: unknown): number | undefined {
+  const n = finiteUsageNumber(value);
+  return n === undefined ? undefined : Math.max(0, Math.round(n));
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function coerceAiUsage(result: unknown): AiReviewActualUsage | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const usage = (result as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return undefined;
+  const record = usage as Record<string, unknown>;
+  return {
+    provider: stringField(record.provider),
+    model: stringField(record.model),
+    effort: stringField(record.effort),
+    inputTokens: finiteUsageInteger(record.inputTokens),
+    outputTokens: finiteUsageInteger(record.outputTokens),
+    totalTokens: finiteUsageInteger(record.totalTokens),
+    costUsd: finiteUsageNumber(record.costUsd),
+  };
 }
 
 /**
@@ -716,14 +756,16 @@ async function runWorkersOpinion(
           extra,
         );
         const text = coerceAiText(result);
+        const usage = coerceAiUsage(result);
+        const usageFields = usage ? { usage } : {};
         const parsed = parseModelReview(text);
         if (parsed) {
-          diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)) });
+          diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
           return { review: parsed };
         }
         const hasJsonObject = Boolean(extractLastJsonObject(text));
         const status = text.trim() ? "unparseable_output" : "empty_output";
-        diagnostics.push({ model, attempt, status, responseChars: text.length, hasJsonObject });
+        diagnostics.push({ model, attempt, status, responseChars: text.length, hasJsonObject, ...usageFields });
         if (text.trim()) {
           lastUnparseable = { model, attempt, responseChars: text.length, hasJsonObject };
           console.warn(
@@ -1423,6 +1465,7 @@ export async function runGittensoryAiReview(
       inconclusive,
       ...(byokFailure ? { byokFailure } : {}),
     },
+    aggregateActualUsage(reviewDiagnostics),
   );
   return {
     status: "ok",
@@ -1452,6 +1495,54 @@ function reviewerModelLabel(env: Env, input: GittensoryAiReviewInput): string {
   return BEST_REVIEW_MODELS.join("+");
 }
 
+function joinedUnique(values: Iterable<string | undefined>): string | undefined {
+  const unique = [...new Set([...values].filter((value): value is string => Boolean(value)))];
+  return unique.length > 0 ? unique.join("+") : undefined;
+}
+
+function sumUsageField(
+  usages: readonly AiReviewActualUsage[],
+  key: "inputTokens" | "outputTokens" | "totalTokens" | "costUsd",
+): number | undefined {
+  let sawValue = false;
+  let total = 0;
+  for (const usage of usages) {
+    const value = usage[key];
+    if (value === undefined) continue;
+    sawValue = true;
+    total += value;
+  }
+  return sawValue ? total : undefined;
+}
+
+function aggregateActualUsage(diagnostics: readonly AiReviewDiagnostic[]): AiReviewActualUsage | undefined {
+  const usages = diagnostics.map((diagnostic) => diagnostic.usage).filter((usage): usage is AiReviewActualUsage => Boolean(usage));
+  if (usages.length === 0) return undefined;
+  const inputTokens = sumUsageField(usages, "inputTokens");
+  const outputTokens = sumUsageField(usages, "outputTokens");
+  let sawTotalTokens = false;
+  let totalTokensSum = 0;
+  for (const usage of usages) {
+    const total =
+      usage.totalTokens ??
+      (usage.inputTokens !== undefined || usage.outputTokens !== undefined
+        ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
+        : undefined);
+    if (total === undefined) continue;
+    sawTotalTokens = true;
+    totalTokensSum += total;
+  }
+  return {
+    provider: joinedUnique(usages.map((usage) => usage.provider)),
+    model: joinedUnique(usages.map((usage) => usage.model)),
+    effort: joinedUnique(usages.map((usage) => usage.effort)),
+    inputTokens,
+    outputTokens,
+    totalTokens: sawTotalTokens ? totalTokensSum : undefined,
+    costUsd: sumUsageField(usages, "costUsd"),
+  };
+}
+
 async function record(
   env: Env,
   input: GittensoryAiReviewInput,
@@ -1459,6 +1550,7 @@ async function record(
   estimatedNeurons: number,
   detail: string,
   metadata?: Record<string, unknown>,
+  actualUsage?: AiReviewActualUsage | undefined,
 ): Promise<void> {
   // NEVER include provider key material in usage/audit metadata.
   await recordAiUsageEvent(env, {
@@ -1470,6 +1562,12 @@ async function record(
       : reviewerModelLabel(env, input),
     status,
     estimatedNeurons,
+    provider: actualUsage?.provider,
+    effort: actualUsage?.effort,
+    inputTokens: actualUsage?.inputTokens,
+    outputTokens: actualUsage?.outputTokens,
+    totalTokens: actualUsage?.totalTokens,
+    costUsd: actualUsage?.costUsd,
     detail,
     metadata: {
       repoFullName: input.repoFullName,
@@ -1492,4 +1590,6 @@ export const __aiReviewInternals = {
   toPublicSafe,
   estimateNeurons,
   runWorkersOpinion,
+  coerceAiUsage,
+  aggregateActualUsage,
 };

@@ -5,6 +5,8 @@ import {
   queryPackageWeight,
   resetWeightCacheForTest,
   weightCacheSizeForTest,
+  countPackagePatchUsages,
+  isHeavyPackageWeight,
 } from "../dist/analyzers/heavy-dependency.js";
 
 beforeEach(() => {
@@ -161,4 +163,83 @@ test("queryPackageWeight: the cache is bounded, evicting the oldest entry once a
   };
   await queryPackageWeight("pkg-0", "1.0.0", countingFetch);
   assert.equal(calls, 1, "the oldest entry (pkg-0) should have been evicted and require a real re-fetch");
+});
+
+const patchFile = (path, lines) => ({
+  path,
+  patch: `@@ -1,1 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}`,
+});
+
+test("countPackagePatchUsages: counts multiple require/import occurrences of the same package", () => {
+  const files = [
+    patchFile("src/a.ts", [`const x = require("left-pad");`, `import y from "left-pad";`]),
+  ];
+  const usage = countPackagePatchUsages(files, "left-pad");
+  assert.equal(usage.usageCount, 2);
+  assert.deepEqual(usage.usageLocations, [
+    { file: "src/a.ts", line: 1 },
+    { file: "src/a.ts", line: 2 },
+  ]);
+});
+
+test("countPackagePatchUsages: a package with no added-line usage returns zero and an empty location list", () => {
+  const files = [patchFile("src/a.ts", [`const x = require("other-pkg");`])];
+  assert.deepEqual(countPackagePatchUsages(files, "left-pad"), { usageCount: 0, usageLocations: [] });
+});
+
+test("countPackagePatchUsages: an empty files array returns zero usage", () => {
+  assert.deepEqual(countPackagePatchUsages([], "left-pad"), { usageCount: 0, usageLocations: [] });
+});
+
+test("countPackagePatchUsages: usageLocations caps at TRIVIAL_USAGE_MAX (2) but usageCount keeps counting past it", () => {
+  const files = [
+    patchFile("src/a.ts", [`require("left-pad");`, `require("left-pad");`, `require("left-pad");`]),
+  ];
+  const usage = countPackagePatchUsages(files, "left-pad");
+  assert.equal(usage.usageCount, 3);
+  assert.equal(usage.usageLocations.length, 2);
+});
+
+test("countPackagePatchUsages: an identical import line repeated across files counts each occurrence independently, not deduped", () => {
+  const files = [patchFile("src/a.ts", [`import "left-pad";`]), patchFile("src/b.ts", [`import "left-pad";`])];
+  const usage = countPackagePatchUsages(files, "left-pad");
+  assert.equal(usage.usageCount, 2);
+  assert.deepEqual(usage.usageLocations, [
+    { file: "src/a.ts", line: 1 },
+    { file: "src/b.ts", line: 1 },
+  ]);
+});
+
+test("countPackagePatchUsages: resolves a deep subpath import and a scoped package to their package root", () => {
+  const files = [
+    patchFile("src/a.ts", [`import debounce from "lodash/debounce";`, `import z from "@scope/pkg/sub/path";`]),
+  ];
+  assert.equal(countPackagePatchUsages(files, "lodash").usageCount, 1);
+  assert.equal(countPackagePatchUsages(files, "@scope/pkg").usageCount, 1);
+});
+
+test("isHeavyPackageWeight: flags at-or-above each individual threshold (install, bundle, gzip)", () => {
+  assert.equal(
+    isHeavyPackageWeight({ installSizeBytes: 500_000, bundleSizeBytes: null, gzipSizeBytes: null, dependencyCount: null }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({ installSizeBytes: null, bundleSizeBytes: 80_000, gzipSizeBytes: null, dependencyCount: null }),
+    true,
+  );
+  assert.equal(
+    isHeavyPackageWeight({ installSizeBytes: null, bundleSizeBytes: null, gzipSizeBytes: 25_000, dependencyCount: null }),
+    true,
+  );
+});
+
+test("isHeavyPackageWeight: does not flag just below every threshold, or all-null weights", () => {
+  assert.equal(
+    isHeavyPackageWeight({ installSizeBytes: 499_999, bundleSizeBytes: 79_999, gzipSizeBytes: 24_999, dependencyCount: null }),
+    false,
+  );
+  assert.equal(
+    isHeavyPackageWeight({ installSizeBytes: null, bundleSizeBytes: null, gzipSizeBytes: null, dependencyCount: null }),
+    false,
+  );
 });

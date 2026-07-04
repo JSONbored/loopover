@@ -12,6 +12,12 @@ dist-ssr
 coverage
 .git
 .claude
+# The self-host bundle's only entry point is src/server.ts (scripts/build-selfhost.mjs) and `npm ci`
+# only ever sees the root package*.json (copied before the rest of the tree) — the gittensory-ui
+# workspace app and the test suite are never read during the image build, so keep both out of the
+# build context entirely (measured: ~11MB of this repo's ~22MB tracked-file footprint).
+apps
+test
 # Runtime-only private review config and subscription CLI auth must never enter image layers.
 gittensory-config
 **/gittensory-config

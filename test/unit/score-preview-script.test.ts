@@ -132,6 +132,31 @@ describe("gittensor-score-preview.mjs classifier parity with the server", () => 
     expect(py.nonCodeTokenScore).toBe(3);
   });
 
+  it("classifies PascalCase PHP test files as tests in both .mjs and .py previews", () => {
+    // Parity with src/signals/test-evidence.ts: PHPUnit/PHPSpec class-suffix files must not be counted as
+    // PHP source simply because they live outside a conventional tests/ directory.
+    const files = [
+      { path: "app/Domain/FooTest.php", additions: 8, deletions: 0 },
+      { path: "app/Domain/FooSpec.php", additions: 5, deletions: 0 },
+      { path: "app/Domain/Latest.php", additions: 3, deletions: 0 }, // source control: suffix is not a test token
+    ];
+    const mjs = runPreview(files);
+    expect(mjs.testTokenScore).toBe(13);
+    expect(mjs.sourceTokenScore).toBe(3);
+    expect(mjs.nonCodeTokenScore).toBe(0);
+
+    const python = findPython();
+    if (!python) return;
+    const env = { ...process.env };
+    delete env.GITTENSOR_ROOT;
+    const res = spawnSync(python, [scriptPy], { input: JSON.stringify({ changedFiles: files }), encoding: "utf8", env });
+    expect(res.status, res.stderr).toBe(0);
+    const py = JSON.parse(res.stdout);
+    expect(py.testTokenScore).toBe(13);
+    expect(py.sourceTokenScore).toBe(3);
+    expect(py.nonCodeTokenScore).toBe(0);
+  });
+
   it("does not misclassify a *.test.mjs.map source-map as a test (extension anchored to end-of-path, matching the server)", () => {
     // A substring match on ".test.mjs" wrongly flagged non-tests like dist/widget.test.mjs.map; the rule must be
     // end-anchored like isTestPath. It's a source-map — neither test nor code — so it counts as non-code.

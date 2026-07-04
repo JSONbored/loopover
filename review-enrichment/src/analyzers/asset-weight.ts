@@ -72,6 +72,14 @@ const BINARY_EXTS = new Set([
   "node",
   "jar",
   "class",
+  // Serialized ML model / checkpoint weight formats — routinely hundreds of MB to multi-GB, the heaviest
+  // binary blobs a PR can commit, and their bytes never appear in the textual diff.
+  "safetensors",
+  "gguf",
+  "onnx",
+  "pt",
+  "pth",
+  "ckpt",
 ]);
 
 interface ScanOptions {

@@ -8,7 +8,7 @@ import { logAudit, extractPayloadType, extractPayloadContext } from "./audit";
 import { incr } from "./metrics";
 import { withReviewSpan } from "./tracing";
 import { withOtelSpan } from "./otel";
-import { captureError } from "./sentry";
+import { captureError, withSentryMonitor } from "./sentry";
 import {
   consumingRetryDelayMs,
   deterministicJitterMs,
@@ -334,10 +334,21 @@ export function createSqliteQueue(
    *  a transient driver/metric failure here would otherwise surface as an uncaught exception and can terminate
    *  the process (fatal when SENTRY_DSN is unset, since server.ts only installs the handler when Sentry is
    *  configured), exactly the failure mode pump()'s own try/catch above guards against for the main poll loop.
-   *  A failed revive tick just waits for the next interval, same as a failed poll tick waits for the next poll. */
-  function reviveDeadLetterJobsSafely(): void {
+   *  A failed revive tick just waits for the next interval, same as a failed poll tick waits for the next poll.
+   *
+   *  Also wrapped in a Sentry cron monitor (#1824): dead-letter revival stopping SILENTLY (the timer never fires
+   *  again) is worse than one throwing tick -- a crashed tick self-reports via captureError below, but a stopped
+   *  one reports nothing without a monitor watching for the missed check-in. withSentryMonitor rethrows on
+   *  failure so its own capture fires; the outer try/catch (this function's actual job) still guards the
+   *  setInterval callback. Async now (setInterval tolerates a Promise-returning callback the same as the
+   *  synchronous one it replaces -- see the call site). */
+  async function reviveDeadLetterJobsSafely(): Promise<void> {
     try {
-      reviveDeadLetterJobs();
+      await withSentryMonitor(
+        "queue-dead-letter-revive",
+        { jobType: "queue-dead-letter-revive" },
+        () => Promise.resolve(reviveDeadLetterJobs()),
+      );
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -1169,7 +1180,7 @@ export function createSqliteQueue(
       // Separate, much slower interval than the poll tick above -- reviving a dead job every second would
       // recreate the retry storm this feature exists to bound. The interval itself is the cooldown between
       // auto-retry rounds for any one job.
-      deadLetterReviveTimer = setInterval(reviveDeadLetterJobsSafely, queueDeadLetterReviveIntervalMs());
+      deadLetterReviveTimer = setInterval(() => void reviveDeadLetterJobsSafely(), queueDeadLetterReviveIntervalMs());
       // Foreground-liveness sweep (#selfhost-queue-liveness): also a separate, slow interval -- see
       // foreground-liveness.ts for why a per-tick check would busy-loop under sustained rate-limit pressure.
       foregroundLivenessTimer = setInterval(releaseStaleForegroundDeferralsSafely, foregroundLivenessConfig.checkIntervalMs);

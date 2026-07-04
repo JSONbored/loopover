@@ -33,6 +33,7 @@ describe("observability config CI guard", () => {
 
     const validateCode = nestedRecord(workflow, ["jobs", "validate-code"]);
     const validateSteps = recordArray(validateCode.steps, "jobs.validate-code.steps");
+    const neutralizeStep = validateSteps.find((step) => step.name === "Neutralize untrusted npm config");
     const validateStep = validateSteps.find((step) => step.name === "Validate observability configs");
 
     expect(outputs.observability).toBe("${{ steps.filter.outputs.observability }}");
@@ -41,10 +42,13 @@ describe("observability config CI guard", () => {
     expect(filters).toContain("observability:");
     expect(filters).toContain("grafana/dashboards/**");
     expect(filters).toContain("prometheus/rules/**");
+    expect(neutralizeStep).toBeDefined();
+    expect(neutralizeStep!.run).toBe("rm -f .npmrc");
     expect(validateStep).toBeDefined();
     expect(String(validateStep!.if)).toBe(
       "${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.observability == 'true' }}",
     );
-    expect(validateStep!.run).toBe("npm run selfhost:validate-observability");
+    expect(record(validateStep!.env, "validateStep.env").NODE_OPTIONS).toBe("");
+    expect(validateStep!.run).toBe("node scripts/validate-observability-configs.mjs");
   });
 });

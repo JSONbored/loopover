@@ -169,6 +169,11 @@ export type FocusManifestRepoDocGenerationConfig = {
   enabled: boolean;
   scope: FocusManifestRepoDocGenerationScope[];
   allowOverwriteExisting: boolean;
+  /** How many days must elapse between scheduled refresh attempts for this repo (#3003). Default 7 (weekly).
+   *  Purely a rate-limiting knob on the SCHEDULED sweep -- it never affects correctness, since
+   *  openRepoDocPullRequest's own no-change short-circuit already prevents a redundant PR regardless of how
+   *  often it's invoked; this just avoids re-checking a stable repo more often than the operator wants. */
+  refreshIntervalDays: number;
 };
 
 /**
@@ -248,10 +253,16 @@ export type FocusManifestSettings = Partial<
   // ...>` above, which would force a complete, defaults-filled object) so `resolveEffectiveSettings` can merge
   // them field-by-field against the DB value — a `.gittensory.yml` override naming only one key (e.g. just
   // `typeLabels.priority`) must inherit the OTHER keys from the DB-persisted value, not silently reset them to
-  // the built-in default (#priority-linked-issue-gate). `mappings` is still a complete replacement when
-  // present (arrays don't have per-item precedence semantics, matching the private-config layer's own
-  // documented array-replace-wholesale overlay behavior).
-  typeLabels?: Partial<PrTypeLabelSet> | undefined;
+  // the built-in default (#priority-linked-issue-gate), and can add arbitrary categories beyond the built-in
+  // three (#label-modularity). `mappings` is still a complete replacement when present (arrays don't have
+  // per-item precedence semantics, matching the private-config layer's own documented array-replace-wholesale
+  // overlay behavior).
+  // `typeLabels: null` (distinct from an omitted key OR a sparse-but-nonempty object) is a DELIBERATE signal
+  // reserved for a manifest's literal `typeLabels: {}` — "zero configured categories for this repo" — the same
+  // load-bearing-null idiom as `blacklistLabel`/`contributorCapLabel`/etc. This is NOT the same as a sparse
+  // override whose named keys all failed validation (which still parses to `{}`, not `null`, and must NOT wipe
+  // the DB value -- see `resolveEffectiveSettings`).
+  typeLabels?: Partial<PrTypeLabelSet> | null | undefined;
   linkedIssueLabelPropagation?: Partial<LinkedIssueLabelPropagationConfig> | undefined;
   linkedIssueHardRules?: Partial<LinkedIssueHardRulesConfig> | undefined;
 };
@@ -452,11 +463,14 @@ const EMPTY_CONTENT_LANE_CONFIG: FocusManifestContentLaneConfig = {
   validatorId: null,
 };
 
+const DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS = 7;
+
 const EMPTY_REPO_DOC_GENERATION_CONFIG: FocusManifestRepoDocGenerationConfig = {
   present: false,
   enabled: false,
   scope: ["agents"],
   allowOverwriteExisting: false,
+  refreshIntervalDays: DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -996,14 +1010,15 @@ function parseRepoDocGenerationConfig(value: JsonValue | undefined, warnings: st
   const enabled = normalizeOptionalBoolean(record.enabled, "repoDocGeneration.enabled", warnings) ?? false;
   const allowOverwriteExisting = normalizeOptionalBoolean(record.allowOverwriteExisting, "repoDocGeneration.allowOverwriteExisting", warnings) ?? false;
   const scope = parseRepoDocGenerationScope(record.scope, warnings);
-  return { present: true, enabled, scope, allowOverwriteExisting };
+  const refreshIntervalDays = normalizeOptionalPositiveInteger(record.refreshIntervalDays, "repoDocGeneration.refreshIntervalDays", warnings) ?? DEFAULT_REPO_DOC_REFRESH_INTERVAL_DAYS;
+  return { present: true, enabled, scope, allowOverwriteExisting, refreshIntervalDays };
 }
 
 /** Serialize a repoDocGeneration config back into the parse-compatible shape so a cached snapshot round-trips
  *  through {@link parseRepoDocGenerationConfig} unchanged. Returns null when nothing is configured. */
 export function repoDocGenerationConfigToJson(config: FocusManifestRepoDocGenerationConfig): JsonValue {
   if (!config.present) return null;
-  return { enabled: config.enabled, scope: config.scope, allowOverwriteExisting: config.allowOverwriteExisting };
+  return { enabled: config.enabled, scope: config.scope, allowOverwriteExisting: config.allowOverwriteExisting, refreshIntervalDays: config.refreshIntervalDays };
 }
 
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {
@@ -1119,27 +1134,39 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   } else if (r.commandAuthorization !== undefined) {
     warnings.push(`Manifest "settings.commandAuthorization" must be an object; ignoring it and keeping any existing policy.`);
   }
-  // TYPE label NAME overrides (#priority-linked-issue-gate): unlike commandAuthorization/autoMaintain
-  // above, this is deliberately kept SPARSE -- only the keys actually present AND validly-shaped in the
-  // raw YAML are copied onto `out.typeLabels` (via `normalizeTypeLabelSet`, which still fills in the
-  // OTHER keys to run its own shape checks, but those defaults-filled values are discarded here). A
-  // manifest naming only `typeLabels.priority` must inherit `bug`/`feature` from the DB-persisted value in
+  // TYPE label category overrides (#priority-linked-issue-gate, #label-modularity): unlike
+  // commandAuthorization/autoMaintain above, this is deliberately kept SPARSE -- only the keys actually
+  // present AND validly-shaped in the raw YAML are copied onto `out.typeLabels` (via
+  // `normalizeTypeLabelSet`, which still fills in the built-in bug/feature/priority keys to run its own
+  // shape checks, but those defaults-filled values are discarded here). A manifest naming only
+  // `typeLabels.priority` must inherit `bug`/`feature` from the DB-persisted value in
   // `resolveEffectiveSettings`, not have them silently reset to the built-in gittensor:* names -- assigning
   // the normalizer's complete object here would do exactly that via the resolver's wholesale
   // `{...dbSettings, ...manifest.settings}` spread. The per-field shape check below (not just "is the key
   // present") matters too: a malformed value (e.g. `typeLabels.priority: 123`) is present but invalid, so
   // `normalizeTypeLabelSet` warns and reports its OWN built-in-default fallback for that key -- copying
   // that fallback into the sparse override would silently overwrite a DB-customized value with the
-  // built-in default on a config typo, instead of leaving the DB value alone.
+  // built-in default on a config typo, instead of leaving the DB value alone. The loop is generic over
+  // whatever keys the raw object actually has (not hardcoded to bug/feature/priority), so an arbitrary
+  // custom category (e.g. `security`) sparse-overrides exactly like a built-in one.
   if (typeof r.typeLabels === "object" && r.typeLabels !== null && !Array.isArray(r.typeLabels)) {
     const rawTypeLabels = r.typeLabels as Record<string, unknown>;
-    const validated = normalizeTypeLabelSet(rawTypeLabels, warnings);
-    const isValidLabelName = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
-    const sparseTypeLabels: Partial<PrTypeLabelSet> = {};
-    if (isValidLabelName(rawTypeLabels.bug)) sparseTypeLabels.bug = validated.bug;
-    if (isValidLabelName(rawTypeLabels.feature)) sparseTypeLabels.feature = validated.feature;
-    if (isValidLabelName(rawTypeLabels.priority)) sparseTypeLabels.priority = validated.priority;
-    out.typeLabels = sparseTypeLabels;
+    if (Object.keys(rawTypeLabels).length === 0) {
+      // A literal `typeLabels: {}` is a DELIBERATE, complete declaration -- "zero configured categories
+      // for this repo" -- distinct from a sparse override whose named keys all failed validation (the
+      // `else` branch below, which must NOT wipe the DB value). Represented as `null` so
+      // `resolveEffectiveSettings` can tell the two apart even though both would otherwise collapse to
+      // the same empty-object shape (#label-modularity).
+      out.typeLabels = null;
+    } else {
+      const validated = normalizeTypeLabelSet(rawTypeLabels, warnings);
+      const isValidLabelName = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
+      const sparseTypeLabels: Partial<PrTypeLabelSet> = {};
+      for (const key of Object.keys(rawTypeLabels)) {
+        if (isValidLabelName(rawTypeLabels[key])) sparseTypeLabels[key] = validated[key];
+      }
+      out.typeLabels = sparseTypeLabels;
+    }
   } else if (r.typeLabels !== undefined) {
     warnings.push(`Manifest "settings.typeLabels" must be an object; ignoring it and keeping any existing label names.`);
   }
@@ -1725,7 +1752,8 @@ export function resolveEffectiveSettings(
   // value wholesale via the spread below. Pull them out of the spread and merge each field individually,
   // manifest override > DB value > built-in default, so a `.gittensory.yml` naming only one key (e.g.
   // `typeLabels.priority`) can never silently reset the others back to the built-in default and discard a
-  // DB-customized value (#priority-linked-issue-gate).
+  // DB-customized value (#priority-linked-issue-gate), and an arbitrary custom category (e.g. `security`)
+  // layers in alongside the DB value rather than requiring it too (#label-modularity).
   const {
     typeLabels: typeLabelsOverride,
     linkedIssueLabelPropagation: linkedIssueLabelPropagationOverride,
@@ -1734,8 +1762,18 @@ export function resolveEffectiveSettings(
   } = manifest.settings;
   const effective: RepositorySettings = { ...dbSettings, ...restManifestSettings };
   if (typeLabelsOverride !== undefined) {
-    const base = dbSettings.typeLabels ?? DEFAULT_TYPE_LABELS;
-    effective.typeLabels = { bug: typeLabelsOverride.bug ?? base.bug, feature: typeLabelsOverride.feature ?? base.feature, priority: typeLabelsOverride.priority ?? base.priority };
+    // `null` is parseFocusManifest's distinct signal for a literal `typeLabels: {}` -- a deliberate
+    // "zero configured categories for this repo" that REPLACES the DB value wholesale, rather than a
+    // sparse override merged over it (#label-modularity). Any other (possibly-empty-if-all-invalid)
+    // object is a sparse layer: its present keys win, every other key (built-in or custom) is inherited
+    // from the DB value -- a plain object spread generalizes the old per-key `?? ` merge to an arbitrary
+    // key set for free, and an override with zero surviving keys (e.g. every named key failed validation)
+    // spreads in nothing, leaving the DB value completely unchanged.
+    // The cast is safe: every key parseFocusManifest actually sets on the sparse override already
+    // passed normalizeTypeLabelSet's non-empty-string validation (see the sparse-copy loop above), so
+    // no value here is ever `undefined` at runtime -- only `Partial<PrTypeLabelSet>`'s TYPE (not its
+    // actual contents) admits that possibility.
+    effective.typeLabels = typeLabelsOverride === null ? {} : ({ ...(dbSettings.typeLabels ?? DEFAULT_TYPE_LABELS), ...typeLabelsOverride } as PrTypeLabelSet);
   }
   if (linkedIssueLabelPropagationOverride !== undefined) {
     const base = dbSettings.linkedIssueLabelPropagation ?? DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION;

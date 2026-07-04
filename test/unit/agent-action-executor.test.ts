@@ -569,6 +569,16 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     warn.mockRestore();
   });
 
+  it("REGRESSION: after operator freeze, a missing singleton row stays fail-closed and does not clear sticky cache (#2125)", async () => {
+    clearProcessLocalGlobalAgentFrozenCacheForTest();
+    const env = createTestEnv({});
+    await setGlobalAgentFrozen(env, true, "operator");
+    await env.DB.prepare("DELETE FROM global_agent_controls WHERE id = 'singleton'").run();
+    expect(await isGlobalAgentFrozen(env)).toBe(true);
+    const broken = { ...env, DB: null } as unknown as Env;
+    expect(await isGlobalAgentFrozen(broken)).toBe(true);
+  });
+
   it("REGRESSION: after operator unfreeze, a read error fails open again on this process", async () => {
     clearProcessLocalGlobalAgentFrozenCacheForTest();
     const env = createTestEnv({});

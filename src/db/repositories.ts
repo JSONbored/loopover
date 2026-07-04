@@ -2316,8 +2316,8 @@ export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
     const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
     if (!row) {
       console.warn(JSON.stringify({ ev: "global_kill_switch_row_missing", message: "global_agent_controls has no singleton row — treating as unfrozen; re-run migrations or re-seed the row" }));
-      processLocalGlobalAgentFrozen = false;
-      return false;
+      if (processLocalGlobalAgentFrozen === null) processLocalGlobalAgentFrozen = false;
+      return processLocalGlobalAgentFrozen === true;
     }
     const frozen = row.frozen === 1;
     processLocalGlobalAgentFrozen = frozen;

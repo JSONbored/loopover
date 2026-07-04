@@ -32,7 +32,7 @@ import { isDuplicateClusterWinnerByClaim } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 import { splitAiReviewNits } from "../review/ai-notes";
-import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
+import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
 import { diffFilePriority } from "../review/review-diff";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
@@ -4278,7 +4278,7 @@ export function buildPublicPrIntelligenceComment(args: {
     /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
     ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
   ].filter((step) => !containsPrivatePublicTerm(step));
-  const gateEnabled = args.settings.gateCheckMode === "enabled";
+  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode);
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the earliest observed
@@ -4519,7 +4519,7 @@ export function buildPublicPrPanelSignalRows(args: {
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs: visibleLinkedDuplicatePrs, scopedOverlapCount });
   const linkedIssueResult = linkedIssuePanelResult(args.pr);
   const relatedWorkResult = relatedWorkPanelResult(visibleLinkedDuplicatePrs, scopedOverlapCount);
-  const gateEnabled = args.settings.gateCheckMode === "enabled";
+  const gateEnabled = shouldPublishReviewCheck(args.settings.reviewCheckMode);
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   // Duplicate-winner adjudication (#dup-winner): suppress the earliest known claimant's hard-duplicate block
   // (see the comment builder). Sparse legacy rows fail closed; flag-OFF keeps legacy behavior.

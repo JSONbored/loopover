@@ -4068,7 +4068,7 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
 
-      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -4665,6 +4665,68 @@ describe("GitHub backfill", () => {
         const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
 
         expect(aggregate.ciState).toBe("pending");
+        // #selfhost-ci-deferral-staleness: a required context that never appeared is an INFERRED absence, not
+        // observed activity — distinct from hasVisiblePending, which stays false here (nothing is actively
+        // queued/in_progress; the context simply never posted at all).
+        expect(aggregate.hasMissingRequiredContext).toBe(true);
+        expect(aggregate.hasVisiblePending).toBe(false);
+      });
+
+      it("does NOT flag a missing required context as confidently absent when the check-runs page read was incomplete", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?") && url.includes("&page=1")) {
+            return Response.json(
+              { check_runs: [] },
+              { headers: { link: '<https://api.github.com/repos/x/y/commits/abc/check-runs?page=2>; rel="next"' } },
+            );
+          }
+          if (url.includes("/check-runs?")) return new Response("upstream error", { status: 500 }); // page 2 fails → incomplete
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        const requiredContexts = mergeRequiredCiContexts(null, ["build"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        // "build" never appeared on the pages read, but the read did not COMPLETE — a partial page can't tell
+        // "never appears" from "appears on a page we didn't fetch", so this must NOT be a confident absence.
+        expect(aggregate.ciState).toBe("pending");
+        expect(aggregate.hasMissingRequiredContext).toBe(false);
+      });
+
+      it("does not flag a missing NON-required context in fold-all mode (no branch protection, no expectedCiContexts)", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        // No requiredContexts configured at all → fold-all mode (enforceRequiredOnly false); the
+        // missing-required-context signal only ever applies under enforceRequiredOnly.
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+
+        expect(aggregate.hasMissingRequiredContext).toBe(false);
+      });
+
+      it("keeps hasVisiblePending authoritative when one required context is missing and another is actively queued", async () => {
+        const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "in_progress", conclusion: null }] });
+          if (url.includes("/status?")) return Response.json({ statuses: [] });
+          return new Response("not found", { status: 404 });
+        });
+
+        // "build" is actively queued (Class A); "deploy" is required but never appears (Class B) — both true at once.
+        const requiredContexts = mergeRequiredCiContexts(null, ["build", "deploy"]);
+        const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", requiredContexts);
+
+        expect(aggregate.hasVisiblePending).toBe(true);
+        expect(aggregate.hasMissingRequiredContext).toBe(true);
       });
 
       it("fails when branch protection is unreadable and the expected context completes red", async () => {

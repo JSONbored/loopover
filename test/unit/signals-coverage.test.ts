@@ -788,27 +788,27 @@ describe("signal coverage edge cases", () => {
     const KEYS = ["linkedIssue", "relatedWork", "reviewLoad", "validationEvidence", "openPrQueue", "contributorContext", "gateResult"];
 
     // Provided gate is authoritative; gate enabled → a real gate action (not the advisory-only copy).
-    const provided = buildPublicPrPanelSignalRows({ ...baseArgs, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" }, gate: { conclusion: "success", summary: "Passing" } });
+    const provided = buildPublicPrPanelSignalRows({ ...baseArgs, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", reviewCheckMode: "required" }, gate: { conclusion: "success", summary: "Passing" } });
     expect(provided.rows.map((r) => r.key)).toEqual(KEYS);
     expect(typeof provided.readinessTotal).toBe("number");
     const providedGate = provided.rows.find((r) => r.key === "gateResult")!;
     expect(providedGate.cells[2]).not.toBe("Advisory only.");
 
     // Gate check NOT enabled → fallback success conclusion + the advisory-only action/next-step.
-    const advisory = buildPublicPrPanelSignalRows({ ...baseArgs, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" } });
+    const advisory = buildPublicPrPanelSignalRows({ ...baseArgs, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" } });
     const advisoryGate = advisory.rows.find((r) => r.key === "gateResult")!;
     expect(advisoryGate.cells[2]).toBe("Advisory only.");
     expect(advisoryGate.cells[3]).toBe("No action.");
 
     // No gate + enabled + unknown repo → neutral fallback (distinct from the passing cell).
-    const neutral = buildPublicPrPanelSignalRows({ ...baseArgs, repo: null, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" } });
+    const neutral = buildPublicPrPanelSignalRows({ ...baseArgs, repo: null, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", reviewCheckMode: "required" } });
     expect(neutral.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
 
     // No gate + enabled + a hard linked-issue block (no linked issue, no rationale) → failure fallback.
     const blocked = buildPublicPrPanelSignalRows({
       ...baseArgs,
       pr: pr(directRepo.fullName, 71, "No issue", { authorLogin: "miner", linkedIssues: [], body: "just a change" }),
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", linkedIssueGateMode: "block" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", reviewCheckMode: "required", linkedIssueGateMode: "block" },
     });
     expect(blocked.rows).toHaveLength(7);
     expect(blocked.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
@@ -823,7 +823,7 @@ describe("signal coverage edge cases", () => {
       ...baseArgs,
       collisions: dupCollisions,
       queueHealth: buildQueueHealth(directRepo, [dupIssue], [baseArgs.pr, dupPr], dupCollisions),
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", duplicatePrGateMode: "block" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", reviewCheckMode: "required", duplicatePrGateMode: "block" },
     });
     expect(duplicateBlocked.rows).toHaveLength(7);
     // The duplicate cluster surfaces in the related-work row, and the gate falls back to the failing cell.
@@ -849,7 +849,7 @@ describe("signal coverage edge cases", () => {
     });
     const collisions = buildCollisionReport(directRepo.fullName, [dupIssue], [winnerPr, loserPr]);
     const queueHealth = buildQueueHealth(directRepo, [dupIssue], [winnerPr, loserPr], collisions);
-    const blockSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const };
+    const blockSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, reviewCheckMode: "required" as const, duplicatePrGateMode: "block" as const };
     const profile = buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []);
     const detection = { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 };
     const preflightFor = (target: PullRequestRecord) =>
@@ -939,7 +939,7 @@ describe("signal coverage edge cases", () => {
       queueHealth: buildQueueHealth(directRepo, [duplicateIssue], [winnerPr, siblingPr], collisions),
       collisions,
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: winnerPr.title, body: winnerPr.body ?? undefined, linkedIssues: winnerPr.linkedIssues }, directRepo, [duplicateIssue], [winnerPr, siblingPr]),
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, reviewCheckMode: "required" as const, duplicatePrGateMode: "block" as const },
       duplicateWinnerEnabled: true,
     };
     const retainedSameIssueView = buildDuplicateWinnerRelatedWorkView({
@@ -994,7 +994,7 @@ describe("signal coverage edge cases", () => {
     );
     const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
     const detection = { detected: true, source: "github_cache" as const, reason: "cached contributor", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 };
-    const gateSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const };
+    const gateSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, reviewCheckMode: "required" as const, duplicatePrGateMode: "block" as const };
 
     const collisionComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -1116,7 +1116,7 @@ describe("signal coverage edge cases", () => {
       queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
       collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
       aiReview: { notes: "The change is currently unsafe to merge.\n\n**Blockers**\n- `src/a.ts` has a syntax error.\n\n**Nits (1)**\n- Add a regression test." },
     });
     expect(aiBlockedComment).toContain("> [!CAUTION]");
@@ -1132,7 +1132,7 @@ describe("signal coverage edge cases", () => {
       queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
       collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
       aiReview: { notes: "The change is focused.\n\n**Blockers**\n- None.\n\n**Nits (1)**\n- Add a regression test." },
     });
     expect(aiExplicitNoBlockersComment).toContain("> [!TIP]");
@@ -1156,7 +1156,7 @@ describe("signal coverage edge cases", () => {
         ),
         findings: [{ code: "public_warning", severity: "warning", title: "Validation note missing", detail: "Validation evidence is not cached yet." }],
       },
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
     });
 
     expect(advisoryOnlyComment).toContain("> [!WARNING]");
@@ -1192,7 +1192,7 @@ describe("signal coverage edge cases", () => {
       queueHealth,
       collisions,
       preflight,
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
     });
     expect(duplicateAdvisoryComment).toContain("Same-issue duplicate risk found against #8.");
     expect(duplicateAdvisoryComment).toContain("> | Related work | ⚠️ Same linked issue: #8 | Another open PR references the same linked issue. | Compare #8. |");
@@ -1220,7 +1220,7 @@ describe("signal coverage edge cases", () => {
         collisions: scopedClusters,
         findings: [],
       },
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
     });
     expect(scopedComment).toContain("> | Related work | ⚠️ 3 scoped overlaps | Top overlaps are listed below; lower-confidence bulk is hidden. | Review top overlaps. |");
     expect(scopedComment).toContain("Additional title-only matches omitted; title-only overlap does not block.");
@@ -1267,7 +1267,7 @@ describe("signal coverage edge cases", () => {
         collisions: preflightClusters,
         findings: [],
       },
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
     });
     // PR-specific clusters = {pr-cluster} (1); preflight clusters = 2 disjoint -> 3 distinct overlaps.
     // Old code used Math.max(1, 2) = 2; the union (3) is the correct count feeding the related-work row.
@@ -1302,7 +1302,7 @@ describe("signal coverage edge cases", () => {
       queueHealth,
       collisions,
       preflight,
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", reviewCheckMode: "required" },
     });
 
     expect(comment).toContain("> | Related work | ✅ No active overlap found | No same-issue or scoped active PR overlap found. | No action. |");
@@ -1361,7 +1361,7 @@ describe("signal coverage edge cases", () => {
       queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
       collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
       preflight: basePreflight,
-      settings: { ...repoSettings(directRepo.fullName), publicAudienceMode: "gittensor_only", gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), publicAudienceMode: "gittensor_only", gateCheckMode: "off", reviewCheckMode: "disabled" },
     });
     expect(officialComment).toContain("Confirmed Gittensor contributor context was checked");
     expect(officialComment).toContain("Official Gittensor activity: 4 PR(s), 3 issue(s).");
@@ -1385,7 +1385,7 @@ describe("signal coverage edge cases", () => {
       queueHealth: buildQueueHealth(directRepo, [], [currentPr], edgeCollisions),
       collisions: edgeCollisions,
       preflight: basePreflight,
-      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off", reviewCheckMode: "disabled" },
     });
     expect(edgeComment).toContain("Related work: Only this PR is present.");
     expect(edgeComment).toContain("merged PR #11");
@@ -1439,7 +1439,7 @@ describe("signal coverage edge cases", () => {
       Array.from({ length: 16 }, (_, index) => pr(directRepo.fullName, 100 + index, `Open PR ${index}`)),
       buildCollisionReport(directRepo.fullName, [], []),
     );
-    const settings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, qualityGateMode: "block" as const, qualityGateMinScore: 95 };
+    const settings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, reviewCheckMode: "required" as const, qualityGateMode: "block" as const, qualityGateMinScore: 95 };
     const comment = buildPublicPrIntelligenceComment({
       repo: directRepo,
       pr: currentPr,
@@ -2158,6 +2158,7 @@ function repoSettings(repoFullName: string): RepositorySettings {
     checkRunMode: "off",
     checkRunDetailLevel: "minimal",
     gateCheckMode: "off",
+    reviewCheckMode: "disabled",
     gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",

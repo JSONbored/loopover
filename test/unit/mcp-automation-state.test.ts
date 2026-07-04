@@ -41,7 +41,7 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
 // dedicated staleness-supersede test coverage lives in agent-approval-queue.test.ts, not this MCP-surface file.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
-  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
 }));

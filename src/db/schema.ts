@@ -51,6 +51,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   checkRunMode: text("check_run_mode").notNull().default("off"),
   checkRunDetailLevel: text("check_run_detail_level").notNull().default("minimal"),
   gateCheckMode: text("gate_check_mode").notNull().default("off"),
+  reviewCheckMode: text("review_check_mode").notNull().default("disabled"),
   gatePack: text("gate_pack").notNull().default("gittensor"),
   // Missing a linked issue is advisory-only by default -- issues aren't always available, so it only
   // blocks when a repo explicitly opts in (linkedIssueGateMode: "block" or the requireLinkedIssue toggle;

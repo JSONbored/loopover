@@ -609,6 +609,13 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
+  // #2852: deliberately NO `.default()` here (unlike every sibling field above) -- this is a non-partial,
+  // full-replace schema (see upsertRepositorySettings call below, which passes every parsed field straight
+  // through with no read-merge of the current row), so an eager default would mask a legacy caller that only
+  // sends gateCheckMode: the value would already be "defined" (the default) by the time it reaches
+  // upsertRepositorySettings, and its own `settings.reviewCheckMode ?? (gateCheckMode==="enabled" ? ...)`
+  // fallback only fires on `undefined`. Leaving this genuinely optional lets that fallback do its job.
+  reviewCheckMode: z.enum(["required", "visible", "disabled"]).optional(),
   gatePack: z.enum(["gittensor", "oss-anti-slop"]).default("gittensor"),
   linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("block"),
@@ -658,6 +665,7 @@ const maintainerSettingsSchema = z
     checkRunMode: z.enum(["off", "enabled"]),
     checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
     gateCheckMode: z.enum(["off", "enabled"]),
+    reviewCheckMode: z.enum(["required", "visible", "disabled"]),
     gatePack: z.enum(["gittensor", "oss-anti-slop"]),
     linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
     duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
@@ -2181,6 +2189,14 @@ export function createApp() {
     const current = await getRepositorySettings(c.env, fullName);
     const changes = Object.fromEntries(Object.entries(parsed.data).filter(([, value]) => value !== undefined)) as Partial<RepositorySettings>;
     if (changes.qualityGateMode !== undefined) changes.qualityGateMode = downgradeQualityGateMode(changes.qualityGateMode);
+    // #2852: a legacy client (the maintainer dashboard's "Review agent check" toggle) only ever sends
+    // gateCheckMode, never the newer reviewCheckMode -- which must keep its historical effect on the ACTUAL
+    // publish authority. Derive it here, before merging onto `current` (which always has a DEFINED
+    // reviewCheckMode already), because upsertRepositorySettings's own legacy-fallback only fires on
+    // `undefined` and would never see this change as unset once merged with the current row.
+    if (changes.gateCheckMode !== undefined && changes.reviewCheckMode === undefined) {
+      changes.reviewCheckMode = changes.gateCheckMode === "enabled" ? "required" : "disabled";
+    }
     const updated = await upsertRepositorySettings(c.env, { ...current, ...changes, repoFullName: fullName });
     await recordAuditEvent(c.env, {
       eventType: "repo.settings_updated",
@@ -2298,6 +2314,7 @@ export function createApp() {
     return c.json({
       repoFullName: fullName,
       gateCheckMode: updated.gateCheckMode,
+      reviewCheckMode: updated.reviewCheckMode,
       checkRunMode: updated.checkRunMode,
       linkedIssueGateMode: updated.linkedIssueGateMode,
       duplicatePrGateMode: updated.duplicatePrGateMode,
@@ -3505,6 +3522,11 @@ export function createApp() {
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
         gateCheckMode: parsed.data.gateCheckMode,
+        // #2852: this route is a full-replace, non-partial schema (every sibling field has a `.default()`),
+        // so a caller that only ever sends gateCheckMode must still get its historical effect on the actual
+        // publish authority -- derive it explicitly here rather than relying on a passthrough `undefined`
+        // (which `exactOptionalPropertyTypes` disallows assigning to RepositorySettings anyway).
+        reviewCheckMode: parsed.data.reviewCheckMode ?? (parsed.data.gateCheckMode === "enabled" ? "required" : "disabled"),
         gatePack: parsed.data.gatePack,
         linkedIssueGateMode: parsed.data.linkedIssueGateMode,
         duplicatePrGateMode: parsed.data.duplicatePrGateMode,

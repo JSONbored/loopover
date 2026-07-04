@@ -169,6 +169,7 @@ import {
 } from "../github/pr-freshness";
 import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
+import { shouldPublishReviewCheck } from "../review/check-names";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import {
@@ -1414,7 +1415,7 @@ async function sweepRepoRegate(
     env,
     repoFullName,
     openPullRequests,
-    settings.gateCheckMode === "enabled",
+    shouldPublishReviewCheck(settings.reviewCheckMode),
   );
   const regateBacklog = requestedBy === "schedule" ? await currentRegateBacklog(env) : 0;
   // Normal stale maintenance yields behind existing per-PR repairs. Missing current Gate checks are outage repair:
@@ -2768,14 +2769,20 @@ async function prReadyForReview(
   const ci = await cachedLiveCiAggregate(env, repoFullName, liveFacts, pr.headSha, pr.baseRef, token, settings.expectedCiContexts, admissionKey).catch(() => undefined);
   if (ci?.hasPending) {
     // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
-    // transiently unreadable pages, fork check that never reports). Past STUCK_CI_DEFER_MS we stop deferring and
-    // let the gate FINALIZE so the PR surfaces. A trusted required/base-repo visibly queued/in_progress CI
-    // signal is active CI, though, so never cut in front of it. first-seen is tracked in the self-host Redis
-    // transient cache per PR+headSha (a new push = a fresh window); a cache miss degrades to the old defer.
-    // (#ci-stuck-finalize)
+    // transiently unreadable pages, fork check that never reports). Past the cap we stop deferring and let the
+    // gate FINALIZE so the PR surfaces. A trusted required/base-repo visibly queued/in_progress CI signal is
+    // active CI, though, so never cut in front of it. A required context that never appeared in any page this
+    // fetch read to completion (hasMissingRequiredContext) has NO webhook to ever wait for — nothing fires
+    // check_run/check_suite "completed" for a context name that structurally never runs (a path-filtered
+    // workflow, a mistyped branch-protection context) — so it gets a much shorter cap than genuinely active or
+    // merely unreadable/non-required pending CI (#selfhost-ci-deferral-staleness). first-seen is tracked in the
+    // self-host Redis transient cache per PR+headSha (a new push = a fresh window, and the SAME key anchors
+    // both cap classes so a pending reason that changes class mid-window doesn't reset the clock); a cache
+    // miss degrades to the old defer. (#ci-stuck-finalize)
+    const deferCapMs = ci.hasMissingRequiredContext ? MISSING_REQUIRED_CONTEXT_DEFER_MS : STUCK_CI_DEFER_MS;
     if (
       ci.hasVisiblePending ||
-      !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha))
+      !(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha, deferCapMs))
     ) {
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
@@ -2805,6 +2812,14 @@ async function prReadyForReview(
 // that will never report). Past it, prReadyForReview stops deferring and finalizes the gate so the PR surfaces
 // (held / needs-human) instead of deferring forever. Generous so a genuinely-slow CI is never cut off early.
 const STUCK_CI_DEFER_MS = 30 * 60 * 1000;
+
+// A required branch-protection context that never appeared in any check-run/status page a fetch read to
+// completion (#selfhost-ci-deferral-staleness) has no webhook to ever wait for — unlike genuinely active or
+// merely unreadable/non-required pending CI, there is no forward signal this cap races against, so it can be
+// much shorter than STUCK_CI_DEFER_MS: long enough to absorb GitHub's own event-ordering lag (a check-run for a
+// DIFFERENT required context still arriving, or a just-pushed commit's check-runs not yet indexed) without
+// stalling review for up to half an hour on a context that will structurally never post.
+const MISSING_REQUIRED_CONTEXT_DEFER_MS = 2 * 60 * 1000;
 
 async function getTransientKey(env: Env, key: string): Promise<string | null> {
   if (!env.SELFHOST_TRANSIENT_CACHE) return null;
@@ -2898,16 +2913,20 @@ class PrActuationLockContendedError extends RetryableJobError {
 }
 
 /**
- * True when CI for this PR+headSha has been pending past STUCK_CI_DEFER_MS. Stamps the first-seen time in a
- * transient cache keyed by repo#pr:headSha — a new push is a new SHA, so the window resets per commit. A missing
- * cache / cache hiccup degrades to `false` (never force-finalize → keeps the safe old defer rather than acting
- * early).
+ * True when CI for this PR+headSha has been pending past `capMs`. Stamps the first-seen time in a transient
+ * cache keyed by repo#pr:headSha — a new push is a new SHA, so the window resets per commit. The SAME key is
+ * reused regardless of which cap the caller passes: if a PR's pending reason changes class between polls (e.g.
+ * a non-required check pending at first look, then a missing-required-context on a later look), the first-seen
+ * timestamp still anchors to when pending was FIRST observed for that head SHA — only the comparison threshold
+ * varies by call (#selfhost-ci-deferral-staleness). A missing cache / cache hiccup degrades to `false` (never
+ * force-finalize → keeps the safe old defer rather than acting early).
  */
 async function ciPendingDeferStuck(
   env: Env,
   repoFullName: string,
   prNumber: number,
   headSha: string | null | undefined,
+  capMs: number,
 ): Promise<boolean> {
   if (!headSha) return false;
   const key = `ci-pending-first-seen:${repoFullName.toLowerCase()}#${prNumber}:${headSha}`;
@@ -2918,7 +2937,7 @@ async function ciPendingDeferStuck(
       return false;
     }
     const firstMs = Number(first);
-    return Number.isFinite(firstMs) && Date.now() - firstMs > STUCK_CI_DEFER_MS;
+    return Number.isFinite(firstMs) && Date.now() - firstMs > capMs;
   } catch {
     return false;
   }
@@ -6443,7 +6462,7 @@ async function maybePublishPrPublicSurface(
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
   // file. The gate verdict is the same for every author; confirmedContributor feeds only on-chain scoring.
   const gateEnabled =
-    settings.gateCheckMode === "enabled" && Boolean(advisory.headSha);
+    shouldPublishReviewCheck(settings.reviewCheckMode) && Boolean(advisory.headSha);
   // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
   const prelim = decidePublicSurface({
     settings,
@@ -6469,15 +6488,32 @@ async function maybePublishPrPublicSurface(
     settings.commentMode === "detected_contributors_only" &&
     (settings.publicSurface === "comment_and_label" ||
       settings.publicSurface === "comment_only");
+  // #2852: when the check-run is disabled AND there is nothing to publish, this function would otherwise bail
+  // to `undefined` -- but maybeRunAgentMaintenance (the caller's very next step) hard-requires a defined `gate`
+  // to act on (`if (!gate) return;`), so bailing here would silently break auto-merge/close for a repo that
+  // configured autonomy but has no check-run/public surface. Only skip the bail when autonomy is actually
+  // configured — an unconfigured repo keeps today's exact early-return (no wasted evaluation work).
+  const autonomyNeedsGateEvaluation = isAgentConfigured(settings.autonomy);
+  // #2852: the actual gate CONCLUSION must be computed whenever either the check-run will publish OR autonomous
+  // merge/close needs it to act on — the two are now independent axes (reviewCheckMode only ever controlled the
+  // former; gate evaluation itself has always been meant to run regardless of publish mode). Every site below
+  // that feeds evaluateGateCheck's result (review-thread blockers, evaluateGateCheck itself, the surface-lane
+  // override) is gated on this, NOT on gateEnabled alone — gateEnabled stays scoped to the check-run PUBLISH
+  // calls (createOrUpdate*GateCheckRun), which must still never fire when reviewCheckMode is disabled.
+  const shouldEvaluateGate = gateEnabled || autonomyNeedsGateEvaluation;
   if (
     !gateEnabled &&
+    !autonomyNeedsGateEvaluation &&
     (publicSurfaceSkipped ||
       (prelim.actions.length === 1 &&
         prelim.actions[0] === "none" &&
         !needsMinerCheckForDetectedComment))
   )
     return undefined;
-  if (!author && !gateEnabled) return undefined;
+  // A missing author already forces publicSurfaceSkipped=true above (decidePublicSurface's own
+  // "missing_author" skip), so the guard just above already returns undefined whenever `!author` combines with
+  // `!gateEnabled && !autonomyNeedsGateEvaluation` -- a separate `!author` check here can never fire and was
+  // dead code even before #2852 (removed rather than left as an uncoverable branch).
 
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
     // The PR is already closed/merged. Mark the gate check skipped, but DO NOT overwrite the unified review
@@ -6541,7 +6577,7 @@ async function maybePublishPrPublicSurface(
         "miner_detection_unavailable",
         webhook.deliveryId,
       );
-      if (!gateEnabled) return undefined;
+      if (!gateEnabled && !autonomyNeedsGateEvaluation) return undefined;
       publicSurfaceSkipped = true;
     } else if (requireOfficialMiner && official.status !== "confirmed") {
       await auditPrVisibilitySkip(
@@ -6552,7 +6588,7 @@ async function maybePublishPrPublicSurface(
         "not_official_gittensor_miner",
         webhook.deliveryId,
       );
-      if (!gateEnabled) return undefined;
+      if (!gateEnabled && !autonomyNeedsGateEvaluation) return undefined;
       publicSurfaceSkipped = true;
     }
     decision = decidePublicSurface({
@@ -6565,6 +6601,7 @@ async function maybePublishPrPublicSurface(
 
     if (
       !gateEnabled &&
+      !autonomyNeedsGateEvaluation &&
       decision.actions.length === 1 &&
       decision.actions[0] === "none"
     )
@@ -6827,6 +6864,7 @@ async function maybePublishPrPublicSurface(
             deliveryId: webhook.deliveryId,
             repoFullName,
             gateCheckMode: settings.gateCheckMode,
+            reviewCheckMode: settings.reviewCheckMode,
             publishedOutputs,
             failedOutputs,
           },
@@ -6854,6 +6892,7 @@ async function maybePublishPrPublicSurface(
           label: decision.willLabel ? settings.gittensorLabel : null,
           checkRunMode: settings.checkRunMode,
           gateCheckMode: settings.gateCheckMode,
+          reviewCheckMode: settings.reviewCheckMode,
           publicAudienceMode: settings.publicAudienceMode,
           publishedOutputs,
           failedOutputs,
@@ -6872,6 +6911,7 @@ async function maybePublishPrPublicSurface(
         label: decision.willLabel ? settings.gittensorLabel : null,
         checkRunMode: settings.checkRunMode,
         gateCheckMode: settings.gateCheckMode,
+        reviewCheckMode: settings.reviewCheckMode,
         publicAudienceMode: settings.publicAudienceMode,
         publishedOutputs,
         failedOutputs,
@@ -6888,6 +6928,7 @@ async function maybePublishPrPublicSurface(
         labelApplied: decision.willLabel,
         checkRunMode: settings.checkRunMode,
         gateCheckMode: settings.gateCheckMode,
+        reviewCheckMode: settings.reviewCheckMode,
         publicAudienceMode: settings.publicAudienceMode,
         publishedOutputs,
         failedOutputs,
@@ -6967,7 +7008,11 @@ async function maybePublishPrPublicSurface(
       scopedOverlapCount: relatedWork.scopedOverlapClusters.length,
     });
 
-    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
+    // #2852: gated on shouldEvaluateGate, not gateEnabled alone -- confirmedContributor (sourced from
+    // `official` below) feeds runAiSlopForAdvisory's hard gate later in this pass, so a reviewCheckMode:
+    // disabled repo with autonomy configured must still resolve it, not silently treat a confirmed miner as
+    // unconfirmed.
+    if (shouldEvaluateGate && author && !publicSurfaceSkipped && !official) {
       official = await getCachedOfficialMinerDetection(env, author, {
         targetKey: `${repoFullName}#${pr.number}`,
         deliveryId: webhook.deliveryId,
@@ -7504,8 +7549,10 @@ async function maybePublishPrPublicSurface(
     // Unresolved GitHub review threads (for example external security scanner inline findings) are blocking
     // review facts. Fetch them before gate evaluation so the normal blocker path drives the check-run, comment,
     // and disposition consistently. Fail-open on GitHub/GraphQL errors: a transient thread-read failure should not
-    // invent a blocker, but any thread we can see must be resolved before approval/merge.
-    if (gateEnabled) {
+    // invent a blocker, but any thread we can see must be resolved before approval/merge. Gated on
+    // shouldEvaluateGate (#2852), not gateEnabled alone, so a disabled-check-run repo with autonomy configured
+    // still gets this blocker fed into the merge/close decision.
+    if (shouldEvaluateGate) {
       const reviewThreadToken =
         (await createInstallationToken(env, installationId).catch(
           () => undefined,
@@ -7563,7 +7610,9 @@ async function maybePublishPrPublicSurface(
         operation: "gate_decision",
       },
       async () => {
-        let evaluation = gateEnabled
+        // #2852: computed whenever the check-run publishes OR autonomous merge/close needs a conclusion to act
+        // on — this is the actual gate CONCLUSION, independent of whether anything gets published to GitHub.
+        let evaluation = shouldEvaluateGate
           ? evaluateGateCheck(advisory, gatePolicy)
           : undefined;
         // Deterministic content/registry surface lane (#1255) — flag-gated + per-repo allowlist, byte-identical when
@@ -7573,7 +7622,7 @@ async function maybePublishPrPublicSurface(
         evaluation = await evaluateWithSurfaceLane(
           env,
           repoFullName,
-          gateEnabled,
+          shouldEvaluateGate,
           evaluation,
           {
             installationId,

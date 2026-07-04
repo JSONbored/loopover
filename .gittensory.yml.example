@@ -95,6 +95,32 @@ gate:
   # Bool. Default: false (gate off).
   enabled: true
 
+  # Review-CHECK publish mode (#2852) — controls ONLY whether/how the "Gittensory Orb Review Agent"
+  # check-run is created/updated on GitHub. Never affects gate evaluation, comments, labels, audit
+  # records, or autonomous merge/close — all of those run identically in every mode (the autonomous
+  # decision engine already excludes the bot's own check-run from the live CI it merges/closes against,
+  # specifically to avoid a self-deadlock). Takes precedence over the legacy `enabled` boolean above
+  # when both are set; when unset, `enabled: true` maps to `required` and `enabled: false` maps to
+  # `disabled` for backward compatibility.
+  #   required — legacy/current behavior: publish/update the check exactly as before. Use this if you
+  #              intentionally keep it as a required branch-protection status check.
+  #   visible  — publish/update the SAME check-run, but for UI visibility only. Never add this check as
+  #              a required branch-protection status check — behaves identically to `required` on the
+  #              publish side (same API calls); the distinction is purely how you configure GitHub.
+  #   disabled — never create/update the check-run at all. RECOMMENDED for high-volume autonomous
+  #              self-hosting: avoids GitHub showing "Expected — Waiting for status to be reported"
+  #              under review-queue pressure, and reduces GitHub API calls (no check-run create/update).
+  #              Before switching to `disabled`, remove "Gittensory Orb Review Agent" from this repo's
+  #              branch-protection / ruleset required-status-checks list — Gittensory cannot do this on
+  #              your behalf (it is a GitHub branch-protection setting), and leaving it required with
+  #              nothing to satisfy it means GitHub will show a pending status forever. Keep your real
+  #              CI/codecov/security checks required — this only ever affects Gittensory's own check.
+  # required | visible | disabled. Default: disabled for a never-configured repo (matches the existing
+  # opt-in default); an already-configured repo keeps its current effective behavior. RECOMMENDED for
+  # high-volume autonomous self-hosting: `visible` or `disabled`, not `required` — Gittensory's own
+  # merge/close decisions never depend on this check either way.
+  checkMode: visible
+
   # Policy pack.
   #   gittensor      — confirmed-contributor-gated, registry-aware.
   #   oss-anti-slop  — runs the deterministic rules against ANY author on ANY repo.

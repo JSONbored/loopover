@@ -16,6 +16,7 @@ function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
     checkRunMode: "off",
     checkRunDetailLevel: "standard",
     gateCheckMode: "enabled",
+    reviewCheckMode: "required",
     gatePack: "gittensor",
     linkedIssueGateMode: "off",
     duplicatePrGateMode: "advisory",

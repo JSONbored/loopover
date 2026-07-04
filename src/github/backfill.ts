@@ -68,6 +68,7 @@ import {
   GITTENSORY_CONTEXT_CHECK_NAME,
   GITTENSORY_GATE_CHECK_NAME,
   GITTENSORY_LEGACY_GATE_CHECK_NAME,
+  shouldPublishReviewCheck,
 } from "../review/check-names";
 import { buildReviewThreadBlocker, type ReviewThreadBlocker } from "../review/review-thread-findings";
 import { delayUntil, HISTORICAL_BACKFILL_RESERVED_HEADROOM, shouldWaitForGitHubRateLimit } from "./rate-limit";
@@ -953,7 +954,7 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
   const commentRepoCount = installedSettings.filter(usesCommentMode).length;
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
-  const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
+  const gateCheckRepoCount = installedSettings.filter((settings) => shouldPublishReviewCheck(settings.reviewCheckMode)).length;
   const prWriteRepoCount = installedSettings.filter((settings) => agentRequiresPrWrite(settings.autonomy)).length;
   const mergeRepoCount = installedSettings.filter((settings) => agentRequiresContentsWrite(settings.autonomy)).length;
   const missingPermissions = new Set(health.missingPermissions);
@@ -1125,6 +1126,7 @@ function summarizeRepairSettings(settings: RepositorySettings) {
     publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
     gateCheckMode: settings.gateCheckMode,
+    reviewCheckMode: settings.reviewCheckMode,
     autoLabelEnabled: settings.autoLabelEnabled,
   };
 }
@@ -2493,6 +2495,15 @@ export type LiveCiAggregate = {
   // A currently visible check-run/status/suite is still queued, waiting, or in_progress. Unlike inferred missing
   // contexts or unreadable pages, this is active CI and must not be overridden by the stale-CI surfacing cap.
   hasVisiblePending: boolean;
+  // A required branch-protection/expectedCiContexts context that never appeared in any check-run or status page
+  // this fetch read to COMPLETION (#selfhost-ci-deferral-staleness). Distinct from hasVisiblePending: this is an
+  // INFERRED absence, not observed activity — nothing will ever fire a check_run/check_suite "completed" webhook
+  // for a context name that structurally never runs (a path-filtered workflow, a mistyped branch-protection
+  // context, a fork check GitHub never surfaces), so there is no event-driven way this ever resolves on its own.
+  // Only ever true when the read was COMPLETE (not checkRunsIncomplete/statusIncomplete) — a partial page can't
+  // tell "never appears" from "appears on a page we didn't fetch," so it must never be read as a confident
+  // absence. Lets prReadyForReview apply a much shorter surfacing cap than genuinely active CI.
+  hasMissingRequiredContext: boolean;
   // Checks that FAIL the gate. Any completed red check/status is adverse, required or not; required contexts are
   // still used for absent/pending detection so missing required CI cannot silently pass.
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
@@ -2676,6 +2687,7 @@ async function reduceLiveCiAggregate(
   let anyPending = false;
   let anyVisiblePending = false;
   let anyRequiredVisiblePending = false;
+  let anyMissingRequiredContext = false;
   let sawFirstPartyCheckRun = false;
   const seenContextNames = new Set<string>();
 
@@ -2724,7 +2736,10 @@ async function reduceLiveCiAggregate(
   // A required context that never appeared in any result is not safe to treat as passed — count it as pending.
   if (enforceRequiredOnly) {
     for (const ctx of requiredContexts!) {
-      if (!seenContextNames.has(ctx)) anyPending = true;
+      if (!seenContextNames.has(ctx)) {
+        anyPending = true;
+        anyMissingRequiredContext = true;
+      }
     }
   }
 
@@ -2763,7 +2778,10 @@ async function reduceLiveCiAggregate(
     !enforceRequiredOnly && ciState === "passed"
       ? "CI resolved to passed with no branch-protection required checks configured — gittensory cannot verify every expected workflow ran on this commit (a path-filtered or misconfigured workflow that never triggers is indistinguishable from one that doesn't exist). Configure branch protection or an expected-checks list for full CI-completeness verification."
       : null;
-  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, failingDetails, nonRequiredFailingDetails, ciCompletenessWarning };
+  // A partial/paginated read can't tell "never appears" from "appears on a page we didn't fetch" -- only a
+  // COMPLETE read's absence is a confident signal worth a short surfacing cap (#selfhost-ci-deferral-staleness).
+  const hasMissingRequiredContext = anyMissingRequiredContext && !checkRunsIncomplete && !statusIncomplete;
+  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, hasMissingRequiredContext, failingDetails, nonRequiredFailingDetails, ciCompletenessWarning };
 }
 
 /**
@@ -2785,7 +2803,7 @@ export async function fetchLiveCiAggregate(
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null };
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null };
   // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
   // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
   const checkRuns: LiveCiCheckRun[] = [];

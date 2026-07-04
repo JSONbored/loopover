@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import type { GatePolicyPack, GateRuleMode, JsonValue, LinkedIssueLabelPropagationConfig, PrTypeLabelSet, RepositorySettings } from "../types";
+import type { GatePolicyPack, GateRuleMode, JsonValue, LinkedIssueLabelPropagationConfig, PrTypeLabelSet, RepositorySettings, ReviewCheckMode } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
 import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
@@ -22,11 +22,17 @@ export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "disc
  * of these flow through the SAME confirmed-contributor-gated `evaluateGateCheck` path — the manifest
  * only chooses which deterministic blockers are active, never who can be blocked. Turning the gate
  * itself on/off stays a repository setting (`gateCheckMode`); `.gittensory.yml gate:` refines the
- * blocker policy of an already-enabled gate.
+ * blocker policy of an already-enabled gate. `checkMode` (#2852) is a separate, more expressive axis:
+ * whether/how the "Gittensory Orb Review Agent" check-RUN publishes, independent of gate evaluation
+ * itself (which always runs regardless of `checkMode`/`enabled`) — see {@link ReviewCheckMode}.
  */
 export type FocusManifestGateConfig = {
   present: boolean;
   enabled: boolean | null;
+  /** `gate.checkMode` (#2852): explicit required|visible|disabled review-check publish mode. Takes
+   *  precedence over the legacy `enabled` boolean below when both are set (see resolveEffectiveSettings).
+   *  null (unset) ⇒ fall back to `enabled`, then to `settings.reviewCheckMode` (DB/dashboard), then default. */
+  checkMode: ReviewCheckMode | null;
   pack: GatePolicyPack | null;
   linkedIssue: GateRuleMode | null;
   duplicates: GateRuleMode | null;
@@ -158,6 +164,7 @@ export type FocusManifestSettings = Partial<
     | "checkRunMode"
     | "checkRunDetailLevel"
     | "gateCheckMode"
+    | "reviewCheckMode"
     | "linkedIssueGateMode"
     | "duplicatePrGateMode"
     | "selfAuthoredLinkedIssueGateMode"
@@ -363,6 +370,7 @@ export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   present: false,
   enabled: null,
+  checkMode: null,
   pack: null,
   linkedIssue: null,
   duplicates: null,
@@ -652,6 +660,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   const gate: FocusManifestGateConfig = {
     present: false,
     enabled: normalizeOptionalBoolean(record.enabled, "gate.enabled", warnings),
+    checkMode: normalizeOptionalEnum(record.checkMode, "gate.checkMode", ["required", "visible", "disabled"] as const, warnings),
     pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
@@ -693,6 +702,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   }
   gate.present =
     gate.enabled !== null ||
+    gate.checkMode !== null ||
     gate.pack !== null ||
     gate.linkedIssue !== null ||
     gate.duplicates !== null ||
@@ -735,6 +745,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (!gate.present) return null;
   const out: Record<string, JsonValue> = {};
   if (gate.enabled !== null) out.enabled = gate.enabled;
+  if (gate.checkMode !== null) out.checkMode = gate.checkMode;
   if (gate.pack !== null) out.pack = gate.pack;
   if (gate.linkedIssue !== null) out.linkedIssue = gate.linkedIssue;
   if (gate.duplicates !== null) out.duplicates = gate.duplicates;
@@ -956,6 +967,10 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (checkRunDetailLevel !== null) out.checkRunDetailLevel = checkRunDetailLevel;
   const gateCheckMode = normalizeOptionalEnum(r.gateCheckMode, "settings.gateCheckMode", ["off", "enabled"] as const, warnings);
   if (gateCheckMode !== null) out.gateCheckMode = gateCheckMode;
+  // Same tri-state field as gate.checkMode above (the friendly gate alias overlays onto it in
+  // resolveEffectiveSettings, and wins when both are set).
+  const reviewCheckMode = normalizeOptionalEnum(r.reviewCheckMode, "settings.reviewCheckMode", ["required", "visible", "disabled"] as const, warnings);
+  if (reviewCheckMode !== null) out.reviewCheckMode = reviewCheckMode;
   const linkedIssueGateMode = normalizeOptionalGateMode(r.linkedIssueGateMode, "settings.linkedIssueGateMode", warnings);
   if (linkedIssueGateMode !== null) out.linkedIssueGateMode = linkedIssueGateMode;
   const duplicatePrGateMode = normalizeOptionalGateMode(r.duplicatePrGateMode, "settings.duplicatePrGateMode", warnings);
@@ -1576,6 +1591,13 @@ export function resolveEffectiveSettings(
   }
   const gate = manifest.gate;
   if (gate.enabled !== null) effective.gateCheckMode = gate.enabled ? "enabled" : "off";
+  // reviewCheckMode (#2852) resolution: explicit `gate.checkMode` is the most-specific signal and always wins
+  // when set. Otherwise fall back to the legacy `gate.enabled` boolean alias, mapped symmetrically so it keeps
+  // its historical effect (true -> the check publishes and may be required; false -> it never publishes) even
+  // though it no longer drives `gateCheckMode` alone. When NEITHER is set, `effective.reviewCheckMode` already
+  // holds `settings.reviewCheckMode` (yml `settings:` override, else the DB value) from the spread above.
+  if (gate.checkMode !== null) effective.reviewCheckMode = gate.checkMode;
+  else if (gate.enabled !== null) effective.reviewCheckMode = gate.enabled ? "required" : "disabled";
   if (gate.pack !== null) effective.gatePack = gate.pack;
   if (gate.linkedIssue !== null) effective.linkedIssueGateMode = gate.linkedIssue;
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;

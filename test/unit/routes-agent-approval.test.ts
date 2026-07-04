@@ -30,7 +30,7 @@ vi.mock("../../src/github/backfill", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/backfill")>();
   return {
     ...actual,
-    fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
+    fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   };
 });
 

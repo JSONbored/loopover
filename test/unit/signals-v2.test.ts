@@ -2035,6 +2035,7 @@ describe("v2 signal builders", () => {
         checkRunMode: "off",
         checkRunDetailLevel: "minimal",
         gateCheckMode: "off",
+        reviewCheckMode: "disabled",
         gatePack: "gittensor",
         linkedIssueGateMode: "advisory",
         duplicatePrGateMode: "advisory",

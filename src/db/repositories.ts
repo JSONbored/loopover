@@ -478,6 +478,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      reviewCheckMode: "disabled",
       gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "block",
@@ -546,6 +547,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    reviewCheckMode: parseReviewCheckMode(row.reviewCheckMode),
     gatePack: parseGatePack(row.gatePack),
     linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
     duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
@@ -650,6 +652,14 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
+    // Legacy-write compatibility (#2852): a caller that sets ONLY gateCheckMode (never touching the newer,
+    // more expressive reviewCheckMode) must keep its historical effect -- "enabled" still means the check
+    // publishes. This is safe under this function's existing "no field is preserved from the DB, an absent
+    // field always gets a fresh default" contract (see the route-handler comment above): a true partial-update
+    // caller already read-merges the full current settings (including its persisted reviewCheckMode) before
+    // calling this, so `settings.reviewCheckMode` is never actually undefined for that path -- this fallback
+    // only fires for callers that never cared about reviewCheckMode at all.
+    reviewCheckMode: settings.reviewCheckMode ?? (settings.gateCheckMode === "enabled" ? "required" : "disabled"),
     gatePack: parseGatePack(settings.gatePack),
     linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
     duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
@@ -720,6 +730,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
+      reviewCheckMode: resolved.reviewCheckMode,
       gatePack: resolved.gatePack,
       linkedIssueGateMode: resolved.linkedIssueGateMode,
       duplicatePrGateMode: resolved.duplicatePrGateMode,
@@ -789,6 +800,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
+        reviewCheckMode: resolved.reviewCheckMode,
         gatePack: resolved.gatePack,
         linkedIssueGateMode: resolved.linkedIssueGateMode,
         duplicatePrGateMode: resolved.duplicatePrGateMode,
@@ -6116,6 +6128,10 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 
 function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
   return value === "enabled" ? "enabled" : "off";
+}
+
+function parseReviewCheckMode(value: string): RepositorySettings["reviewCheckMode"] {
+  return value === "required" || value === "visible" ? value : "disabled";
 }
 
 function parseGatePack(value: string | null | undefined): RepositorySettings["gatePack"] {

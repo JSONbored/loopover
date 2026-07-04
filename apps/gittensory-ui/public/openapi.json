@@ -3630,6 +3630,14 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "reviewCheckMode": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "visible",
+                  "disabled"
+                ]
               }
             },
             "required": [
@@ -3639,6 +3647,7 @@
               "publicAudienceMode",
               "checkRunMode",
               "gateCheckMode",
+              "reviewCheckMode",
               "quietByDefault",
               "behavior",
               "warnings"
@@ -9064,6 +9073,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "reviewCheckMode": {
+            "type": "string",
+            "enum": [
+              "required",
+              "visible",
+              "disabled"
+            ]
           }
         },
         "required": [
@@ -9074,6 +9091,7 @@
           "checkRunMode",
           "checkRunDetailLevel",
           "gateCheckMode",
+          "reviewCheckMode",
           "gatePack",
           "linkedIssueGateMode",
           "duplicatePrGateMode",
@@ -9164,6 +9182,14 @@
                     },
                     "autoLabelEnabled": {
                       "type": "boolean"
+                    },
+                    "reviewCheckMode": {
+                      "type": "string",
+                      "enum": [
+                        "required",
+                        "visible",
+                        "disabled"
+                      ]
                     }
                   },
                   "required": [
@@ -9172,6 +9198,7 @@
                     "publicAudienceMode",
                     "checkRunMode",
                     "gateCheckMode",
+                    "reviewCheckMode",
                     "autoLabelEnabled"
                   ]
                 }
@@ -9734,6 +9761,14 @@
               },
               "typeLabelsEnabled": {
                 "type": "boolean"
+              },
+              "reviewCheckMode": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "visible",
+                  "disabled"
+                ]
               }
             },
             "required": [
@@ -9744,6 +9779,7 @@
               "checkRunMode",
               "checkRunDetailLevel",
               "gateCheckMode",
+              "reviewCheckMode",
               "gatePack",
               "linkedIssueGateMode",
               "duplicatePrGateMode",

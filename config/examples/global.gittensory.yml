@@ -16,6 +16,13 @@
 # Baseline gate policy shared by every repo unless a per-repo file overrides it.
 gate:
   enabled: true
+  # Review-check publish mode (#2852): required | visible | disabled. RECOMMENDED fleet-wide default
+  # for high-volume autonomous self-hosting is `visible` or `disabled`, NOT `required` — Gittensory's
+  # own merge/close decisions never depend on this check either way. If you set this to `disabled`
+  # instance-wide, remove "Gittensory Orb Review Agent" from every repo's branch-protection required-
+  # status-checks list first (Gittensory cannot do this for you — it's a GitHub branch-protection
+  # setting), or GitHub will show a pending status forever on repos that still require it.
+  checkMode: visible
   duplicates: block
   linkedIssue: advisory
 

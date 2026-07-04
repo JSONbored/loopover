@@ -28,6 +28,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     checkRunMode: "off",
     checkRunDetailLevel: "standard",
     gateCheckMode: "off",
+    reviewCheckMode: "disabled",
     gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
@@ -114,7 +115,7 @@ describe("buildMaintainerActivationPreview", () => {
     const preview = buildMaintainerActivationPreview({
       repoFullName: repo.fullName,
       repo,
-      settings: settings({ gateCheckMode: "enabled", aiReviewMode: "advisory" }),
+      settings: settings({ gateCheckMode: "enabled", reviewCheckMode: "required", aiReviewMode: "advisory" }),
       pullRequests: [pr(1, { linkedIssues: [] })],
       generatedAt: "2026-06-14T00:00:00.000Z",
     });
@@ -122,6 +123,23 @@ describe("buildMaintainerActivationPreview", () => {
     expect(preview.aiReviewConfigured).toBe(true);
     expect(preview.currentGateMode).toBe("enabled");
     expect(preview.summary).toContain("already enabled");
+  });
+
+  it("still recommends activation when gateCheckMode is enabled but reviewCheckMode is disabled (#2852 legacy-yml mismatch)", () => {
+    // Reachable via .gittensory.yml's independent settings.gateCheckMode/settings.reviewCheckMode keys (or any
+    // caller that sets one without the other) -- currentGateMode echoes the legacy field for display, but
+    // recommendedAction/currentlyActive must follow reviewCheckMode, the actual check-run publish authority,
+    // not the legacy field, since the check genuinely is not publishing in this state.
+    const preview = buildMaintainerActivationPreview({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings({ gateCheckMode: "enabled", reviewCheckMode: "disabled" }),
+      pullRequests: [pr(1, { linkedIssues: [] })],
+      generatedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(preview.currentGateMode).toBe("enabled");
+    expect(preview.recommendedAction).toBe("enable_advisory");
+    expect(preview.summary).not.toContain("already enabled");
   });
 
   it("handles a repo with no cached PRs", () => {
@@ -221,6 +239,7 @@ describe("recommendedAdvisoryActivationSettings", () => {
   it("enables the gate + deterministic rules in advisory (non-blocking) mode", () => {
     expect(recommendedAdvisoryActivationSettings()).toEqual({
       gateCheckMode: "enabled",
+      reviewCheckMode: "required",
       checkRunMode: "enabled",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",

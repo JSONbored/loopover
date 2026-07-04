@@ -30,7 +30,7 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
 // override these to exercise the staleness-supersede / staleness-denial paths.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
-  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
+  fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null })),
   fetchLivePullRequestMergeState: vi.fn(async () => "clean"),
   fetchLivePullRequestReviewDecision: vi.fn(async () => undefined),
 }));
@@ -479,7 +479,7 @@ describe("agent approval queue (#779)", () => {
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
-    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
     // Also exercise a best-effort-failed mergeable/review read (undefined) alongside the CI failure — the
     // audit metadata's nullish fallback must not throw, and ciState alone is still sufficient to deny.
     vi.mocked(fetchLivePullRequestMergeState).mockResolvedValueOnce(undefined);
@@ -501,7 +501,7 @@ describe("agent approval queue (#779)", () => {
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
     // A FULFILLED "pending" read is a genuine non-passing signal — distinct from a REJECTED read (fail-open,
     // covered by the "ITSELF rejects" test below), which must NOT supersede.
-    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "pending", hasPending: true, hasVisiblePending: true, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "pending", hasPending: true, hasVisiblePending: true, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("rejected");
@@ -692,7 +692,7 @@ describe("agent approval queue (#779)", () => {
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
     vi.mocked(fetchLivePullRequestMergeState).mockRejectedValueOnce(new Error("GitHub API transient 502"));
-    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+    vi.mocked(fetchLiveCiAggregate).mockResolvedValueOnce({ ciState: "failed", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
 
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
     expect(result.status).toBe("rejected");

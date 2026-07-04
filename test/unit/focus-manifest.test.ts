@@ -516,7 +516,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], preMergeChecks: [] },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
@@ -824,7 +824,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -919,6 +919,24 @@ describe("parseFocusManifest gate config", () => {
     const bad = parseFocusManifest({ gate: { enabled: "yes" } });
     expect(bad.gate.enabled).toBeNull();
     expect(bad.warnings.some((w) => /gate\.enabled/.test(w))).toBe(true);
+  });
+
+  it("parses gate.checkMode (required/visible/disabled) and ignores an unknown value with a warning (#2852)", () => {
+    expect(parseFocusManifest({ gate: { checkMode: "required" } }).gate.checkMode).toBe("required");
+    expect(parseFocusManifest({ gate: { checkMode: "visible" } }).gate.checkMode).toBe("visible");
+    expect(parseFocusManifest({ gate: { checkMode: "disabled" } }).gate.checkMode).toBe("disabled");
+    expect(parseFocusManifest({ gate: { checkMode: "required" } }).gate.present).toBe(true);
+    const bad = parseFocusManifest({ gate: { checkMode: "sometimes" } });
+    expect(bad.gate.checkMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.checkMode/.test(w))).toBe(true);
+    expect(bad.gate.present).toBe(false);
+  });
+
+  it("round-trips gate.checkMode through gateConfigToJson", () => {
+    const m = parseFocusManifest({ gate: { checkMode: "visible" } });
+    expect(gateConfigToJson(m.gate)).toMatchObject({ checkMode: "visible" });
+    const unset = parseFocusManifest({ gate: { duplicates: "block" } });
+    expect(gateConfigToJson(unset.gate)).not.toHaveProperty("checkMode");
   });
 
   it("treats a manifest with ONLY a gate section as present", () => {
@@ -1612,6 +1630,46 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(invalid.settings.moderationGateMode).toBeUndefined();
     expect(invalid.settings.moderationWarningLabel).toBeUndefined();
     expect(invalid.warnings.some((w) => /settings\.moderationGateMode/.test(w))).toBe(true);
+  });
+
+  describe("reviewCheckMode precedence (#2852)", () => {
+    it("parses settings.reviewCheckMode and drops an invalid value with a warning", () => {
+      const m = parseFocusManifest({ settings: { reviewCheckMode: "visible" } });
+      expect(m.settings.reviewCheckMode).toBe("visible");
+      const invalid = parseFocusManifest({ settings: { reviewCheckMode: "sometimes" as never } });
+      expect(invalid.settings.reviewCheckMode).toBeUndefined();
+      expect(invalid.warnings.some((w) => /settings\.reviewCheckMode/.test(w))).toBe(true);
+    });
+
+    it("settings.reviewCheckMode overlays (replaces) the DB value when set, and is preserved when omitted", () => {
+      const overridden = resolveEffectiveSettings(
+        { reviewCheckMode: "required" } as unknown as RepositorySettings,
+        parseFocusManifest({ settings: { reviewCheckMode: "disabled" } }),
+      );
+      expect(overridden.reviewCheckMode).toBe("disabled");
+      const noOverride = resolveEffectiveSettings({ reviewCheckMode: "required" } as unknown as RepositorySettings, parseFocusManifest({}));
+      expect(noOverride.reviewCheckMode).toBe("required");
+    });
+
+    it("gate.checkMode takes precedence over the legacy gate.enabled boolean when both are set", () => {
+      const eff = resolveEffectiveSettings(
+        { reviewCheckMode: "disabled" } as unknown as RepositorySettings,
+        parseFocusManifest({ gate: { enabled: false, checkMode: "visible" } }),
+      );
+      expect(eff.reviewCheckMode).toBe("visible");
+    });
+
+    it("gate.enabled maps symmetrically to reviewCheckMode when gate.checkMode is unset (legacy compatibility)", () => {
+      const enabledTrue = resolveEffectiveSettings({ reviewCheckMode: "disabled" } as unknown as RepositorySettings, parseFocusManifest({ gate: { enabled: true } }));
+      expect(enabledTrue.reviewCheckMode).toBe("required");
+      const enabledFalse = resolveEffectiveSettings({ reviewCheckMode: "required" } as unknown as RepositorySettings, parseFocusManifest({ gate: { enabled: false } }));
+      expect(enabledFalse.reviewCheckMode).toBe("disabled");
+    });
+
+    it("falls through to the DB/settings-block value when neither gate.checkMode nor gate.enabled is set", () => {
+      const eff = resolveEffectiveSettings({ reviewCheckMode: "visible" } as unknown as RepositorySettings, parseFocusManifest({ gate: { duplicates: "block" } }));
+      expect(eff.reviewCheckMode).toBe("visible");
+    });
   });
 
   it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {

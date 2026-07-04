@@ -81,7 +81,10 @@ export function buildMaintainerActivationPreview(args: {
   const findingCodeCounts = [...codeCounts.entries()]
     .map(([code, count]) => ({ code, count }))
     .sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
-  const currentlyActive = args.settings.gateCheckMode === "enabled";
+  // reviewCheckMode (not the legacy gateCheckMode) is the actual publish authority (#2852) -- a repo activated
+  // only via .gittensory.yml `gate.checkMode`/`gate.enabled` (never touching the old dashboard toggle) must not
+  // be told to "enable advisory mode" again.
+  const currentlyActive = args.settings.reviewCheckMode !== "disabled";
 
   return {
     repoFullName: args.repoFullName,
@@ -110,10 +113,11 @@ function buildSummary(evaluated: number, withFindings: number, currentlyActive: 
  */
 export function recommendedAdvisoryActivationSettings(): Pick<
   RepositorySettings,
-  "gateCheckMode" | "checkRunMode" | "linkedIssueGateMode" | "duplicatePrGateMode" | "qualityGateMode"
+  "gateCheckMode" | "reviewCheckMode" | "checkRunMode" | "linkedIssueGateMode" | "duplicatePrGateMode" | "qualityGateMode"
 > {
   return {
     gateCheckMode: "enabled",
+    reviewCheckMode: "required",
     checkRunMode: "enabled",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",

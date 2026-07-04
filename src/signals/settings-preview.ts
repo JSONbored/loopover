@@ -14,11 +14,11 @@ import {
   type ContributorDetection,
 } from "./engine";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
-import { GITTENSORY_GATE_CHECK_NAME } from "../review/check-names";
+import { GITTENSORY_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
 import { requiredAgentActionPermissions } from "../settings/agent-execution";
 
 export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
-  return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
+  return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || shouldPublishReviewCheck(settings.reviewCheckMode);
 }
 
 export function shouldPublishPrComment(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
@@ -184,6 +184,7 @@ export type RepoSettingsPreview = {
     checkRunMode: RepositorySettings["checkRunMode"];
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
     gateCheckMode: RepositorySettings["gateCheckMode"];
+    reviewCheckMode: RepositorySettings["reviewCheckMode"];
     gatePack: RepositorySettings["gatePack"];
     linkedIssueGateMode: RepositorySettings["linkedIssueGateMode"];
     duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];
@@ -310,6 +311,7 @@ export function buildRepoSettingsPreview(args: {
       checkRunMode: settings.checkRunMode,
       checkRunDetailLevel: settings.checkRunDetailLevel,
       gateCheckMode: settings.gateCheckMode,
+      reviewCheckMode: settings.reviewCheckMode,
       gatePack: settings.gatePack,
       linkedIssueGateMode: settings.linkedIssueGateMode,
       duplicatePrGateMode: settings.duplicatePrGateMode,
@@ -366,7 +368,7 @@ function buildWarnings(settings: RepositorySettings, decision: PublicSurfaceDeci
   if (settings.checkRunMode === "enabled" && missing.has("checks")) {
     warnings.push("Check runs are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
   }
-  if (settings.gateCheckMode === "enabled" && missing.has("checks")) {
+  if (shouldPublishReviewCheck(settings.reviewCheckMode) && missing.has("checks")) {
     warnings.push("Review-agent checks are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
   }
   for (const event of installation.missingEvents) {
@@ -389,7 +391,7 @@ function buildRepoInstallPreview(args: {
   const missing = activeMissingPermissions(args.settings, args.decision, args.installation);
   const missingEvents = args.installation?.missingEvents ?? [];
   const permissionStatus: RepoInstallPreviewStatus = !args.installation || args.installation.status === "broken" ? "blocked" : missing.length > 0 || missingEvents.length > 0 || args.installation.status === "needs_attention" ? "needs_attention" : "ready";
-  const publicOutputStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" || args.settings.gateCheckMode === "enabled" ? "needs_attention" : "ready";
+  const publicOutputStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" || shouldPublishReviewCheck(args.settings.reviewCheckMode) ? "needs_attention" : "ready";
   const commandAuthorizationStatus: RepoInstallPreviewStatus = !args.installation ? "blocked" : new Set(args.installation.missingPermissions).has("issues") ? "needs_attention" : "ready";
   const manualControlStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" ? "needs_attention" : "ready";
   const checklist: RepoInstallPreviewChecklistItem[] = [
@@ -522,7 +524,7 @@ function requiredInstallPermissions(settings: RepositorySettings, decision: Publ
       .map(([key, value]) => `${key}: ${value}`),
   );
   if (writesPrPublicSurface(settings, decision)) permissions.add("issues: write");
-  if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
+  if (decision.willCheckRun || settings.checkRunMode === "enabled" || shouldPublishReviewCheck(settings.reviewCheckMode)) permissions.add("checks: write");
   for (const requirement of requiredAgentActionPermissions(settings.autonomy)) {
     permissions.add(`${requirement.permission}: ${requirement.requiredAccess}`);
   }
@@ -539,7 +541,7 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   }
   // Comment/label output is gated on issues:write (Issues endpoints), not pull_requests:write.
   if (writesPrPublicSurface(settings, decision) && missing.has("issues")) active.add("issues");
-  if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.add("checks");
+  if ((decision.willCheckRun || settings.checkRunMode === "enabled" || shouldPublishReviewCheck(settings.reviewCheckMode)) && missing.has("checks")) active.add("checks");
   return [...active];
 }
 
@@ -554,7 +556,7 @@ function permissionSummary(installation: InstallationHealthSummary | null, missi
 }
 
 function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string | null, settings: RepositorySettings): string[] {
-  const gateOutput = settings.gateCheckMode === "enabled" ? [`Opt-in ${GITTENSORY_GATE_CHECK_NAME} check run.`] : [];
+  const gateOutput = shouldPublishReviewCheck(settings.reviewCheckMode) ? [`Opt-in ${GITTENSORY_GATE_CHECK_NAME} check run.`] : [];
   if (decision.skipped) return [`No comment or label for this sample: ${decision.summary}`, ...gateOutput];
   const outputs = [
     ...(decision.willComment ? ["One sanitized sticky PR comment."] : []),

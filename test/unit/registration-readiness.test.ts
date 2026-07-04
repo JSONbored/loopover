@@ -42,6 +42,7 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
     gateCheckMode: "off",
+    reviewCheckMode: "disabled",
     gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
@@ -173,7 +174,7 @@ describe("buildRegistrationReadiness", () => {
 
   it("describes a quiet public surface while keeping the opt-in gate check enabled", () => {
     const repo = repoFor("octo/quiet-gate", configFor({ repo: "octo/quiet-gate" }));
-    const settings = settingsFor(repo.fullName, { publicSurface: "off", gateCheckMode: "enabled" });
+    const settings = settingsFor(repo.fullName, { publicSurface: "off", gateCheckMode: "enabled", reviewCheckMode: "required" });
     const report = buildRegistrationReadiness({
       repoFullName: repo.fullName,
       repo,

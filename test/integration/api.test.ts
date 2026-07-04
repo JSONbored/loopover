@@ -283,6 +283,38 @@ describe("api routes", () => {
     await expect(response.json()).resolves.toMatchObject({ repoFullName: "acme/readiness-block", qualityGateMode: "advisory" });
   });
 
+  it("derives reviewCheckMode from a legacy gateCheckMode-only body through the internal settings write endpoint (#2852)", async () => {
+    // The internal full-replace route is a non-partial schema (every field defaults independently) -- a
+    // caller that only ever knows about gateCheckMode must still get its historical effect on reviewCheckMode,
+    // the actual check-run publish authority, not silently leave it at the schema's own "disabled" default.
+    const app = createApp();
+    const env = createTestEnv();
+    const enabled = await app.request(
+      "/v1/internal/repos/acme/legacy-gate-enable/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ gateCheckMode: "enabled" }) },
+      env,
+    );
+    expect(enabled.status).toBe(200);
+    await expect(enabled.json()).resolves.toMatchObject({ gateCheckMode: "enabled", reviewCheckMode: "required" });
+
+    const disabled = await app.request(
+      "/v1/internal/repos/acme/legacy-gate-disable/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ gateCheckMode: "off" }) },
+      env,
+    );
+    expect(disabled.status).toBe(200);
+    await expect(disabled.json()).resolves.toMatchObject({ gateCheckMode: "off", reviewCheckMode: "disabled" });
+
+    // An explicit reviewCheckMode still wins over the gateCheckMode-derived value in the same request.
+    const explicit = await app.request(
+      "/v1/internal/repos/acme/legacy-gate-explicit/settings",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ gateCheckMode: "off", reviewCheckMode: "visible" }) },
+      env,
+    );
+    expect(explicit.status).toBe(200);
+    await expect(explicit.json()).resolves.toMatchObject({ gateCheckMode: "off", reviewCheckMode: "visible" });
+  });
+
   it("rejects invalid public GitHub repo stats paths before calling GitHub", async () => {
     const app = createApp();
     const env = createTestEnv();
@@ -2301,6 +2333,10 @@ describe("api routes", () => {
     expect(settingsUpdate.status).toBe(200);
     await expect(settingsUpdate.json()).resolves.toMatchObject({
       gateCheckMode: "enabled",
+      // #2852: a legacy client sending ONLY gateCheckMode (never reviewCheckMode, matching the current
+      // untouched dashboard) must still get the check-run actually publishing -- reviewCheckMode is derived
+      // from this same request's gateCheckMode, not silently left at its "disabled" default.
+      reviewCheckMode: "required",
       slopGateMode: "block",
       slopGateMinScore: 55,
       qualityGateMode: "advisory", // #2267: downgraded, not persisted as "block"
@@ -2309,6 +2345,16 @@ describe("api routes", () => {
       agentPaused: true, // #776 kill-switch
       agentDryRun: true,
     });
+    // #2852: the other direction of the same legacy-write derivation — gateCheckMode: "off" alone (still no
+    // reviewCheckMode sent) must derive reviewCheckMode: "disabled", not silently leave it at whatever the
+    // prior save left it (still "required" from the write immediately above).
+    const settingsUpdateOff = await app.request(
+      "/v1/repos/repo-owner/owned-repo/settings",
+      { method: "PUT", headers: ownerHeaders, body: JSON.stringify({ gateCheckMode: "off" }) },
+      ownerEnv,
+    );
+    expect(settingsUpdateOff.status).toBe(200);
+    await expect(settingsUpdateOff.json()).resolves.toMatchObject({ gateCheckMode: "off", reviewCheckMode: "disabled" });
     // requireApprovals is bounded at the API boundary — an out-of-range value is rejected, not silently clamped.
     const settingsBadApprovals = await app.request(
       "/v1/repos/repo-owner/owned-repo/settings",

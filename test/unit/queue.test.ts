@@ -1363,6 +1363,7 @@ describe("queue processors", () => {
       ciState: "pending",
       hasPending: true,
       hasVisiblePending: false,
+      hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
       ciCompletenessWarning: null,
@@ -1412,6 +1413,7 @@ describe("queue processors", () => {
       ciState: "passed",
       hasPending: true,
       hasVisiblePending: false,
+      hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
       ciCompletenessWarning: null,
@@ -1470,6 +1472,7 @@ describe("queue processors", () => {
       ciState: "pending",
       hasPending: true,
       hasVisiblePending: false,
+      hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
       ciCompletenessWarning: null,
@@ -1503,6 +1506,116 @@ describe("queue processors", () => {
     }
   });
 
+  it("keeps deferring a missing-required-context PR within its own short cap (#selfhost-ci-deferral-staleness)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Missing required context, within cap", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // 1 minute elapsed: under the new 2-minute missing-required-context cap AND under the old 30-minute cap —
+    // proves the short cap, not the long one, governs this class.
+    await env.SELFHOST_TRANSIENT_CACHE?.set(
+      "ci-pending-first-seen:owner/agent-repo#7:a7",
+      String(Date.now() - 1 * 60 * 1000),
+      7 * 24 * 3600,
+    );
+    const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "pending",
+      hasPending: true,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: true,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      ciCompletenessWarning: null,
+    });
+    let gateChecks = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Missing required context, within cap", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/check-runs") && method === "POST") {
+        gateChecks += 1;
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      return Response.json({});
+    });
+
+    try {
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "missing-context-within-cap", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+      expect(gateChecks).toBe(0);
+      const deferred = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.review_deferred_ci_pending")
+        .first<{ n: number }>();
+      const finalized = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.review_finalized_ci_stuck")
+        .first<{ n: number }>();
+      expect(deferred?.n).toBe(1);
+      expect(finalized?.n).toBe(0);
+    } finally {
+      liveCiSpy.mockRestore();
+      requiredContextsSpy.mockRestore();
+    }
+  });
+
+  it("finalizes a missing-required-context PR within minutes, well before the old 30-minute stale-CI cap (#selfhost-ci-deferral-staleness)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, aiReviewMode: "off", gatePack: "oss-anti-slop", gateCheckMode: "enabled", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Missing required context, past short cap", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // 3 minutes elapsed: past the new 2-minute missing-required-context cap, but nowhere near the old 30-minute
+    // cap — this is the key regression proving #selfhost-ci-deferral-staleness actually shortens the wait
+    // instead of the PR sitting deferred for up to half an hour on a context that will never post.
+    await env.SELFHOST_TRANSIENT_CACHE?.set(
+      "ci-pending-first-seen:owner/agent-repo#7:a7",
+      String(Date.now() - 3 * 60 * 1000),
+      7 * 24 * 3600,
+    );
+    const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "pending",
+      hasPending: true,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: true,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      ciCompletenessWarning: null,
+    });
+    let gateChecks = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Missing required context, past short cap", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) {
+        gateChecks += 1;
+        return Response.json({ id: 901 }, { status: method === "POST" ? 201 : 200 });
+      }
+      return Response.json({});
+    });
+
+    try {
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "missing-context-past-short-cap", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+      expect(gateChecks).toBeGreaterThan(0);
+      const finalized = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.review_finalized_ci_stuck")
+        .first<{ n: number }>();
+      expect(finalized?.n).toBe(1);
+    } finally {
+      liveCiSpy.mockRestore();
+      requiredContextsSpy.mockRestore();
+    }
+  });
+
   it("records an informational audit event when the live CI aggregate carries a completeness warning (#2137)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
@@ -1514,6 +1627,7 @@ describe("queue processors", () => {
       ciState: "passed",
       hasPending: false,
       hasVisiblePending: false,
+      hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
       ciCompletenessWarning: "CI resolved to passed with no branch-protection required checks configured — cannot verify every expected workflow ran.",
@@ -1555,6 +1669,7 @@ describe("queue processors", () => {
       ciState: "passed",
       hasPending: false,
       hasVisiblePending: false,
+      hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
       ciCompletenessWarning: null,
@@ -4038,6 +4153,15 @@ describe("queue processors", () => {
     const before = await env.DB.prepare("select last_regated_at from pull_requests where repo_full_name = ? and number = 7").bind("owner/agent-repo").first<{ last_regated_at: string | null }>();
     expect(before?.last_regated_at).toBeNull(); // never swept yet
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // #2852: autonomy configured (merge: auto) now means the gate CONCLUSION is evaluated even without a
+    // GITHUB_APP_PRIVATE_KEY / check-run publish, which reaches the review-thread-blockers live fetch -- stub a
+    // generic safe response so that call resolves instead of hitting a real, unmocked network request.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.github.com/graphql") return Response.json({ data: {} });
+      return Response.json({});
+    });
 
     await sweepAndDrainPerPr(env, "owner/agent-repo");
 
@@ -4523,6 +4647,15 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Stale PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "" });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // #2852: autonomy configured (merge: auto) now means the gate CONCLUSION is evaluated even without a
+    // GITHUB_APP_PRIVATE_KEY / check-run publish, which reaches the review-thread-blockers live fetch -- stub a
+    // generic safe response so that call resolves instead of hitting a real, unmocked network request.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.github.com/graphql") return Response.json({ data: {} });
+      return Response.json({});
+    });
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stamp = vi.spyOn(repositoriesModule, "markPullRequestsRegated").mockRejectedValueOnce(new Error("D1 write error"));
 
@@ -12595,6 +12728,7 @@ describe("queue processors", () => {
         ciState: "passed",
         hasPending: false,
         hasVisiblePending: false,
+        hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
         ciCompletenessWarning: null,
@@ -19481,6 +19615,33 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
   });
 
+  it("reviewCheckMode: disabled still auto-closes a blocked contributor PR via the general heuristic-close path (#2852)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { close: "auto" }, reviewCheckMode: "disabled" });
+    const seen = { closed: false, merged: false };
+    let checkRunApiCalls = 0;
+    stubPrFetch(66, "conv66", seen);
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (/\/check-runs(?:\/|\?|$)/.test(url) && (method === "POST" || method === "PATCH")) checkRunApiCalls += 1;
+      return realFetch(input, init);
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "conv-disabled-close",
+      eventName: "pull_request",
+      payload: prPayload({ number: 66, head: { sha: "conv66" } }),
+    });
+
+    expect(seen.closed).toBe(true);
+    expect(checkRunApiCalls).toBe(0);
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+    expect(closeAudit?.n).toBeGreaterThanOrEqual(1);
+  });
+
   it("REGRESSION: a green-verdict PR with CI still pending is NOT merged (merge withheld until CI/mergeability settle)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
@@ -19639,6 +19800,165 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.merge'").first<{ n: number }>();
     expect(mergeAudit?.n).toBe(0);
     expect(await renderMetrics()).toContain('gittensory_precision_breaker_downgrades_total{direction="merge"} 1');
+  });
+
+  it("reviewCheckMode: disabled still auto-merges a green PR via the general heuristic path, with ZERO check-run API calls (#2852)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off", reviewCheckMode: "disabled" });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    const seen = { closed: false, merged: false };
+    let checkRunApiCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (/\/check-runs(?:\/|\?|$)/.test(url) && (method === "POST" || method === "PATCH")) checkRunApiCalls += 1;
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/64/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/64/reviews")) return Response.json([]);
+      if (url.includes("/pulls/64/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/64/merge") && method === "PUT") {
+        seen.merged = true;
+        return Response.json({ merged: true });
+      }
+      if (url.endsWith("/pulls/64")) return Response.json({ number: 64, state: "open", user: { login: "contributor" }, head: { sha: "conv64" }, mergeable_state: "clean" });
+      if (url.includes("/commits/conv64/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      if (url.includes("/commits/conv64/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/64/labels")) return Response.json([]);
+      if (url.includes("/issues/64/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "conv-disabled-merge",
+      eventName: "pull_request",
+      payload: prPayload({ number: 64, head: { sha: "conv64" }, body: "Closes #1" }),
+    });
+
+    expect(seen.merged).toBe(true);
+    expect(checkRunApiCalls).toBe(0);
+    const mergeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.merge'").first<{ n: number }>();
+    expect(mergeAudit?.n).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reviewCheckMode: disabled still auto-merges an AUTHOR-LESS (ghost) PR when autonomy is configured (#2852)", async () => {
+    // A ghost PR (no `user` at all -> authorLogin null) is the one other early-return in
+    // maybePublishPrPublicSurface gated on gateEnabled (`if (!author && !gateEnabled && !autonomyNeedsGateEvaluation)
+    // return undefined;`) -- proves autonomyNeedsGateEvaluation also keeps THIS guard from bailing.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off", reviewCheckMode: "disabled" });
+    const seen = { closed: false, merged: false };
+    let checkRunApiCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (/\/check-runs(?:\/|\?|$)/.test(url) && (method === "POST" || method === "PATCH")) checkRunApiCalls += 1;
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/67/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/67/reviews")) return Response.json([]);
+      if (url.includes("/pulls/67/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/67/merge") && method === "PUT") {
+        seen.merged = true;
+        return Response.json({ merged: true });
+      }
+      if (url.endsWith("/pulls/67")) return Response.json({ number: 67, state: "open", head: { sha: "conv67" }, mergeable_state: "clean" });
+      if (url.includes("/commits/conv67/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      if (url.includes("/commits/conv67/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/67/labels")) return Response.json([]);
+      if (url.includes("/issues/67/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "conv-disabled-ghost-author",
+      eventName: "pull_request",
+      payload: prPayload({ number: 67, head: { sha: "conv67" }, body: "Closes #1", user: undefined }),
+    });
+
+    expect(seen.merged).toBe(true);
+    expect(checkRunApiCalls).toBe(0);
+  });
+
+  it("an author-less (ghost) PR with the check-run disabled and NO autonomy configured stays fully silent (early-return preserved)", async () => {
+    // Mirrors the ghost-PR test above but WITHOUT autonomy configured -- proves the early return in
+    // maybePublishPrPublicSurface still fires (bails to undefined, no work at all) when neither gateEnabled nor
+    // autonomyNeedsGateEvaluation applies, exactly as before #2852.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { reviewCheckMode: "disabled" }); // autonomy defaults to {} (unconfigured)
+    let checkRunApiCalls = 0;
+    let mergeAttempted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (/\/check-runs(?:\/|\?|$)/.test(url) && (method === "POST" || method === "PATCH")) checkRunApiCalls += 1;
+      if (url.endsWith("/pulls/68/merge")) mergeAttempted = true;
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "ghost-no-autonomy",
+      eventName: "pull_request",
+      payload: prPayload({ number: 68, head: { sha: "conv68" }, body: "no linked issue here", user: undefined }),
+    });
+
+    expect(checkRunApiCalls).toBe(0);
+    expect(mergeAttempted).toBe(false);
+  });
+
+  it("reviewCheckMode: disabled still posts the sticky PR comment and label (public surface is independent of the check-run publish decision) (#2852)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, {
+      autonomy: { merge: "auto", approve: "auto" },
+      linkedIssueGateMode: "off",
+      reviewCheckMode: "disabled",
+      commentMode: "all_prs",
+      publicSurface: "comment_and_label",
+    });
+    let checkRunApiCalls = 0;
+    let commentPosted = false;
+    let labelApplied = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (/\/check-runs(?:\/|\?|$)/.test(url) && (method === "POST" || method === "PATCH")) checkRunApiCalls += 1;
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/65/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/65/reviews")) return Response.json([]);
+      if (url.includes("/pulls/65/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/65")) return Response.json({ number: 65, state: "open", user: { login: "contributor" }, head: { sha: "conv65" }, mergeable_state: "clean" });
+      if (url.includes("/commits/conv65/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      if (url.includes("/commits/conv65/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/65/comments") && method === "POST") {
+        commentPosted = true;
+        return Response.json({ id: 1 });
+      }
+      if (url.includes("/issues/65/labels") && method === "POST") {
+        labelApplied = true;
+        return Response.json([]);
+      }
+      if (url.includes("/issues/65/comments") || url.includes("/issues/65/labels")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "conv-disabled-surface",
+      eventName: "pull_request",
+      payload: prPayload({ number: 65, head: { sha: "conv65" }, body: "Closes #1" }),
+    });
+
+    expect(checkRunApiCalls).toBe(0);
+    expect(commentPosted).toBe(true);
+    expect(labelApplied).toBe(true);
   });
 
   it("REGRESSION: closeOwnerAuthors=false (default) protects an owner-authored blocked PR from the general heuristic-close path", async () => {

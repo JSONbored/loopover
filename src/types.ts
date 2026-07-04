@@ -536,6 +536,22 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** Review-check publish surface (#2852). Controls ONLY whether/how the "Gittensory Orb Review Agent" check-run
+ *  is created/updated -- never the underlying gate evaluation, disposition, comments, labels, audit, or
+ *  autonomous merge/close, all of which run identically in every mode (the autonomous decision engine already
+ *  excludes the bot's own check-runs from the live CI aggregate it merges/closes against, see
+ *  `BOT_OWNED_CHECK_NAMES` in `github/backfill.ts`, specifically to avoid a self-deadlock).
+ *   • `required` — legacy/current behavior: publish/update the check exactly as before. For operators who
+ *                  intentionally keep it as a required branch-protection status check.
+ *   • `visible`  — publish/update the SAME check-run for UI visibility only. Never intended to be added as a
+ *                  required branch-protection check; behaves identically to `required` on the publish side
+ *                  (same API calls), the distinction is purely about how the operator should configure GitHub.
+ *   • `disabled` — never create/update the check-run at all. Recommended for high-volume autonomous self-hosting
+ *                  to avoid GitHub showing "Expected — Waiting for status to be reported" under queue pressure;
+ *                  requires removing the check from branch-protection required-status-checks first (Gittensory
+ *                  cannot do this on the operator's behalf -- it is a GitHub branch-protection setting). */
+export type ReviewCheckMode = "required" | "visible" | "disabled";
+
 /** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: registry/emissions-
  *  aware, and it threads the author's confirmed status for on-chain scoring (the gate verdict itself blocks
  *  every author the same — confirmed status no longer changes it, #gate-nonconfirmed). `oss-anti-slop` = a
@@ -569,6 +585,10 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  /** The actual runtime authority for whether the "Gittensory Orb Review Agent" check-run publishes (#2852).
+   *  See {@link ReviewCheckMode}. `gateCheckMode` above stays wired for API/back-compat display but no longer
+   *  drives the publish decision on its own. */
+  reviewCheckMode: ReviewCheckMode;
   /** Policy pack the gate evaluates under (#692). Default `gittensor` (registry-aware; threads confirmed
    *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;

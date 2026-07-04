@@ -76,6 +76,39 @@ function parseSemver(version: string) {
   };
 }
 
+/**
+ * Compare two dot-separated prerelease strings per semver §11.4. A single numeric `localeCompare` over the
+ * whole string is wrong: it compares leading digit runs numerically and so ranks `2` above `1a`, whereas
+ * semver compares identifier-by-identifier, where a purely numeric identifier always has LOWER precedence
+ * than an alphanumeric one. Numeric identifiers are compared as decimal strings (not via `Number()`, which
+ * loses precision beyond `Number.MAX_SAFE_INTEGER`): with no leading zeros a longer digit string is the
+ * larger number and equal-length strings compare lexicographically. Case-insensitive per-identifier
+ * compare is preserved intentionally (matching the existing `RC.1` == `rc.1` behavior).
+ */
+function comparePrerelease(left: string, right: string): -1 | 0 | 1 {
+  const leftIds = left.split(".");
+  const rightIds = right.split(".");
+  const max = Math.max(leftIds.length, rightIds.length);
+  for (let index = 0; index < max; index += 1) {
+    if (index >= leftIds.length) return -1; // fewer identifiers = lower precedence
+    if (index >= rightIds.length) return 1;
+    const a = leftIds[index]!;
+    const b = rightIds[index]!;
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) {
+      if (a.length !== b.length) return a.length < b.length ? -1 : 1;
+      if (a !== b) return a < b ? -1 : 1;
+    } else if (aNumeric !== bNumeric) {
+      return aNumeric ? -1 : 1; // numeric identifier ranks below alphanumeric
+    } else {
+      const comparison = a.toLowerCase().localeCompare(b.toLowerCase());
+      if (comparison !== 0) return comparison < 0 ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
 export function compareMcpSemver(leftVersion: string, rightVersion: string): number | null {
   const left = parseSemver(leftVersion);
   const right = parseSemver(rightVersion);
@@ -86,6 +119,5 @@ export function compareMcpSemver(leftVersion: string, rightVersion: string): num
   if (left.prerelease === right.prerelease) return 0;
   if (!left.prerelease) return 1;
   if (!right.prerelease) return -1;
-  const prereleaseComparison = left.prerelease.localeCompare(right.prerelease, undefined, { numeric: true, sensitivity: "base" });
-  return prereleaseComparison === 0 ? 0 : prereleaseComparison < 0 ? -1 : 1;
+  return comparePrerelease(left.prerelease, right.prerelease);
 }

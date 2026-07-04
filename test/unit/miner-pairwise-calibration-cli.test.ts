@@ -95,26 +95,26 @@ describe("gittensory-miner pairwise calibration CLI (#3013)", () => {
     expect(table).toContain("stable samples: 1/1");
   });
 
-  it("runPairwiseScore prints table and JSON output", () => {
+  it("runPairwiseScore prints table and JSON output", async () => {
     const input = {
       objectiveAnchor: 0.55,
       samples: [{ attempts: [{ replayFirst: "replay_better", revealedFirst: "revealed_better" }] }],
     };
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    expect(runPairwiseScore(["--input", JSON.stringify(input)])).toBe(0);
+    expect(await runPairwiseScore(["--input", JSON.stringify(input)])).toBe(0);
     expect(String(log.mock.calls[0]?.[0])).toContain("composite score:");
 
     log.mockClear();
-    expect(runPairwiseScore(["--input", JSON.stringify(input), "--json"])).toBe(0);
+    expect(await runPairwiseScore(["--input", JSON.stringify(input), "--json"])).toBe(0);
     const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(parsed.compositeScore).toBeGreaterThan(0);
     expect(parsed.metrics.stableSamples).toBe(1);
   });
 
-  it("runCalibrationCli dispatches pairwise score and rejects unknown subcommands", () => {
+  it("runCalibrationCli dispatches pairwise score and rejects unknown subcommands", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(runCalibrationCli("pairwise", "score", ["--input", "not-json"])).toBe(2);
-    expect(runCalibrationCli("gate-verdict", "score", [])).toBe(2);
+    expect(await runCalibrationCli("pairwise", "score", ["--input", "not-json"])).toBe(2);
+    expect(await runCalibrationCli("gate-verdict", "score", [])).toBe(2);
     expect(String(err.mock.calls.at(-1)?.[0])).toContain("Unknown calibration subcommand");
   });
 });

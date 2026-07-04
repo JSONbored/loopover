@@ -4,7 +4,6 @@ import { printHelp, printVersion, runCli } from "../lib/cli.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
-import { runCalibrationCli } from "../lib/pairwise-calibration-cli.js";
 import { runManagePoll } from "../lib/manage-poll.js";
 import { runManageStatus } from "../lib/manage-status.js";
 import { runPlanCli } from "../lib/plan-store-cli.js";
@@ -51,7 +50,8 @@ if (cliArgs[0] === "governor") {
 }
 
 if (cliArgs[0] === "calibration") {
-  process.exit(runCalibrationCli(cliArgs[1], cliArgs[2], cliArgs.slice(3)));
+  const { runCalibrationCli } = await import("../lib/pairwise-calibration-cli.js");
+  process.exit(await runCalibrationCli(cliArgs[1], cliArgs[2], cliArgs.slice(3)));
 }
 
 const require = createRequire(import.meta.url);

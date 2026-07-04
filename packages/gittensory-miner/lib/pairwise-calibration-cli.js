@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { computePairwiseCalibrationScore } from "@jsonbored/gittensory-engine";
 
 const PAIRWISE_SCORE_USAGE =
   "Usage: gittensory-miner calibration pairwise score --input <json|@file> [--json]";
@@ -81,15 +80,20 @@ export function renderPairwiseScoreTable(result) {
   return lines.join("\n");
 }
 
-export function runPairwiseScore(args, options = {}) {
+async function resolveComputePairwiseCalibrationScore(options = {}) {
+  if (options.computePairwiseCalibrationScore) return options.computePairwiseCalibrationScore;
+  const { computePairwiseCalibrationScore } = await import("@jsonbored/gittensory-engine");
+  return computePairwiseCalibrationScore;
+}
+
+export async function runPairwiseScore(args, options = {}) {
   const parsed = parsePairwiseScoreArgs(args);
   if ("error" in parsed) {
     console.error(parsed.error);
     return 2;
   }
 
-  const compute =
-    options.computePairwiseCalibrationScore ?? computePairwiseCalibrationScore;
+  const compute = await resolveComputePairwiseCalibrationScore(options);
   try {
     const result = compute({
       objectiveAnchor: parsed.input.objectiveAnchor ?? 0,
@@ -108,7 +112,7 @@ export function runPairwiseScore(args, options = {}) {
   }
 }
 
-export function runCalibrationCli(subcommand, nested, args, options = {}) {
+export async function runCalibrationCli(subcommand, nested, args, options = {}) {
   if (subcommand === "pairwise" && nested === "score") {
     return runPairwiseScore(args, options);
   }

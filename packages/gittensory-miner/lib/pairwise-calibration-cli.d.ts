@@ -27,7 +27,7 @@ export function runPairwiseScore(
   options?: {
     computePairwiseCalibrationScore?: typeof import("@jsonbored/gittensory-engine").computePairwiseCalibrationScore;
   },
-): number;
+): Promise<number>;
 
 export function runCalibrationCli(
   subcommand: string | undefined,
@@ -36,4 +36,4 @@ export function runCalibrationCli(
   options?: {
     computePairwiseCalibrationScore?: typeof import("@jsonbored/gittensory-engine").computePairwiseCalibrationScore;
   },
-): number;
+): Promise<number>;

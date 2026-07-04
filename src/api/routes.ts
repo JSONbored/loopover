@@ -5050,6 +5050,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoValidateLinkedIssuePath(path)) return true;
   if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
+  if (isRepoAgentPendingActionsPath(path)) return true; // list: requireRepoMaintainer; decide: requireRepoWriteAccess
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
@@ -5099,6 +5100,7 @@ function isRepoAgentAuditFeedPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/agent\/audit-feed$/.test(path);
 }
 
+function isRepoAgentPendingActionsPath(path: string): boolean { return /^\/v1\/repos\/[^/]+\/[^/]+\/agent\/pending-actions(?:\/[^/]+\/(?:accept|reject))?$/.test(path); }
 function isIssueQualityPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/issue-quality$/.test(path);
 }

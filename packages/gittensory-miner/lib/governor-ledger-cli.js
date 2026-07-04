@@ -1,5 +1,10 @@
-import { GOVERNOR_LEDGER_EVENT_TYPES } from "@jsonbored/gittensory-engine";
-import { initGovernorLedger } from "./governor-ledger.js";
+/** Must match `GOVERNOR_LEDGER_EVENT_TYPES` in `@jsonbored/gittensory-engine`. */
+const GOVERNOR_LEDGER_EVENT_TYPES = Object.freeze([
+  "allowed",
+  "denied",
+  "throttled",
+  "kill_switch",
+]);
 
 const GOVERNOR_LIST_USAGE =
   "Usage: gittensory-miner governor list [--repo <owner/repo>] [--type allowed|denied|throttled|kill_switch] [--json]";
@@ -89,9 +94,11 @@ export function renderGovernorTable(events) {
   return [header, ...lines].join("\n");
 }
 
-function withGovernorLedger(options, run) {
+async function withGovernorLedger(options, run) {
   const ownsLedger = options.initGovernorLedger === undefined;
-  const governorLedger = (options.initGovernorLedger ?? initGovernorLedger)();
+  const initGovernorLedger =
+    options.initGovernorLedger ?? (await import("./governor-ledger.js")).initGovernorLedger;
+  const governorLedger = initGovernorLedger();
   try {
     return run(governorLedger);
   } finally {
@@ -99,7 +106,7 @@ function withGovernorLedger(options, run) {
   }
 }
 
-export function runGovernorList(args, options = {}) {
+export async function runGovernorList(args, options = {}) {
   const parsed = parseGovernorListArgs(args);
   if ("error" in parsed) {
     console.error(parsed.error);
@@ -107,7 +114,7 @@ export function runGovernorList(args, options = {}) {
   }
 
   try {
-    return withGovernorLedger(options, (governorLedger) => {
+    return await withGovernorLedger(options, (governorLedger) => {
       const events = filterGovernorEvents(
         governorLedger.readGovernorEvents({
           repoFullName: parsed.repoFullName,
@@ -127,7 +134,7 @@ export function runGovernorList(args, options = {}) {
   }
 }
 
-export function runGovernorCli(subcommand, args, options = {}) {
+export async function runGovernorCli(subcommand, args, options = {}) {
   if (subcommand === "list") return runGovernorList(args, options);
   console.error(`Unknown governor subcommand: ${subcommand ?? ""}. ${GOVERNOR_LIST_USAGE}`);
   return 2;

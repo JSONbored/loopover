@@ -77,7 +77,7 @@ describe("gittensory-miner governor ledger CLI (#2328)", () => {
     expect(renderGovernorTable(events)).toContain("   1");
   });
 
-  it("runGovernorList prints table and JSON output with repo and type filters", () => {
+  it("runGovernorList prints table and JSON output with repo and type filters", async () => {
     const governorLedger = tempLedger();
     governorLedger.appendGovernorEvent({
       eventType: "allowed",
@@ -103,7 +103,7 @@ describe("gittensory-miner governor ledger CLI (#2328)", () => {
 
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(
-      runGovernorList([], {
+      await runGovernorList([], {
         initGovernorLedger: () => governorLedger,
       }),
     ).toBe(0);
@@ -111,7 +111,7 @@ describe("gittensory-miner governor ledger CLI (#2328)", () => {
 
     log.mockClear();
     expect(
-      runGovernorList(["--repo", "acme/widgets", "--type", "denied", "--json"], {
+      await runGovernorList(["--repo", "acme/widgets", "--type", "denied", "--json"], {
         initGovernorLedger: () => governorLedger,
       }),
     ).toBe(0);
@@ -126,7 +126,7 @@ describe("gittensory-miner governor ledger CLI (#2328)", () => {
     });
   });
 
-  it("runGovernorCli dispatches list and rejects unknown subcommands", () => {
+  it("runGovernorCli dispatches list and rejects unknown subcommands", async () => {
     const governorLedger = tempLedger();
     governorLedger.appendGovernorEvent({
       eventType: "throttled",
@@ -135,17 +135,17 @@ describe("gittensory-miner governor ledger CLI (#2328)", () => {
       reason: "rate limit",
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    expect(runGovernorCli("list", ["--json"], { initGovernorLedger: () => governorLedger })).toBe(0);
+    expect(await runGovernorCli("list", ["--json"], { initGovernorLedger: () => governorLedger })).toBe(0);
     expect(log).toHaveBeenCalled();
 
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(runGovernorCli("tail", [])).toBe(2);
+    expect(await runGovernorCli("tail", [])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown governor subcommand");
   });
 
-  it("rejects unknown options from argv parsing", () => {
+  it("rejects unknown options from argv parsing", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(runGovernorList(["--verbose"])).toBe(2);
+    expect(await runGovernorList(["--verbose"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown option");
   });
 });

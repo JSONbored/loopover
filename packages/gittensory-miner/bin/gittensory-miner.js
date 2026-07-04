@@ -46,7 +46,7 @@ if (cliArgs[0] === "plan") {
 }
 
 if (cliArgs[0] === "governor") {
-  process.exit(runGovernorCli(cliArgs[1], cliArgs.slice(2)));
+  process.exit(await runGovernorCli(cliArgs[1], cliArgs.slice(2)));
 }
 
 const require = createRequire(import.meta.url);

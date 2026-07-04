@@ -1,5 +1,6 @@
 import type { GovernorLedger, GovernorLedgerEntry } from "./governor-ledger.js";
-import type { GovernorLedgerEventType } from "@jsonbored/gittensory-engine";
+
+export type GovernorLedgerEventType = "allowed" | "denied" | "throttled" | "kill_switch";
 
 export type ParsedGovernorListArgs =
   | {
@@ -21,10 +22,10 @@ export function renderGovernorTable(events: GovernorLedgerEntry[]): string;
 export function runGovernorList(
   args: string[],
   options?: { initGovernorLedger?: () => GovernorLedger },
-): number;
+): Promise<number>;
 
 export function runGovernorCli(
   subcommand: string | undefined,
   args: string[],
   options?: { initGovernorLedger?: () => GovernorLedger },
-): number;
+): Promise<number>;

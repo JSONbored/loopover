@@ -529,6 +529,21 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
     });
   });
 
+  it("provider routing falls back to \"default\" when both the adapter's usage AND the requested model are empty", async () => {
+    const ai = createChainAi([
+      {
+        name: "codex",
+        ai: {
+          run: async () => ({ response: "ok", usage: { inputTokens: 3 } }),
+        },
+      },
+    ]);
+    await expect(ai.run("", { prompt: "x" })).resolves.toMatchObject({
+      response: "ok",
+      usage: { provider: "codex", model: "default", inputTokens: 3 },
+    });
+  });
+
   it("createSelfHostAi routes a SINGLE provider through the router too — a name address yields the provider default, never `--model <provider>` (#1610)", async () => {
     // Regression (#1610): a single-provider self-host returned env.AI as the BARE provider, so the reviewer plan's
     // name address ({ model: "openai-compatible" } — or "claude-code") reached it as a model id. `claude --model

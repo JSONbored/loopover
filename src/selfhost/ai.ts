@@ -449,14 +449,14 @@ export function extractCliUsage(stdout: string): CliUsage {
   return usage;
 }
 
-function cliUsageFromStdout(provider: string, model: string, effort: string, stdout: string): AiUsage {
+function cliUsageFromStdout(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
   const usage = extractCliUsage(stdout);
   return { ...usage, provider, model: usage.model ?? (model || "default"), effort };
 }
 
-function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): AiUsage {
+function recordCliUsageMetrics(provider: string, model: string, effort: string, stdout: string): AiUsage & { model: string } {
   const usage = cliUsageFromStdout(provider, model, effort, stdout);
-  const labels = { provider, model: usage.model ?? "default", effort };
+  const labels = { provider, model: usage.model, effort };
   incr("gittensory_ai_requests_total", labels);
   incr("gittensory_ai_cost_usd_total", { provider: labels.provider }, usage.costUsd ?? 0);
   if (usage.inputTokens !== undefined) incr("gittensory_ai_input_tokens_total", { ...labels, kind: "review" }, usage.inputTokens);

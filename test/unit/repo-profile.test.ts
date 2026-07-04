@@ -234,22 +234,54 @@ describe("extractRepoProfile (#2999)", () => {
     expect(profile.commands.testCommands).toEqual([]);
   });
 
-  it("reflects gatePublishesCheck true via checkRunMode even when gateCheckMode is off", async () => {
+  it("treats an array-valued scripts field as malformed rather than walking its indices", async () => {
     const env = createTestEnv({});
     await seedChunk(env, "src/widget.ts", "x");
-    await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "off", checkRunMode: "enabled" });
+    await seedChunk(env, "package.json", JSON.stringify({ scripts: ["test", "build"] }));
+    const profile = await extractRepoProfile(env, REPO);
+    if (!profile.present) throw new Error("expected present profile");
+    expect(profile.commands).toEqual({ packageManager: null, buildCommands: [], testCommands: [], lintCommands: [] });
+  });
+
+  it("reflects gatePublishesCheck true when reviewCheckMode is required, regardless of legacy checkRunMode", async () => {
+    const env = createTestEnv({});
+    await seedChunk(env, "src/widget.ts", "x");
+    await upsertRepositorySettings(env, {
+      repoFullName: REPO,
+      gateCheckMode: "off",
+      checkRunMode: "off",
+      reviewCheckMode: "required",
+    });
     const profile = await extractRepoProfile(env, REPO);
     if (!profile.present) throw new Error("expected present profile");
     expect(profile.contributionWorkflow.gatePublishesCheck).toBe(true);
   });
 
-  it("reflects gatePublishesCheck false when both gateCheckMode and checkRunMode are off", async () => {
+  it("reflects gatePublishesCheck false when reviewCheckMode is disabled (#3039 regression)", async () => {
     const env = createTestEnv({});
     await seedChunk(env, "src/widget.ts", "x");
-    await upsertRepositorySettings(env, { repoFullName: REPO, gateCheckMode: "off", checkRunMode: "off" });
+    // Legacy checkRunMode says "enabled", but reviewCheckMode -- the actual runtime authority for check
+    // publication (#2852) -- says "disabled". gatePublishesCheck must follow reviewCheckMode, not the
+    // legacy back-compat-only field, or a repo that disabled the check via .gittensory.yml's
+    // gate.checkMode still gets reported as publishing one.
+    await upsertRepositorySettings(env, {
+      repoFullName: REPO,
+      gateCheckMode: "enabled",
+      checkRunMode: "enabled",
+      reviewCheckMode: "disabled",
+    });
     const profile = await extractRepoProfile(env, REPO);
     if (!profile.present) throw new Error("expected present profile");
     expect(profile.contributionWorkflow.gatePublishesCheck).toBe(false);
+  });
+
+  it("reflects gatePublishesCheck true when reviewCheckMode is visible", async () => {
+    const env = createTestEnv({});
+    await seedChunk(env, "src/widget.ts", "x");
+    await upsertRepositorySettings(env, { repoFullName: REPO, reviewCheckMode: "visible" });
+    const profile = await extractRepoProfile(env, REPO);
+    if (!profile.present) throw new Error("expected present profile");
+    expect(profile.contributionWorkflow.gatePublishesCheck).toBe(true);
   });
 
   it("defaults linkedIssuePolicy to optional when the repo has no manifest", async () => {

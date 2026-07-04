@@ -55,8 +55,10 @@ export type RepoProfileCommands = {
 };
 
 export type RepoProfileContributionWorkflow = {
-  /** Whether the review gate publishes a check at all (settings.gateCheckMode / checkRunMode), reusing the
-   *  EXISTING settings resolver rather than re-deriving gate presence from raw repo files. */
+  /** Whether the review gate publishes a check at all, derived from `settings.reviewCheckMode` -- the actual
+   *  runtime authority for check publication (#2852); `gateCheckMode`/`checkRunMode` are legacy fields kept
+   *  only for API/back-compat display and no longer drive this decision. Reuses the EXISTING settings
+   *  resolver rather than re-deriving gate presence from raw repo files. */
   gatePublishesCheck: boolean;
   linkedIssuePolicy: "required" | "preferred" | "optional";
   requireLinkedIssue: boolean;
@@ -206,7 +208,10 @@ function deriveCommandsFromPackageJson(packageJsonText: string | null): RepoProf
   const packageManagerField = typeof record.packageManager === "string" ? record.packageManager : null;
   const packageManagerMatch = packageManagerField ? /^(npm|yarn|pnpm|bun)@/.exec(packageManagerField) : null;
   const packageManager = (packageManagerMatch?.[1] as RepoProfilePackageManager | undefined) ?? null;
-  const scripts = record.scripts && typeof record.scripts === "object" ? (record.scripts as Record<string, unknown>) : {};
+  const scripts =
+    record.scripts && typeof record.scripts === "object" && !Array.isArray(record.scripts)
+      ? (record.scripts as Record<string, unknown>)
+      : {};
   const buildCommands: string[] = [];
   const testCommands: string[] = [];
   const lintCommands: string[] = [];
@@ -263,7 +268,7 @@ export async function extractRepoProfile(env: Env, repoFullName: string, options
     conventions: deriveConventions(paths),
     commands: deriveCommandsFromPackageJson(packageJsonText),
     contributionWorkflow: {
-      gatePublishesCheck: settings.gateCheckMode === "enabled" || settings.checkRunMode === "enabled",
+      gatePublishesCheck: settings.reviewCheckMode !== "disabled",
       linkedIssuePolicy: manifest.linkedIssuePolicy,
       requireLinkedIssue: settings.requireLinkedIssue,
       ciWorkflowFiles: deriveCiWorkflowFiles(paths),

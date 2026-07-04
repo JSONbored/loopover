@@ -112,6 +112,24 @@ describe("fetchCandidateIssues (#2307)", () => {
     expect(calls[0]).toContain("/repos/acme/banned/contents/AI-USAGE.md");
   });
 
+  it("does not let a blank AI-USAGE.md swallow an AI ban in CONTRIBUTING.md", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/contents/AI-USAGE.md")) return contentResponse("   "); // exists but blank/whitespace
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("No AI-generated pull requests.");
+      if (url.includes("/issues?")) return jsonResponse([issue(7)]);
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await fetchCandidateIssues([{ owner: "acme", repo: "banned" }], "", { apiBaseUrl: API });
+
+    // The ban in CONTRIBUTING.md must win, and it must actually be consulted (not skipped by the blank AI-USAGE.md).
+    expect(result).toEqual([]);
+    expect(calls.some((url) => url.endsWith("/contents/CONTRIBUTING.md"))).toBe(true);
+  });
+
   it("fans out allowed repos while banned repos contribute no issue calls", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

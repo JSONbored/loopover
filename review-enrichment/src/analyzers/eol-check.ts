@@ -88,7 +88,8 @@ export function extractVersionPins(
           if (product && version)
             pins.push({ file: file.path, product, version });
         }
-      } else if (base === ".nvmrc") {
+      } else if (base === ".nvmrc" || base === ".node-version") {
+        // `.node-version` (nodenv/asdf) carries the same leading-version pin as `.nvmrc`.
         const version = leadingVersion(line);
         if (version) pins.push({ file: file.path, product: "nodejs", version });
       } else if (base === "go.mod") {

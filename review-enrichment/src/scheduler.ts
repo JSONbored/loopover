@@ -404,5 +404,11 @@ function isRuntimePinPath(path: string): boolean {
   // Share the eol analyzer's own Dockerfile predicate so the gate can't skip a file the analyzer would
   // parse. The prior bespoke `/^Dockerfile(?:\..*)?$/` missed `*.dockerfile` (e.g. web.dockerfile), silently
   // dropping eol analysis for it even though isDockerfile() handles it.
-  return isDockerfile(path) || basename === ".nvmrc" || basename === "go.mod";
+  // `.node-version` is the nodenv/asdf pin file; the eol analyzer parses it like `.nvmrc`.
+  return (
+    isDockerfile(path) ||
+    basename === ".nvmrc" ||
+    basename === ".node-version" ||
+    basename === "go.mod"
+  );
 }

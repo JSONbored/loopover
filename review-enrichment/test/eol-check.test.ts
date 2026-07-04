@@ -44,6 +44,13 @@ test("extractVersionPins reads .nvmrc and go.mod pins", () => {
   ]);
 });
 
+test("extractVersionPins reads .node-version pins like .nvmrc", () => {
+  // nodenv/asdf use `.node-version` with the same leading-version format as `.nvmrc`.
+  assert.deepEqual(extractVersionPins([added(".node-version", "20.11.0")]), [
+    { file: ".node-version", product: "nodejs", version: "20.11.0" },
+  ]);
+});
+
 test("extractVersionPins ignores removed/context lines and files with no patch", () => {
   const patch = ["@@ -1 +1,2 @@", "-FROM python:3.7", " FROM python:3.9"].join(
     "\n",

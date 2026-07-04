@@ -26,6 +26,7 @@ import { scanSecretLog } from "./secret-log.js";
 import { scanStaleBranch } from "./stale-branch.js";
 import { scanTestRatio } from "./test-ratio.js";
 import { scanMigrationSafety } from "./migration-safety.js";
+import { scanLooseRanges } from "./loose-range.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -750,6 +751,47 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanMigrationSafety(req, signal),
+  }),
+  descriptor({
+    name: "looseRange",
+    title: "Loose dependency version range",
+    category: "supply-chain",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 20, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added npm dependency specifiers that use dangerously loose ranges instead of a pinned/caret/tilde range.",
+      looksAt: "Added specifier lines in package.json patches.",
+      reports: "Manifest file, line, package, raw specifier, and loose-range kind.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "wildcard":
+            return "a wildcard range accepts ANY published version, including a compromised one";
+          case "latest":
+            return "the `latest` dist-tag floats to whatever is published next; installs are not reproducible";
+          case "unbounded-gte":
+            return "an unbounded `>=` range accepts every future major version, breaking changes included";
+          case "bare":
+            return "a bare-major range floats across every future minor/patch of the major line";
+        }
+      };
+      const lines = ["### Loose dependency version ranges (supply-chain drift risk)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.package}@"${item.range}"`)} (${helpers.safeCodeSpan(`${item.file}:${item.line}`)}) — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanLooseRanges(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

@@ -34,6 +34,7 @@ export const REES_ANALYZER_NAMES = [
   "pendingReviewRequests",
   "testRatio",
   "migrationSafety",
+  "looseRange",
 ] as const;
 
 export type ReesAnalyzerName = (typeof REES_ANALYZER_NAMES)[number];

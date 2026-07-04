@@ -773,6 +773,28 @@ export const REES_ANALYZERS = [
         "Detection is line-anchored single-statement shapes only; statements split across lines are skipped rather than tracked with cross-line state.",
     },
   },
+  {
+    name: "looseRange",
+    title: "Loose dependency version range",
+    category: "supply-chain",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 20,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags newly-added npm dependency specifiers that use dangerously loose ranges instead of a pinned/caret/tilde range.",
+      looksAt: "Added specifier lines in package.json patches.",
+      reports: "Manifest file, line, package, raw specifier, and loose-range kind.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

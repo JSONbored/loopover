@@ -71,25 +71,16 @@ export function nextForegroundLane(
 export type BacklogRepoCandidate = { repo: string; oldestPendingAgeMs: number };
 
 /**
- * Per-repo round-robin for the backlog lane: pick the repo whose oldest pending backlog job is stalest,
- * EXCEPT when that repo was also the last one served — in that case, rotate to the next-stalest so a single
- * repo with a deep backlog cannot monopolize every backlog-lane claim and starve every other repo's backlog.
- * A `lastClaimedRepo` no longer present in `candidates` (its backlog fully drained since) falls back to the
- * stalest overall, same as a first-ever pick. Pure.
+ * Per-repo round-robin for the backlog lane: sort repos by their oldest pending backlog job, then pick the
+ * successor of the last served repo in that deterministic order. The first-ever pick, or a drained
+ * `lastClaimedRepo` no longer present in `candidates`, starts at the stalest repo. Pure.
  */
 export function pickBacklogRepo(candidates: readonly BacklogRepoCandidate[], lastClaimedRepo: string | null): string | null {
   if (candidates.length === 0) return null;
   const sorted = [...candidates].sort((a, b) => b.oldestPendingAgeMs - a.oldestPendingAgeMs || a.repo.localeCompare(b.repo));
-  // sorted.length is provably >0 past the early return above, so every index below is in bounds.
-  const stalest = sorted[0] as BacklogRepoCandidate;
-  // Serve the stalest repo, EXCEPT when it is the one served last cycle — only then rotate to the
-  // next-stalest, so a single deep-backlog repo cannot monopolize the lane. When `lastClaimedRepo` is null,
-  // has since drained, or is simply some OTHER (less-stale) repo, the stalest was NOT just served, so it is
-  // served now — anything else would skip past the oldest backlog the lane exists to drain. (A positional
-  // "successor of the last-claimed repo" rotation would instead skip the stalest whenever the last-claimed
-  // repo sat at a middle rank, starving the very repo this mechanism is meant to protect.)
-  if (stalest.repo !== lastClaimedRepo) return stalest.repo;
-  return (sorted[1] ?? stalest).repo;
+  const lastIndex = lastClaimedRepo === null ? -1 : sorted.findIndex((candidate) => candidate.repo === lastClaimedRepo);
+  const next = sorted[(lastIndex + 1) % sorted.length] as BacklogRepoCandidate;
+  return next.repo;
 }
 
 // Exported so the queue backends' own topBacklogRepos SQL (COUNT/GROUP BY/ORDER BY/LIMIT pushed into the

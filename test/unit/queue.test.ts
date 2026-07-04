@@ -5507,11 +5507,13 @@ describe("queue processors", () => {
   // three mutating PR paths can race any other (review round 4) — a single namespace, not one lock per path.
   it("claimPrActuationLock claims when free, denies when held (per-PR), and release frees it again (#2135)", async () => {
     const env = createTestEnv({});
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(false);
-    expect(await claimPrActuationLock(env, "owner/act-repo", 8)).toBe(true);
-    await releasePrActuationLock(env, "owner/act-repo", 7);
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    const first = await claimPrActuationLock(env, "owner/act-repo", 7);
+    expect(typeof first).toBe("string");
+    expect(first).not.toBe("");
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBeNull();
+    expect(await claimPrActuationLock(env, "owner/act-repo", 8)).not.toBeNull();
+    await releasePrActuationLock(env, "owner/act-repo", 7, first);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).not.toBeNull();
   });
 
   it("claimPrActuationLock fails OPEN on a broken transient cache — never itself blocks actuation (#2135)", async () => {
@@ -5522,8 +5524,8 @@ describe("queue processors", () => {
         del: async () => { throw new Error("cache delete error"); },
       },
     });
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
-    await expect(releasePrActuationLock(env, "owner/act-repo", 7)).resolves.toBeUndefined();
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe("");
+    await expect(releasePrActuationLock(env, "owner/act-repo", 7, "")).resolves.toBeUndefined();
   });
 
   it("claimPrActuationLock fails OPEN when the atomic claim primitive itself throws (#2135)", async () => {
@@ -5534,7 +5536,7 @@ describe("queue processors", () => {
         claim: async () => { throw new Error("redis unavailable"); },
       },
     });
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe("");
   });
 
   it("REGRESSION (#2135): claimPrActuationLock uses an atomic check-and-set, so two genuinely concurrent claims for the SAME PR can never both succeed", async () => {
@@ -5543,7 +5545,57 @@ describe("queue processors", () => {
       claimPrActuationLock(env, "owner/act-repo", 7),
       claimPrActuationLock(env, "owner/act-repo", 7),
     ]);
-    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect([first, second].filter((token) => token !== null && token !== "")).toHaveLength(1);
+  });
+
+  it("REGRESSION: a stale holder's releaseIfValue does not delete a later claimer's live lock", async () => {
+    const env = createTestEnv({});
+    const staleToken = await claimPrActuationLock(env, "owner/act-repo", 7);
+    expect(staleToken).not.toBeNull();
+    expect(staleToken).not.toBe("");
+    const liveToken = await claimPrActuationLock(env, "owner/act-repo", 7);
+    expect(liveToken).toBeNull();
+    await env.SELFHOST_TRANSIENT_CACHE?.set?.("pr-actuation-lock:owner/act-repo#7", "later-holder-token", 60);
+    await releasePrActuationLock(env, "owner/act-repo", 7, staleToken);
+    expect(await env.SELFHOST_TRANSIENT_CACHE?.get("pr-actuation-lock:owner/act-repo#7")).toBe("later-holder-token");
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBeNull();
+    await releasePrActuationLock(env, "owner/act-repo", 7, "later-holder-token");
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).not.toBeNull();
+  });
+
+  it("releasePrActuationLock leaves the key in place when the cache has claim() but no releaseIfValue()", async () => {
+    const values = new Map<string, string>();
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async (key: string) => values.get(key) ?? null,
+        set: async (key: string, value: string) => { values.set(key, value); },
+        claim: async (key: string, value: string) => {
+          if (values.has(key)) return false;
+          values.set(key, value);
+          return true;
+        },
+      },
+    });
+    const token = await claimPrActuationLock(env, "owner/act-repo", 7);
+    expect(token).not.toBe("");
+    await releasePrActuationLock(env, "owner/act-repo", 7, token);
+    expect(values.get("pr-actuation-lock:owner/act-repo#7")).toBe(token);
+  });
+
+  it("releasePrActuationLock swallows releaseIfValue errors (best-effort)", async () => {
+    const env = createTestEnv({
+      SELFHOST_TRANSIENT_CACHE: {
+        get: async () => "holder",
+        set: async () => undefined,
+        claim: async (_key: string, value: string) => {
+          return value.length > 0;
+        },
+        releaseIfValue: async () => {
+          throw new Error("redis down");
+        },
+      },
+    });
+    await expect(releasePrActuationLock(env, "owner/act-repo", 7, "holder")).resolves.toBeUndefined();
   });
 
   it("REGRESSION (#2135): claimPrActuationLock calls the atomic claim primitive, not a separate get+set pair, when the cache supports it", async () => {
@@ -5555,11 +5607,11 @@ describe("queue processors", () => {
         claim: async () => { calls.push("claim"); return true; },
       },
     });
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).not.toBeNull();
     expect(calls).toEqual(["claim"]); // never falls through to the racy get/set pair when claim is available
   });
 
-  it("claimPrActuationLock returns true unconditionally when the cache has no claim() — no false exclusivity guarantee (#2135, review round 2)", async () => {
+  it("claimPrActuationLock returns empty string unconditionally when the cache has no claim() — no false exclusivity guarantee (#2135, review round 2)", async () => {
     // A get-then-set pair (even with a re-read) is not a real exclusivity guarantee under concurrent load, so a
     // cache without claim() now gets NO exclusivity at all rather than a fallback that only looks atomic.
     const values = new Map<string, string>();
@@ -5569,8 +5621,8 @@ describe("queue processors", () => {
         set: async (key: string, value: string) => { values.set(key, value); },
       },
     });
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
-    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe(true);
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe("");
+    expect(await claimPrActuationLock(env, "owner/act-repo", 7)).toBe("");
   });
 
   it("REGRESSION (#2135, review round 2): claimPrActuationLock does not falsely claim exclusivity for two genuinely concurrent callers when the cache has no claim()", async () => {
@@ -5586,7 +5638,7 @@ describe("queue processors", () => {
       claimPrActuationLock(env, "owner/act-repo", 7),
       claimPrActuationLock(env, "owner/act-repo", 7),
     ]);
-    expect([first, second]).toEqual([true, true]);
+    expect([first, second]).toEqual(["", ""]);
   });
 
   it("INVARIANT (#2129 per-PR lock): a maintenance pass defers when another pass already holds the PR's lock", async () => {

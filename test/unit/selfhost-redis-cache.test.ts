@@ -21,6 +21,13 @@ function fakeRedis(): Redis & { _store: Map<string, string> } {
       _store.delete(k);
       return 1;
     },
+    async eval(_script: string, _numKeys: number, key: string, value: string) {
+      if (_store.get(key) === value) {
+        _store.delete(key);
+        return 1;
+      }
+      return 0;
+    },
   } as unknown as Redis & { _store: Map<string, string> };
 }
 
@@ -62,5 +69,19 @@ describe("createRedisCache (#1216 webhook dedup cache)", () => {
     const brokenRedis = { async set() { throw new Error("connection refused"); } } as unknown as Redis;
     const cache = createRedisCache(brokenRedis);
     await expect(cache.claim("lock", "1", 60)).rejects.toThrow("connection refused");
+  });
+
+  it("releaseIfValue deletes only when the stored owner matches (#2129)", async () => {
+    const cache = createRedisCache(fakeRedis());
+    await cache.set("lock", "holder-A", 60);
+    expect(await cache.releaseIfValue("lock", "holder-A")).toBe(true);
+    expect(await cache.get("lock")).toBeNull();
+  });
+
+  it("releaseIfValue refuses when a different owner holds the key (#2129)", async () => {
+    const cache = createRedisCache(fakeRedis());
+    await cache.set("lock", "holder-B", 60);
+    expect(await cache.releaseIfValue("lock", "holder-A")).toBe(false);
+    expect(await cache.get("lock")).toBe("holder-B");
   });
 });

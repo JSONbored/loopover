@@ -117,6 +117,11 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
         transientCache.set(key, value);
         return true;
       },
+      async releaseIfValue(key: string, value: string) {
+        if (transientCache.get(key) !== value) return false;
+        transientCache.delete(key);
+        return true;
+      },
     },
     // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
     // gated review features. Override to "" to assert the dormant (no-repo) default.

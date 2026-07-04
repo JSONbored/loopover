@@ -23,6 +23,17 @@ export function createRedisCache(redis: Redis) {
       const result = await redis.set(key, value, "EX", ttlSeconds, "NX");
       return result === "OK";
     },
+    async releaseIfValue(key: string, value: string): Promise<boolean> {
+      const script = `
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+          return redis.call("del", KEYS[1])
+        else
+          return 0
+        end
+      `;
+      const result = await redis.eval(script, 1, key, value);
+      return Number(result) === 1;
+    },
   };
 }
 

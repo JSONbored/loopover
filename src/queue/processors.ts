@@ -2143,7 +2143,8 @@ async function maybeRunAgentMaintenance(
   // critical section (extracted below so the try/finally doesn't force-reindent that whole block); a pass that
   // loses the race defers cleanly — the next webhook/sweep tick is the backstop. Lightweight stand-in for the
   // per-PR SubmissionLock Durable Object noted as a longer-term TODO in env.d.ts.
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) return;
+  const lockToken = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (lockToken === null) return;
   try {
     await runAgentMaintenancePlanAndExecute(env, {
       installationId,
@@ -2157,7 +2158,7 @@ async function maybeRunAgentMaintenance(
       liveFacts: args.liveFacts,
     });
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number);
+    await releasePrActuationLock(env, repoFullName, pr.number, lockToken);
   }
 }
 
@@ -3094,32 +3095,31 @@ async function putTransientKey(
 // could still race — the whole point of this mutex is to make "does something else already own this PR" one
 // question with one answer, not one question per code path (review round 4). This is a lightweight interim
 // mutex (a full per-PR Durable Object / SubmissionLock is a separate, more-involved follow-up — see the TODO in
-// env.d.ts) built on the SAME transient cache used for CI-completion coalescing above, claimed ATOMICALLY (see
-// claimTransientLock) so two racing deliveries can never both win the claim — a short TTL, best-effort release.
-// A lock-contended caller fails OPEN (returns false / skips this pass) rather than blocking — the delivery
-// holding the lock is evaluating the SAME PR, and the periodic sweep is the backstop if this specific trigger is
-// dropped. A cache adapter with no claim() primitive gets NO exclusivity at all (every call proceeds) rather
-// than a get-then-set pair that only *looks* atomic — see claimTransientLock's doc comment for why that fallback
-// was removed.
+// env.d.ts) built on the SAME transient cache used for CI-completion coalescing above, claimed ATOMICALLY with a
+// per-holder token (see claimTransientLockWithOwnerToken) so two racing deliveries can never both win the claim —
+// a short TTL, owner-verified release. A lock-contended caller skips this pass (returns null) rather than
+// blocking — the delivery holding the lock is evaluating the SAME PR, and the periodic sweep is the backstop if
+// this specific trigger is dropped. A cache adapter with no claim() primitive gets NO exclusivity at all (every
+// call proceeds as fail-open) rather than a get-then-set pair that only *looks* atomic — see claimTransientLock's
+// doc comment for why that fallback was removed.
 //
-// KNOWN LIMITATION: the lock value is a constant, not a per-holder ownership token, so release does not verify
-// it still owns the key — if a holder ran past the TTL, a later claimer's live lock could be deleted by the
-// first holder's stale `finally` release, reopening the exact race this mutex exists to close. A per-holder
-// token + a conditional (check-then-delete) release would close this properly, but needs a new atomic
-// compare-and-delete primitive on the cache adapter — tracked alongside the Durable Object follow-up above. The
-// TTL is set generously long specifically so this window is practically unreachable: the guarded operations
-// (a handful of sequential GitHub API calls, or a maintenance pass's plan-and-execute) should never legitimately
-// run anywhere near this long.
+// Per-PR mutual exclusion (#2129/#2135): maybeRunAgentMaintenance, maybeCloseDraftDodgeAttempt, and
+// maybeRecloseDisallowedReopen all claim/release the SAME key so none of the three mutating PR paths can race
+// any other (review round 4) — a single namespace, not one lock per path. Each claim stores a per-holder
+// ownership token; release is compare-and-delete so a holder that ran past the TTL cannot delete a later
+// claimer's live lock in its stale `finally` block.
 const PR_ACTUATION_LOCK_TTL_SECONDS = 600;
 function prActuationLockKey(repoFullName: string, prNumber: number): string {
   return `pr-actuation-lock:${repoFullName.toLowerCase()}#${prNumber}`;
 }
+/** Non-empty string = claimed (release with this token). Empty string = fail-open (no lock held). Null = contended. */
+export type PrActuationLockClaim = string | null;
 export async function claimPrActuationLock(
   env: Env,
   repoFullName: string,
   prNumber: number,
-): Promise<boolean> {
-  return claimTransientLock(
+): Promise<PrActuationLockClaim> {
+  return claimTransientLockWithOwnerToken(
     env,
     prActuationLockKey(repoFullName, prNumber),
     PR_ACTUATION_LOCK_TTL_SECONDS,
@@ -3129,12 +3129,9 @@ export async function releasePrActuationLock(
   env: Env,
   repoFullName: string,
   prNumber: number,
+  token: PrActuationLockClaim,
 ): Promise<void> {
-  try {
-    await env.SELFHOST_TRANSIENT_CACHE?.del?.(prActuationLockKey(repoFullName, prNumber));
-  } catch {
-    // best-effort
-  }
+  await releaseTransientLockIfOwner(env, prActuationLockKey(repoFullName, prNumber), token);
 }
 
 // A plain thrown Error still reaches the queue's retry path (this call site is deliberately uncaught, same as
@@ -3478,6 +3475,35 @@ async function claimTransientLock(
     return await env.SELFHOST_TRANSIENT_CACHE.claim(key, "1", ttlSeconds);
   } catch {
     return true; // fail open — see the doc comment above.
+  }
+}
+
+/** Like {@link claimTransientLock}, but stores a per-holder ownership token for compare-and-delete release. */
+async function claimTransientLockWithOwnerToken(
+  env: Env,
+  key: string,
+  ttlSeconds: number,
+): Promise<PrActuationLockClaim> {
+  if (!env.SELFHOST_TRANSIENT_CACHE?.claim) return ""; // fail-open — no lock to release.
+  try {
+    const token = crypto.randomUUID();
+    return (await env.SELFHOST_TRANSIENT_CACHE.claim(key, token, ttlSeconds)) ? token : null;
+  } catch {
+    return ""; // fail open — see claimTransientLock's doc comment above.
+  }
+}
+
+/** Best-effort owner-verified release. Empty token = fail-open claim, no-op. Without releaseIfValue, leave the
+ *  key to expire via TTL rather than risk deleting a later claimer's live lock. */
+async function releaseTransientLockIfOwner(env: Env, key: string, token: PrActuationLockClaim): Promise<void> {
+  if (!token) return;
+  try {
+    if (env.SELFHOST_TRANSIENT_CACHE?.releaseIfValue) {
+      await env.SELFHOST_TRANSIENT_CACHE.releaseIfValue(key, token);
+      return;
+    }
+  } catch {
+    // best-effort
   }
 }
 
@@ -9624,7 +9650,8 @@ async function maybeCloseDraftDodgeAttempt(
   pr: PullRequestRecord,
   settings: RepositorySettings,
 ): Promise<void> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) {
+  const lockToken = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (lockToken === null) {
     throw new PrActuationLockContendedError(repoFullName, pr.number, "draft-dodge");
   }
   try {
@@ -9637,7 +9664,7 @@ async function maybeCloseDraftDodgeAttempt(
       settings,
     );
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number);
+    await releasePrActuationLock(env, repoFullName, pr.number, lockToken);
   }
 }
 
@@ -9830,7 +9857,8 @@ async function maybeRecloseDisallowedReopen(
   pr: PullRequestRecord,
   payload: GitHubWebhookPayload,
 ): Promise<ReopenRecloseOutcome> {
-  if (!(await claimPrActuationLock(env, repoFullName, pr.number))) {
+  const lockToken = await claimPrActuationLock(env, repoFullName, pr.number);
+  if (lockToken === null) {
     throw new PrActuationLockContendedError(repoFullName, pr.number, "reopen-reclose");
   }
   try {
@@ -9844,7 +9872,7 @@ async function maybeRecloseDisallowedReopen(
     );
     return reclosed ? "reclosed" : "allowed";
   } finally {
-    await releasePrActuationLock(env, repoFullName, pr.number);
+    await releasePrActuationLock(env, repoFullName, pr.number, lockToken);
   }
 }
 

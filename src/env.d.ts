@@ -34,6 +34,10 @@ declare global {
        *  check-and-set as one operation. Optional so a cache adapter that hasn't implemented it yet still
        *  type-checks; callers fall back to the non-atomic get/set pair when absent (#2129). */
       claim?(key: string, value: string, ttlSeconds: number): Promise<boolean>;
+      /** Atomic "delete only if value matches": returns true when this call removed the key, false when the
+       *  key was absent or held by a different owner. Used by per-holder transient locks so a stale holder's
+       *  finally release cannot delete a later claimer's live lock after TTL expiry (#2129). */
+      releaseIfValue?(key: string, value: string): Promise<boolean>;
     };
     /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
      *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.

@@ -221,7 +221,19 @@ export interface IacMisconfigFinding {
     | "insecure-cookie"
     | "tls-verification-disabled"
     | "prod-debug"
-    | "hardcoded-service-url";
+    | "hardcoded-service-url"
+    | "privileged-container"
+    | "privilege-escalation"
+    | "host-pid-namespace"
+    | "host-ipc-namespace"
+    | "run-as-root"
+    | "run-as-root-uid"
+    | "writable-root-filesystem"
+    | "unmasked-proc-mount"
+    | "unencrypted-storage"
+    | "publicly-accessible-database"
+    | "imdsv1-allowed"
+    | "world-writable-permissions";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel

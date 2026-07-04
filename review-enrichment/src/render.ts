@@ -281,6 +281,30 @@ export function renderBrief(
           return "enables debug mode in production configuration; this can expose internals or sensitive data";
         case "hardcoded-service-url":
           return "hardcodes a service URL in config; prefer environment-specific injection or secrets-managed config";
+        case "privileged-container":
+          return "runs the container in privileged mode, granting near-unrestricted host device and kernel access";
+        case "privilege-escalation":
+          return "sets `allowPrivilegeEscalation: true`; the process can gain more privileges than its parent";
+        case "host-pid-namespace":
+          return "shares the host PID namespace; the container can see and signal processes on the host";
+        case "host-ipc-namespace":
+          return "shares the host IPC namespace; the container can reach host shared-memory segments";
+        case "run-as-root":
+          return "sets `runAsNonRoot: false`, permitting the container to run as the root user";
+        case "run-as-root-uid":
+          return "runs the container as UID 0 (root); prefer a dedicated non-root user";
+        case "writable-root-filesystem":
+          return "sets `readOnlyRootFilesystem: false`; a writable root filesystem eases tampering and persistence";
+        case "unmasked-proc-mount":
+          return "sets `procMount: Unmasked`, exposing masked `/proc` paths to the container";
+        case "unencrypted-storage":
+          return "disables storage encryption at rest; verify the stored data does not require encryption";
+        case "publicly-accessible-database":
+          return "marks the database instance as publicly accessible from the internet";
+        case "imdsv1-allowed":
+          return "allows IMDSv1 (`http_tokens: optional`); prefer IMDSv2 to mitigate SSRF credential theft";
+        case "world-writable-permissions":
+          return "grants world-writable `0777` permissions; restrict to the least access the workload needs";
       }
     };
 

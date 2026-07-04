@@ -171,3 +171,65 @@ test("scanPatchForIacMisconfig keeps line numbers correct across a no-newline ma
     { file: ".env.production", line: 2, kind: "tls-verification-disabled" },
   ]);
 });
+
+test("scanPatchForIacMisconfig flags container securityContext and cloud hardening misconfigurations", () => {
+  // Each added line is the insecure form of a recognized check (Kubernetes Pod Security Standards
+  // restricted profile + tfsec/checkov cloud rules) and must produce exactly one finding of its own kind.
+  const cases = [
+    ["+      privileged: true", "privileged-container"],
+    ["+      allowPrivilegeEscalation: true", "privilege-escalation"],
+    ["+      hostPID: true", "host-pid-namespace"],
+    ["+      hostIPC: true", "host-ipc-namespace"],
+    ["+      runAsNonRoot: false", "run-as-root"],
+    ["+      runAsUser: 0", "run-as-root-uid"],
+    ["+      readOnlyRootFilesystem: false", "writable-root-filesystem"],
+    ["+      procMount: Unmasked", "unmasked-proc-mount"],
+    ["+  storage_encrypted = false", "unencrypted-storage"],
+    ["+  publicly_accessible = true", "publicly-accessible-database"],
+    ['+    http_tokens = "optional"', "imdsv1-allowed"],
+    ["+RUN chmod 777 /app/entrypoint.sh", "world-writable-permissions"],
+  ];
+  for (const [added, kind] of cases) {
+    const findings = scanPatchForIacMisconfig(
+      "deploy/app.yaml",
+      ["@@ -1,0 +1,1 @@", added].join("\n"),
+    );
+    assert.deepEqual(
+      findings,
+      [{ file: "deploy/app.yaml", line: 1, kind }],
+      `${kind}: expected exactly one finding of that kind, got ${JSON.stringify(findings)}`,
+    );
+  }
+});
+
+test("scanPatchForIacMisconfig does not flag the secure counterpart of each container/cloud setting", () => {
+  // The safe value of every new rule, plus three deliberate near-misses: `unprivileged: true` (word boundary
+  // must not fire the `privileged` rule), `runAsUser: 1000` (a non-root uid must not match the `runAsUser: 0`
+  // rule), and `chmod 1777` (a sticky-bit dir must not match the world-writable `0777` rule).
+  const safe = [
+    "+      privileged: false",
+    "+      unprivileged: true",
+    "+      allowPrivilegeEscalation: false",
+    "+      hostPID: false",
+    "+      hostIPC: false",
+    "+      runAsNonRoot: true",
+    "+      runAsUser: 1000",
+    "+      readOnlyRootFilesystem: true",
+    "+      procMount: Default",
+    "+  storage_encrypted = true",
+    "+  publicly_accessible = false",
+    '+    http_tokens = "required"',
+    "+RUN chmod 750 /app/entrypoint.sh",
+    "+RUN chmod 1777 /tmp/scratch",
+  ];
+  for (const added of safe) {
+    assert.deepEqual(
+      scanPatchForIacMisconfig(
+        "deploy/app.yaml",
+        ["@@ -1,0 +1,1 @@", added].join("\n"),
+      ),
+      [],
+      `should not flag: ${added.trim()}`,
+    );
+  }
+});

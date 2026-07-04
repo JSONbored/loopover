@@ -37,6 +37,7 @@ const EXPECTED_ANALYZERS = [
   "undocumentedExport",
   "staleBranch",
   "commitHygiene",
+  "pendingReviewRequests",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

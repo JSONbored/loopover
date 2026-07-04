@@ -364,6 +364,14 @@ export type CommitHygieneFinding =
   | { shaPrefix: string; kind: "fixup-commit-present"; subject: string }
   | { shaPrefix: string; kind: "unattributed-co-author"; coAuthor: string };
 
+/** A reviewer or team (`team:slug`) whose most recent `review_requested` event is still pending (no review
+ *  submitted) 48+ hours later, read from structured GitHub fields only (the requested-reviewers list and the
+ *  issue-timeline's `review_requested` events) — never diff/file content. */
+export interface PendingReviewRequestFinding {
+  reviewer: string;
+  hoursPending: number;
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -393,6 +401,7 @@ export interface BriefFindings {
   undocumentedExport?: UndocumentedExportFinding[];
   staleBranch?: StaleBranchFinding[];
   commitHygiene?: CommitHygieneFinding[];
+  pendingReviewRequests?: PendingReviewRequestFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

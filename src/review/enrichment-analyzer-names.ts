@@ -31,6 +31,7 @@ export const REES_ANALYZER_NAMES = [
   "undocumentedExport",
   "staleBranch",
   "commitHygiene",
+  "pendingReviewRequests",
 ] as const;
 
 export type ReesAnalyzerName = (typeof REES_ANALYZER_NAMES)[number];

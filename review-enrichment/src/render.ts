@@ -418,6 +418,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("undocumentedExport", findings.undocumentedExport));
   lines.push(...renderDescriptorSection("staleBranch", findings.staleBranch));
   lines.push(...renderDescriptorSection("commitHygiene", findings.commitHygiene));
+  lines.push(...renderDescriptorSection("pendingReviewRequests", findings.pendingReviewRequests));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

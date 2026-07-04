@@ -703,6 +703,30 @@ export const REES_ANALYZERS = [
         "Structured-fields-only: reads commit.message and parents, matched one line at a time, never cross-line state. Fail-safe on missing token/fetch error.",
     },
   },
+  {
+    name: "pendingReviewRequests",
+    title: "Pending review-request staleness",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["github-token"],
+    limits: {
+      staleThresholdHours: 48,
+      maxTimelinePages: 5,
+    },
+    docs: {
+      summary:
+        "Flags a reviewer or team whose review request has been outstanding 48+ hours with no response yet.",
+      looksAt:
+        "The PR's currently pending requested reviewers/teams, matched against the issue timeline's review_requested events (bounded, page-confirmed complete).",
+      reports: "The reviewer login (or team:slug) and hours pending — never review content.",
+      network:
+        "Calls the GitHub requested-reviewers API once and the issue-timeline API, paginated and bounded to a fixed page cap.",
+      notes:
+        "Structured-fields-only: reads user.login/team.slug/event/created_at, never diff or comment text. Fail-safe on missing token/fetch error/an unconfirmed-complete timeline.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

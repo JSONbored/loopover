@@ -18,6 +18,7 @@ import { scanInstallScripts } from "./install-scripts.js";
 import { scanLicenses } from "./license-check.js";
 import { scanLockfileDrift } from "./lockfile-drift.js";
 import { scanNativeBuild } from "./native-build.js";
+import { scanPendingReviewRequests } from "./pending-review-requests.js";
 import { scanProvenance } from "./provenance.js";
 import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
@@ -650,6 +651,34 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanCommitHygiene(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "pendingReviewRequests",
+    title: "Pending review-request staleness",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["github-token"],
+    limits: { staleThresholdHours: 48, maxTimelinePages: 5 },
+    docs: {
+      summary:
+        "Flags a reviewer or team whose review request has been outstanding 48+ hours with no response yet.",
+      looksAt: "The PR's currently pending requested reviewers/teams, matched against the issue timeline's review_requested events (bounded, page-confirmed complete).",
+      reports: "The reviewer login (or team:slug) and hours pending — never review content.",
+      network: "Calls the GitHub requested-reviewers API once and the issue-timeline API, paginated and bounded to a fixed page cap.",
+      notes:
+        "Structured-fields-only: reads user.login/team.slug/event/created_at, never diff or comment text. Fail-safe on missing token/fetch error/an unconfirmed-complete timeline.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Pending review-request staleness"];
+      for (const item of findings) {
+        lines.push(`- ${helpers.safeCodeSpan(item.reviewer)}'s review request has been pending for ${item.hoursPending}h`);
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanPendingReviewRequests(req, fetch, { signal, analysis, diagnostics }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

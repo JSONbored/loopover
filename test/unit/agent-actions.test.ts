@@ -961,20 +961,23 @@ describe("closeConcreteEvidence — concrete-evidence exemption from the close-p
   });
 });
 
-// #hard-blockers-not-ai-judgment parity guard (nit): CONCRETE_EVIDENCE_BLOCKER_CODES hand-types 7 of its 9
-// literals (the other 2 -- duplicate_pr_risk, pre_merge_check_required -- are imported directly from
-// advisory.ts/pre-merge-checks.ts, so a rename there is a compile error, not silent drift). Each of these 7
-// producer files defines its code as either a module-private const or a raw literal duplicated across several
-// unrelated call sites, so there is no single canonical export worth centralizing around (see the doc comment
-// on CONCRETE_EVIDENCE_BLOCKER_CODES). This test reads the real producer source text and asserts each literal
-// still appears there, so a future rename/removal at the producer fails this test immediately instead of
-// silently turning a "concrete evidence" code into a permanently-unreachable Set entry.
+// #hard-blockers-not-ai-judgment parity guard (nit): CONCRETE_EVIDENCE_BLOCKER_CODES hand-types all 9 of its
+// literals rather than importing any of them from their producers, even where a producer DOES export a
+// reusable constant (advisory.ts's DUPLICATE_ONLY_BLOCKER_CODES, pre-merge-checks.ts's
+// PRE_MERGE_CHECK_BLOCKING_CODE) -- see the doc comment on CONCRETE_EVIDENCE_BLOCKER_CODES for why: this module
+// sits inside a real module-load cycle, and an eager top-level import of another module's export broke with a
+// genuine "X is not iterable" failure the first time it was tried. This test reads the real producer source
+// text and asserts each literal still appears there, so a future rename/removal at the producer fails this
+// test immediately instead of silently turning a "concrete evidence" code into a permanently-unreachable Set
+// entry.
 describe("CONCRETE_EVIDENCE_BLOCKER_CODES parity — hand-typed literals still match their producers", () => {
   const HAND_TYPED_CODES_AND_PRODUCERS: Array<{ code: string; file: string }> = [
     { code: "secret_leak", file: "src/review/safety.ts" },
+    { code: "duplicate_pr_risk", file: "src/rules/advisory.ts" },
     { code: "surface_lane_reject", file: "src/review/content-lane-wire.ts" },
     { code: "manifest_missing_tests", file: "src/signals/focus-manifest.ts" },
     { code: "manifest_linked_issue_required", file: "src/signals/focus-manifest.ts" },
+    { code: "pre_merge_check_required", file: "src/review/pre-merge-checks.ts" },
     { code: "lockfile_tamper_risk", file: "src/review/lockfile-tamper.ts" },
     { code: "missing_linked_issue", file: "src/rules/advisory.ts" },
     { code: "self_authored_linked_issue", file: "src/rules/advisory.ts" },

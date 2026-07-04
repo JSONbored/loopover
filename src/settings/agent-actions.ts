@@ -1,6 +1,5 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
-import { AI_JUDGMENT_BLOCKER_CODES, DUPLICATE_ONLY_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
-import { PRE_MERGE_CHECK_BLOCKING_CODE } from "../review/pre-merge-checks";
+import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
@@ -127,19 +126,22 @@ export type PlannedAgentAction = {
 // excluding advisory.ts's own AI_JUDGMENT_BLOCKER_CODES so this can't silently regress). Kept here (not in
 // rules/advisory.ts) because "which findings are trustworthy enough to survive the breaker" is a
 // disposition-planning concern, not a gate-evaluation one — the set of finding codes is itself generic
-// self-host engine vocabulary (src/rules/advisory.ts), not specific to any one repository. Two entries reuse
-// advisory.ts's own exported code constants (DUPLICATE_ONLY_BLOCKER_CODES, PRE_MERGE_CHECK_BLOCKING_CODE)
-// rather than retyping their literals; the rest have no single canonical export to import (each is either a
-// module-private const or a raw literal duplicated across several unrelated producer files), so a source-text
-// parity test in the test file below guards against drift for all nine instead of a broader cross-module
-// refactor.
+// self-host engine vocabulary (src/rules/advisory.ts), not specific to any one repository. Every entry is a
+// plain string literal, deliberately NOT imported from its producer's own exported constant (even where one
+// exists, e.g. advisory.ts's DUPLICATE_ONLY_BLOCKER_CODES / pre-merge-checks.ts's PRE_MERGE_CHECK_BLOCKING_CODE):
+// this module sits inside a real module-load cycle
+// (scoring/model.ts -> db/repositories.ts -> agent-actions.ts -> advisory.ts -> scoring/preview.ts ->
+// scoring/model.ts), and spreading/reading another module's export INTO A TOP-LEVEL ARRAY LITERAL evaluates it
+// eagerly at module-load time, before that module has necessarily finished initializing on this cycle's first
+// pass -- confirmed by a real "X is not iterable" failure when that was tried. A plain literal has no such
+// hazard. A source-text parity test in the test file below guards all nine against producer-side drift instead.
 const CONCRETE_EVIDENCE_BLOCKER_CODES = new Set<string>([
   "secret_leak",
-  ...DUPLICATE_ONLY_BLOCKER_CODES,
+  "duplicate_pr_risk",
   "surface_lane_reject",
   "manifest_missing_tests",
   "manifest_linked_issue_required",
-  PRE_MERGE_CHECK_BLOCKING_CODE,
+  "pre_merge_check_required",
   "lockfile_tamper_risk",
   "missing_linked_issue",
   "self_authored_linked_issue",

@@ -305,7 +305,11 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
       { eventName: row.event_name, installationId: row.installation_id, deliveryId: row.delivery_id, rawBody: row.raw_body },
       opts?.fetchImpl,
     );
-    if (result === "forwarded" || result === "queued" || result === "skipped") {
+    // "skipped" is NOT always terminal: forwardOrbEvent also skips forwardable events when push relay is
+    // temporarily undeliverable (no relay_url yet, TOKEN_ENCRYPTION_SECRET absent during deploy, enrollment row
+    // mid re-register). Deleting those rows silently dropped webhook events that had already failed once.
+    // Only permanently non-forwardable events (outside RELAY_FORWARD_EVENTS, e.g. check_run) are obsolete.
+    if (result === "forwarded" || result === "queued" || (result === "skipped" && !RELAY_FORWARD_EVENTS.has(row.event_name))) {
       await env.DB.prepare("DELETE FROM orb_relay_failures WHERE delivery_id = ?").bind(row.delivery_id).run();
     } else {
       await env.DB

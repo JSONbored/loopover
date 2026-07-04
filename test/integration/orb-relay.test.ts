@@ -380,6 +380,26 @@ describe("retryFailedRelays", () => {
     expect(row ?? null).toBeNull(); // skipped = no longer applicable → cleaned up
   });
 
+  it("KEEPS retrying a forwardable event when forwardOrbEvent skips due to transient config (no relay URL)", async () => {
+    const e = brokeredEnv();
+    await enroll(e, 9602); // enrolled push mode, relay not registered yet
+    await storeRelayFailure(e, { deliveryId: "transient-skip", eventName: "pull_request", installationId: 9602, rawBody: "{}" });
+    await retryFailedRelays(e);
+    const row = await db(e).prepare("SELECT attempts FROM orb_relay_failures WHERE delivery_id='transient-skip'").first<{ attempts: number }>();
+    expect(row?.attempts).toBe(1); // transient skip must not delete the row — backoff and retry
+  });
+
+  it("KEEPS retrying when the encryption secret is temporarily missing", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9603);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    await storeRelayFailure(e, { deliveryId: "no-key-skip", eventName: "pull_request", installationId: 9603, rawBody: "{}" });
+    const noKey = { ...e, TOKEN_ENCRYPTION_SECRET: undefined } as unknown as Env;
+    await retryFailedRelays(noKey);
+    const row = await db(noKey).prepare("SELECT attempts FROM orb_relay_failures WHERE delivery_id='no-key-skip'").first<{ attempts: number }>();
+    expect(row?.attempts).toBe(1);
+  });
+
   it("PAGES retry work and bounds concurrent forwards", async () => {
     const e = brokeredEnv();
     const secret = await enroll(e, 9500);

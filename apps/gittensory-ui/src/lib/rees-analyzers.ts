@@ -795,6 +795,28 @@ export const REES_ANALYZERS = [
         "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install.",
     },
   },
+  {
+    name: "debugLeftover",
+    title: "Leftover debug statements",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags debugging leftovers a PR adds to non-test source: `debugger;`, bare `console.log`/`console.debug`, or a bare Python `print(...)`.",
+      looksAt: "Added lines in non-test JS/TS and Python source files.",
+      reports: "File, line, and leftover kind — never line content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "String-literal messages and comments are stripped before matching, and detection is gated by file extension, so a `console.log` in prose or a `print(` in a non-Python file is never flagged.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

@@ -35,6 +35,7 @@ export const REES_ANALYZER_NAMES = [
   "testRatio",
   "migrationSafety",
   "looseRange",
+  "debugLeftover",
 ] as const;
 
 export type ReesAnalyzerName = (typeof REES_ANALYZER_NAMES)[number];

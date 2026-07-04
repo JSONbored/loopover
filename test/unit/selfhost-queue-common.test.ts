@@ -1052,11 +1052,14 @@ describe("self-host queue common helpers", () => {
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-abc123" }))).toBe("run-agent:run-abc123");
     expect(jobCoalesceKey(payload({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: "del-77" }))).toBe("notify-deliver:del-77");
     expect(jobCoalesceKey(payload({ type: "submit-draft", requestedBy: "api", draftId: "draft-9" }))).toBe("submit-draft:draft-9");
+    // notify-evaluate keys off a fixed-length digest of the batch's dedup keys, not the raw keys themselves
+    // (#selfhost-maintenance-self-pin, tested for shape/order-independence/collision-avoidance below) --
+    // still a stable per-invocation key, so it belongs in this "coalesces by stable id" suite too.
     expect(
       jobCoalesceKey(
         payload({ type: "notify-evaluate", requestedBy: "webhook", events: [{ dedupKey: "review_requested:o/r#3:bob" }] }),
       ),
-    ).toBe("notify-evaluate:review_requested:o/r#3:bob");
+    ).toMatch(/^notify-evaluate:sha256:[a-f0-9]{64}$/);
     // Two DISTINCT invocations have distinct ids → distinct keys, so they never merge.
     expect(jobCoalesceKey(payload({ type: "run-agent", requestedBy: "github_comment", runId: "run-xyz789" }))).toBe("run-agent:run-xyz789");
     // A payload missing its id → null (uncoalesced), never a shared key that could drop a distinct job.

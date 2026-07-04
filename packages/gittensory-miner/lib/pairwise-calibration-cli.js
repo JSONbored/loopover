@@ -1,17 +1,39 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { computePairwiseCalibrationScore } from "@jsonbored/gittensory-engine";
 
 const PAIRWISE_SCORE_USAGE =
   "Usage: gittensory-miner calibration pairwise score --input <json|@file> [--json]";
+
+function readJsonFileArg(filePath, label) {
+  const trimmed = filePath.trim();
+  if (!trimmed) return { error: `${label} file path must not be empty.` };
+  if (trimmed.split(/[/\\]/).some((segment) => segment === "..")) {
+    return { error: `${label} file path must not contain .. segments.` };
+  }
+  try {
+    return { value: readFileSync(resolve(trimmed), "utf8") };
+  } catch {
+    return { error: `${label} could not read file: ${trimmed}` };
+  }
+}
 
 function parseJsonInput(value, label) {
   if (value === undefined || value === null || value === "") {
     return { error: `Missing value for ${label}.` };
   }
   const raw = String(value);
-  const payload = raw.startsWith("@") ? readFileSync(raw.slice(1), "utf8") : raw;
+  if (raw.startsWith("@")) {
+    const file = readJsonFileArg(raw.slice(1), label);
+    if ("error" in file) return file;
+    try {
+      return { value: JSON.parse(file.value) };
+    } catch {
+      return { error: `${label} must be valid JSON.` };
+    }
+  }
   try {
-    return { value: JSON.parse(payload) };
+    return { value: JSON.parse(raw) };
   } catch {
     return { error: `${label} must be valid JSON.` };
   }

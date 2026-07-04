@@ -73,6 +73,12 @@ describe("gittensory-miner pairwise calibration CLI (#3013)", () => {
     });
   });
 
+  it("parsePairwiseScoreArgs rejects @file paths that traverse outside the cwd", () => {
+    expect(parsePairwiseScoreArgs(["--input", "@../../etc/passwd"])).toEqual({
+      error: expect.stringMatching(/\.\. segments/u),
+    });
+  });
+
   it("renderPairwiseScoreTable summarizes composite and instability metrics", () => {
     const table = renderPairwiseScoreTable({
       compositeScore: 0.775,

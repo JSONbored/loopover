@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
-import { CodeBlock, FeatureRow } from "@/components/site/primitives";
+import { Callout, CodeBlock, FeatureRow } from "@/components/site/primitives";
 
 export const Route = createFileRoute("/docs/self-hosting-operations")({
   head: () => ({
@@ -10,13 +10,13 @@ export const Route = createFileRoute("/docs/self-hosting-operations")({
       {
         name: "description",
         content:
-          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, and routine checks.",
+          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, routine checks, and safe updates/rollback.",
       },
       { property: "og:title", content: "Self-host operations — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, and routine checks.",
+          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, routine checks, and safe updates/rollback.",
       },
       { property: "og:url", content: "/docs/self-hosting-operations" },
     ],
@@ -274,6 +274,116 @@ volumes:
         </li>
         <li>Backups are recent and restore-tested.</li>
       </ul>
+
+      <h2>Updating and rolling back</h2>
+      <p>
+        Both update paths below only ever restart the <code>gittensory</code> app service (
+        <code>--no-deps</code>) — they never touch other compose-profile services (Postgres, Redis,
+        Qdrant, Grafana, and friends), and they never touch <code>.env</code> keys other than the
+        one they persist for next time. That means <code>.env</code>, the{" "}
+        <code>gittensory-config/</code> mount, every data volume, and any{" "}
+        <code>docker-compose.override.yml</code> are preserved automatically across an update — you
+        don&apos;t need to back those up or re-supply them just to run either script.
+      </p>
+
+      <h3>Path 1: pull a published image</h3>
+      <p>
+        <code>scripts/deploy-selfhost-image.sh</code> pulls a tag or digest, restarts only the{" "}
+        <code>gittensory</code> service, waits for it to report <code>healthy</code> via{" "}
+        <code>docker inspect</code>&apos;s health status (configurable timeout, default 180s), and
+        then persists the resolved image reference back to <code>GITTENSORY_IMAGE</code> in{" "}
+        <code>.env</code> so the next plain invocation reuses it.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`# Re-pull whatever GITTENSORY_IMAGE already resolves to (safe no-op restart if the tag is unchanged
+# and nothing new was pushed under it)
+./scripts/deploy-selfhost-image.sh
+
+# Pin an exact release tag or content digest
+./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/gittensory-selfhost:orb-v0.1.0
+GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
+      />
+      <p>
+        The pull always runs with <code>--policy always</code>, so re-running the script against an
+        unchanged tag is safe: if the registry has nothing new, it just restarts the same image and
+        the health-check wait passes immediately.
+      </p>
+
+      <h3>Path 2: build from the current git checkout</h3>
+      <p>
+        <code>scripts/deploy-selfhost-prebuilt.sh</code> is for a source-based deploy (this is how{" "}
+        <code>GITTENSORY_VERSION</code> ends up as a short git SHA instead of an image tag). It
+        builds the bundle inside a Dockerized Node container — the host itself never needs Node or
+        npm installed — then restarts only the <code>gittensory</code> service the same way as the
+        image path.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`git pull
+./scripts/deploy-selfhost-prebuilt.sh`}
+      />
+      <p>
+        <code>SENTRY_RELEASE</code> defaults to{" "}
+        <code>gittensory-selfhost@&lt;short git SHA of the current HEAD&gt;</code> unless you
+        override it, so each deploy from a new commit gets a distinct release id automatically. When{" "}
+        <code>SENTRY_AUTH_TOKEN</code>, <code>SENTRY_ORG</code>, and <code>SENTRY_PROJECT</code> are
+        all configured, the script also injects and uploads Sentry source maps for that release
+        before restarting the service (set <code>SELFHOST_SKIP_SENTRY_UPLOAD=1</code> to skip this
+        even when those three are present).
+      </p>
+
+      <h3>Rollback: no dedicated command today</h3>
+      <p>
+        There is no <code>rollback</code> script. Rolling back means re-running one of the two
+        scripts above pointed at an older target:
+      </p>
+      <ul>
+        <li>
+          Image-based: re-run <code>deploy-selfhost-image.sh</code> with the prior tag or digest (
+          <code>docker inspect</code> on the running container, or your own deploy log, has the
+          digest you were on before the update).
+        </li>
+        <li>
+          Source-based: <code>git checkout</code> the prior commit, then re-run{" "}
+          <code>deploy-selfhost-prebuilt.sh</code>.
+        </li>
+      </ul>
+      <Callout variant="warn" title="Migrations are forward-only">
+        This repo has no down-migration convention — <code>scripts/check-migrations.mjs</code> only
+        enforces a contiguous, non-colliding numbering, not a reverse path. If a migration has
+        already run forward against the live database, rolling back the app code is{" "}
+        <strong>not safe in general</strong>: older code can break against a newer schema (a
+        dropped/renamed column, a NOT NULL column it never writes, a changed constraint), even
+        though the migration itself succeeded. Before rolling back across a migration boundary,
+        check whether everything the newer migration(s) did is purely additive (new nullable column,
+        new table, new index) and, specifically, whether the code you're rolling back to actually
+        still runs against that schema — additive is usually fine; anything the old code can't
+        tolerate is not. Take a fresh backup first regardless — see{" "}
+        <Link to="/docs/self-hosting-backup-scaling">Backup and scaling</Link> — and if in doubt,
+        restore that backup to a scratch database and boot the older code against it before doing
+        the same on the live instance.
+      </Callout>
+
+      <h3>Before and after any update</h3>
+      <p>Before updating:</p>
+      <ul>
+        <li>
+          Source-based deploys: <code>git status</code> is clean (no uncommitted local changes the
+          build would silently pick up or drop).
+        </li>
+        <li>
+          A current, verified backup exists if the update includes schema changes — see{" "}
+          <Link to="/docs/self-hosting-backup-scaling">Backup and scaling</Link>.
+        </li>
+      </ul>
+      <p>
+        After updating, work through the same checks as any other health pass — see{" "}
+        <strong>Health endpoints</strong> and <strong>Useful commands</strong> above: confirm{" "}
+        <code>/ready</code> returns 200, <code>docker compose ps</code> shows the service{" "}
+        <code>healthy</code>, and tail recent logs for startup errors or an unexpected absence of{" "}
+        <code>selfhost_listening</code> / <code>selfhost_migrations_applied</code>.
+      </p>
 
       <p>
         If an operating check fails, go to{" "}

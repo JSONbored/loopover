@@ -420,6 +420,15 @@ export interface LooseRangeFinding {
   kind: "wildcard" | "latest" | "unbounded-gte" | "bare";
 }
 
+/** A debugging leftover a PR added to non-test source — a `debugger;` statement, a bare `console.log`/
+ *  `console.debug` call, or a bare Python `print(...)` call (#2015, part of #1499). Reports the location +
+ *  kind only. */
+export interface DebugLeftoverFinding {
+  file: string;
+  line: number;
+  kind: "debugger" | "console" | "print";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -453,6 +462,7 @@ export interface BriefFindings {
   testRatio?: TestRatioFinding[];
   migrationSafety?: MigrationSafetyFinding[];
   looseRange?: LooseRangeFinding[];
+  debugLeftover?: DebugLeftoverFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

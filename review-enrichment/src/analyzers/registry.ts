@@ -27,6 +27,7 @@ import { scanStaleBranch } from "./stale-branch.js";
 import { scanTestRatio } from "./test-ratio.js";
 import { scanMigrationSafety } from "./migration-safety.js";
 import { scanLooseRanges } from "./loose-range.js";
+import { scanDebugLeftover } from "./debug-leftover.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -792,6 +793,45 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanLooseRanges(req, signal),
+  }),
+  descriptor({
+    name: "debugLeftover",
+    title: "Leftover debug statements",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags debugging leftovers a PR adds to non-test source: `debugger;`, bare `console.log`/`console.debug`, or a bare Python `print(...)`.",
+      looksAt: "Added lines in non-test JS/TS and Python source files.",
+      reports: "File, line, and leftover kind — never line content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "String-literal messages and comments are stripped before matching, and detection is gated by file extension, so a `console.log` in prose or a `print(` in a non-Python file is never flagged.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "debugger":
+            return "a `debugger;` statement will halt execution under an attached debugger";
+          case "console":
+            return "a bare `console.log`/`console.debug` call looks like leftover debug output";
+          case "print":
+            return "a bare `print(...)` call looks like leftover debug output";
+        }
+      };
+      const lines = ["### Leftover debug statements (remove before merging)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanDebugLeftover(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

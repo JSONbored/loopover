@@ -185,6 +185,65 @@ const result = computePairwiseCalibrationScore({
 If every pairwise sample is unstable, the composite falls back to the objective-anchor score and records the failed
 samples in `metrics` rather than averaging noise into the calibration signal.
 
+## Structured gate-verdict calibration
+
+`resolveGateVerdictCalibrationConfig()`, `ingestGateVerdictCalibrationSignals()`, and
+`computeGateVerdictCompositeCalibrationScore()` provide the pure engine contract for opt-in cross-product calibration.
+The hosted review stack remains responsible for loading the repo's current `.gittensory.yml` or private config; the
+engine contract is deliberately default-off and safe to call at ingestion time.
+
+The preferred config-as-code surface is:
+
+```yaml
+miner:
+  calibration:
+    shareStructuredGateVerdicts: true
+    structuredGateVerdictWeight: 0.2
+```
+
+Only `shareStructuredGateVerdicts: true` enables ingestion. Missing, malformed, or falsey values all fail closed to no
+sharing. The optional weight is non-negative and finite; malformed values fall back to the default.
+
+The accepted signal is intentionally narrow. It contains repo/run ids plus structured dimension outcomes such as
+`correctness`, `tests`, `security`, `scope`, `freshness`, `ci`, and `policy`. It has no fields for raw review text,
+secrets, trust scores, reward values, private rankings, or maintainer evidence.
+
+```ts
+import {
+  computeGateVerdictCompositeCalibrationScore,
+  ingestGateVerdictCalibrationSignals,
+} from "@jsonbored/gittensory-engine";
+
+const gateVerdicts = ingestGateVerdictCalibrationSignals([
+  {
+    repoFullName: "jsonbored/gittensory",
+    replayRunId: "replay-2026-07-04",
+    gateRunId: "gate-123",
+    optedIn: true,
+    dimensions: [
+      { dimension: "correctness", outcome: "pass" },
+      { dimension: "tests", outcome: "warn" },
+      { dimension: "security", outcome: "pass" },
+    ],
+  },
+]);
+
+const score = computeGateVerdictCompositeCalibrationScore({
+  objectiveAnchor: 0.65,
+  pairwise: 0.8,
+  gateVerdicts,
+});
+```
+
+The composite scorer renormalizes weights when a signal is absent. For example, if a repo opts out or no valid
+structured dimensions remain, the structured gate-verdict weight drops to zero and the objective/pairwise signals are
+renormalized. The returned audit trail records which opted-in repos contributed to the replay run and which rows were
+rejected because the repo was not opted in, had invalid ids, or exposed no recognized structured dimensions.
+
+`renderGateVerdictCalibrationAuditMarkdown(result)` turns the composite result into a deterministic local artifact with
+component scores, effective weights, contributing repos, dimension tables, rejected rows, and a contributing-repo
+summary. All caller-supplied ids and repo names are Markdown-escaped and newline-collapsed before rendering.
+
 ## Plan templates
 
 `plan-templates.ts` exports one builder per miner lifecycle stage (`analyze`, `plan`, `prepare`, `create`, `manage`).

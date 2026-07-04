@@ -36,6 +36,23 @@ export {
   type PairwiseCalibrationVerdict,
   type PairwiseCalibrationWeights,
 } from "./pairwise-calibration.js";
+export {
+  computeGateVerdictCompositeCalibrationScore,
+  ingestGateVerdictCalibrationSignals,
+  renderGateVerdictCalibrationAuditMarkdown,
+  resolveGateVerdictCalibrationConfig,
+  type GateVerdictCalibrationConfig,
+  type GateVerdictCalibrationDimension,
+  type GateVerdictCalibrationDimensionInput,
+  type GateVerdictCalibrationDimensionSignal,
+  type GateVerdictCalibrationIngestion,
+  type GateVerdictCalibrationManifest,
+  type GateVerdictCalibrationOutcome,
+  type GateVerdictCalibrationSignal,
+  type GateVerdictCalibrationSignalInput,
+  type GateVerdictCalibrationWeights,
+  type GateVerdictCompositeCalibrationScore,
+} from "./gate-verdict-calibration.js";
 export * from "./governor/rate-limit.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,6 +20,7 @@ const currentApiVersion = "0.1.0";
 const decisionPackCacheSchemaVersion = 1;
 const decisionPackCacheMaxEntries = 25;
 const decisionPackCacheMaxBytes = 512 * 1024;
+const cliTextFileMaxBytes = 1024 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const cliArgs = process.argv.slice(2);
 const defaultProfileName = "default";
@@ -1484,6 +1485,14 @@ async function runCli(args) {
   writeBranchAnalysisCli(result, command);
 }
 
+function readCliTextFile(path, label) {
+  if (!existsSync(path)) throw new Error(`${label} file not found: ${path}`);
+  const stats = lstatSync(path);
+  if (!stats.isFile()) throw new Error(`${label} file must be a regular file: ${path}`);
+  if (stats.size > cliTextFileMaxBytes) throw new Error(`${label} file is too large: ${path} (max ${cliTextFileMaxBytes} bytes)`);
+  return readFileSync(path, "utf8");
+}
+
 function printLintPrTextHelp() {
   process.stdout.write(
     [
@@ -1503,8 +1512,7 @@ async function lintPrTextCli(args) {
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
   let prBody = options.body;
   if (options.bodyFile) {
-    if (!existsSync(options.bodyFile)) throw new Error(`Body file not found: ${options.bodyFile}`);
-    prBody = readFileSync(options.bodyFile, "utf8");
+    prBody = readCliTextFile(options.bodyFile, "Body");
   }
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
   const payload = await apiPost("/v1/lint/pr-text", {
@@ -1562,8 +1570,7 @@ async function slopRiskCli(args) {
   let description = options.description ?? options.body;
   const descriptionFile = options.descriptionFile ?? options.bodyFile;
   if (descriptionFile) {
-    if (!existsSync(descriptionFile)) throw new Error(`Description file not found: ${descriptionFile}`);
-    description = readFileSync(descriptionFile, "utf8");
+    description = readCliTextFile(descriptionFile, "Description");
   }
   const changedFiles = stringArrayOption(options.changedFile).map(parseChangedFileSpec);
   const tests = stringArrayOption(options.test);
@@ -1600,8 +1607,7 @@ async function issueSlopCli(args) {
   const options = parseOptions(args);
   let body = normalizeOptionalStringOption(options.body);
   if (options.bodyFile) {
-    if (!existsSync(options.bodyFile)) throw new Error(`Body file not found: ${options.bodyFile}`);
-    body = readFileSync(options.bodyFile, "utf8");
+    body = readCliTextFile(options.bodyFile, "Body");
   }
   const title = normalizeOptionalStringOption(options.title);
   const payload = await apiPost("/v1/lint/issue-slop", {

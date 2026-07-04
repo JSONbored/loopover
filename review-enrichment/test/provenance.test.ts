@@ -33,3 +33,21 @@ test("classifyAddedFile flags prebuilt native-addon binaries (.node/.pyd) as bin
   assert.equal(classifyAddedFile("src/node.ts"), null);
   assert.equal(classifyAddedFile("app/foo.node.js"), null);
 });
+
+test("classifyAddedFile flags committed ML checkpoint files as binary artifacts", () => {
+  // Serialized model weights are unauditable prebuilt blobs — the same category asset-weight.ts flags for
+  // size bloat. A committed checkpoint must ship with reproducible training source, not as opaque binary.
+  for (const path of [
+    "models/llama/model.gguf",
+    "weights/model.safetensors",
+    "export/model.onnx",
+    "checkpoints/epoch_3.pt",
+    "checkpoints/best.pth",
+    "checkpoints/final.ckpt",
+  ]) {
+    assert.equal(classifyAddedFile(path), "binary", path);
+  }
+  // Extension is `$`-anchored: source files merely named like a checkpoint stay ordinary source.
+  assert.equal(classifyAddedFile("src/model.pt.ts"), null);
+  assert.equal(classifyAddedFile("lib/onnx.ts"), null);
+});

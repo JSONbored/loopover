@@ -163,6 +163,18 @@ describe("buildMaintainerNoiseReport (#2093)", () => {
     expect(report.noiseSources.some((s) => /broad or hard to triage/.test(s))).toBe(true);
   });
 
+  it("excludes already-merged/closed broad-title PRs from the broad-diff noise arm (only open PRs are live noise)", () => {
+    const r = repo("JSONbored/gittensory");
+    // A merged and a closed PR whose titles hit the churn regex must NOT be counted as live queue noise.
+    const merged = pr(r.fullName, 61, "Refactor cleanup of various modules", { state: "merged" });
+    const closed = pr(r.fullName, 62, "Misc cleanup", { state: "closed" });
+    expect(buildMaintainerNoiseReport(r, [], [merged, closed], [], r.fullName).noiseSources.some((s) => /broad or hard to triage/.test(s))).toBe(false);
+    // With one open broad PR alongside the two non-open ones, only the open PR is counted (1, not 3).
+    const open = pr(r.fullName, 63, "Refactor cleanup various", { state: "open" });
+    const mixed = buildMaintainerNoiseReport(r, [], [open, merged, closed], [], r.fullName);
+    expect(mixed.noiseSources.some((s) => /^1 PR\(s\) look broad or hard to triage/.test(s))).toBe(true);
+  });
+
   it("reports the strained intake arm via deduped maintainerActions", () => {
     const r = repo("JSONbored/gittensory", { issueDiscoveryShare: 0 });
     const unlinked = Array.from({ length: 4 }, (_, i) =>

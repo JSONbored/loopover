@@ -121,6 +121,10 @@ describe("MCP compatibility telemetry", () => {
     expect(compareMcpSemver("0.3.0-alpha", "0.3.0-beta")).toBe(-1);
     expect(compareMcpSemver("0.3.0-1", "0.3.0-alpha")).toBe(-1);
     expect(compareMcpSemver("0.3.0-alpha", "0.3.0-1")).toBe(1);
+    // A numeric identifier ranks below an alphanumeric one even when its digits sort higher (semver
+    // §11.4.3): `2` < `1a`, not `2` > `1a` as a whole-string numeric compare would rank it.
+    expect(compareMcpSemver("0.3.0-2", "0.3.0-1a")).toBe(-1);
+    expect(compareMcpSemver("0.3.0-1a", "0.3.0-2")).toBe(1);
     expect(compareMcpSemver("0.3.0-rc.1", "0.3.0-rc.1.1")).toBe(-1);
     expect(compareMcpSemver("0.3.0-rc.1.1", "0.3.0-rc.1")).toBe(1);
     expect(compareMcpSemver("0.3.0-rc.1", "0.3.0-rc.1")).toBe(0);

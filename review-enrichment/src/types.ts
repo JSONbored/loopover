@@ -243,7 +243,14 @@ export interface IacMisconfigFinding {
     | "npm-unsafe-perm"
     | "sudo-in-build"
     | "hardcoded-build-secret"
-    | "insecure-pip-index";
+    | "insecure-pip-index"
+    | "db-ssl-disabled"
+    | "git-ssl-no-verify"
+    | "ssh-host-key-check-off"
+    | "verify-ssl-off"
+    | "validate-certs-off"
+    | "tls-skip-verify"
+    | "trust-all-server-certs";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel
@@ -382,6 +389,37 @@ export interface PendingReviewRequestFinding {
   hoursPending: number;
 }
 
+/** How much test change accompanies a PR's source change, computed from `req.files` alone (path + additions) —
+ *  no network, no diff/patch parsing. Emitted only when the source change is material (>= a minimum added-line
+ *  floor) and the test-to-source line ratio is under a configurable threshold (#2024, part of #1499). */
+export interface TestRatioFinding {
+  sourceAdded: number;
+  testAdded: number;
+  sourceFiles: number;
+  testFiles: number;
+  ratio: number;
+  belowThreshold: boolean;
+}
+
+/** A risky schema operation on an added migration-SQL line — a change that can break running deployments
+ *  mid-rollout (#2022, part of #1499). Reports the location + rule kind only, never SQL content. */
+export interface MigrationSafetyFinding {
+  file: string;
+  line: number;
+  kind: "drop" | "rename" | "not-null-no-default" | "blocking-rewrite";
+}
+
+/** A newly-added/changed npm dependency whose version specifier is dangerously loose — a wildcard, the
+ *  `latest` dist-tag, an unbounded `>=` range, or a bare major — letting any future publish flow into the
+ *  next install (#2036, part of #1499). Reports the manifest location, package, raw specifier, and kind. */
+export interface LooseRangeFinding {
+  file: string;
+  line: number;
+  package: string;
+  range: string;
+  kind: "wildcard" | "latest" | "unbounded-gte" | "bare";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -412,6 +450,9 @@ export interface BriefFindings {
   staleBranch?: StaleBranchFinding[];
   commitHygiene?: CommitHygieneFinding[];
   pendingReviewRequests?: PendingReviewRequestFinding[];
+  testRatio?: TestRatioFinding[];
+  migrationSafety?: MigrationSafetyFinding[];
+  looseRange?: LooseRangeFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

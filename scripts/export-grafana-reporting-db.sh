@@ -159,14 +159,21 @@ CREATE INDEX review_targets_verdict_idx ON review_targets(verdict);
 CREATE TABLE ai_usage_events (
   feature TEXT NOT NULL,
   model TEXT NOT NULL,
+  provider TEXT,
+  effort TEXT,
   status TEXT NOT NULL,
   estimated_neurons INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
   detail TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
 CREATE INDEX ai_usage_events_feature_created_idx ON ai_usage_events(feature, created_at);
 CREATE INDEX ai_usage_events_model_created_idx ON ai_usage_events(model, created_at);
+CREATE INDEX ai_usage_events_provider_created_idx ON ai_usage_events(provider, created_at);
 SQL
 
 if pg_enabled; then
@@ -281,12 +288,24 @@ WHERE t.kind = 'pull_request'
     else
       ESTIMATED_NEURONS_EXPR="0"
     fi
+    if pg_column_exists "ai_usage_events" "provider"; then PROVIDER_EXPR="provider"; else PROVIDER_EXPR="NULL"; fi
+    if pg_column_exists "ai_usage_events" "effort"; then EFFORT_EXPR="effort"; else EFFORT_EXPR="NULL"; fi
+    if pg_column_exists "ai_usage_events" "input_tokens"; then INPUT_TOKENS_EXPR="COALESCE(input_tokens, 0)"; else INPUT_TOKENS_EXPR="0"; fi
+    if pg_column_exists "ai_usage_events" "output_tokens"; then OUTPUT_TOKENS_EXPR="COALESCE(output_tokens, 0)"; else OUTPUT_TOKENS_EXPR="0"; fi
+    if pg_column_exists "ai_usage_events" "total_tokens"; then TOTAL_TOKENS_EXPR="COALESCE(total_tokens, 0)"; else TOTAL_TOKENS_EXPR="0"; fi
+    if pg_column_exists "ai_usage_events" "cost_usd"; then COST_USD_EXPR="COALESCE(cost_usd, 0)"; else COST_USD_EXPR="0"; fi
     pg_copy_csv "
 SELECT
   feature,
   model,
+  $PROVIDER_EXPR AS provider,
+  $EFFORT_EXPR AS effort,
   status,
   $ESTIMATED_NEURONS_EXPR AS estimated_neurons,
+  $INPUT_TOKENS_EXPR AS input_tokens,
+  $OUTPUT_TOKENS_EXPR AS output_tokens,
+  $TOTAL_TOKENS_EXPR AS total_tokens,
+  $COST_USD_EXPR AS cost_usd,
   detail,
   json_build_object(
     'repoFullName', metadata_json::jsonb ->> 'repoFullName',
@@ -442,14 +461,32 @@ if source_table_exists "ai_usage_events"; then
   if source_column_exists "ai_usage_events" "estimated_neurons"; then
     ESTIMATED_NEURONS_EXPR="estimated_neurons"
   fi
+  PROVIDER_EXPR=NULL
+  if source_column_exists "ai_usage_events" "provider"; then PROVIDER_EXPR="provider"; fi
+  EFFORT_EXPR=NULL
+  if source_column_exists "ai_usage_events" "effort"; then EFFORT_EXPR="effort"; fi
+  INPUT_TOKENS_EXPR=0
+  if source_column_exists "ai_usage_events" "input_tokens"; then INPUT_TOKENS_EXPR="input_tokens"; fi
+  OUTPUT_TOKENS_EXPR=0
+  if source_column_exists "ai_usage_events" "output_tokens"; then OUTPUT_TOKENS_EXPR="output_tokens"; fi
+  TOTAL_TOKENS_EXPR=0
+  if source_column_exists "ai_usage_events" "total_tokens"; then TOTAL_TOKENS_EXPR="total_tokens"; fi
+  COST_USD_EXPR=0
+  if source_column_exists "ai_usage_events" "cost_usd"; then COST_USD_EXPR="cost_usd"; fi
 
   sqlite3 -cmd ".timeout 5000" "$APP_DB" "
 ATTACH '$TMP_DB_SQL' AS report;
 INSERT INTO report.ai_usage_events (
   feature,
   model,
+  provider,
+  effort,
   status,
   estimated_neurons,
+  input_tokens,
+  output_tokens,
+  total_tokens,
+  cost_usd,
   detail,
   metadata_json,
   created_at
@@ -457,8 +494,14 @@ INSERT INTO report.ai_usage_events (
 SELECT
   feature,
   model,
+  $PROVIDER_EXPR,
+  $EFFORT_EXPR,
   status,
   COALESCE($ESTIMATED_NEURONS_EXPR, 0),
+  COALESCE($INPUT_TOKENS_EXPR, 0),
+  COALESCE($OUTPUT_TOKENS_EXPR, 0),
+  COALESCE($TOTAL_TOKENS_EXPR, 0),
+  COALESCE($COST_USD_EXPR, 0),
   detail,
   json_object(
     'repoFullName', json_extract(metadata_json, '$.repoFullName'),

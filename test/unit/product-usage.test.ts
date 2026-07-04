@@ -201,6 +201,33 @@ describe("product usage events", () => {
     expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|\/root\/|\/var\/|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
   });
 
+  // Regression (#1825): the Orb broker's enrollment id/secret (createOpaqueToken("orbenr"/"orbsec"),
+  // src/orb/broker.ts) are bare opaque tokens with no "token"/"secret"-named field to trip the key-based
+  // redaction above when they appear as a plain VALUE (e.g. quoted inside an error-message string embedded
+  // in metadata) — PRODUCT_USAGE_TOKEN_VALUE must recognize the orbenr_/orbsec_ shape too, or it survives
+  // into persisted telemetry verbatim.
+  it("redacts bare Orb broker enrollment id/secret values from persisted telemetry", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const fakeEnrollId = `orbenr_${"a".repeat(64)}`;
+    const fakeSecret = `orbsec_${"b".repeat(64)}`;
+
+    await recordProductUsageEvent(env, {
+      surface: "internal",
+      eventName: "command_previewed",
+      actor: "oktofeesh1",
+      metadata: {
+        note: `broker exchange failed for enrollment ${fakeEnrollId} secret ${fakeSecret}`,
+      },
+    });
+
+    const [row] = await listProductUsageEvents(env);
+    expect(row).toBeDefined();
+    if (!row) throw new Error("expected product usage event");
+    expect(row.metadata).toMatchObject({ note: "broker exchange failed for enrollment <redacted-token> secret <redacted-token>" });
+    expect(JSON.stringify(row.metadata)).not.toContain(fakeEnrollId);
+    expect(JSON.stringify(row.metadata)).not.toContain(fakeSecret);
+  });
+
   it("persists normalized role on the event row and strips private scoreability metadata", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
 

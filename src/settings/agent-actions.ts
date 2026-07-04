@@ -121,6 +121,10 @@ export type PlannedAgentAction = {
   // (which still counts toward a "require approving reviews" branch-protection rule) must not be left in place.
   // (#2254)
   dismissStaleApproval?: boolean;
+  // For an `assign` action (#3182): the login to set as the PR's GitHub assignee -- the PR's own opening
+  // contributor. GitHub silently drops an assignee lacking push/triage access rather than erroring, so the
+  // executor falls back to a per-login label when the real assignment doesn't stick.
+  assignee?: string;
 };
 
 // Gate-blocker codes backed by CONCRETE, non-judgment evidence: a committed secret, a deterministic
@@ -311,6 +315,11 @@ export type AgentActionPlanInput = {
     // does NOT reliably flip reviewDecision to APPROVED, so without this the bot re-approves every sweep). A new
     // commit makes the live head differ → the bot may approve the new code (correct).
     approvedHeadSha?: string | null | undefined;
+    // The PR's opening contributor (#3182), threaded through ONLY for the `assign` disposition below. Absent
+    // (undefined) on the several other, narrower callers of this planner (issue-cap/review-nag short-circuits)
+    // is harmless -- those all set `conclusion: "skipped"` or hit an earlier short-circuit `return`, so the
+    // `assign` block below is unreachable from them regardless.
+    authorLogin?: string | null | undefined;
   };
 };
 
@@ -757,6 +766,19 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         comment: "✓ The linked-issue hard-rule violation is resolved — this PR is no longer pending closure.",
       });
     }
+  }
+
+  // 2b) assign (#3182) — best-effort: set the PR's own opening contributor as its GitHub assignee, purely for
+  // triage (who is this PR's author, at a glance). Independent of merge/close/CI outcome, exactly like
+  // review_state_label above: gated on its own `assign` class (default OFF), not tied to any other disposition.
+  // Idempotent at the executor (a live GET before the POST), so replanning this every sweep is harmless.
+  if (acting("assign") && input.pr.authorLogin) {
+    actions.push({
+      actionClass: "assign",
+      requiresApproval: approval("assign"),
+      reason: "auto-assign PR opener",
+      assignee: input.pr.authorLogin,
+    });
   }
 
   // 3) review — APPROVE a review-good PR only when it is NOT on a guarded path; a guarded PR falls through to the

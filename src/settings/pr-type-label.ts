@@ -1,16 +1,26 @@
-// Neutral per-PR TYPE label (reviewbot src/core/auto-label.ts parity). Applies one or more of:
-//   gittensor:priority — ONLY when a linked/closing issue already carries the configured priority
-//                         issue label (#priority-linked-issue-gate, `linkedIssueLabelPropagation`).
-//                         Never inferred from title, changed files, AI output, or existing PR labels.
-//   gittensor:feature  — genuine NEW functionality only (conventional-commit `feat`/`feature`).
-//   gittensor:bug      — EVERYTHING ELSE: fix, test, docs, chore, refactor, perf, ci, build, style, revert.
-// Public + neutral categorization (NOT the reputation signal). Review-time + independent of the gate /
-// autonomy / dry-run (matches reviewbot, where auto-label runs at review start). Fail-safe.
+// Neutral per-PR TYPE label (reviewbot src/core/auto-label.ts parity). The label CATEGORIES are a
+// config-driven, open `category -> label name` map (#label-modularity) — `bug`/`feature`/`priority` are
+// the built-in gittensor:* categories shipped as the DEFAULT config, not hardcoded engine assumptions:
+//   priority — ONLY when a linked/closing issue already carries the configured priority issue label
+//              (#priority-linked-issue-gate, `linkedIssueLabelPropagation`). Never inferred from title,
+//              changed files, AI output, or existing PR labels.
+//   feature  — genuine NEW functionality only (conventional-commit `feat`/`feature`).
+//   bug      — EVERYTHING ELSE: fix, test, docs, chore, refactor, perf, ci, build, style, revert.
+// A self-hoster can register any number of ADDITIONAL categories in `typeLabels` beyond these three (e.g.
+// `security: "area:security"`) — an extra category is never chosen by title-classification (only bug/
+// feature are), only ever by a configured `linkedIssueLabelPropagation` mapping's `prLabel` (which can
+// target ANY string, registered in `typeLabels` or not); registering it here just makes it participate
+// in the mutual-exclusivity cleanup below, i.e. eligible for automatic removal when a PR's classification
+// moves away from it. Public + neutral categorization (NOT the reputation signal). Review-time +
+// independent of the gate / autonomy / dry-run (matches reviewbot, where auto-label runs at review
+// start). Fail-safe.
 import type { LinkedIssueLabelPropagationConfig, PrTypeLabelSet } from "../types";
 
 export type { PrTypeLabelSet } from "../types";
 
-/** The gittensor: namespace the maintainer uses. The three are mutually exclusive by default (see
+/** The gittensor: namespace Gittensor itself uses -- an EXAMPLE default config, not an engine
+ *  assumption (#label-modularity): a self-hoster's `typeLabels` fully replaces the category set these
+ *  keys are drawn from. The built-in categories are mutually exclusive by default (see
  *  `resolvePrTypeLabel`'s `removeLabels`) unless a propagation mapping is explicitly additive. */
 export const DEFAULT_TYPE_LABELS: PrTypeLabelSet = {
   bug: "gittensor:bug",
@@ -18,7 +28,10 @@ export const DEFAULT_TYPE_LABELS: PrTypeLabelSet = {
   priority: "gittensor:priority",
 };
 
-export const ALL_TYPE_LABELS: readonly string[] = [DEFAULT_TYPE_LABELS.bug, DEFAULT_TYPE_LABELS.feature, DEFAULT_TYPE_LABELS.priority];
+/** Every label name in the built-in default set, generic over however many categories
+ *  `DEFAULT_TYPE_LABELS` carries (#label-modularity) -- never hardcode `.bug`/`.feature`/`.priority`
+ *  property access here, a configured set can carry more or fewer categories than the default. */
+export const ALL_TYPE_LABELS: readonly string[] = Object.values(DEFAULT_TYPE_LABELS);
 
 const FEATURE_TITLE_ACTION_RE = /\b(add|adds|added|create|creates|created|enable|enables|enabled|implement|implements|implemented|integrate|integrates|integrated|introduce|introduces|introduced|launch|launches|launched|support|supports|supported|wire|wires|wired)\b/i;
 const FEATURE_TITLE_DOWNGRADE_RE = /\b(avoid|block|bug|bugfix|cache|classify|classifies|classifying|cleanup|clean-up|clean up|detect|detects|detecting|docs?|fix|format|guard|lint|normalize|recognize|recognizes|recognizing|refactor|regression|rename|test|tests|testing|tighten|typo)\b/i;
@@ -36,12 +49,24 @@ export function deriveKindFromTitle(title: string | undefined): "bug" | "feature
   return FEATURE_TITLE_DOWNGRADE_RE.test(subject) ? "bug" : "feature";
 }
 
-/** Defaults-fill a per-repo `typeLabels` override (config-as-code): each of bug/feature/priority is
- *  taken independently from `input` when it is a non-empty string, else falls back to the
- *  corresponding `DEFAULT_TYPE_LABELS` value — so a repo can override just one label name and keep
- *  the other two at their default. A non-object input yields the full default set; omitted is normal
- *  (no warning), present-but-wrong-shaped warns. Mirrors `normalizeCommandAuthorizationPolicy`'s
- *  defaults-fill pattern (`src/settings/command-authorization.ts`). */
+/** Defaults-fill a per-repo `typeLabels` override (config-as-code), generic over an arbitrary set of
+ *  categories (#label-modularity): every key of `DEFAULT_TYPE_LABELS` (the built-in bug/feature/
+ *  priority categories) is taken independently from `input` when it is a non-empty string, else falls
+ *  back to the corresponding built-in default — so a repo can override just one built-in label name
+ *  (e.g. only `priority`) and keep the others default. Any EXTRA key present in `input` beyond the
+ *  built-in set (a self-hoster's own custom category, e.g. `security`) is included verbatim when
+ *  valid; there is no built-in default for it to fall back to, so an invalid extra-category value is
+ *  dropped entirely (warned, not defaulted) rather than silently defaulted. A non-object input yields
+ *  the full default set; omitted is normal (no warning), present-but-wrong-shaped warns. An input that
+ *  IS a valid object but has zero own keys (`{}`) also yields the full default set here — this
+ *  function only ever defaults-fills or validates a COMPLETE settings value (the DB-persisted set, or
+ *  a from-scratch construction); `resolveEffectiveSettings` (focus-manifest.ts) is what gives a
+ *  manifest's *literal* `typeLabels: {}` its own distinct "deliberately zero categories" meaning,
+ *  since collapsing that here would also flip every legacy `type_labels_json = '{}'` DB row (the SQL
+ *  column's own default, predating any explicit customization) from full defaults to zero labels —
+ *  the exact behavior change #priority-linked-issue-gate's migration promised existing repos would
+ *  never see. Mirrors `normalizeCommandAuthorizationPolicy`'s defaults-fill pattern
+ *  (`src/settings/command-authorization.ts`). */
 export function normalizeTypeLabelSet(input: unknown, warnings: string[]): PrTypeLabelSet {
   if (input === undefined) return { ...DEFAULT_TYPE_LABELS };
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -49,13 +74,28 @@ export function normalizeTypeLabelSet(input: unknown, warnings: string[]): PrTyp
     return { ...DEFAULT_TYPE_LABELS };
   }
   const record = input as Record<string, unknown>;
-  const pick = (key: keyof PrTypeLabelSet): string => {
+  const keys = new Set([...Object.keys(DEFAULT_TYPE_LABELS), ...Object.keys(record)]);
+  const result: PrTypeLabelSet = {};
+  for (const key of keys) {
     const value = record[key];
-    if (typeof value === "string" && value.trim().length > 0) return value.trim();
-    if (value !== undefined) warnings.push(`settings.typeLabels.${key} must be a non-empty string; using the default "${DEFAULT_TYPE_LABELS[key]}".`);
-    return DEFAULT_TYPE_LABELS[key];
-  };
-  return { bug: pick("bug"), feature: pick("feature"), priority: pick("priority") };
+    const builtInDefault: string | undefined = DEFAULT_TYPE_LABELS[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      result[key] = value.trim();
+      continue;
+    }
+    if (value !== undefined) {
+      warnings.push(
+        builtInDefault !== undefined
+          ? `settings.typeLabels.${key} must be a non-empty string; using the default "${builtInDefault}".`
+          : `settings.typeLabels.${key} must be a non-empty string; ignoring it.`,
+      );
+    }
+    // Reached for BOTH an invalid present value and an absent one -- a built-in category (bug/feature/
+    // priority) always has a default to fall back to; an unknown custom category does not, so it is
+    // dropped entirely (warned above when it was present-but-invalid, silently absent when never named).
+    if (builtInDefault !== undefined) result[key] = builtInDefault;
+  }
+  return result;
 }
 
 /** The pure decision `resolvePrTypeLabel` returns: which label(s) to apply, which configured
@@ -79,11 +119,15 @@ export type PrTypeLabelDecision = {
  *     - `removeOtherTypeLabels: false` (additive) — the mapped label is applied ALONGSIDE the
  *       normal title-based bug/feature label, which is left untouched (e.g. a generic
  *       `customer:vip` → `triage:vip` triage marker that has nothing to do with bug/feature/priority).
- *  2. Otherwise, feature (feat/feature) / bug (everything else) by the conventional-commit title prefix.
+ *  2. Otherwise, feature (feat/feature) / bug (everything else) by the conventional-commit title prefix
+ *     -- ONLY when `labels` actually has a name registered for that built-in category; a configured set
+ *     that omits `bug`/`feature` entirely (a self-hoster who only wants custom, propagation-driven
+ *     categories, or an explicit `typeLabels: {}` resolved to zero categories) applies nothing for that
+ *     branch rather than inventing a label name (#label-modularity).
  * `removeLabels` is always "every member of the configured type-label set that isn't one of
- * `applyLabels`" — generic and total, and safe even if a misconfigured additive mapping's `prLabel`
- * happens to collide with a type-label-set name (it is excluded from removal since it is also being
- * applied). Pure + total.
+ * `applyLabels`" — generic and total over however many categories are configured, and safe even if a
+ * misconfigured additive mapping's `prLabel` happens to collide with a type-label-set name (it is
+ * excluded from removal since it is also being applied). Pure + total.
  */
 export function resolvePrTypeLabel(input: {
   title: string | undefined;
@@ -92,21 +136,19 @@ export function resolvePrTypeLabel(input: {
   propagation?: LinkedIssueLabelPropagationConfig | undefined;
 }): PrTypeLabelDecision {
   const labels = input.labels ?? DEFAULT_TYPE_LABELS;
-  const typeLabelSet = Object.values(labels);
-  const titleLabel = labels[deriveKindFromTitle(input.title)];
-  const decide = (applyLabels: string[], source: PrTypeLabelDecision["source"]): PrTypeLabelDecision => ({
-    applyLabels,
-    removeLabels: typeLabelSet.filter((label) => !applyLabels.includes(label)),
-    source,
-  });
+  const isRealLabel = (label: string | undefined): label is string => typeof label === "string" && label.length > 0;
+  const typeLabelSet = Object.values(labels).filter(isRealLabel);
+  const titleLabel: string | undefined = labels[deriveKindFromTitle(input.title)];
+  const decide = (applyLabels: ReadonlyArray<string | undefined>, source: PrTypeLabelDecision["source"]): PrTypeLabelDecision => {
+    const apply = [...new Set(applyLabels.filter(isRealLabel))];
+    return { applyLabels: apply, removeLabels: typeLabelSet.filter((label) => !apply.includes(label)), source };
+  };
 
   if (input.propagation?.enabled) {
     const wanted = new Set((input.linkedIssueLabels ?? []).map((label) => label.toLowerCase()));
     for (const mapping of input.propagation.mappings) {
       if (!wanted.has(mapping.issueLabel.toLowerCase())) continue;
-      return mapping.removeOtherTypeLabels
-        ? decide([mapping.prLabel], "propagation_exclusive")
-        : decide([...new Set([titleLabel, mapping.prLabel])], "propagation_additive");
+      return mapping.removeOtherTypeLabels ? decide([mapping.prLabel], "propagation_exclusive") : decide([titleLabel, mapping.prLabel], "propagation_additive");
     }
   }
   return decide([titleLabel], "title");

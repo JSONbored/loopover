@@ -7,6 +7,7 @@ import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
 import { hostLoadAvg1PerCore } from "../../src/selfhost/host-pressure";
+import * as sentryModule from "../../src/selfhost/sentry";
 import type { JobMessage } from "../../src/types";
 
 // Real host CPU load is nondeterministic (and can legitimately spike on a busy CI runner), so every
@@ -2077,6 +2078,64 @@ describe("createPgQueue (durable #977)", () => {
         expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
         await q.stop();
       } finally {
+        delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+      }
+    });
+
+    // (#1824): dead-letter revival stopping SILENTLY is worse than one throwing tick -- a Sentry cron monitor
+    // now wraps every tick so a stopped timer shows up as a missed check-in, not silence.
+    it("wraps each revive tick in the queue-dead-letter-revive Sentry monitor", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const m = makePool(); // default mock returns { rows: [], rowCount: 0 } for the dead-letter SELECT -- a no-op tick
+        const q = createPgQueue(m.pool, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000); // the revive interval fires once
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
+        delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
+      }
+    });
+
+    // The monitor rethrows on failure (withSentryMonitor's own contract) -- confirms that rethrow is still caught
+    // by reviveDeadLetterJobsSafely's own try/catch, so a crashing tick behaves exactly as it did before the
+    // monitor was added: logged + captured, never an unhandled rejection.
+    it("still catches a revive crash after adding the Sentry monitor wrapper (no regression on #2581)", async () => {
+      process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS = "1000";
+      vi.useFakeTimers();
+      const monitorSpy = vi.spyOn(sentryModule, "withSentryMonitor");
+      try {
+        const fn = vi.fn().mockImplementation(async (sql: unknown) => {
+          if (String(sql).includes("WHERE status='dead' AND attempts<$1")) throw new Error("connection terminated unexpectedly");
+          return { rows: [], rowCount: 0 };
+        });
+        const pool = { query: fn } as unknown as Pool;
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const q = createPgQueue(pool, async () => undefined, { maxRetries: 1 });
+
+        q.start();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(monitorSpy).toHaveBeenCalledWith(
+          "queue-dead-letter-revive",
+          { jobType: "queue-dead-letter-revive" },
+          expect.any(Function),
+        );
+        const logged = errorSpy.mock.calls.map(([line]) => String(line));
+        expect(logged.some((line) => line.includes("selfhost_queue_dead_letter_revive_crashed") && line.includes("connection terminated unexpectedly"))).toBe(true);
+        await q.stop();
+      } finally {
+        monitorSpy.mockRestore();
         delete process.env.QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS;
       }
     });

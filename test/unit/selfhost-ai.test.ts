@@ -90,11 +90,12 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     const calls: Array<{ url: string; body: { model: string } }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: { body: string }) => {
       calls.push({ url, body: JSON.parse(init.body) });
-      return new Response(JSON.stringify({ choices: [{ message: { content: "hi there" } }] }), { status: 200 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "hi there" } }], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 } }), { status: 200 });
     }));
     const ai = createOpenAiCompatibleAi({ baseUrl: "http://ollama:11434/v1/", apiKey: "k" });
     const out = await ai.run("llama3.1", { messages: [{ role: "user", content: "x" }], max_tokens: 100 });
     expect(out.response).toBe("hi there");
+    expect(out.usage).toMatchObject({ model: "llama3.1", inputTokens: 12, outputTokens: 4, totalTokens: 16 });
     const first = calls[0];
     expect(first?.url).toBe("http://ollama:11434/v1/chat/completions"); // trailing slash trimmed
     expect(first?.body.model).toBe("llama3.1");
@@ -506,6 +507,41 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
   it("createSelfHostAi wires routing for a 2+ provider AI_PROVIDER (addressable by name)", async () => {
     const ai = createSelfHostAi({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant", OLLAMA_AI_BASE_URL: "http://o/v1" });
     expect(typeof ai?.run).toBe("function");
+  });
+
+  it("provider routing labels usage with the selected provider when the adapter omits it", async () => {
+    const ai = createChainAi([
+      {
+        name: "codex",
+        ai: {
+          run: async () => ({ response: "ok", usage: { inputTokens: 3, outputTokens: 2 } }),
+        },
+      },
+    ]);
+    await expect(ai.run("gpt-5.5", { prompt: "x" })).resolves.toMatchObject({
+      response: "ok",
+      usage: {
+        provider: "codex",
+        model: "gpt-5.5",
+        inputTokens: 3,
+        outputTokens: 2,
+      },
+    });
+  });
+
+  it("provider routing falls back to \"default\" when both the adapter's usage AND the requested model are empty", async () => {
+    const ai = createChainAi([
+      {
+        name: "codex",
+        ai: {
+          run: async () => ({ response: "ok", usage: { inputTokens: 3 } }),
+        },
+      },
+    ]);
+    await expect(ai.run("", { prompt: "x" })).resolves.toMatchObject({
+      response: "ok",
+      usage: { provider: "codex", model: "default", inputTokens: 3 },
+    });
   });
 
   it("createSelfHostAi routes a SINGLE provider through the router too — a name address yields the provider default, never `--model <provider>` (#1610)", async () => {
@@ -1165,7 +1201,8 @@ describe("subscription CLI helpers + fail-safe", () => {
       JSON.stringify({ type: "result", result: "review" }),
     ].join("\n");
     const ok: StubSpawn = async () => ({ stdout, code: 0 });
-    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_EFFORT: "medium" }, ok, noAuthCheck).run("", { prompt: "x" });
+    const result = await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1", CODEX_AI_EFFORT: "medium" }, ok, noAuthCheck).run("", { prompt: "x" });
+    expect(result.usage).toMatchObject({ provider: "codex", model: "gpt-5-codex", effort: "medium", inputTokens: 20, outputTokens: 7, totalTokens: 27 });
     const metrics = await renderMetrics();
     expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="gpt-5-codex",provider="codex"} 1');
     expect(metrics).toContain('gittensory_ai_input_tokens_total{effort="medium",kind="review",model="gpt-5-codex",provider="codex"} 20');

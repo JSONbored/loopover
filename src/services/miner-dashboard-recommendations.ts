@@ -46,7 +46,7 @@ const FORBIDDEN_PUBLIC_TEXT =
 // Compose the roots from the canonical PUBLIC_LOCAL_PATH_INLINE in redaction.ts (so this surface cannot drift)
 // while preserving this surface's own trailing class and its case-sensitive `/g` (Windows form via `[A-Z]`).
 const LOCAL_PATH = new RegExp(`(?:${PUBLIC_LOCAL_PATH_INLINE})[^\\s,;:)]+`, "g");
-const FORBIDDEN_TOKEN = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
+const FORBIDDEN_TOKEN = /\b(?:ghp_|github_pat_|gts_|orbenr_|orbsec_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 
 export function previousDecisionPackFromSnapshots(currentPack: ContributorDecisionPack, snapshots: SignalSnapshotRecord[]): ContributorDecisionPack | undefined {
   const current = asRecord(currentPack);

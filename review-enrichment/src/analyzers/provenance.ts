@@ -19,9 +19,11 @@ const MAX_FINDINGS = 30; // keep the brief bounded
 
 // Compiled/non-source binary artifact extensions. `node` is a compiled Node native addon (matching the
 // binary set in asset-weight.ts) and `pyd` is a Windows Python extension DLL (the sibling of the pyc/pyo/so
-// entries) — both are unauditable prebuilt binaries a PR should not check in without source.
+// entries) — both are unauditable prebuilt binaries a PR should not check in without source. ML checkpoint
+// formats (`safetensors`, `gguf`, `onnx`, `pt`, `pth`, `ckpt`) mirror asset-weight.ts — unauditable weight
+// blobs a PR should not commit without reproducible training source.
 const BINARY_EXT_RE =
-  /\.(exe|dll|so|dylib|bin|pyc|pyo|pyd|class|jar|war|ear|wasm|node|o|a)$/i;
+  /\.(?:exe|dll|so|dylib|bin|pyc|pyo|pyd|class|jar|war|ear|wasm|node|o|a|safetensors|gguf|onnx|pt|pth|ckpt)$/i;
 // Vendored / embedded third-party source trees. bower_components (Bower) and jspm_packages (JSPM) are
 // installed-dependency directories — the same vendored case as node_modules — so a committed tree under either
 // is a vendored artifact, not contributor source (mirrors src/signals/path-matchers.ts's vendored classifier).

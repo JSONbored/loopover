@@ -21,14 +21,10 @@ const COALESCABLE_PULL_REQUEST_ACTIONS = new Set([
 const COALESCABLE_PULL_REQUEST_LABEL_ACTIONS = new Set(["labeled", "unlabeled"]);
 
 // #selfhost-backlog-convergence: mirrors shouldProcessPullRequestPublicSurface's (processors.ts) own action
-// allowlist per event -- these three event types are the ones that trigger a full re-review pipeline run for a
-// PR (readiness/review/publish), so a burst of review activity on the same head (e.g. several reviewers
-// submitting close together, or one reviewer leaving many inline comments) fans out one FULL re-review per
-// delivery today. The re-review pipeline always re-fetches live review/comment state from GitHub rather than
-// acting on the specific webhook payload's content, so collapsing a burst into one job loses nothing -- exactly
-// the same safety property the existing pull_request coalescing above already relies on.
+// allowlist for review comments/threads. Unlike `pull_request_review`, these events do not carry review-cache
+// invalidation or changes-requested notification side effects, so only payload-interchangeable event families
+// may coalesce with each other.
 const REVIEW_SURFACE_ACTIONS_BY_EVENT: Record<string, ReadonlySet<string>> = {
-  pull_request_review: new Set(["submitted", "edited", "dismissed"]),
   pull_request_review_comment: new Set(["created", "edited", "deleted"]),
   pull_request_review_thread: new Set(["resolved", "unresolved"]),
 };
@@ -78,7 +74,7 @@ export function githubWebhookCoalesceKey(
     const pr = normalizedNumber(payload.pull_request?.number);
     const headSha = normalizedSha(payload.pull_request?.head?.sha);
     return pr !== null
-      ? `github-webhook:pr-review:${repo}#${pr}${headSha ? `@${headSha}` : ""}`
+      ? `github-webhook:${eventName}:${repo}#${pr}${headSha ? `@${headSha}` : ""}`
       : null;
   }
   return null;

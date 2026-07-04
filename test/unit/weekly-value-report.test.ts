@@ -243,6 +243,40 @@ describe("weekly value reports", () => {
     expect(JSON.stringify(report)).not.toMatch(new RegExp(slackToken.slice(0, 4), "i"));
   });
 
+  // Regression (#1825): the Orb broker's enrollment id/secret (createOpaqueToken("orbenr"/"orbsec"),
+  // src/orb/broker.ts) are bare opaque tokens that must be redacted the same way ghp_/gts_/xoxb- tokens are.
+  it("redacts Orb broker enrollment id/secret tokens in operator rollup dimensions (#1825)", () => {
+    const orbSecret = `orbsec_${"e".repeat(20)}`;
+    const report = buildWeeklyValueReport({
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      variant: "operator",
+      days: 7,
+      repositories: [repo("JSONbored/gittensory", true, true)],
+      installations: [installation(1)],
+      health: [health(1, "healthy")],
+      registry: registry([]),
+      scoring: scoring([]),
+      upstreamDrift: upstream({ status: "current", openReportCount: 0 }),
+      usageSummary: usageSummary({ totalEvents: 1, activeActors: 1 }),
+      usageRollups: [
+        rollup("2026-05-31", {
+          totalEvents: 1,
+          activeActors: 1,
+          activeRepos: 1,
+          repos: [{ key: orbSecret, count: 1 }],
+          events: [],
+          surfaces: [],
+          commands: [],
+          tools: [],
+        }),
+      ],
+      usageRollupStatus: rollupStatus({ status: "ready" }),
+    });
+
+    expect(report.operatorDetails?.topRepos).toEqual([{ key: "<redacted-token>", count: 1 }]);
+    expect(JSON.stringify(report)).not.toContain(orbSecret);
+  });
+
   it("keeps clean complete windows marked ready", () => {
     const report = buildWeeklyValueReport({
       generatedAt: "2026-06-01T12:00:00.000Z",

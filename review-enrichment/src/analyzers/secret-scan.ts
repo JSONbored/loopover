@@ -357,6 +357,222 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Discord webhook URL: discord.com/api/webhooks/<id>/<token>. Base64url token, lookahead terminator.
+    kind: "discord_webhook_url",
+    re: /\bhttps:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,20}\/[A-Za-z0-9_-]{60,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Microsoft Teams incoming-webhook URL (webhook.office.com): a postable message-egress secret endpoint.
+    kind: "teams_webhook_url",
+    re: /\bhttps:\/\/[a-z0-9-]+\.webhook\.office\.com\/webhookb2\/[A-Za-z0-9@-]+\/IncomingWebhook\/[A-Za-z0-9]+\/[A-Za-z0-9-]+/,
+    confidence: "high",
+  },
+  {
+    // Figma personal access token: `figd_` + >=40 base64url (lookahead terminator).
+    kind: "figma_pat",
+    re: /\bfigd_[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Docker Hub personal access token: `dckr_pat_` + 27 base64url (lookahead terminator).
+    kind: "dockerhub_pat",
+    re: /\bdckr_pat_[A-Za-z0-9_-]{27}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // GitLab feed token: `glft-` + 20 hex.
+    kind: "gitlab_feed_token",
+    re: /\bglft-[0-9a-f]{20}\b/,
+    confidence: "high",
+  },
+  {
+    // GitLab deploy token: `gldt-` + 20 base64url (lookahead terminator).
+    kind: "gitlab_deploy_token",
+    re: /\bgldt-[A-Za-z0-9_-]{20}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Razorpay key id/secret: `rzp_test_`/`rzp_live_` + 14 base62.
+    kind: "razorpay_key",
+    re: /\brzp_(?:test|live)_[A-Za-z0-9]{14}\b/,
+    confidence: "high",
+  },
+  {
+    // Supabase access token: `sbp_` + 40 hex.
+    kind: "supabase_token",
+    re: /\bsbp_[a-f0-9]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // Cloudinary URL: `cloudinary://<api-key>:<api-secret>@<cloud>` — the secret is embedded in the URL.
+    kind: "cloudinary_url",
+    re: /\bcloudinary:\/\/\d{15}:[A-Za-z0-9_-]{20,}@[A-Za-z0-9_-]+/,
+    confidence: "high",
+  },
+  {
+    // Brevo (Sendinblue) API key: `xkeysib-` + 64 hex + `-` + 16 base62.
+    kind: "brevo_api_key",
+    re: /\bxkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}\b/,
+    confidence: "high",
+  },
+  {
+    // Buildkite agent token: `bkua_` + 40 lowercase-hex/base36.
+    kind: "buildkite_token",
+    re: /\bbkua_[a-z0-9]{40}\b/,
+    confidence: "high",
+  },
+  {
+    // NuGet API key: `oy2` + 43 lowercase base36.
+    kind: "nuget_api_key",
+    re: /\boy2[a-z0-9]{43}\b/,
+    confidence: "high",
+  },
+  {
+    // HubSpot private-app access token: `pat-na1-`/`pat-eu1-` + a UUID (distinct from the Airtable `pat<id>.` shape).
+    kind: "hubspot_pat",
+    re: /\bpat-(?:na|eu)1-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // Atlassian (Jira/Confluence) API token: the fixed `ATATT3xFfGF0` marker + base64url body (lookahead terminator).
+    kind: "atlassian_api_token",
+    re: /\bATATT3xFfGF0[A-Za-z0-9_=-]{50,}(?![A-Za-z0-9_=-])/,
+    confidence: "high",
+  },
+  {
+    // Alibaba Cloud access key id: `LTAI` + 20 base62.
+    kind: "alibaba_access_key",
+    re: /\bLTAI[A-Za-z0-9]{20}\b/,
+    confidence: "high",
+  },
+  {
+    // LangSmith API key: `lsv2_pt_` + 32 hex + `_` + 10 hex.
+    kind: "langsmith_api_key",
+    re: /\blsv2_pt_[a-f0-9]{32}_[a-f0-9]{10}\b/,
+    confidence: "high",
+  },
+  {
+    // Plaid access token: `access-{sandbox,development,production}-` + a UUID.
+    kind: "plaid_access_token",
+    re: /\baccess-(?:sandbox|development|production)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // LaunchDarkly SDK/mobile key: `sdk-`/`mob-` + a UUID.
+    kind: "launchdarkly_key",
+    re: /\b(?:sdk|mob)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // Grafana Cloud access-policy token: `glc_` + >=32 base62 (distinct from the `glsa_` service-account token).
+    kind: "grafana_cloud_token",
+    re: /\bglc_[A-Za-z0-9]{32,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // dbt Cloud service token: `dbtc_` + >=30 base64url (lookahead terminator).
+    kind: "dbt_cloud_token",
+    re: /\bdbtc_[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // PostHog personal API key: `phx_` + >=32 base62.
+    kind: "posthog_personal_key",
+    re: /\bphx_[A-Za-z0-9]{32,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Render API key: `rnd_` + >=24 base62.
+    kind: "render_api_key",
+    re: /\brnd_[A-Za-z0-9]{24,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Jina AI API key: `jina_` + >=28 base62.
+    kind: "jina_api_key",
+    re: /\bjina_[A-Za-z0-9]{28,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Sentry user auth token: `sntryu_` + 64 hex (distinct from the `sntrys_` org token / DSN).
+    kind: "sentry_user_token",
+    re: /\bsntryu_[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Replicate API token: `r8_` + >=37 base62.
+    kind: "replicate_token",
+    re: /\br8_[A-Za-z0-9]{37,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // OpenRouter API key: `sk-or-v1-` + 64 hex (distinct prefix from the OpenAI/Anthropic `sk-` keys above).
+    kind: "openrouter_key",
+    re: /\bsk-or-v1-[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Amazon MWS auth token: `amzn.mws.` + a UUID.
+    kind: "amazon_mws_token",
+    re: /\bamzn\.mws\.[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // Tencent Cloud secret id: `AKID` + >=32 base62.
+    kind: "tencent_secret_id",
+    re: /\bAKID[A-Za-z0-9]{32,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Ory personal access token: `ory_pat_` + >=32 base64url (lookahead terminator).
+    kind: "ory_pat",
+    re: /\bory_pat_[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Braintree production access token: `access_token$production$` + 16 base36 merchant id + `$` + 32 hex.
+    kind: "braintree_token",
+    re: /\baccess_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}\b/,
+    confidence: "high",
+  },
+  {
+    // MailerSend API token: `mlsn.` + 64 hex.
+    kind: "mailersend_token",
+    re: /\bmlsn\.[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Ghost Admin API key: a 24-hex id, `:`, then a 64-hex secret.
+    kind: "ghost_admin_key",
+    re: /\b[0-9a-f]{24}:[0-9a-f]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Xata API key: `xau_` + >=40 base64url (lookahead terminator).
+    kind: "xata_api_key",
+    re: /\bxau_[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Deno Deploy access token: `ddp_` + >=40 base62.
+    kind: "deno_deploy_token",
+    re: /\bddp_[A-Za-z0-9]{40,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // 1Password service-account token: `ops_` + a base64url body that begins with the `eyJ` JSON marker.
+    kind: "onepassword_service_token",
+    re: /\bops_eyJ[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // RunPod API key: `rpa_` + >=32 uppercase base36.
+    kind: "runpod_api_key",
+    re: /\brpa_[A-Z0-9]{32,}(?![A-Z0-9])/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

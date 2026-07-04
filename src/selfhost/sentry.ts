@@ -13,11 +13,12 @@ import {
   type OpenTelemetryBridge,
 } from "./otel";
 import { hashedInstallationIdWith } from "./review-tracing";
+import { queueDeadLetterReviveIntervalMs } from "./queue-common";
 
 type SentryNs = typeof import("@sentry/node");
 type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
 type SentryMonitorConfig = NonNullable<Parameters<SentryNs["captureCheckIn"]>[1]>;
-export type SentryMonitorName = "scheduled-loop" | "orb-export" | "orb-relay-drain" | "orb-relay-register";
+export type SentryMonitorName = "scheduled-loop" | "orb-export" | "orb-relay-drain" | "orb-relay-register" | "queue-dead-letter-revive";
 type SentryScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setTag(key: string, value: string): void;
@@ -40,6 +41,11 @@ const SECRET_VALUE = new RegExp(
     String.raw`gh[opsru]_[A-Za-z0-9_]{20,}`,
     String.raw`sk-[A-Za-z0-9_-]{20,}`,
     String.raw`xox[baprs]-[A-Za-z0-9-]+`,
+    // Gittensory's own opaque tokens (createOpaqueToken, src/auth/security.ts): gts_ is the default session-token
+    // prefix, orbenr_/orbsec_ are the Orb broker's enrollment id/secret (#1825) — a broker error message can quote
+    // these bare (no "secret"/"token"-named field for the key-based redaction above to catch), so the VALUE itself
+    // must be recognized here too.
+    String.raw`(?:gts|orbenr|orbsec)_[A-Za-z0-9_]{20,}`,
     String.raw`Bearer\s+[A-Za-z0-9._~+/=-]{12,}`,
     String.raw`-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----`,
   ].join("|"),
@@ -74,7 +80,7 @@ async function loadNodeHasher(): Promise<void> {
     createHash("sha256").update(input).digest("hex");
 }
 
-const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryMonitorConfig }> = {
+const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryMonitorConfig | (() => SentryMonitorConfig) }> = {
   "scheduled-loop": {
     slug: "scheduled-loop",
     config: {
@@ -113,6 +119,24 @@ const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryM
       maxRuntime: 1,
       failureIssueThreshold: 3,
       recoveryThreshold: 1,
+    },
+  },
+  // Derived from the LIVE QUEUE_DEAD_LETTER_REVIVE_INTERVAL_MS override (default 30min, see queue-common.ts)
+  // rather than hard-coded: a static 30min schedule would report false missed check-ins for any operator who
+  // configures an interval longer than the schedule + margin window, even though the job is running exactly on
+  // its own configured cadence. Silent stoppage here means dead jobs never retry again without manual
+  // intervention (#1824), so the monitor must track whatever interval is actually in effect.
+  "queue-dead-letter-revive": {
+    slug: "queue-dead-letter-revive",
+    config: () => {
+      const intervalMinutes = Math.max(1, Math.round(queueDeadLetterReviveIntervalMs() / 60_000));
+      return {
+        schedule: { type: "interval", value: intervalMinutes, unit: "minute" },
+        checkinMargin: Math.max(5, Math.ceil(intervalMinutes / 3)),
+        maxRuntime: 5,
+        failureIssueThreshold: 2,
+        recoveryThreshold: 1,
+      };
     },
   },
 };
@@ -595,10 +619,9 @@ export async function withSentryMonitor<T>(
 ): Promise<T> {
   if (!active || !Sentry) return callback();
   const monitorSlug = resolveSentryMonitorSlug(name);
-  const checkInId = Sentry.captureCheckIn(
-    { monitorSlug, status: "in_progress" },
-    SENTRY_MONITORS[name].config,
-  );
+  const configOrResolver = SENTRY_MONITORS[name].config;
+  const resolvedConfig = typeof configOrResolver === "function" ? configOrResolver() : configOrResolver;
+  const checkInId = Sentry.captureCheckIn({ monitorSlug, status: "in_progress" }, resolvedConfig);
   const startedAt = Date.now();
   try {
     const result = await callback();

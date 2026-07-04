@@ -11,9 +11,9 @@ function isTestFile(file) {
     /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
     /\.(test|spec)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|rs)$/i.test(file) ||
     /(^|\/)[^/]+\.(cy|e2e)\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(file) ||
-    // JVM/.NET/Swift PascalCase test-class suffix (case-sensitive, matching the
-    // signal classifiers) so C#/Swift/Groovy tests aren't counted as source.
-    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy)$/.test(file) ||
+    // JVM/.NET/Swift/PHP PascalCase test-class suffix (case-sensitive, matching the
+    // signal classifiers) so C#/Swift/Groovy/PHP tests aren't counted as source.
+    /(^|\/)\w*(Tests?|Spec)\.(java|kt|kts|scala|cs|swift|groovy|php)$/.test(file) ||
     /(^|\/)__snapshots__\//i.test(file)
   );
 }

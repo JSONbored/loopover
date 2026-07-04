@@ -24,6 +24,9 @@ import { scanRedos } from "./redos.js";
 import { secretAnalyzer } from "./secret/descriptor.js";
 import { scanSecretLog } from "./secret-log.js";
 import { scanStaleBranch } from "./stale-branch.js";
+import { scanTestRatio } from "./test-ratio.js";
+import { scanMigrationSafety } from "./migration-safety.js";
+import { scanLooseRanges } from "./loose-range.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import type {
@@ -679,6 +682,116 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanPendingReviewRequests(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "testRatio",
+    title: "Test-to-code ratio",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { materialSourceLines: 20, ratioThreshold: 0.3 },
+    docs: {
+      summary: "Flags a PR whose source change is material but ships with disproportionately little (or zero) accompanying test change.",
+      looksAt: "Each changed file's path (classified source vs test by naming convention) and added-line count.",
+      reports: "Source/test added-line and file counts and the resulting ratio — never file content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "A cheap, always-available complement to the coverage-delta analyzer: works even when no CI coverage artifact exists.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Test-to-code ratio"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`+${item.sourceAdded} source`)} vs ${helpers.safeCodeSpan(`+${item.testAdded} test`)} added lines (ratio ${item.ratio.toFixed(2)}) across ${item.sourceFiles} source file(s) and ${item.testFiles} test file(s)`,
+        );
+      }
+      return lines;
+    },
+    run: (req) => scanTestRatio(req),
+  }),
+  descriptor({
+    name: "migrationSafety",
+    title: "SQL migration safety",
+    category: "config",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 20, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags risky schema operations in added migration SQL: drops, renames, non-nullable columns without a default, and blocking table rewrites.",
+      looksAt: "Added lines in migration paths (migrations/, db/migrate/, *.sql).",
+      reports: "File, line, and public-safe rule kind — never SQL content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Detection is line-anchored single-statement shapes only; statements split across lines are skipped rather than tracked with cross-line state.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "drop":
+            return "drops a table or column; still-running deployments that read the old schema break immediately";
+          case "rename":
+            return "renames a table or column in one step; code still using the old name fails until fully rolled out";
+          case "not-null-no-default":
+            return "adds a NOT NULL column without a DEFAULT; inserts from not-yet-updated code omit it and fail";
+          case "blocking-rewrite":
+            return "changes a column type, which rewrites (and locks) the table in most engines while it runs";
+        }
+      };
+      const lines = ["### SQL migration safety (deploy-breaking schema changes)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanMigrationSafety(req, signal),
+  }),
+  descriptor({
+    name: "looseRange",
+    title: "Loose dependency version range",
+    category: "supply-chain",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 20, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added npm dependency specifiers that use dangerously loose ranges instead of a pinned/caret/tilde range.",
+      looksAt: "Added specifier lines in package.json patches.",
+      reports: "Manifest file, line, package, raw specifier, and loose-range kind.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Judges only the version specifier, never the package; wildcard, latest, unbounded >=, and bare-major ranges let any future publish flow into the next install.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "wildcard":
+            return "a wildcard range accepts ANY published version, including a compromised one";
+          case "latest":
+            return "the `latest` dist-tag floats to whatever is published next; installs are not reproducible";
+          case "unbounded-gte":
+            return "an unbounded `>=` range accepts every future major version, breaking changes included";
+          case "bare":
+            return "a bare-major range floats across every future minor/patch of the major line";
+        }
+      };
+      const lines = ["### Loose dependency version ranges (supply-chain drift risk)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.package}@"${item.range}"`)} (${helpers.safeCodeSpan(`${item.file}:${item.line}`)}) — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanLooseRanges(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

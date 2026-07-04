@@ -628,7 +628,9 @@ export const RepositorySettingsSchema = z
     closeOwnerAuthors: z.boolean(),
     autoLabelEnabled: z.boolean(),
     typeLabelsEnabled: z.boolean(),
-    typeLabels: z.object({ bug: z.string(), feature: z.string(), priority: z.string() }).optional(),
+    // Open `category -> label name` record (#label-modularity): bug/feature/priority are the built-in
+    // categories, but a self-hoster may register any number of additional ones (e.g. `security`).
+    typeLabels: z.record(z.string(), z.string()).optional(),
     linkedIssueLabelPropagation: z
       .object({
         enabled: z.boolean(),
@@ -673,7 +675,7 @@ export const RepositorySettingsSchema = z
       )
       .optional(),
     autonomy: z
-      .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
+      .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
       .optional(),
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),

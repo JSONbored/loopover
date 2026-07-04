@@ -73,6 +73,23 @@ const HARDCODED_BUILD_SECRET_RE =
 // A package installer pointed at a plaintext-HTTP index (dependency-download MITM).
 const INSECURE_PIP_INDEX_RE = /--(?:extra-)?index-url[=\s]+http:\/\//i;
 
+// More Kubernetes Pod Security Standards (restricted profile) controls, completing the securityContext set
+// above. Each is a single `key: <insecure-value>` line (or, for capabilities, an unambiguous capability name).
+const HOST_PORT_RE = /\bhostPort\b[\s"'=:,-]*\d/;
+// `hostPath` volume mount (restricted PSS forbids it). `\bhostPath\b` does NOT match the `hostPathType` sub-field
+// (word boundary fails before `Type`); it matches the `hostPath:` volume key that maps a host directory in.
+const HOST_PATH_RE = /\bhostPath\b\s*:/;
+// A dangerous Linux capability added to the container. These names are capability-specific (they are not
+// ordinary words/identifiers), so a bare occurrence in a config file is a reliable signal.
+const ADDED_CAPABILITY_RE = /\b(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|SYS_MODULE|SYS_RAWIO|DAC_READ_SEARCH|NET_RAW)\b/;
+const SHARE_PROCESS_NS_RE = /\bshareProcessNamespace\b[\s"'=:,-]*true\b/;
+const RUN_AS_GID_ZERO_RE = /\brunAsGroup\b[\s"'=:,-]*0\b/;
+const FS_GROUP_ZERO_RE = /\bfsGroup\b[\s"'=:,-]*0\b/;
+const WINDOWS_HOST_PROCESS_RE = /\bhostProcess\b[\s"'=:,-]*true\b/;
+// seccompProfile `type: Unconfined` disables syscall filtering. The `Unconfined` value is k8s-specific
+// (seccomp/AppArmor), so keying the generic `type` field on it does not over-match ordinary config.
+const SECCOMP_UNCONFINED_RE = /\btype\b[\s"'=:,-]*["']?Unconfined\b/;
+
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
   for (let i = 0; i <= patch.length; i++) {
@@ -396,6 +413,54 @@ export function scanPatchForIacMisconfig(
     if (
       INSECURE_PIP_INDEX_RE.test(body) &&
       pushFinding(findings, seen, path, newLine, "insecure-pip-index", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HOST_PORT_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "host-port", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      HOST_PATH_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "host-path-volume", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      ADDED_CAPABILITY_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "added-linux-capability", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      SHARE_PROCESS_NS_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "share-process-namespace", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      RUN_AS_GID_ZERO_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "run-as-root-group", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      FS_GROUP_ZERO_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "root-fs-group", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      WINDOWS_HOST_PROCESS_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "windows-host-process", maxFindings)
+    ) {
+      return findings;
+    }
+    if (
+      SECCOMP_UNCONFINED_RE.test(body) &&
+      pushFinding(findings, seen, path, newLine, "seccomp-unconfined", maxFindings)
     ) {
       return findings;
     }

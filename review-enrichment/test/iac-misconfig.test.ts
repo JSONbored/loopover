@@ -328,3 +328,51 @@ test("scanPatchForIacMisconfig does not flag the safe counterpart of each Docker
     );
   }
 });
+
+test("scanPatchForIacMisconfig flags more Kubernetes Pod Security Standards violations", () => {
+  // Each added line is a recognized PSS-restricted violation not covered by the earlier securityContext set,
+  // and must produce exactly one finding of its own kind.
+  const cases = [
+    ["+      hostPort: 8080", "host-port"],
+    ["+      hostPath:", "host-path-volume"],
+    ["+        - SYS_ADMIN", "added-linux-capability"],
+    ["+  shareProcessNamespace: true", "share-process-namespace"],
+    ["+      runAsGroup: 0", "run-as-root-group"],
+    ["+      fsGroup: 0", "root-fs-group"],
+    ["+      hostProcess: true", "windows-host-process"],
+    ["+        type: Unconfined", "seccomp-unconfined"],
+  ];
+  for (const [added, kind] of cases) {
+    const findings = scanPatchForIacMisconfig(
+      "deploy/pod.yaml",
+      ["@@ -1,0 +1,1 @@", added].join("\n"),
+    );
+    assert.deepEqual(
+      findings,
+      [{ file: "deploy/pod.yaml", line: 1, kind }],
+      `${kind}: expected exactly one finding of that kind, got ${JSON.stringify(findings)}`,
+    );
+  }
+});
+
+test("scanPatchForIacMisconfig does not flag the safe counterpart of each PSS control", () => {
+  // Safe/near-miss forms: a container (not host) port, the `hostPathType` sub-field (word boundary must not
+  // fire the `hostPath` volume rule), a benign capability, and the non-root/non-zero/secure values.
+  const safe = [
+    "+      containerPort: 8080",
+    "+      hostPathType: Directory",
+    "+        - NET_BIND_SERVICE",
+    "+  shareProcessNamespace: false",
+    "+      runAsGroup: 1000",
+    "+      fsGroup: 2000",
+    "+      hostProcess: false",
+    "+        type: RuntimeDefault",
+  ];
+  for (const added of safe) {
+    assert.deepEqual(
+      scanPatchForIacMisconfig("deploy/pod.yaml", ["@@ -1,0 +1,1 @@", added].join("\n")),
+      [],
+      `should not flag: ${added.trim()}`,
+    );
+  }
+});

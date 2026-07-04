@@ -325,6 +325,22 @@ export function renderBrief(
           return "hardcodes a credential-shaped value into an image layer via `ENV`/`ARG`; build secrets persist in the image history";
         case "insecure-pip-index":
           return "points a package installer at a plaintext-HTTP index; dependency downloads can be intercepted";
+        case "host-port":
+          return "binds a container port to the host node (`hostPort`); it constrains scheduling and exposes the port on the node";
+        case "host-path-volume":
+          return "mounts a host filesystem path into the pod (`hostPath` volume); host files become reachable from the container";
+        case "added-linux-capability":
+          return "adds a dangerous Linux capability to the container; it grants broad kernel-level privileges";
+        case "share-process-namespace":
+          return "shares the process namespace across the pod's containers; each can see and signal the others' processes";
+        case "run-as-root-group":
+          return "runs the container with the root group GID 0 (`runAsGroup: 0`); prefer a dedicated non-root group";
+        case "root-fs-group":
+          return "sets the volume ownership group to GID 0 (`fsGroup: 0`); prefer a dedicated non-root group";
+        case "windows-host-process":
+          return "runs a Windows HostProcess container (`hostProcess: true`), which has host-level privileges";
+        case "seccomp-unconfined":
+          return "sets the seccomp profile to `Unconfined`, disabling syscall filtering for the container";
       }
     };
 

@@ -316,9 +316,9 @@ const MAX_PATH_INSTRUCTIONS = 50;
 
 /**
  * Normalized maintainer focus manifest. Repo owners declare which work areas are wanted,
- * preferred, and how PRs should present validation. Path-based manual review is intentionally
- * not part of this manifest anymore; use `settings.hardGuardrailGlobs` for that single
- * authoritative control. `maintainerNotes` are private review context and must never reach a public
+ * preferred, and how PRs should present validation. Path-based manual review is configured through
+ * `settings.hardGuardrailGlobs`; legacy top-level `blockedPaths` is accepted as a compatibility
+ * alias when the settings field is absent. `maintainerNotes` are private review context and must never reach a public
  * GitHub surface; `publicNotes` are explicitly opted into public output by the maintainer.
  */
 export type FocusManifest = {
@@ -1754,6 +1754,16 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
   }
   const record = raw as Record<string, JsonValue>;
   const warnings: string[] = [];
+  const settings = parseSettingsOverride(record.settings, warnings);
+  const hasSettingsHardGuardrails =
+    record.settings !== null &&
+    typeof record.settings === "object" &&
+    !Array.isArray(record.settings) &&
+    Object.prototype.hasOwnProperty.call(record.settings, "hardGuardrailGlobs");
+  if (!hasSettingsHardGuardrails && Array.isArray(record.blockedPaths)) {
+    const legacyGuardrails = normalizeStringList(record.blockedPaths, "blockedPaths", warnings);
+    if (legacyGuardrails.length > 0) settings.hardGuardrailGlobs = legacyGuardrails;
+  }
   const manifest: FocusManifest = {
     present: true,
     source: normalizeSource(source, record.source, warnings),
@@ -1765,7 +1775,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     maintainerNotes: normalizeStringList(record.maintainerNotes, "maintainerNotes", warnings),
     publicNotes: normalizeStringList(record.publicNotes, "publicNotes", warnings).filter(isFocusManifestPublicSafe),
     gate: parseGateConfig(record.gate, warnings),
-    settings: parseSettingsOverride(record.settings, warnings),
+    settings,
     review: parseReviewConfig(record.review, warnings),
     features: parseFeaturesConfig(record.features, warnings),
     contentLane: parseContentLaneConfig(record.contentLane, warnings),

@@ -1,10 +1,9 @@
 import { BASE_INPUT, BASE_REPO, definePredictedGateFixture, openIssue, parseManifest } from "./_shared";
 
-// Legacy focus-manifest blockedPaths are inert. Path holds are configured through
-// settings.hardGuardrailGlobs, not manifestPolicy.
+// Legacy focus-manifest blockedPaths remain a compatibility alias for hard guardrail holds.
 export default definePredictedGateFixture({
   id: "manifest-blocked-path",
-  title: "Legacy blocked manifest path is ignored",
+  title: "Legacy blocked manifest path is held",
   branch: "legacy blockedPaths with changedPaths supplied and manifestPolicy:block",
   input: BASE_INPUT,
   manifest: parseManifest({ gate: { manifestPolicy: "block" }, blockedPaths: ["dist/**"] }),
@@ -13,10 +12,10 @@ export default definePredictedGateFixture({
   pullRequests: [],
   changedPaths: ["dist/bundle.js"],
   expected: {
-    conclusion: "success",
+    conclusion: "neutral",
     pack: "gittensor",
     blockerCodes: [],
-    warningCodes: [],
+    warningCodes: ["guardrail_hold"],
     funnelPresent: false,
     noteExcludes: ["Provide the PR's changed paths"],
   },

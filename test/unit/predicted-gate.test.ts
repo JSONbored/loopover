@@ -336,29 +336,27 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.conclusion).toBe("neutral");
   });
 
-  it("ignores legacy blockedPaths even when manifestPolicy:block is enabled (#12)", () => {
+  it("maps legacy blockedPaths to a guardrail hold even when manifestPolicy:block is enabled (#12)", () => {
     const result = verdict({
       gate: { manifestPolicy: "block" },
       manifestExtra: { blockedPaths: ["dist/**"] },
       changedPaths: ["dist/bundle.js"],
     });
-    expect(result.conclusion).toBe("success");
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
     expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
-    expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
-    // The note no longer disclaims path-policy once paths are supplied, but slop stays disclaimed.
     expect(result.note).not.toContain("Provide the PR's changed paths");
     expect(result.note.toLowerCase()).toContain("slop");
   });
 
-  it("manifestPolicy:advisory does NOT block on legacy blockedPaths (parity with the live advisory gate) (#12)", () => {
-    // Path holds are configured through settings.hardGuardrailGlobs, not manifest blockedPaths.
+  it("maps legacy blockedPaths to a guardrail hold under manifestPolicy:advisory (#12)", () => {
     const result = verdict({
       gate: { manifestPolicy: "advisory" },
       manifestExtra: { blockedPaths: ["dist/**"] },
       changedPaths: ["dist/bundle.js"],
     });
-    expect(result.conclusion).not.toBe("failure");
-    expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
+    expect(result.conclusion).toBe("neutral");
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
   });
 
   it("manifestPolicy:off (default) emits NO manifest finding for legacy blockedPaths", () => {
@@ -369,6 +367,7 @@ describe("buildPredictedGateVerdict", () => {
     });
     expect(result.blockers.some((b) => b.code === "manifest_blocked_path")).toBe(false);
     expect(result.warnings.some((w) => w.code === "manifest_blocked_path")).toBe(false);
+    expect(result.warnings.some((w) => w.code === "guardrail_hold")).toBe(true);
   });
 
   it("ignores non-policy guidance findings (e.g. off-focus) — only enforceable policy codes are threaded (#12)", () => {

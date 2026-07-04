@@ -467,10 +467,12 @@ describe("compileFocusManifestPolicy", () => {
     expect(guidance).not.toMatch(/ranking/i);
   });
 
-  it("treats legacy blockedPaths-only manifests as absent", () => {
-    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ blockedPaths: ["infra/"] }), opts);
-    expect(policy.present).toBe(false);
-    expect(policy.publicSafe.readinessWarnings).toEqual([]);
+  it("treats legacy blockedPaths-only manifests as guardrail settings", () => {
+    const manifest = parseFocusManifest({ blockedPaths: ["infra/"] });
+    const policy = compileFocusManifestPolicy(REPO, manifest, opts);
+    expect(manifest.present).toBe(true);
+    expect(manifest.settings.hardGuardrailGlobs).toEqual(["infra/"]);
+    expect(policy.present).toBe(true);
   });
 
   it("emits a readiness warning when no wanted paths or preferred labels are declared", () => {
@@ -1572,6 +1574,12 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
 
     const omitted = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({}));
     expect(omitted.hardGuardrailGlobs).toEqual(["db-default/**"]);
+
+    const legacy = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({ blockedPaths: ["legacy/**"] }));
+    expect(legacy.hardGuardrailGlobs).toEqual(["legacy/**"]);
+
+    const explicitBeatsLegacy = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, parseFocusManifest({ blockedPaths: ["legacy/**"], settings: { hardGuardrailGlobs: ["modern/**"] } }));
+    expect(explicitBeatsLegacy.hardGuardrailGlobs).toEqual(["modern/**"]);
 
     const malformed = parseFocusManifest({ settings: { hardGuardrailGlobs: "src/**" as never } });
     expect(malformed.settings.hardGuardrailGlobs).toBeUndefined();

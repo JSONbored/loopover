@@ -199,6 +199,17 @@ describe("gaugeVector (#selfhost-lane-observability)", () => {
     expect(out).not.toContain("owner/repo");
   });
 
+  it("reuses the same redacted label for a repo across repeated scrapes, without resetting", async () => {
+    gaugeVector("gittensory_queue_backlog_by_repo", () => [
+      { labels: { rank: "1", repo: "owner/repo" }, value: 2 },
+    ]);
+
+    const first = await renderMetrics();
+    const second = await renderMetrics();
+    expect(first).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+    expect(second).toContain('gittensory_queue_backlog_by_repo{rank="1",repo="redacted-1"} 2');
+  });
+
   it("supports an async sampler", async () => {
     gaugeVector("async_v", async () => [{ labels: { key_scope: "public" }, value: 42 }]);
     expect(await renderMetrics()).toContain('async_v{key_scope="public"} 42');

@@ -766,7 +766,7 @@ export const REES_ANALYZERS = [
     },
     docs: {
       summary:
-        "Flags risky schema operations in added migration SQL: drops, renames, non-nullable columns without a default, and blocking table rewrites.",
+        "Flags risky schema operations in added migration SQL: drops, truncates, renames, non-nullable columns without a default, SET NOT NULL on existing columns, blocking table rewrites, and non-concurrent index builds.",
       looksAt: "Added lines in migration paths (migrations/, db/migrate/, *.sql).",
       reports: "File, line, and public-safe rule kind — never SQL content.",
       network: "Pure local analyzer. No external network call.",

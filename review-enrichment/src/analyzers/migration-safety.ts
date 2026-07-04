@@ -1,7 +1,8 @@
 // SQL migration-safety linter (#2022). Flags risky schema operations in ADDED migration SQL — the changes that
-// can break running deployments mid-rollout: dropping tables/columns the old code still reads, renames (the old
-// code's names disappear), non-nullable columns added without a DEFAULT (inserts from old code fail), and
-// column-type changes that force a blocking table rewrite. Pure compute over added patch lines in migration
+// can break running deployments mid-rollout: dropping/truncating tables or columns the old code still reads,
+// renames (the old code's names disappear), non-nullable columns added without a DEFAULT (inserts from old code
+// fail), SET NOT NULL on existing nullable columns without a same-line DEFAULT, column-type changes that force
+// a blocking table rewrite, and non-concurrent index builds that lock writers. Pure compute over added patch lines in migration
 // paths — no network, no SQL parsing beyond single-line statement shapes. Detection is deliberately
 // line-anchored: a statement split across lines is missed (fail-quiet) rather than tracked with cross-line
 // state, and each shape is a finite, documented DDL form — never a general SQL grammar.
@@ -16,6 +17,8 @@ const MIGRATION_PATH_RE = /(?:^|\/)(?:migrations?|db\/migrate)\/|\.sql$/i;
 
 // Dropping a table or column breaks any still-deployed reader/writer of the old schema.
 const DROP_RE = /\bDROP\s+(?:TABLE|COLUMN)\b/i;
+// TRUNCATE wipes live rows; still-running code that reads the table sees empty data mid-rollout.
+const TRUNCATE_RE = /\bTRUNCATE\b/i;
 // Renames remove the old name in one step; running code that still uses it fails immediately. Covers the
 // standard forms: `ALTER TABLE a RENAME TO b`, `… RENAME [COLUMN] x TO y` (PostgreSQL/SQLite treat the
 // COLUMN keyword as optional), and MySQL's `RENAME TABLE a TO b`.
@@ -27,10 +30,44 @@ const ADD_COLUMN_RE =
   /\bADD\s+(?!CONSTRAINT\b|PRIMARY\b|FOREIGN\b|UNIQUE\b|CHECK\b|INDEX\b|KEY\b)(?:COLUMN\s+)?\S/i;
 const NOT_NULL_RE = /\bNOT\s+NULL\b/i;
 const DEFAULT_RE = /\bDEFAULT\b/i;
+// Promoting an existing nullable column to NOT NULL without a same-line DEFAULT/backfill: rows that still
+// contain NULL fail the constraint check when the migration runs.
+const SET_NOT_NULL_RE = /\bSET\s+NOT\s+NULL\b/i;
 // Column-type changes rewrite (and lock) the whole table in most engines: Postgres
 // `ALTER COLUMN x [SET DATA] TYPE …` and MySQL `MODIFY [COLUMN] …`.
 const BLOCKING_REWRITE_RE =
   /\bALTER\s+COLUMN\s+\S+\s+(?:SET\s+DATA\s+)?TYPE\b|\bMODIFY\s+(?:COLUMN\s+)?\S/i;
+// A non-concurrent index build locks the table for writes (and often reads) until it finishes.
+const CREATE_INDEX_RE = /\bCREATE\s+(?:UNIQUE\s+)?INDEX\b/i;
+const CONCURRENTLY_RE = /\bCONCURRENTLY\b/i;
+
+/** Classify one added migration-SQL line (after `--` comment stripping). Pure. */
+export function classifyMigrationLine(
+  body: string,
+): MigrationSafetyFinding["kind"] | null {
+  if (DROP_RE.test(body)) return "drop";
+  if (RENAME_RE.test(body)) return "rename";
+  if (TRUNCATE_RE.test(body)) return "truncate";
+  if (
+    ADD_COLUMN_RE.test(body) &&
+    NOT_NULL_RE.test(body) &&
+    !DEFAULT_RE.test(body)
+  ) {
+    return "not-null-no-default";
+  }
+  if (
+    SET_NOT_NULL_RE.test(body) &&
+    !ADD_COLUMN_RE.test(body) &&
+    !DEFAULT_RE.test(body)
+  ) {
+    return "set-not-null";
+  }
+  if (BLOCKING_REWRITE_RE.test(body)) return "blocking-rewrite";
+  if (CREATE_INDEX_RE.test(body) && !CONCURRENTLY_RE.test(body)) {
+    return "blocking-index";
+  }
+  return null;
+}
 
 function* patchLines(patch: string): Generator<string> {
   let start = 0;
@@ -108,31 +145,8 @@ export function scanPatchForMigrationSafety(
     // the statement either (`ADD COLUMN age INTEGER NOT NULL; -- DEFAULT later` has no real DEFAULT).
     // Block comments are not tracked (no cross-line state by design).
     const body = rawBody.replace(/--.*$/, "");
-
-    if (
-      DROP_RE.test(body) &&
-      pushFinding(findings, seen, path, newLine, "drop", maxFindings)
-    ) {
-      return findings;
-    }
-    if (
-      RENAME_RE.test(body) &&
-      pushFinding(findings, seen, path, newLine, "rename", maxFindings)
-    ) {
-      return findings;
-    }
-    if (
-      ADD_COLUMN_RE.test(body) &&
-      NOT_NULL_RE.test(body) &&
-      !DEFAULT_RE.test(body) &&
-      pushFinding(findings, seen, path, newLine, "not-null-no-default", maxFindings)
-    ) {
-      return findings;
-    }
-    if (
-      BLOCKING_REWRITE_RE.test(body) &&
-      pushFinding(findings, seen, path, newLine, "blocking-rewrite", maxFindings)
-    ) {
+    const kind = classifyMigrationLine(body);
+    if (kind && pushFinding(findings, seen, path, newLine, kind, maxFindings)) {
       return findings;
     }
 

@@ -722,7 +722,7 @@ export const ANALYZER_DESCRIPTORS = [
     limits: { maxFindings: 20, maxLineChars: 2000 },
     docs: {
       summary:
-        "Flags risky schema operations in added migration SQL: drops, renames, non-nullable columns without a default, and blocking table rewrites.",
+        "Flags risky schema operations in added migration SQL: drops, truncates, renames, non-nullable columns without a default, SET NOT NULL on existing columns, blocking table rewrites, and non-concurrent index builds.",
       looksAt: "Added lines in migration paths (migrations/, db/migrate/, *.sql).",
       reports: "File, line, and public-safe rule kind — never SQL content.",
       network: "Pure local analyzer. No external network call.",
@@ -741,6 +741,12 @@ export const ANALYZER_DESCRIPTORS = [
             return "adds a NOT NULL column without a DEFAULT; inserts from not-yet-updated code omit it and fail";
           case "blocking-rewrite":
             return "changes a column type, which rewrites (and locks) the table in most engines while it runs";
+          case "truncate":
+            return "truncates a table, wiping live rows while older deployments may still read it";
+          case "set-not-null":
+            return "sets NOT NULL on an existing column without a same-line DEFAULT; rows still containing NULL fail the check";
+          case "blocking-index":
+            return "creates an index without CONCURRENTLY, which locks the table for writes until the build finishes";
         }
       };
       const lines = ["### SQL migration safety (deploy-breaking schema changes)"];

@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  classifyMigrationLine,
   isMigrationPath,
   scanPatchForMigrationSafety,
   scanMigrationSafety,
@@ -19,6 +20,148 @@ test("isMigrationPath: recognizes migrations/, db/migrate/, and bare .sql paths"
   assert.equal(isMigrationPath("schema.sql"), true);
   assert.equal(isMigrationPath("src/services/scoring.ts"), false);
   assert.equal(isMigrationPath("docs/migrations.md"), false);
+});
+
+test("classifyMigrationLine: maps each risky DDL shape to its kind", () => {
+  assert.equal(classifyMigrationLine("DROP TABLE legacy_events;"), "drop");
+  assert.equal(classifyMigrationLine("TRUNCATE TABLE legacy_events;"), "truncate");
+  assert.equal(
+    classifyMigrationLine("ALTER TABLE users ADD COLUMN age INTEGER NOT NULL;"),
+    "not-null-no-default",
+  );
+  assert.equal(
+    classifyMigrationLine("ALTER TABLE users ALTER COLUMN email SET NOT NULL;"),
+    "set-not-null",
+  );
+  assert.equal(
+    classifyMigrationLine("CREATE INDEX idx_users_email ON users(email);"),
+    "blocking-index",
+  );
+  assert.equal(classifyMigrationLine("SELECT 1;"), null);
+});
+
+test("scanPatchForMigrationSafety: flags TRUNCATE as truncate", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0015_truncate.sql",
+    patchOf(["TRUNCATE TABLE legacy_events;", "TRUNCATE users;"]),
+  );
+  assert.deepEqual(
+    findings.map((f) => f.kind),
+    ["truncate", "truncate"],
+  );
+});
+
+test("scanPatchForMigrationSafety: flags ALTER COLUMN SET NOT NULL without a DEFAULT as set-not-null", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0016_set_not_null.sql",
+    patchOf([
+      "ALTER TABLE users ALTER COLUMN email SET NOT NULL;",
+      "ALTER TABLE users ALTER COLUMN phone SET NOT NULL;",
+    ]),
+  );
+  assert.deepEqual(
+    findings.map((f) => f.kind),
+    ["set-not-null", "set-not-null"],
+  );
+});
+
+test("scanPatchForMigrationSafety: SET DEFAULT and SET NOT NULL on one line is safe", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0017_safe_set_not_null.sql",
+    patchOf([
+      "ALTER TABLE users ALTER COLUMN email SET DEFAULT '', ALTER COLUMN email SET NOT NULL;",
+    ]),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanPatchForMigrationSafety: SET NOT NULL on a later line is flagged even when DEFAULT is set earlier", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0017_split_set_not_null.sql",
+    patchOf([
+      "ALTER TABLE users ALTER COLUMN email SET DEFAULT '';",
+      "ALTER TABLE users ALTER COLUMN email SET NOT NULL;",
+    ]),
+  );
+  assert.deepEqual(findings, [
+    { file: "migrations/0017_split_set_not_null.sql", line: 2, kind: "set-not-null" },
+  ]);
+});
+
+test("scanPatchForMigrationSafety: ADD COLUMN NOT NULL stays not-null-no-default, not set-not-null", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0018_add_not_null.sql",
+    patchOf(["ALTER TABLE users ADD COLUMN status TEXT NOT NULL;"]),
+  );
+  assert.deepEqual(findings, [
+    { file: "migrations/0018_add_not_null.sql", line: 1, kind: "not-null-no-default" },
+  ]);
+});
+
+test("scanPatchForMigrationSafety: flags CREATE INDEX without CONCURRENTLY as blocking-index", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0019_index.sql",
+    patchOf([
+      "CREATE INDEX idx_users_email ON users(email);",
+      "CREATE UNIQUE INDEX idx_users_email_unique ON users(email);",
+    ]),
+  );
+  assert.deepEqual(
+    findings.map((f) => f.kind),
+    ["blocking-index", "blocking-index"],
+  );
+});
+
+test("scanPatchForMigrationSafety: CREATE INDEX CONCURRENTLY is not flagged", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0020_concurrent_index.sql",
+    patchOf([
+      "CREATE INDEX CONCURRENTLY idx_users_email ON users(email);",
+      "CREATE UNIQUE INDEX CONCURRENTLY idx_users_email_unique ON users(email);",
+    ]),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("scanPatchForMigrationSafety: a -- comment line mentioning TRUNCATE is not flagged", () => {
+  const findings = scanPatchForMigrationSafety(
+    "migrations/0021_commented_truncate.sql",
+    patchOf(["-- TRUNCATE TABLE users (deferred)", "SELECT 1;"]),
+  );
+  assert.deepEqual(findings, []);
+});
+
+test("classifyMigrationLine: DROP NOT NULL and CONCURRENTLY index builds are not flagged", () => {
+  assert.equal(classifyMigrationLine("ALTER TABLE users ALTER COLUMN email DROP NOT NULL;"), null);
+  assert.equal(
+    classifyMigrationLine("CREATE INDEX CONCURRENTLY idx_users_email ON users(email);"),
+    null,
+  );
+});
+
+test("scanMigrationSafety: mixed new kinds across migration files are collected up to the cap", async () => {
+  const findings = await scanMigrationSafety({
+    repoFullName: "octo/repo",
+    prNumber: 1,
+    files: [
+      {
+        path: "migrations/0100_truncate.sql",
+        patch: patchOf(["TRUNCATE TABLE staging_events;"]),
+      },
+      {
+        path: "migrations/0101_set_not_null.sql",
+        patch: patchOf(["ALTER TABLE users ALTER COLUMN email SET NOT NULL;"]),
+      },
+      {
+        path: "migrations/0102_index.sql",
+        patch: patchOf(["CREATE INDEX idx_users_email ON users(email);"]),
+      },
+    ],
+  });
+  assert.deepEqual(
+    findings.map((f) => f.kind),
+    ["truncate", "set-not-null", "blocking-index"],
+  );
 });
 
 test("scanPatchForMigrationSafety: flags DROP TABLE and DROP COLUMN as drop", () => {
@@ -70,7 +213,7 @@ test("scanPatchForMigrationSafety: a NOT NULL column WITH a DEFAULT on the same 
     patchOf([
       "ALTER TABLE users ADD COLUMN age INTEGER NOT NULL DEFAULT 0;",
       "ALTER TABLE users ADD COLUMN bio TEXT;",
-      "CREATE INDEX idx_users_age ON users(age);",
+      "CREATE INDEX CONCURRENTLY idx_users_age ON users(age);",
     ]),
   );
   assert.deepEqual(findings, []);
@@ -182,9 +325,15 @@ test("renderBrief: migration-safety findings render location plus a public-safe 
     migrationSafety: [
       { file: "migrations/0002_cleanup.sql", line: 1, kind: "drop" },
       { file: "migrations/0004_add.sql", line: 3, kind: "not-null-no-default" },
+      { file: "migrations/0015_truncate.sql", line: 1, kind: "truncate" },
+      { file: "migrations/0016_set_not_null.sql", line: 2, kind: "set-not-null" },
+      { file: "migrations/0019_index.sql", line: 1, kind: "blocking-index" },
     ],
   });
   assert.match(promptSection, /SQL migration safety/);
   assert.match(promptSection, /migrations\/0002_cleanup\.sql:1/);
   assert.match(promptSection, /NOT NULL column without a DEFAULT/);
+  assert.match(promptSection, /truncates a table/);
+  assert.match(promptSection, /sets NOT NULL on an existing column/);
+  assert.match(promptSection, /creates an index without CONCURRENTLY/);
 });

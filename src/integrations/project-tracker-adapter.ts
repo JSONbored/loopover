@@ -2,6 +2,7 @@ import { createInstallationToken } from "../github/app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "../github/client";
 import { createIssueComment } from "../github/pr-actions";
 import { termOverlap, tokenize, type CollisionTerms } from "../signals/engine";
+import { errorMessage } from "../utils/json";
 
 /** Repo-scoped context shared by every ProjectTrackerAdapter call (#3183). */
 export type ProjectTrackerContext = {
@@ -174,10 +175,10 @@ export async function maybeSuggestMilestoneMatch(ctx: ProjectTrackerContext, pul
 
 /**
  * Webhook-level entry point (#3183): folds the "should this even run" gating (installed app, PR still open,
- * feature opted in) AND the best-effort error swallowing into one call, so the PR-webhook handler in
- * processors.ts has a single, unconditional call site instead of an inline compound branch that's awkward to
- * exercise through the full webhook pipeline. `onError` lets the caller log/audit without this module needing
- * to know about the caller's logging shape.
+ * feature opted in) AND the best-effort error logging into one call, so the PR-webhook handler in
+ * processors.ts has a single, unconditional call site with no logic/logging body of its own -- everything
+ * testable lives here, where it already has dedicated, isolated coverage, rather than in an inline closure
+ * inside the huge webhook file that only a full pipeline test could exercise.
  */
 export async function maybeSuggestMilestoneMatchForPr(args: {
   env: Env;
@@ -188,12 +189,23 @@ export async function maybeSuggestMilestoneMatchForPr(args: {
   prTitle: string;
   prBody: string | null | undefined;
   mode: ProjectMilestoneMatchModeInput;
-  onError: (error: unknown) => void;
+  deliveryId: string;
 }): Promise<void> {
   if (!args.installationId) return;
   if (args.prState !== "open") return;
   if (!args.mode || args.mode === "off") return;
-  await maybeSuggestMilestoneMatch({ env: args.env, installationId: args.installationId, repoFullName: args.repoFullName }, args.pullNumber, args.prTitle, args.prBody).catch(args.onError);
+  await maybeSuggestMilestoneMatch({ env: args.env, installationId: args.installationId, repoFullName: args.repoFullName }, args.pullNumber, args.prTitle, args.prBody).catch((error) => {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "milestone_suggest_failed",
+        deliveryId: args.deliveryId,
+        repoFullName: args.repoFullName,
+        pullNumber: args.pullNumber,
+        error: errorMessage(error),
+      }),
+    );
+  });
 }
 
 // Kept as a standalone alias (rather than importing RepositorySettings from ../types) so this integrations

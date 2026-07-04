@@ -213,7 +213,7 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
       prTitle: "Improve self-host reliability roadmap convergence",
       prBody: "Follow-up on the self-host reliability roadmap work",
       mode: "suggest" as const,
-      onError: vi.fn(),
+      deliveryId: "test-delivery",
       ...overrides,
     };
   }
@@ -224,10 +224,8 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
       called = true;
       return new Response("unexpected", { status: 500 });
     });
-    const onError = vi.fn();
-    await maybeSuggestMilestoneMatchForPr(baseArgs({ installationId: null, onError }));
+    await maybeSuggestMilestoneMatchForPr(baseArgs({ installationId: null }));
     expect(called).toBe(false);
-    expect(onError).not.toHaveBeenCalled();
   });
 
   it("does nothing when the PR is not open", async () => {
@@ -295,15 +293,18 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
     expect(milestonesFetched).toBe(true);
   });
 
-  it("routes a failure to onError instead of throwing", async () => {
+  it("logs a failure instead of throwing", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/milestones")) return new Response("boom", { status: 500 });
       return new Response("unexpected", { status: 500 });
     });
-    const onError = vi.fn();
-    await expect(maybeSuggestMilestoneMatchForPr(baseArgs({ onError }))).resolves.toBeUndefined();
-    expect(onError).toHaveBeenCalledTimes(1);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(maybeSuggestMilestoneMatchForPr(baseArgs({ deliveryId: "delivery-42" }))).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(String(consoleError.mock.calls[0]?.[0]));
+    expect(logged).toMatchObject({ event: "milestone_suggest_failed", deliveryId: "delivery-42", repoFullName: "JSONbored/gittensory", pullNumber: 4 });
+    consoleError.mockRestore();
   });
 });

@@ -5304,8 +5304,8 @@ async function processGitHubWebhook(
       await persistAdvisory(env, advisory);
       // Auto-project/milestone matching (#3183): independent of the gate/disposition entirely -- a missed or
       // wrong match must never affect CI/merge, so this is a best-effort side comment, never a blocker. All the
-      // "should this run at all" gating + error swallowing lives in maybeSuggestMilestoneMatchForPr itself, so
-      // this call site stays a single unconditional call.
+      // "should this run at all" gating + error logging lives in maybeSuggestMilestoneMatchForPr itself, so
+      // this call site stays a single unconditional call with no logic of its own.
       await maybeSuggestMilestoneMatchForPr({
         env,
         installationId,
@@ -5315,18 +5315,7 @@ async function processGitHubWebhook(
         prTitle: pr.title,
         prBody: pr.body,
         mode: settings.autoProjectMilestoneMatch,
-        onError: (error) => {
-          console.error(
-            JSON.stringify({
-              level: "warn",
-              event: "milestone_suggest_failed",
-              deliveryId,
-              repoFullName,
-              pullNumber: pr.number,
-              error: errorMessage(error),
-            }),
-          );
-        },
+        deliveryId,
       });
       // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
       // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current

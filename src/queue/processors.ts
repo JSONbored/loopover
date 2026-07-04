@@ -5554,6 +5554,9 @@ function markEligiblePatchLessFilesIncomplete(
 export const secretScanPatchFallbackInternals = {
   markEligiblePatchLessFilesIncomplete,
   shouldAttemptPatchLessSecretScan,
+  syntheticSecretScanPatch,
+  isOverSecretScanContentLimit,
+  markPatchLessSecretScanIncomplete,
 };
 
 export function incompletePatchLessSecretScanFinding(

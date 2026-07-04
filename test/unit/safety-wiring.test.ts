@@ -1095,6 +1095,60 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
     expect(secretLeakFinding(buildSecretScanDiff(enriched))).toBeNull();
   });
 
+  it("scans patch-less content at the exact 512KB cap without marking incomplete", async () => {
+    const atCap = "x".repeat(512_000);
+    const fetcher: FileFetcher = {
+      async getFileContent(path, ref) {
+        if (path === "large.env" && ref === "head-sha") return atCap;
+        return null;
+      },
+    };
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "large.env",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
+    ];
+    const enriched = await enrichSecretScanFilesWithPatchFallback(files, {
+      headSha: "head-sha",
+      fetcher,
+    });
+    expect(enriched[0]?.payload.secretScanIncomplete).toBeUndefined();
+    expect(enriched[0]?.payload.patch).toContain("+");
+  });
+
+  it("enriches a single patch-less file with bounded concurrency", async () => {
+    const fetcher: FileFetcher = {
+      async getFileContent(path, ref) {
+        if (path === "only.env" && ref === "head-sha") return "const ok = 1;\n";
+        return null;
+      },
+    };
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "only.env",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
+    ];
+    const enriched = await enrichSecretScanFilesWithPatchFallback(files, {
+      headSha: "head-sha",
+      fetcher,
+    });
+    expect(enriched[0]?.payload.patch).toBe("+const ok = 1;");
+  });
+
   it("marks a patch-less file incomplete when fetched content exceeds the scan cap", async () => {
     const oversized = "x".repeat(512_001);
     const fetcher: FileFetcher = {
@@ -1166,13 +1220,19 @@ describe("enrichSecretScanFilesWithPatchFallback", () => {
 });
 
 describe("secretScanPatchFallbackInternals", () => {
-  const { markEligiblePatchLessFilesIncomplete, shouldAttemptPatchLessSecretScan } =
-    secretScanPatchFallbackInternals;
+  const {
+    markEligiblePatchLessFilesIncomplete,
+    shouldAttemptPatchLessSecretScan,
+    syntheticSecretScanPatch,
+    isOverSecretScanContentLimit,
+    markPatchLessSecretScanIncomplete,
+  } = secretScanPatchFallbackInternals;
 
   it("shouldAttemptPatchLessSecretScan only allows added files without baseSha", () => {
     expect(shouldAttemptPatchLessSecretScan({}, "added", null)).toBe(true);
     expect(shouldAttemptPatchLessSecretScan({}, "modified", "base-sha")).toBe(true);
     expect(shouldAttemptPatchLessSecretScan({}, "modified", null)).toBe(false);
+    expect(shouldAttemptPatchLessSecretScan({}, "modified", "   ")).toBe(false);
     expect(shouldAttemptPatchLessSecretScan({}, "removed", "base-sha")).toBe(false);
     expect(shouldAttemptPatchLessSecretScan({}, "copied", "base-sha")).toBe(false);
     expect(
@@ -1181,7 +1241,29 @@ describe("secretScanPatchFallbackInternals", () => {
     expect(shouldAttemptPatchLessSecretScan({ previousFilename: "old.env" }, "renamed", null)).toBe(
       false,
     );
+    expect(
+      shouldAttemptPatchLessSecretScan({ previousFilename: "old.env" }, "renamed", "   "),
+    ).toBe(false);
+    expect(
+      shouldAttemptPatchLessSecretScan({ previousFilename: "   " }, "renamed", "base-sha"),
+    ).toBe(false);
     expect(shouldAttemptPatchLessSecretScan({}, "renamed", "base-sha")).toBe(false);
+  });
+
+  it("covers helper boundaries for synthetic patches and content limits", () => {
+    expect(syntheticSecretScanPatch(["a", "b"])).toBe("+a\n+b");
+    expect(isOverSecretScanContentLimit("x".repeat(512_000))).toBe(false);
+    expect(isOverSecretScanContentLimit("x".repeat(512_001))).toBe(true);
+    const incomplete = markPatchLessSecretScanIncomplete({
+      path: "secrets.env",
+    } as Parameters<typeof markPatchLessSecretScanIncomplete>[0]);
+    expect(incomplete.payload?.secretScanIncomplete).toBe(true);
+  });
+
+  it("addedLinesForSecretScan handles identical content and multiset decrements", () => {
+    expect(addedLinesForSecretScan("", "")).toEqual([]);
+    expect(addedLinesForSecretScan("a\nb\n", "a\nb\n")).toEqual([]);
+    expect(addedLinesForSecretScan("a\na\n", "a\na\nb\n")).toEqual(["b"]);
   });
 
   it("markEligiblePatchLessFilesIncomplete preserves inline patches and ineligible patch-less files", () => {
@@ -1321,38 +1403,6 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 
-  it("still scans inline patches when makeGithubFileFetcher rejects", async () => {
-    const env = createTestEnv();
-    const adv = advisory();
-    const files = [
-      {
-        repoFullName: "acme/widgets",
-        pullNumber: 7,
-        path: "src/config.ts",
-        status: "modified",
-        additions: 1,
-        deletions: 0,
-        changes: 1,
-        payload: { patch: `@@\n+const token = "${fakeToken}";` },
-      },
-    ];
-    const groundingWire = await import("../../src/review/grounding-wire");
-    const spy = vi
-      .spyOn(groundingWire, "makeGithubFileFetcher")
-      .mockRejectedValue(new Error("installation token unavailable"));
-    await maybeAddSecretLeakFinding(env, {
-      advisory: adv,
-      repoFullName: "acme/widgets",
-      pullNumber: 7,
-      files,
-      installationId: 1,
-      headSha: "head-sha",
-      baseSha: "base-sha",
-    });
-    spy.mockRestore();
-    expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
-  });
-
   it("blocks patch-less files when makeGithubFileFetcher rejects", async () => {
     const env = createTestEnv();
     const adv = advisory();
@@ -1386,6 +1436,38 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 
+  it("still scans inline patches when makeGithubFileFetcher rejects", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "src/config.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: { patch: `@@\n+const token = "${fakeToken}";` },
+      },
+    ];
+    const groundingWire = await import("../../src/review/grounding-wire");
+    const spy = vi
+      .spyOn(groundingWire, "makeGithubFileFetcher")
+      .mockRejectedValue(new Error("installation token unavailable"));
+    await maybeAddSecretLeakFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      files,
+      installationId: 1,
+      headSha: "head-sha",
+      baseSha: "base-sha",
+    });
+    spy.mockRestore();
+    expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
+  });
+
   it("does not block modified patch-less files when fetcher rejects and baseSha is unknown", async () => {
     const env = createTestEnv();
     const adv = advisory();
@@ -1415,6 +1497,36 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     });
     spy.mockRestore();
     expect(adv.findings.some((f) => f.title.includes("could not be fully scanned"))).toBe(false);
+    expect(adv.findings).toHaveLength(0);
+  });
+
+  it("skips patch-less fetch wiring when headSha is empty at the gate", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "secrets.env",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
+    ];
+    const groundingWire = await import("../../src/review/grounding-wire");
+    const spy = vi.spyOn(groundingWire, "makeGithubFileFetcher");
+    await maybeAddSecretLeakFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      files,
+      installationId: 1,
+      headSha: "",
+    });
+    spy.mockRestore();
+    expect(spy).not.toHaveBeenCalled();
     expect(adv.findings).toHaveLength(0);
   });
 

@@ -110,7 +110,7 @@ function prWebhook(deliveryId: string) {
       action: "opened",
       installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
       repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
-      pull_request: { number: 42, title: "Add config", state: "open", user: { login: "contributor" }, head: { sha: "gate123" }, labels: [], body: "Adds a token." },
+      pull_request: { number: 42, title: "Add config", state: "open", user: { login: "contributor" }, head: { sha: "gate123" }, base: { sha: "base456" }, labels: [], body: "Adds a token." },
     },
   };
 }

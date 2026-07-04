@@ -77,6 +77,13 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // OpenAI project-scoped API key: `sk-proj-` + base64url body. Distinct from Anthropic `sk-ant-`
+    // and Stripe `sk_live_`/`sk_test_`. Negative-lookahead terminator for bodies ending in `-`/`_`.
+    kind: "openai_project_key",
+    re: /\bsk-proj-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // DigitalOcean personal access token: `dop_v1_` + 64 hex chars (case-insensitive).
     kind: "digitalocean_token",
     re: /\bdop_v1_[a-f0-9]{64}\b/i,

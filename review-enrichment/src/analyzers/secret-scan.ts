@@ -435,6 +435,84 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Atlassian (Jira/Confluence) API token: the fixed `ATATT3xFfGF0` marker + base64url body (lookahead terminator).
+    kind: "atlassian_api_token",
+    re: /\bATATT3xFfGF0[A-Za-z0-9_=-]{50,}(?![A-Za-z0-9_=-])/,
+    confidence: "high",
+  },
+  {
+    // Alibaba Cloud access key id: `LTAI` + 20 base62.
+    kind: "alibaba_access_key",
+    re: /\bLTAI[A-Za-z0-9]{20}\b/,
+    confidence: "high",
+  },
+  {
+    // LangSmith API key: `lsv2_pt_` + 32 hex + `_` + 10 hex.
+    kind: "langsmith_api_key",
+    re: /\blsv2_pt_[a-f0-9]{32}_[a-f0-9]{10}\b/,
+    confidence: "high",
+  },
+  {
+    // Plaid access token: `access-{sandbox,development,production}-` + a UUID.
+    kind: "plaid_access_token",
+    re: /\baccess-(?:sandbox|development|production)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // LaunchDarkly SDK/mobile key: `sdk-`/`mob-` + a UUID.
+    kind: "launchdarkly_key",
+    re: /\b(?:sdk|mob)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // Grafana Cloud access-policy token: `glc_` + >=32 base62 (distinct from the `glsa_` service-account token).
+    kind: "grafana_cloud_token",
+    re: /\bglc_[A-Za-z0-9]{32,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // dbt Cloud service token: `dbtc_` + >=30 base64url (lookahead terminator).
+    kind: "dbt_cloud_token",
+    re: /\bdbtc_[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // PostHog personal API key: `phx_` + >=32 base62.
+    kind: "posthog_personal_key",
+    re: /\bphx_[A-Za-z0-9]{32,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Render API key: `rnd_` + >=24 base62.
+    kind: "render_api_key",
+    re: /\brnd_[A-Za-z0-9]{24,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Jina AI API key: `jina_` + >=28 base62.
+    kind: "jina_api_key",
+    re: /\bjina_[A-Za-z0-9]{28,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Sentry user auth token: `sntryu_` + 64 hex (distinct from the `sntrys_` org token / DSN).
+    kind: "sentry_user_token",
+    re: /\bsntryu_[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Replicate API token: `r8_` + >=37 base62.
+    kind: "replicate_token",
+    re: /\br8_[A-Za-z0-9]{37,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // OpenRouter API key: `sk-or-v1-` + 64 hex (distinct prefix from the OpenAI/Anthropic `sk-` keys above).
+    kind: "openrouter_key",
+    re: /\bsk-or-v1-[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

@@ -530,3 +530,45 @@ test("scanPatch does not flag near-miss variants of the webhook/CI/SaaS formats"
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags more SaaS/cloud/AI-provider credential formats", () => {
+  const cases = [
+    ["atlassian_api_token", "ATATT3xFfGF0" + b62(60)],
+    ["alibaba_access_key", "LTAI" + b62(20)],
+    ["langsmith_api_key", "lsv2_pt_" + hex(32) + "_" + hex(10)],
+    ["plaid_access_token", "access-sandbox-" + hex(8) + "-" + hex(4) + "-" + hex(4) + "-" + hex(4) + "-" + hex(12)],
+    ["launchdarkly_key", "sdk-" + hex(8) + "-" + hex(4) + "-" + hex(4) + "-" + hex(4) + "-" + hex(12)],
+    ["grafana_cloud_token", "glc_" + b62(32)],
+    ["dbt_cloud_token", "dbtc_" + b62(29) + "-"], // ends in `-` to guard the lookahead terminator
+    ["posthog_personal_key", "phx_" + b62(32)],
+    ["render_api_key", "rnd_" + b62(24)],
+    ["jina_api_key", "jina_" + b62(28)],
+    ["sentry_user_token", "sntryu_" + hex(64)],
+    ["replicate_token", "r8_" + b62(37)],
+    ["openrouter_key", "sk-or-v1-" + hex(64)],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-miss variants of the new SaaS/AI formats", () => {
+  const nearMisses = [
+    "LTAI" + b62(19),
+    "glc_" + b62(31),
+    "phx_" + b62(31),
+    "rnd_" + b62(23),
+    "jina_" + b62(27),
+    "sntryu_" + hex(63),
+    "r8_" + b62(36),
+    "sk-or-v1-" + hex(63),
+    "dbtc_" + b62(29),
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

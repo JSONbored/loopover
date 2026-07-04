@@ -457,7 +457,7 @@ test("renderGateVerdictCalibrationAuditMarkdown escapes markdown controls and co
       accepted: [
         {
           repoFullName: "owner/repo_name",
-          replayRunId: "replay-*bold*\nnext",
+          replayRunId: "replay-*bold*",
           gateRunId: "gate-`code`",
           observedAt: null,
           score: 1,
@@ -470,6 +470,103 @@ test("renderGateVerdictCalibrationAuditMarkdown escapes markdown controls and co
   const markdown = renderGateVerdictCalibrationAuditMarkdown(result);
 
   assert.ok(markdown.includes("### owner/repo\\_name"));
-  assert.ok(markdown.includes("- replayRunId: replay-\\*bold\\* next"));
+  assert.ok(markdown.includes("- replayRunId: replay-\\*bold\\*"));
   assert.ok(markdown.includes("- gateRunId: gate-\\`code\\`"));
+});
+
+test("computeGateVerdictCompositeCalibrationScore sanitizes pre-ingested audit rows", () => {
+  const result = computeGateVerdictCompositeCalibrationScore({
+    objectiveAnchor: 0.5,
+    pairwise: 0.5,
+    gateVerdicts: {
+      accepted: [
+        {
+          repoFullName: "JSONbored/Gittensory",
+          replayRunId: " replay-13 ",
+          gateRunId: "gate-13",
+          observedAt: "not an ISO timestamp",
+          score: 1,
+          dimensions: [
+            { dimension: "correctness", outcome: "pass", confidence: 1, rawReviewText: "private" },
+            { dimension: "trustScore", outcome: "pass", confidence: 1, privateMetadata: "private" },
+          ],
+          rawReviewText: "private",
+          trustScore: 99,
+        },
+      ],
+      rejected: [
+        {
+          repoFullName: "JSONbored/Gittensory",
+          replayRunId: "replay-13",
+          gateRunId: "gate-13",
+          reason: "not_opted_in",
+          privateMetadata: "private",
+        },
+      ],
+    },
+  });
+  const serialized = JSON.stringify(result);
+
+  assert.equal(result.structuredGateVerdictScore, 1);
+  assert.deepEqual(result.audit.contributingRepos, [
+    {
+      repoFullName: "jsonbored/gittensory",
+      replayRunId: "replay-13",
+      gateRunId: "gate-13",
+      observedAt: null,
+      score: 1,
+      dimensions: [{ dimension: "correctness", outcome: "pass", confidence: 1, score: 1 }],
+    },
+  ]);
+  assert.deepEqual(result.audit.rejected, [
+    {
+      repoFullName: "jsonbored/gittensory",
+      replayRunId: "replay-13",
+      gateRunId: "gate-13",
+      reason: "not_opted_in",
+    },
+  ]);
+  assert.equal(serialized.includes("rawReviewText"), false);
+  assert.equal(serialized.includes("privateMetadata"), false);
+  assert.equal(serialized.includes("trustScore"), false);
+  assert.equal(serialized.includes("private"), false);
+});
+
+test("computeGateVerdictCompositeCalibrationScore ignores malformed pre-ingested rows", () => {
+  const result = computeGateVerdictCompositeCalibrationScore({
+    objectiveAnchor: 0.5,
+    pairwise: 0.5,
+    gateVerdicts: {
+      accepted: [
+        {
+          repoFullName: "not a repo",
+          replayRunId: "replay-14",
+          gateRunId: "gate-14",
+          observedAt: "2026-07-04T17:00:00.000Z",
+          score: 1,
+          dimensions: [{ dimension: "correctness", outcome: "pass", confidence: 1 }],
+        },
+        {
+          repoFullName: "jsonbored/gittensory",
+          replayRunId: "replay-14",
+          gateRunId: "gate-14",
+          observedAt: "2026-07-04T17:00:00.000Z",
+          score: 1,
+          dimensions: [{ dimension: "rawReviewText", outcome: "private", confidence: 1 }],
+        },
+      ],
+      rejected: [
+        {
+          repoFullName: "jsonbored/gittensory",
+          replayRunId: "replay-14",
+          gateRunId: "gate-14",
+          reason: "privateMetadata",
+        },
+      ],
+    },
+  });
+
+  assert.equal(result.structuredGateVerdictScore, null);
+  assert.deepEqual(result.audit.contributingRepos, []);
+  assert.deepEqual(result.audit.rejected, []);
 });

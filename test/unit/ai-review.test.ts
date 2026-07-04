@@ -852,7 +852,7 @@ describe("Workers AI fallback + degraded output", () => {
 describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () => {
   const planEnv = (
     plan: {
-      reviewers: Array<{ model: string }>;
+      reviewers: Array<{ model: string; fallback?: string | null | undefined }>;
       combine: string;
       onMerge?: string;
     },
@@ -888,6 +888,33 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
       "Null deref",
     );
     expect(seen).toEqual(["claude-code"]); // exactly one reviewer, addressed by name
+  });
+
+  it("single provider fallback: tries Claude Code when Codex fails and records the fallback attempt", async () => {
+    const seen: string[] = [];
+    const env = planEnv(
+      { reviewers: [{ model: "codex", fallback: "claude-code" }], combine: "single" },
+      async (model) => {
+        seen.push(model);
+        if (model === "codex") throw new Error("codex quota exhausted");
+        return {
+          response: reviewJson({
+            present: true,
+            title: "Race condition in src/x.ts",
+          }),
+        };
+      },
+    );
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      mode: "block",
+    });
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.consensusDefect?.title).toContain("Race condition");
+    expect(seen).toEqual(["codex", "codex", "codex", "claude-code"]);
+    expect(await renderMetrics()).toContain(
+      'gittensory_ai_review_model_fallback_total{fallback="claude-code",primary="codex"} 1',
+    );
   });
 
   it("dual synthesis (either): runs claude-code AND codex; EITHER blocker decides, never a split", async () => {

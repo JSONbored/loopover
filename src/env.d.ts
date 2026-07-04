@@ -55,12 +55,15 @@ declare global {
     /** Optional Cloudflare AI Gateway id for legacy env.AI-compatible adapters. Self-host review execution should
      *  prefer provider-specific AI_* configuration instead. */
     AI_GATEWAY_ID?: string;
-    /** Self-host AI provider selection + dual-review config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
-     *  providers (claude-code, codex, anthropic, ollama, …); `AI_COMBINE` picks single|consensus|synthesis (default
-     *  synthesis for two); `AI_ON_MERGE` is the synthesis rule either|both. Provider-specific model/effort/timeout
-     *  vars keep Claude/Codex/OpenAI/Ollama/Anthropic config explicit. `AI_REVIEW_PLAN` is the resolved plan
-     *  (computed from these at boot in server.ts and read at the review call site); undefined on cloud. */
+    /** Self-host AI provider selection + reviewer config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
+     *  providers (claude-code, codex, anthropic, ollama, ...). By default, the first provider is the reviewer and
+     *  the first distinct later provider is its fallback; `AI_DUAL_REVIEW=1` makes the first two providers run as
+     *  independent reviewers. In dual mode, `AI_COMBINE` picks single|consensus|synthesis and `AI_ON_MERGE` is the
+     *  synthesis rule either|both. Provider-specific model/effort/timeout vars keep Claude/Codex/OpenAI/Ollama/
+     *  Anthropic config explicit. `AI_REVIEW_PLAN` is the resolved plan (computed from these at boot in server.ts
+     *  and read at the review call site); undefined on cloud. */
     AI_PROVIDER?: string;
+    AI_DUAL_REVIEW?: string;
     AI_COMBINE?: string;
     AI_ON_MERGE?: string;
     CLAUDE_AI_MODEL?: string;
@@ -80,7 +83,7 @@ declare global {
     ANTHROPIC_AI_BASE_URL?: string;
     ANTHROPIC_AI_MODEL?: string;
     AI_REVIEW_PLAN?: {
-      reviewers: Array<{ model: string }>;
+      reviewers: Array<{ model: string; fallback?: string | null | undefined }>;
       combine: import("./services/ai-review").CombineStrategy;
       onMerge?: import("./services/ai-review").OnMerge | undefined;
     };

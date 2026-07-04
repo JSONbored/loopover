@@ -1260,7 +1260,7 @@
     },
     {
       "type": "timeseries",
-      "title": "AI requests by model + effort (last 1h)",
+      "title": "AI requests + fallbacks (last 1h)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1280,6 +1280,14 @@
           },
           "expr": "sum by (model, effort) (increase(gittensory_ai_requests_total[1h]))",
           "legendFormat": "{{model}} \u00b7 {{effort}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (primary, fallback) (increase(gittensory_ai_review_model_fallback_total[1h]))",
+          "legendFormat": "fallback {{primary}}\u2192{{fallback}}"
         }
       ],
       "fieldConfig": {

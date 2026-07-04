@@ -185,9 +185,9 @@ export type GittensoryAiReviewInput = {
   onMerge?: OnMerge | null | undefined;
   /**
    * The reviewer(s) to run (#dual-ai-combiner). Absent/empty ⇒ the free Workers-AI pair with per-slot fallbacks
-   * (byte-identical to today). A self-host plan supplies named providers instead — `{ model: "claude-code" }`,
-   * `{ model: "codex" }` — addressed by the self-host AI router; `fallback` is Workers-AI-only (a self-host
-   * provider has none). `single` (or a single entry) runs reviewer[0]; consensus/synthesis run [0] and [1].
+   * (byte-identical to today). A self-host plan supplies named providers instead — `{ model: "codex",
+   * fallback: "claude-code" }` — addressed by the self-host AI router. `single` (or a single entry) runs
+   * reviewer[0]; consensus/synthesis run [0] and [1].
    */
   reviewers?:
     | ReadonlyArray<{ model: string; fallback?: string | null | undefined }>
@@ -694,9 +694,11 @@ async function runWorkersOpinion(
   let lastUnparseable:
     | { model: string; attempt: number; responseChars: number; hasJsonObject: boolean }
     | undefined;
-  for (const model of fallback && fallback !== primary
-    ? [primary, fallback]
-    : [primary]) {
+  const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
+  for (const [modelIndex, model] of models.entries()) {
+    if (modelIndex > 0) {
+      incr("gittensory_ai_review_model_fallback_total", { primary, fallback: model });
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         const cliSystemAppend = selfHostCliSystemAppend(model, systemAppend);

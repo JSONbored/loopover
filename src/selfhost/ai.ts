@@ -103,12 +103,12 @@ function defaultOpenAiCompatibleModel(name: string): string {
 
 const VALID_CLAUDE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const VALID_CODEX_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
-/** Map `CLAUDE_AI_EFFORT` to a `claude --effort` level. Defaults to "high" — the engine wants a substantive
- *  review, not a fast shallow one — and falls back to "high" for any unset or unrecognized value so a typo can't
- *  silently downgrade reviews. The CLI clamps a level above the model's own ceiling (e.g. xhigh on Sonnet) down. */
+/** Map `CLAUDE_AI_EFFORT` to a `claude --effort` level. Defaults to "medium" so subscription fallback preserves
+ *  enough reasoning depth for reviews without burning high-effort tokens on every PR. A typo falls back to medium
+ *  instead of silently disabling the reviewer; operators can still raise important repos to high/xhigh/max. */
 export function resolveEffort(configured: string | undefined): string {
   const level = (configured ?? "").trim().toLowerCase();
-  return VALID_CLAUDE_EFFORTS.has(level) ? level : "high";
+  return VALID_CLAUDE_EFFORTS.has(level) ? level : "medium";
 }
 
 /** Map `CODEX_AI_EFFORT` to Codex reasoning effort. Codex currently supports xhigh as its top level, so a
@@ -117,7 +117,7 @@ export function resolveCodexEffort(configured: string | undefined): string {
   const level = (configured ?? "").trim().toLowerCase();
   if (VALID_CODEX_EFFORTS.has(level)) return level;
   if (level === "max") return "xhigh";
-  return "high";
+  return "medium";
 }
 
 // Per-effort subprocess timeout (ms) for the subscription CLIs. A higher effort legitimately runs longer, so the
@@ -943,8 +943,8 @@ export function resolveRequiredCliProviders(env: Record<string, string | undefin
 }
 
 /** Select the self-host AI provider(s) from AI_PROVIDER and wrap them in the name-aware router. A comma-separated
- *  list of TWO+ providers is addressable by name for dual review (see `routeProviders`) and otherwise falls back
- *  through them in order; a SINGLE provider is wrapped the same way — NOT returned bare — so a reviewer-plan address
+ *  list is addressable by name for configured reviewers (see `routeProviders`) and otherwise falls back through
+ *  providers in order; a SINGLE provider is wrapped the same way — NOT returned bare — so a reviewer-plan address
  *  that names the provider (`{ model: "claude-code" }`, the single-provider plan from `resolveAiReviewerPlan`)
  *  resolves to that provider's own default model instead of reaching it verbatim as `claude --model claude-code`
  *  (a 404 that broke every review on a single-provider self-host, #1610). Returns undefined when unconfigured or no
@@ -957,17 +957,35 @@ export function createSelfHostAi(env: Record<string, string | undefined>): SelfH
 
 const COMBINE_STRATEGIES = new Set<CombineStrategy>(["single", "consensus", "synthesis"]);
 const ON_MERGE_RULES = new Set<OnMerge>(["either", "both"]);
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
-/** Resolve the self-host dual-review plan from env: the credentialed providers become the reviewer(s), `AI_COMBINE`
- *  the strategy (default `synthesis` for two — "both review, one synthesized decision"), `AI_ON_MERGE` the
- *  synthesis rule. Returns undefined when no provider is configured (cloud, or AI off) so ai-review keeps its
- *  byte-identical Workers-AI consensus default; one provider ⇒ `single`; two+ ⇒ the configured strategy over the
- *  first two. The result is attached to the self-host env at boot and passed to runGittensoryAiReview. */
+function enabledEnvFlag(value: string | undefined): boolean {
+  return TRUE_ENV_VALUES.has((value ?? "").trim().toLowerCase());
+}
+
+/** Resolve the self-host review plan from env. By default, `AI_PROVIDER=a,b` means one reviewer using `a` with
+ *  `b` as the per-review fallback, so a Codex quota/auth outage can fall through to Claude Code without paying
+ *  for two simultaneous reviewers. `AI_DUAL_REVIEW=1` opts back into the explicit two-reviewer mode where the
+ *  first two providers run independently and `AI_COMBINE` / `AI_ON_MERGE` decide how to merge them. */
 export function resolveAiReviewerPlan(
   env: Record<string, string | undefined>,
-): { reviewers: Array<{ model: string }>; combine: CombineStrategy; onMerge: OnMerge | undefined } | undefined {
+): { reviewers: Array<{ model: string; fallback?: string | null | undefined }>; combine: CombineStrategy; onMerge: OnMerge | undefined } | undefined {
   const names = resolveProviderNames(env);
   if (names.length === 0) return undefined;
+  if (!enabledEnvFlag(env.AI_DUAL_REVIEW)) {
+    const primary = names[0] as string;
+    const fallback = names.find((name) => name !== primary);
+    return {
+      reviewers: [
+        {
+          model: primary,
+          ...(fallback ? { fallback } : {}),
+        },
+      ],
+      combine: "single",
+      onMerge: undefined,
+    };
+  }
   if (names.length === 1) return { reviewers: [{ model: names[0] as string }], combine: "single", onMerge: undefined };
   // Fail loud when the two SLOTS the dual-review plan actually uses (the first two names) are the same
   // provider: routeProviders' `byName` map collapses duplicate provider names to one runtime instance, so

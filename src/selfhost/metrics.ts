@@ -111,6 +111,7 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_ai_review_force_bypass_total", { help: "AI review cache force-bypass events.", type: "counter" }],
   ["gittensory_ai_review_inconclusive_total", { help: "AI review inconclusive outcomes.", type: "counter" }],
   ["gittensory_ai_review_onmerge_clamped_total", { help: "AI review on-merge mode clamp events.", type: "counter" }],
+  ["gittensory_ai_review_model_fallback_total", { help: "AI review model fallback attempts by primary and fallback model.", type: "counter" }],
   ["gittensory_regate_ai_skipped_current_total", { help: "Regate requests skipped because AI state is current.", type: "counter" }],
   ["gittensory_public_surface_publish_skipped_current_total", { help: "Public surface publishes skipped because state is current.", type: "counter" }],
   ["gittensory_gate_decisions_total", { help: "Gate decisions by conclusion.", type: "counter" }],

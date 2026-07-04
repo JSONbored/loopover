@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertNoLegacySharedAiEnv, buildProvider, claudeErrorStatus, codexErrorFromStdout, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, extractCliUsage, isAiProviderHealthy, markAiProviderUnhealthyAtBoot, resetAiProviderCircuitBreakerForTest, resetAiProviderHealthForTest, resolveAiReviewerPlan, resolveClaudeCliTimeoutMs, resolveCodexAuthPath, resolveCodexCliTimeoutMs, resolveCodexEffort, resolveEffort, resolveModel, resolveProviderNames, resolveRequiredCliProviders, resolveSubscriptionCliPath, redactSecrets, routeProviders, shouldMarkAiProviderUnhealthyAtBoot, subscriptionCliEnv } from "../../src/selfhost/ai";
-import { labelSelfHostReviewerModel } from "../../src/selfhost/ai-config";
+import { labelSelfHostReviewerModel, labelSelfHostReviewerModels } from "../../src/selfhost/ai-config";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
@@ -19,16 +19,16 @@ describe("resolveModel (#979 — never leak the Workers-AI default to a self-hos
   });
 });
 
-describe("resolveEffort (#selfhost-effort — Claude Code intelligence dial, default high)", () => {
+describe("resolveEffort (#selfhost-effort — Claude Code intelligence dial, default medium)", () => {
   it("passes a valid level through, trimmed + lowercased", () => {
     expect(resolveEffort("low")).toBe("low");
     expect(resolveEffort("  Medium ")).toBe("medium");
     expect(resolveEffort("MAX")).toBe("max");
   });
-  it("defaults to high when unset or unrecognized so a typo can't downgrade reviews", () => {
-    expect(resolveEffort(undefined)).toBe("high"); // ?? right side
-    expect(resolveEffort("")).toBe("high"); // present but not in the valid set
-    expect(resolveEffort("ultra")).toBe("high"); // unrecognized → safe default
+  it("defaults to medium when unset or unrecognized to conserve fallback tokens", () => {
+    expect(resolveEffort(undefined)).toBe("medium"); // ?? right side
+    expect(resolveEffort("")).toBe("medium"); // present but not in the valid set
+    expect(resolveEffort("ultra")).toBe("medium"); // unrecognized → conservative default
   });
 });
 
@@ -38,7 +38,7 @@ describe("resolveCodexEffort (#selfhost-effort — Codex reasoning effort, expli
     expect(resolveCodexEffort("  Medium ")).toBe("medium");
     expect(resolveCodexEffort("xhigh")).toBe("xhigh");
     expect(resolveCodexEffort("max")).toBe("xhigh");
-    expect(resolveCodexEffort("ultra")).toBe("high");
+    expect(resolveCodexEffort("ultra")).toBe("medium");
   });
 });
 
@@ -49,7 +49,7 @@ describe("provider-specific CLI timeouts (#selfhost — no shared timeout ambigu
     expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_EFFORT: "high" })).toBe(240_000);
     expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_EFFORT: "xhigh" })).toBe(360_000);
     expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_EFFORT: "max" })).toBe(600_000);
-    expect(resolveClaudeCliTimeoutMs({})).toBe(240_000);
+    expect(resolveClaudeCliTimeoutMs({})).toBe(120_000);
     expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_TIMEOUT_MS: "300000", CLAUDE_AI_EFFORT: "low" })).toBe(300_000);
   });
   it("scales Codex timeout from CODEX_AI_EFFORT and honors CODEX_AI_TIMEOUT_MS", () => {
@@ -58,6 +58,7 @@ describe("provider-specific CLI timeouts (#selfhost — no shared timeout ambigu
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_EFFORT: "high" })).toBe(240_000);
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_EFFORT: "xhigh" })).toBe(360_000);
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_EFFORT: "max" })).toBe(360_000);
+    expect(resolveCodexCliTimeoutMs({})).toBe(120_000);
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_TIMEOUT_MS: "1000" })).toBe(30_000);
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_TIMEOUT_MS: "9999999" })).toBe(1_800_000);
   });
@@ -555,16 +556,38 @@ describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () 
     ]);
   });
 
-  it("resolveAiReviewerPlan: undefined with no provider; single ⇒ single; two ⇒ default synthesis", () => {
+  it("resolveAiReviewerPlan: undefined with no provider; single provider stays single", () => {
     expect(resolveAiReviewerPlan({})).toBeUndefined(); // cloud / AI off
     expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code" })).toEqual({ reviewers: [{ model: "claude-code" }], combine: "single", onMerge: undefined });
-    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex" })).toEqual({ reviewers: [{ model: "claude-code" }, { model: "codex" }], combine: "synthesis", onMerge: undefined });
   });
 
-  it("resolveAiReviewerPlan: honors AI_COMBINE / AI_ON_MERGE, defaults invalid values, caps at two reviewers", () => {
-    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toMatchObject({ combine: "consensus", onMerge: "both" });
-    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_COMBINE: "garbage", AI_ON_MERGE: "nonsense" })).toMatchObject({ combine: "synthesis", onMerge: undefined }); // invalid → defaults
-    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex,ollama" })?.reviewers).toEqual([{ model: "claude-code" }, { model: "codex" }]); // first two
+  it("resolveAiReviewerPlan: comma-list is a single-reviewer fallback chain by default", () => {
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,claude-code" })).toEqual({
+      reviewers: [{ model: "codex", fallback: "claude-code" }],
+      combine: "single",
+      onMerge: undefined,
+    });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex,claude-code" })).toEqual({
+      reviewers: [{ model: "codex", fallback: "claude-code" }],
+      combine: "single",
+      onMerge: undefined,
+    });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,claude-code,ollama", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toEqual({
+      reviewers: [{ model: "codex", fallback: "claude-code" }],
+      combine: "single",
+      onMerge: undefined,
+    });
+  });
+
+  it("resolveAiReviewerPlan: AI_DUAL_REVIEW=1 restores two independent reviewers and combine controls", () => {
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_DUAL_REVIEW: "1" })).toEqual({
+      reviewers: [{ model: "claude-code" }, { model: "codex" }],
+      combine: "synthesis",
+      onMerge: undefined,
+    });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_DUAL_REVIEW: "true", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toMatchObject({ combine: "consensus", onMerge: "both" });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_DUAL_REVIEW: "yes", AI_COMBINE: "garbage", AI_ON_MERGE: "nonsense" })).toMatchObject({ combine: "synthesis", onMerge: undefined }); // invalid → defaults
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex,ollama", AI_DUAL_REVIEW: "on" })?.reviewers).toEqual([{ model: "claude-code" }, { model: "codex" }]); // first two
   });
 
   it("resolveAiReviewerPlan: throws when the two dual-review slots resolve to the SAME provider (#2540)", () => {
@@ -572,14 +595,14 @@ describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () 
     // collapses duplicate names to one runtime instance, so this would silently degrade "dual review" into
     // "one provider called twice" with no independent second opinion. Fail loud at plan-resolution time
     // instead of degrading silently.
-    expect(() => resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex" })).toThrow(/ai_reviewer_providers_not_distinct/);
-    expect(() => resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex" })).toThrow(/"codex"/);
+    expect(() => resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex", AI_DUAL_REVIEW: "1" })).toThrow(/ai_reviewer_providers_not_distinct/);
+    expect(() => resolveAiReviewerPlan({ AI_PROVIDER: "codex,codex", AI_DUAL_REVIEW: "1" })).toThrow(/"codex"/);
   });
 
   it("resolveAiReviewerPlan: a THIRD-slot duplicate does not throw (only the first two slots are actually used)", () => {
     // "codex,ollama,codex" — the first two names (codex, ollama) are distinct, so the plan resolves normally;
     // the trailing repeat of codex is never addressed because reviewers are capped at the first two.
-    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,ollama,codex" })).toMatchObject({
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "codex,ollama,codex", AI_DUAL_REVIEW: "1" })).toMatchObject({
       reviewers: [{ model: "codex" }, { model: "ollama" }],
       combine: "synthesis",
     });
@@ -587,6 +610,10 @@ describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () 
 
   it("labels explicit provider:model reviewer ids without consulting env defaults", () => {
     expect(labelSelfHostReviewerModel(" CODEX:gpt-5.5 ", { CODEX_AI_MODEL: "ignored" })).toBe("codex:gpt-5.5");
+  });
+
+  it("labels primary→fallback reviewer chains with provider-specific configured models", () => {
+    expect(labelSelfHostReviewerModels([{ model: "codex", fallback: "claude-code" }], { CODEX_AI_MODEL: "gpt-5.5", CLAUDE_AI_MODEL: "claude-sonnet-4-6" })).toBe("codex:gpt-5.5->claude-code:claude-sonnet-4-6");
   });
 });
 
@@ -747,7 +774,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("t");
   });
 
-  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; CLAUDE_AI_* overrides explicitly", async () => {
+  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort medium; CLAUDE_AI_* overrides explicitly", async () => {
     let seen: string[] = [];
     let timeout = 0;
     const cap: StubSpawn = async (_c, a, o) => {
@@ -755,12 +782,12 @@ describe("subscription CLI helpers + fail-safe", () => {
       timeout = o.timeoutMs;
       return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
     };
-    // Empty model id (the dual-router default) + no CLAUDE_AI_MODEL → pinned claude-sonnet-4-6; unset effort → high.
+    // Empty model id (the router default) + no CLAUDE_AI_MODEL → pinned claude-sonnet-4-6; unset effort → medium.
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
-    expect(seen[seen.indexOf("--effort") + 1]).toBe("high");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("medium");
     expect(seen).not.toContain("--append-system-prompt");
-    expect(timeout).toBe(240_000); // high → 240s (not the old fixed 120s)
+    expect(timeout).toBe(120_000); // medium → 120s by default to conserve fallback subscription tokens
     // Provider-specific overrides flow through to the argv + timeout scale.
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", CLAUDE_AI_MODEL: "claude-opus-4-8", CLAUDE_AI_EFFORT: "max" }, cap).run("", { prompt: "x" });
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
@@ -832,7 +859,7 @@ describe("subscription CLI helpers + fail-safe", () => {
         prompt: "x",
       })).response,
     ).toBe("codex review");
-    expect(seen).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-c", 'model_reasoning_effort="high"']);
+    expect(seen).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-c", 'model_reasoning_effort="medium"']);
     expect(seen).not.toContain("--ask-for-approval");
     expect(seen).not.toContain("x");
     expect(capturedInput).toBe("x");
@@ -915,7 +942,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     const empty: StubSpawn = async () => ({ stdout: "", code: 0 });
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, empty).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_empty_output/);
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="high",model="m",provider="claude-code"} 2');
+    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="m",provider="claude-code"} 2');
   });
 
   it("Codex throws on empty output", async () => {
@@ -924,7 +951,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, empty, noAuthCheck).run("gpt-5", { prompt: "x" }),
     ).rejects.toThrow(/codex_empty_output/);
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="high",model="gpt-5",provider="codex"} 1');
+    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="gpt-5",provider="codex"} 1');
   });
 
   it("Claude Code throws subscription_cli_timeout when the CLI is killed for exceeding its deadline", async () => {
@@ -1080,7 +1107,7 @@ describe("subscription CLI helpers + fail-safe", () => {
       /codex_exit_1: stream error: rate limit reached/,
     );
     const metrics = await renderMetrics();
-    expect(metrics).toContain('gittensory_ai_requests_total{effort="high",model="m",provider="codex"} 1');
+    expect(metrics).toContain('gittensory_ai_requests_total{effort="medium",model="m",provider="codex"} 1');
   });
 
   it("redacts the OAuth token and key-shaped tokens from claude stderr before they reach the error (#1605 sec)", async () => {

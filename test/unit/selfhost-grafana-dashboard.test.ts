@@ -89,6 +89,8 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_admission_deferred_total[5m])) or vector(0)")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limit_budget_deferred_total[5m])) or vector(0)")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (kind, key_scope, job_type) (rate(gittensory_jobs_rate_limited_by_type_total[5m])) or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "sum by (primary, fallback) (increase(gittensory_ai_review_model_fallback_total[1h]))")).toBe(true);
+    expect(targets.some((target) => target.legendFormat === "fallback {{primary}}→{{fallback}}")).toBe(true);
   });
 
   it("keeps Orb dashboard panels zero-safe when telemetry counters are absent", () => {

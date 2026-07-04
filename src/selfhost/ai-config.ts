@@ -91,11 +91,17 @@ export function labelSelfHostReviewerModel(
 }
 
 export function labelSelfHostReviewerModels(
-  reviewers: ReadonlyArray<{ model: string }>,
+  reviewers: ReadonlyArray<{ model: string; fallback?: string | null | undefined }>,
   env: Record<string, string | undefined>,
 ): string {
   return reviewers
-    .map((reviewer) => labelSelfHostReviewerModel(reviewer.model, env))
+    .map((reviewer) => {
+      const primary = labelSelfHostReviewerModel(reviewer.model, env);
+      const fallback = reviewer.fallback?.trim()
+        ? labelSelfHostReviewerModel(reviewer.fallback, env)
+        : "";
+      return fallback ? `${primary}->${fallback}` : primary;
+    })
     .join("+");
 }
 

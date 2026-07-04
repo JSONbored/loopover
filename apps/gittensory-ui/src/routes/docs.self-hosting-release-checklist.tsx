@@ -121,9 +121,10 @@ SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
 ./scripts/smoke-selfhost.sh gittensory:rc-candidate
 
-# Both, synthesized
-SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=claude-code,codex
-AI_COMBINE=synthesis
+# Codex primary, Claude Code fallback
+SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex,claude-code
+CODEX_AI_EFFORT=medium
+CLAUDE_AI_EFFORT=medium
 CLAUDE_CODE_OAUTH_TOKEN=\${TEST_CLAUDE_TOKEN}
 GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\

@@ -63,3 +63,39 @@ test("parseMinerGoalSpec warns and falls back on malformed fields", () => {
   assert.equal(result.spec.issueDiscoveryPolicy, "neutral");
   assert.ok(result.warnings.length >= 4);
 });
+
+test("parseMinerGoalSpec caps list inspection for invalid entries", () => {
+  const result = parseMinerGoalSpec({
+    wantedPaths: Array.from({ length: 1_000 }, () => null),
+  });
+
+  assert.deepEqual(result.spec.wantedPaths, []);
+  assert.equal(result.warnings.length, 201);
+  assert.match(result.warnings.at(-1) ?? "", /capped at 200 entries/);
+});
+
+test("parseMinerGoalSpec caps list inspection for duplicate, empty, and overlong entries", () => {
+  const duplicates = parseMinerGoalSpec({
+    wantedPaths: Array.from({ length: 1_000 }, () => "src/**"),
+  });
+  assert.deepEqual(duplicates.spec.wantedPaths, ["src/**"]);
+  assert.deepEqual(duplicates.warnings, [
+    'MinerGoalSpec field "wantedPaths" is capped at 200 entries; dropping the rest.',
+  ]);
+
+  const empty = parseMinerGoalSpec({
+    wantedPaths: Array.from({ length: 1_000 }, () => " "),
+  });
+  assert.deepEqual(empty.spec.wantedPaths, []);
+  assert.deepEqual(empty.warnings, [
+    'MinerGoalSpec field "wantedPaths" is capped at 200 entries; dropping the rest.',
+  ]);
+
+  const overlong = parseMinerGoalSpec({
+    wantedPaths: Array.from({ length: 1_000 }, () => "x".repeat(301)),
+  });
+  assert.deepEqual(overlong.spec.wantedPaths, []);
+  assert.deepEqual(overlong.warnings, [
+    'MinerGoalSpec field "wantedPaths" is capped at 200 entries; dropping the rest.',
+  ]);
+});

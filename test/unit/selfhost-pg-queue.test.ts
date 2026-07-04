@@ -3131,4 +3131,142 @@ describe("createPgQueue (durable #977)", () => {
       expect(signals.oldestLiveRunnableAgeMs).toBeNull();
     });
   });
+
+  describe("installation-concurrency admission (#selfhost-installation-concurrency)", () => {
+    const oldLimit = process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT;
+
+    afterEach(() => {
+      if (oldLimit === undefined) delete process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT;
+      else process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = oldLimit;
+    });
+
+    // backfill-repo-segment (not agent-regate-sweep) is used as the background fixture throughout: unlike every
+    // other GITHUB_BUDGET_BACKGROUND_TYPES member, agent-regate-sweep's OWN row priority (8, PRIORITY_BY_TYPE)
+    // equals FOREGROUND_QUEUE_PRIORITY_FLOOR, so it is ALSO foreground-priority and therefore already exempt from
+    // this policy via the isForegroundJobPriority guard -- a genuinely background-priority (0) type is needed to
+    // actually exercise the limiter.
+
+    it("a second concurrent background job for the SAME installation is deferred at the limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const m = makePool();
+      m.enqueueJob("1", { type: "backfill-repo-segment", installationId: 42 }, 0, "backfill:42:a");
+      // No job_key on the deferred row (a raw/legacy shape) -- exercises the `job.job_key ?? ""` jitter-seed
+      // fallback's nullish arm.
+      m.enqueueJob("2", { type: "backfill-repo-segment", installationId: 42 }, 0, null);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createPgQueue(
+        m.pool,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.init();
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        // Give the second job's own pump loop a chance to claim and be evaluated too, while the first is still
+        // gated open -- only ONE of the two should ever have reached consume() at this point.
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        expect(m.pool.query).toHaveBeenCalledWith(
+          expect.stringContaining("SET status='pending', run_after=GREATEST"),
+          expect.arrayContaining([expect.stringContaining("installation concurrency admission deferred: concurrency_high")]),
+        );
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
+        );
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("a background job for a DIFFERENT installation is admitted concurrently with one already at its own limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const m = makePool();
+      m.enqueueJob("1", { type: "backfill-repo-segment", installationId: 42 }, 0, "backfill:42:a");
+      m.enqueueJob("2", { type: "backfill-repo-segment", installationId: 99 }, 0, "backfill:99:a");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let concurrent = 0;
+      let maxConcurrent = 0;
+      const q = createPgQueue(
+        m.pool,
+        async () => {
+          concurrent++;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await gate;
+          concurrent--;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.init();
+      try {
+        q.start();
+        for (let i = 0; i < 20 && maxConcurrent < 2; i += 1) await new Promise((r) => setTimeout(r, 10));
+        expect(maxConcurrent).toBe(2);
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("never defers a foreground agent-regate-pr job regardless of installation in-flight count", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const m = makePool();
+      m.enqueueJob("1", { type: "backfill-repo-segment", installationId: 42 }, 0, "backfill:42:a");
+      // A real agent-regate-pr claim row carries priority 9 (AGENT_REGATE_PRIORITY) -- enqueueJob's fixed shape
+      // omits `priority` entirely, which would misrepresent this as background-priority (undefined/NaN reads as
+      // NOT foreground), defeating the exact thing this test verifies. enqueueResult lets the row be explicit.
+      m.enqueueResult({
+        rows: [{ id: "2", payload: JSON.stringify(regateJob(42, 1630)), attempts: 0, job_key: "agent-regate-pr:jsonbored/gittensory#1630", priority: 9 }],
+        rowCount: 1,
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const seen: string[] = [];
+      const q = createPgQueue(
+        m.pool,
+        async (j) => {
+          seen.push(typeOf(j));
+          if (typeOf(j) === "backfill-repo-segment") await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.init();
+      try {
+        q.start();
+        for (let i = 0; i < 20 && seen.length < 2; i += 1) await new Promise((r) => setTimeout(r, 10));
+        expect(seen).toContain("agent-regate-pr");
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("the tracker decrements on completion, so a subsequent job for the same installation is admitted again", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const m = makePool();
+      m.enqueueJob("1", { type: "backfill-repo-segment", installationId: 42 }, 0, "backfill:42:a");
+      const seen: string[] = [];
+      const q = createPgQueue(m.pool, async (j) => void seen.push(typeOf(j)), { backgroundConcurrency: 1 });
+      await q.init();
+      await q.drain();
+      expect(seen).toEqual(["backfill-repo-segment"]);
+
+      m.enqueueJob("2", { type: "backfill-repo-segment", installationId: 42 }, 0, "backfill:42:b");
+      await q.drain();
+      expect(seen).toEqual(["backfill-repo-segment", "backfill-repo-segment"]);
+    });
+  });
 });

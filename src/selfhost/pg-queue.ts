@@ -18,6 +18,7 @@ import {
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
+  installationConcurrencyKeyForJob,
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
@@ -150,6 +151,12 @@ import {
   selectForegroundDeferralsToRelease,
   type ForegroundLivenessConfig,
 } from "./foreground-liveness";
+import {
+  evaluateInstallationConcurrencyAdmission,
+  installationConcurrencyDeferMs,
+  resolveInstallationConcurrencyConfig,
+  InstallationConcurrencyTracker,
+} from "./installation-concurrency-admission";
 import type { JobMessage } from "../types";
 
 const TABLE = "_selfhost_jobs";
@@ -244,6 +251,11 @@ interface JobRow {
   priority: number | string;
   created_at: number | string;
   backgroundSlotReserved?: boolean;
+  // #selfhost-installation-concurrency: set only when this job was ADMITTED-AND-COUNTED against a specific
+  // installation's in-flight tracker (see the admission block right before the dispatch try/finally below) --
+  // stamped here so the shared finally can release the SAME key, mirroring backgroundSlotReserved's own
+  // admit-time-stamp / release-in-finally shape.
+  installationConcurrencyKey?: string;
 }
 
 export interface PgQueueOptions {
@@ -286,6 +298,8 @@ export function createPgQueue(
   let foregroundLivenessTimer: ReturnType<typeof setInterval> | null = null;
   const maintenanceAdmissionConfig: MaintenanceAdmissionConfig = resolveMaintenanceAdmissionConfig();
   const foregroundLivenessConfig: ForegroundLivenessConfig = resolveForegroundLivenessConfig();
+  const installationConcurrencyConfig = resolveInstallationConcurrencyConfig();
+  const installationConcurrencyTracker = new InstallationConcurrencyTracker();
 
   async function init(): Promise<void> {
     await pool.query(DDL);
@@ -1163,6 +1177,66 @@ export function createPgQueue(
           });
         }
       }
+      // Per-installation GitHub-fetch concurrency admission (#selfhost-installation-concurrency), the last-mile
+      // gate: only reached by a job that already passed rate-limit admission and (if applicable) maintenance-
+      // lane admission above, immediately before it actually claims a dispatch slot. Explicitly excludes
+      // foreground-priority jobs (mirrors the maintenance-admission guard above) -- isGitHubBudgetBackgroundJob
+      // (which installationConcurrencyKeyForJob is built on) answers "does this job draw GitHub rate-limit
+      // BUDGET", which is also true for a live (non-sweep, non-manual) agent-regate-pr job; that job is still
+      // FOREGROUND priority and must never be deferred by this policy, so the exclusion is a separate, explicit
+      // check here rather than folded into the key resolver itself. installationConcurrencyKey is null for
+      // background jobs whose payload carries no resolvable installationId too -- those fall through unaffected.
+      const installationConcurrencyKey = isForegroundJobPriority(Number(job.priority))
+        ? null
+        : installationConcurrencyKeyForJob(message);
+      if (installationConcurrencyKey) {
+        const decision = evaluateInstallationConcurrencyAdmission(
+          installationConcurrencyConfig,
+          installationConcurrencyTracker.currentCount(installationConcurrencyKey),
+        );
+        if (!decision.admit) {
+          await withReviewSpan(
+            "selfhost.queue.installation_concurrency_deferred",
+            { "job.type": message.type, "queue.backend": "postgres", "installation_concurrency.reason": decision.reason },
+            async () => {
+              const now = Date.now();
+              const retryAfter = now + installationConcurrencyDeferMs(
+                installationConcurrencyConfig,
+                `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+              );
+              const update = await retryPoolUpdateOrLeaveForReclaim(
+                () =>
+                  pool.query(
+                    `UPDATE ${TABLE} SET status='pending', run_after=GREATEST(run_after, $1), last_error=COALESCE(last_error, $2) WHERE id=$3`,
+                    [retryAfter, `installation concurrency admission deferred: ${decision.reason}`, job.id],
+                  ),
+                job.id,
+                "selfhost_queue_pg_connection_lost_on_installation_concurrency_defer",
+              );
+              if (update?.rowCount) {
+                await recordQueueMetric("gittensory_jobs_installation_concurrency_deferred_total");
+                incr("gittensory_jobs_installation_concurrency_deferred_by_reason_total", {
+                  reason: decision.reason,
+                  job_type: message.type,
+                });
+                console.warn(
+                  JSON.stringify({
+                    level: "warn",
+                    event: "selfhost_queue_installation_concurrency_deferred",
+                    jobType: message.type,
+                    reason: decision.reason,
+                    retry_after_ms: Math.max(0, retryAfter - now),
+                  }),
+                );
+              }
+            },
+            { parentTraceParent: jobTraceParent },
+          );
+          return true;
+        }
+        installationConcurrencyTracker.increment(installationConcurrencyKey);
+        job.installationConcurrencyKey = installationConcurrencyKey;
+      }
       try {
         await withReviewSpan(
           "selfhost.queue.job",
@@ -1319,6 +1393,7 @@ export function createPgQueue(
       activeJobIds.delete(job.id);
       if (job.backgroundSlotReserved)
         activeBackground = Math.max(0, activeBackground - 1);
+      if (job.installationConcurrencyKey) installationConcurrencyTracker.decrement(job.installationConcurrencyKey);
     }
   }
 

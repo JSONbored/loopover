@@ -19,6 +19,7 @@ import {
   githubRateLimitMetricContext,
   githubRateLimitRetryDelayMs,
   buildSelfHostQueueSnapshot,
+  installationConcurrencyKeyForJob,
   isForegroundJobPriority,
   jobCoalesceAbsorbedByKey,
   jobCoalesceKey,
@@ -51,6 +52,12 @@ import {
   type MaintenanceAdmissionConfig,
   type MaintenancePressureSignals,
 } from "./maintenance-admission";
+import {
+  evaluateInstallationConcurrencyAdmission,
+  installationConcurrencyDeferMs,
+  resolveInstallationConcurrencyConfig,
+  InstallationConcurrencyTracker,
+} from "./installation-concurrency-admission";
 import {
   AGENT_REGATE_PR_JOB_KEY_PREFIX,
   backlogRepoCandidatesFromJobKeys,
@@ -157,6 +164,10 @@ interface JobRow {
   priority: number;
   created_at: number;
   backgroundSlotReserved?: boolean;
+  // #selfhost-installation-concurrency: set only when this job was ADMITTED-AND-COUNTED against a specific
+  // installation's in-flight tracker -- stamped at admission time so the shared finally can release the SAME
+  // key, mirroring backgroundSlotReserved's own admit-time-stamp / release-in-finally shape.
+  installationConcurrencyKey?: string;
 }
 
 export interface SqliteQueueOptions {
@@ -274,6 +285,8 @@ export function createSqliteQueue(
     );
   const maintenanceAdmissionConfig: MaintenanceAdmissionConfig = resolveMaintenanceAdmissionConfig();
   const foregroundLivenessConfig: ForegroundLivenessConfig = resolveForegroundLivenessConfig();
+  const installationConcurrencyConfig = resolveInstallationConcurrencyConfig();
+  const installationConcurrencyTracker = new InstallationConcurrencyTracker();
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.
   const recovered = recoverProcessingJobs(driver);
   if (recovered) {
@@ -896,6 +909,61 @@ export function createSqliteQueue(
           });
         }
       }
+      // Per-installation GitHub-fetch concurrency admission (#selfhost-installation-concurrency), the last-mile
+      // gate: only reached by a job that already passed rate-limit admission and (if applicable) maintenance-
+      // lane admission above, immediately before it actually claims a dispatch slot. Explicitly excludes
+      // foreground-priority jobs (mirrors the maintenance-admission guard above) -- isGitHubBudgetBackgroundJob
+      // (which installationConcurrencyKeyForJob is built on) answers "does this job draw GitHub rate-limit
+      // BUDGET", which is also true for a live (non-sweep, non-manual) agent-regate-pr job; that job is still
+      // FOREGROUND priority and must never be deferred by this policy, so the exclusion is a separate, explicit
+      // check here rather than folded into the key resolver itself. installationConcurrencyKey is null for
+      // background jobs whose payload carries no resolvable installationId too -- those fall through unaffected.
+      const installationConcurrencyKey = isForegroundJobPriority(job.priority)
+        ? null
+        : installationConcurrencyKeyForJob(message);
+      if (installationConcurrencyKey) {
+        const decision = evaluateInstallationConcurrencyAdmission(
+          installationConcurrencyConfig,
+          installationConcurrencyTracker.currentCount(installationConcurrencyKey),
+        );
+        if (!decision.admit) {
+          await withReviewSpan(
+            "selfhost.queue.installation_concurrency_deferred",
+            { "job.type": message.type, "queue.backend": "sqlite", "installation_concurrency.reason": decision.reason },
+            async () => {
+              const now = Date.now();
+              const retryAfter = now + installationConcurrencyDeferMs(
+                installationConcurrencyConfig,
+                `${job.job_key ?? ""}:${job.id}:${job.payload}`,
+              );
+              const { changes } = driver.query(
+                `UPDATE ${TABLE} SET status='pending', run_after=max(run_after, ?), last_error=coalesce(last_error, ?) WHERE id=?`,
+                [retryAfter, `installation concurrency admission deferred: ${decision.reason}`, job.id],
+              );
+              if (changes) {
+                recordQueueMetric(driver, "gittensory_jobs_installation_concurrency_deferred_total");
+                incr("gittensory_jobs_installation_concurrency_deferred_by_reason_total", {
+                  reason: decision.reason,
+                  job_type: message.type,
+                });
+                console.warn(
+                  JSON.stringify({
+                    level: "warn",
+                    event: "selfhost_queue_installation_concurrency_deferred",
+                    jobType: message.type,
+                    reason: decision.reason,
+                    retry_after_ms: Math.max(0, retryAfter - now),
+                  }),
+                );
+              }
+            },
+            { parentTraceParent: jobTraceParent },
+          );
+          return true;
+        }
+        installationConcurrencyTracker.increment(installationConcurrencyKey);
+        job.installationConcurrencyKey = installationConcurrencyKey;
+      }
       try {
         await withReviewSpan(
           "selfhost.queue.job",
@@ -1015,6 +1083,7 @@ export function createSqliteQueue(
       activeJobIds.delete(job.id);
       if (job.backgroundSlotReserved)
         activeBackground = Math.max(0, activeBackground - 1);
+      if (job.installationConcurrencyKey) installationConcurrencyTracker.decrement(job.installationConcurrencyKey);
     }
   }
 

@@ -114,6 +114,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts:508",
   },
   {
+    name: "GITHUB_INSTALLATION_CONCURRENCY_ENABLED",
+    firstReference: "src/selfhost/installation-concurrency-admission.ts:34",
+  },
+  {
     name: "GITTENSORY_REPO_CONFIG_DIR",
     firstReference: "src/server.ts:288",
   },
@@ -345,6 +349,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts:59` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts:166` |",
   "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts:508` |",
+  "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts:34` |",
   "| `GITTENSORY_REPO_CONFIG_DIR` | `src/server.ts:288` |",
   "| `GITTENSORY_VERSION` | `src/selfhost/otel.ts:62` |",
   "| `HOME` | `src/selfhost/ai.ts:302` |",

@@ -402,6 +402,20 @@ export function githubRateLimitAdmissionKeyForJob(message: JobMessage): GitHubRa
     : null;
 }
 
+// #selfhost-installation-concurrency: the admission key a per-installation concurrency limiter should track
+// THIS job under, or null when the job either makes no GitHub calls isGitHubBudgetBackgroundJob cares about, or
+// carries no resolvable installationId. Reusing githubRateLimitAdmissionKeyForJob (rather than inventing a
+// second key function) keeps the rate-limit-admission key and the concurrency-admission key for the same job
+// always identical by construction. NOTE: isGitHubBudgetBackgroundJob is true for a live (non-sweep, non-manual)
+// agent-regate-pr job too, since that job DOES draw GitHub rate-limit budget under this key -- but that job is
+// still FOREGROUND priority. This function deliberately does NOT filter foreground jobs out itself (it answers
+// "what key would this job's GitHub calls draw against", not "should a background-only policy apply to it") --
+// the caller (pg-queue.ts/sqlite-queue.ts) is responsible for its own `!isForegroundJobPriority(...)` guard
+// before ever calling this, exactly mirroring how isMaintenanceJobType is similarly guarded at its own call site.
+export function installationConcurrencyKeyForJob(message: JobMessage): GitHubRateLimitAdmissionKey | null {
+  return isGitHubBudgetBackgroundJob(message) ? githubRateLimitAdmissionKeyForJob(message) : null;
+}
+
 export type GitHubRateLimitAdmissionKind = "background" | "webhook";
 
 export type GitHubRateLimitAdmissionTarget = {

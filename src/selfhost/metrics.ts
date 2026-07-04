@@ -77,6 +77,8 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_jobs_rate_limit_budget_deferred_total", { help: "Jobs deferred by rate-limit budget checks.", type: "counter" }],
   ["gittensory_jobs_rate_limited_by_type_total", { help: "Jobs rate-limited by job type.", type: "counter" }],
   ["gittensory_jobs_maintenance_admission_deferred_by_reason_total", { help: "Maintenance jobs deferred by reason.", type: "counter" }],
+  ["gittensory_jobs_installation_concurrency_deferred_total", { help: "Background jobs deferred by per-installation GitHub-fetch concurrency admission.", type: "counter" }],
+  ["gittensory_jobs_installation_concurrency_deferred_by_reason_total", { help: "Per-installation GitHub-fetch concurrency deferrals by reason and job type.", type: "counter" }],
   ["gittensory_jobs_dead_letter_revived_total", { help: "Dead-letter jobs revived for retry.", type: "counter" }],
   ["gittensory_jobs_foreground_liveness_released_total", { help: "Foreground-priority jobs force-released from a stale deferral by the liveness sweep.", type: "counter" }],
   ["gittensory_jobs_foreground_liveness_released_by_reason_total", { help: "Foreground liveness releases by reason (age vs rate_limit_cleared).", type: "counter" }],

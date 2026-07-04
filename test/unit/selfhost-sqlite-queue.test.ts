@@ -3538,4 +3538,137 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(await renderMetrics()).not.toContain("gittensory_jobs_maintenance_admission_deferred_by_reason_total");
     });
   });
+
+  describe("installation-concurrency admission (#selfhost-installation-concurrency)", () => {
+    const oldLimit = process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT;
+
+    afterEach(() => {
+      if (oldLimit === undefined) delete process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT;
+      else process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = oldLimit;
+    });
+
+    // backfill-repo-segment (not agent-regate-sweep) is used as the background fixture throughout: unlike every
+    // other GITHUB_BUDGET_BACKGROUND_TYPES member, agent-regate-sweep's OWN row priority (8, PRIORITY_BY_TYPE)
+    // equals FOREGROUND_QUEUE_PRIORITY_FLOOR, so it is ALSO foreground-priority and therefore already exempt from
+    // this policy via the isForegroundJobPriority guard -- a genuinely background-priority (0) type is needed to
+    // actually exercise the limiter. q.binding.send(...) computes real priority via jobPriority(), so (unlike a
+    // hand-built mock row) every job here carries an authentic priority value.
+
+    it("a second concurrent background job for the SAME installation is deferred at the limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          started++;
+          await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      // The second (to-be-deferred) row is inserted directly with job_key=NULL (a raw/legacy shape) --
+      // q.binding.send() would compute a real jobCoalesceKey for this type, which would never exercise the
+      // `job.job_key ?? ""` jitter-seed fallback's nullish arm.
+      driver.query(
+        `INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority, job_key, is_maintenance)
+         VALUES (?, 'pending', 0, 0, ?, 0, NULL, 0)`,
+        [JSON.stringify({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/b" }), Date.now()],
+      );
+      try {
+        q.start();
+        for (let i = 0; i < 20 && started < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
+        expect(started).toBe(1);
+        const row = driver.query(
+          "SELECT last_error FROM _selfhost_jobs WHERE status='pending' AND payload LIKE '%backfill-repo-segment%'",
+          [],
+        ).rows[0] as { last_error: string } | undefined;
+        expect(row?.last_error).toContain("installation concurrency admission deferred: concurrency_high");
+        expect(await renderMetrics()).toContain(
+          'gittensory_jobs_installation_concurrency_deferred_by_reason_total{job_type="backfill-repo-segment",reason="concurrency_high"} 1',
+        );
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("a background job for a DIFFERENT installation is admitted concurrently with one already at its own limit", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let concurrent = 0;
+      let maxConcurrent = 0;
+      const q = createSqliteQueue(
+        driver,
+        async () => {
+          concurrent++;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await gate;
+          concurrent--;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 99, repoFullName: "owner/b" } as unknown as JobMessage);
+      try {
+        q.start();
+        for (let i = 0; i < 20 && maxConcurrent < 2; i += 1) await new Promise((r) => setTimeout(r, 10));
+        expect(maxConcurrent).toBe(2);
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("never defers a foreground agent-regate-pr job regardless of installation in-flight count", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const seen: string[] = [];
+      const q = createSqliteQueue(
+        driver,
+        async (j) => {
+          seen.push(typeOf(j));
+          if (typeOf(j) === "backfill-repo-segment") await gate;
+        },
+        { concurrency: 2, backgroundConcurrency: 2, pollIntervalMs: 100_000 },
+      );
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.binding.send(regateJob(42, 1630));
+      try {
+        q.start();
+        for (let i = 0; i < 20 && seen.length < 2; i += 1) await new Promise((r) => setTimeout(r, 10));
+        expect(seen).toContain("agent-regate-pr");
+      } finally {
+        release();
+        await q.stop();
+      }
+    });
+
+    it("the tracker decrements on completion, so a subsequent job for the same installation is admitted again", async () => {
+      process.env.GITHUB_INSTALLATION_CONCURRENCY_LIMIT = "1";
+      const driver = makeDriver();
+      const seen: string[] = [];
+      const q = createSqliteQueue(driver, async (m) => void seen.push(typeOf(m)), { backgroundConcurrency: 1 });
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/a" } as unknown as JobMessage);
+      await q.drain();
+      expect(seen).toEqual(["backfill-repo-segment"]);
+
+      await q.binding.send({ type: "backfill-repo-segment", installationId: 42, repoFullName: "owner/b" } as unknown as JobMessage);
+      await q.drain();
+      expect(seen).toEqual(["backfill-repo-segment", "backfill-repo-segment"]);
+    });
+  });
 });

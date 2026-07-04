@@ -513,6 +513,66 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Amazon MWS auth token: `amzn.mws.` + a UUID.
+    kind: "amazon_mws_token",
+    re: /\bamzn\.mws\.[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/,
+    confidence: "high",
+  },
+  {
+    // Tencent Cloud secret id: `AKID` + >=32 base62.
+    kind: "tencent_secret_id",
+    re: /\bAKID[A-Za-z0-9]{32,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // Ory personal access token: `ory_pat_` + >=32 base64url (lookahead terminator).
+    kind: "ory_pat",
+    re: /\bory_pat_[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Braintree production access token: `access_token$production$` + 16 base36 merchant id + `$` + 32 hex.
+    kind: "braintree_token",
+    re: /\baccess_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}\b/,
+    confidence: "high",
+  },
+  {
+    // MailerSend API token: `mlsn.` + 64 hex.
+    kind: "mailersend_token",
+    re: /\bmlsn\.[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Ghost Admin API key: a 24-hex id, `:`, then a 64-hex secret.
+    kind: "ghost_admin_key",
+    re: /\b[0-9a-f]{24}:[0-9a-f]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Xata API key: `xau_` + >=40 base64url (lookahead terminator).
+    kind: "xata_api_key",
+    re: /\bxau_[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Deno Deploy access token: `ddp_` + >=40 base62.
+    kind: "deno_deploy_token",
+    re: /\bddp_[A-Za-z0-9]{40,}(?![A-Za-z0-9])/,
+    confidence: "high",
+  },
+  {
+    // 1Password service-account token: `ops_` + a base64url body that begins with the `eyJ` JSON marker.
+    kind: "onepassword_service_token",
+    re: /\bops_eyJ[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // RunPod API key: `rpa_` + >=32 uppercase base36.
+    kind: "runpod_api_key",
+    re: /\brpa_[A-Z0-9]{32,}(?![A-Z0-9])/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

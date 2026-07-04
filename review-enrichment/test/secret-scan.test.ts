@@ -572,3 +572,42 @@ test("scanPatch does not flag near-miss variants of the new SaaS/AI formats", ()
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags additional infrastructure/AI-provider credential formats", () => {
+  const cases = [
+    ["amazon_mws_token", "amzn.mws." + hex(8) + "-" + hex(4) + "-" + hex(4) + "-" + hex(4) + "-" + hex(12)],
+    ["tencent_secret_id", "AKID" + b62(32)],
+    ["ory_pat", "ory_pat_" + b62(32)],
+    ["braintree_token", "access_token$production$" + hex(16) + "$" + hex(32)],
+    ["mailersend_token", "mlsn." + hex(64)],
+    ["ghost_admin_key", hex(24) + ":" + hex(64)],
+    ["xata_api_key", "xau_" + b62(40)],
+    ["deno_deploy_token", "ddp_" + b62(40)],
+    ["onepassword_service_token", "ops_eyJ" + b62(40)],
+    ["runpod_api_key", "rpa_" + b62(32)],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-miss variants of the infra/AI credential formats", () => {
+  const nearMisses = [
+    "AKID" + b62(31),
+    "ory_pat_" + b62(31),
+    "mlsn." + hex(63),
+    hex(24) + ":" + hex(63),
+    "xau_" + b62(39),
+    "ddp_" + b62(39),
+    "ops_eyJ" + b62(39),
+    "rpa_" + b62(31),
+    "amzn.mws." + hex(8) + "-" + hex(4) + "-" + hex(4) + "-" + hex(4) + "-" + hex(11),
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

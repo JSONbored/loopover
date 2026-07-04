@@ -436,3 +436,78 @@ describe("secretLeakFinding scans only ADDED lines", () => {
     expect(secretLeakFinding(diff)).toBeNull();
   });
 });
+
+// #3041: the finding's `detail` must surface the exact file:line so a maintainer can jump straight to the
+// flagged content instead of re-deriving it from the whole diff.
+describe("secretLeakFinding surfaces file:line locations (#3041)", () => {
+  // Assembled at runtime so THIS test file's source carries no contiguous scannable token.
+  const fakeToken = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+  it("reports the exact file path and line number for a planted secret in a multi-file diff", () => {
+    const diff = [
+      "### src/unrelated.ts (modified) +2/-0",
+      "@@ -1,2 +1,4 @@",
+      " const a = 1;",
+      "+const b = 2;",
+      "+const c = 3;",
+      "",
+      "### test/fixture.ts (modified) +3/-0",
+      "@@ -10,3 +10,6 @@",
+      " const before = true;",
+      "+const filler = 0;",
+      `+const token = "${fakeToken}";`,
+      "+const after = 1;",
+    ].join("\n");
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    // Hunk starts at new-file line 10; " const before" is line 10 (context), "+const filler" is line 11,
+    // and the secret line is line 12.
+    expect(finding?.detail).toContain("test/fixture.ts:12");
+    expect(finding?.detail).not.toContain("src/unrelated.ts");
+  });
+
+  it("caps the reported locations at 5 and notes how many more were omitted (singular)", () => {
+    const lines = ["### src/many.ts (modified) +6/-0", "@@ -1,0 +1,6 @@"];
+    for (let i = 0; i < 6; i += 1) {
+      lines.push(`+const secret${i} = "${fakeToken}";`);
+    }
+    const diff = lines.join("\n");
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    // 6 distinct locations (lines 1-6) -> 5 shown + "1 more location" (singular) omitted note.
+    for (let line = 1; line <= 5; line += 1) {
+      expect(finding?.detail).toContain(`src/many.ts:${line}`);
+    }
+    expect(finding?.detail).not.toContain("src/many.ts:6");
+    expect(finding?.detail).toContain("+1 more location)");
+    expect(finding?.detail).not.toContain("+1 more locations)");
+  });
+
+  it("caps the reported locations at 5 and notes how many more were omitted (plural)", () => {
+    const lines = ["### src/many.ts (modified) +8/-0", "@@ -1,0 +1,8 @@"];
+    for (let i = 0; i < 8; i += 1) {
+      lines.push(`+const secret${i} = "${fakeToken}";`);
+    }
+    const diff = lines.join("\n");
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    // 8 distinct locations (lines 1-8) -> 5 shown + "3 more locations" (plural) omitted note.
+    for (let line = 1; line <= 5; line += 1) {
+      expect(finding?.detail).toContain(`src/many.ts:${line}`);
+    }
+    expect(finding?.detail).not.toContain("src/many.ts:6");
+    expect(finding?.detail).toContain("+3 more locations)");
+  });
+
+  it("a removed line's secret-shaped content does not appear in the finding at all", () => {
+    const diff = `### src/config.ts (modified) +0/-1\n@@ -5,1 +5,0 @@\n-const token = "${fakeToken}";`;
+    expect(secretLeakFinding(diff)).toBeNull();
+  });
+
+  it("an added file's secret-shaped filename is reported as a filename-level (line 0) location", () => {
+    const diff = `### fixtures/${fakeToken}.txt (added) +1/-0\n@@ -0,0 +1,1 @@\n+benign fixture content`;
+    const finding = secretLeakFinding(diff);
+    expect(finding?.code).toBe("secret_leak");
+    expect(finding?.detail).toContain(`fixtures/${fakeToken}.txt (filename)`);
+  });
+});

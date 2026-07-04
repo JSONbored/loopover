@@ -63,12 +63,22 @@ function hasLongSequentialRun(value: string): boolean {
   return false;
 }
 
+// #3041: a value made ENTIRELY of lowercase words joined by hyphens (2+ segments, e.g. the test-fixture
+// literal "installation-token" used 351+ times across this repo's own test suite as a mock fetch-response
+// token) reads as an ordinary English-word compound identifier -- a mock/fixture name -- not a generated
+// credential. Real secrets/tokens are essentially always alphanumeric, mixed-case, or base64/hex; they are
+// never a pure lowercase-hyphenated phrase. Require at least one hyphen (2+ segments) so this stays narrow
+// and doesn't broaden into excluding arbitrary single lowercase words that could plausibly be real secrets.
+const LOWERCASE_HYPHENATED_COMPOUND_PATTERN = /^[a-z]+(-[a-z]+)+$/;
+
 /** True for an obvious non-secret filler value: a known placeholder phrase, a string built from at most 2
- *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), or a long monotonic character-code run
- *  (e.g. "abcdefghijklmnop123") — real high-entropy secrets never look like any of these. */
+ *  distinct characters (e.g. "xxxxxxxxxxxxxxxx", "----------------"), a long monotonic character-code run
+ *  (e.g. "abcdefghijklmnop123"), or a lowercase-hyphenated word compound (e.g. "installation-token") — real
+ *  high-entropy secrets never look like any of these. */
 function isPlaceholderSecretValue(value: string): boolean {
   if (PLACEHOLDER_VALUE_PATTERN.test(value)) return true;
   if (new Set(value.toLowerCase()).size <= 2) return true;
+  if (LOWERCASE_HYPHENATED_COMPOUND_PATTERN.test(value)) return true;
   return hasLongSequentialRun(value);
 }
 
@@ -85,14 +95,82 @@ function hasGenericSecretAssignment(text: string): boolean {
   return false;
 }
 
+// #3041: the one place the pattern list (format-specific SECRET_PATTERNS + the generic keyword-assignment
+// heuristic) is applied to a string. Both `scanForSecrets` (whole-text scan) and
+// `scanDiffForSecretsWithLocations` (per-line diff scan, for file:line attribution) delegate here so there is
+// exactly one implementation of "does this text contain secret-shaped content" to keep in sync.
+function matchedKindsIn(text: string): string[] {
+  if (!text) return [];
+  const kinds = SECRET_PATTERNS.filter((pattern) => pattern.re.test(text)).map((pattern) => pattern.name);
+  if (hasGenericSecretAssignment(text)) kinds.push("generic_secret_assignment");
+  return kinds;
+}
+
 export interface SecretScanResult {
   found: boolean;
   kinds: string[];
 }
 
 export function scanForSecrets(text: string): SecretScanResult {
-  if (!text) return { found: false, kinds: [] };
-  const kinds = SECRET_PATTERNS.filter((pattern) => pattern.re.test(text)).map((pattern) => pattern.name);
-  if (hasGenericSecretAssignment(text)) kinds.push("generic_secret_assignment");
+  const kinds = matchedKindsIn(text);
   return { found: kinds.length > 0, kinds };
+}
+
+/** One secret-pattern hit at a specific location in a diff, for surfacing file:line in a finding (#3041). A
+ *  `line` of `0` means the match came from a file-header PATH itself (an added/renamed filename), not from
+ *  diff content — there is no line number for that case. */
+export interface SecretScanLocationMatch {
+  kind: string;
+  path: string;
+  line: number;
+}
+
+const DIFF_FILE_HEADER_PATTERN = /^### (.+) \(([a-z]+)\) \+\d+\/-\d+$/;
+const DIFF_HUNK_HEADER_PATTERN = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/**
+ * Walk a `buildSecretScanDiff`-shaped diff (see src/queue/processors.ts) line by line, scanning only content
+ * this PR is INTRODUCING — added (`+`) lines and, for an added/renamed file, the path in its own section
+ * header — and return every pattern hit with its file path and 1-based line number in the new/post-change
+ * file. Context (` `) and removed (`-`) lines are tracked for line-number bookkeeping but never scanned: a
+ * removed or unchanged line is not something this PR is committing. This mirrors the added-only scanning
+ * `secretLeakFinding` used to do via string filtering, but keeps enough diff structure to report WHERE a hit
+ * lives instead of collapsing everything to a flat blob.
+ */
+export function scanDiffForSecretsWithLocations(diff: string): SecretScanLocationMatch[] {
+  const matches: SecretScanLocationMatch[] = [];
+  let currentPath = "";
+  let currentNewLine = 0;
+  for (const line of diff.split("\n")) {
+    const fileHeader = DIFF_FILE_HEADER_PATTERN.exec(line);
+    if (fileHeader) {
+      currentPath = fileHeader[1]!;
+      currentNewLine = 0;
+      const status = fileHeader[2]!;
+      if (status === "added" || status === "renamed") {
+        for (const kind of matchedKindsIn(currentPath)) {
+          matches.push({ kind, path: currentPath, line: 0 });
+        }
+      }
+      continue;
+    }
+    const hunkHeader = DIFF_HUNK_HEADER_PATTERN.exec(line);
+    if (hunkHeader) {
+      currentNewLine = Number(hunkHeader[1]) - 1;
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      currentNewLine += 1;
+      const content = line.slice(1);
+      for (const kind of matchedKindsIn(content)) {
+        matches.push({ kind, path: currentPath, line: currentNewLine });
+      }
+      continue;
+    }
+    if (line.startsWith("-")) continue;
+    // Context line (single leading space) or a blank separator between file sections -- either way it isn't
+    // new content this PR introduces, but a genuine context line still occupies a line in the new file.
+    currentNewLine += 1;
+  }
+  return matches;
 }

@@ -128,4 +128,31 @@ describe("scanForSecrets — deterministic secret-pattern scanner", () => {
   it("does NOT flag a short value under the 16-character floor", () => {
     expect(scanForSecrets('token = "short12345"').kinds).not.toContain("generic_secret_assignment");
   });
+
+  // #3041: PR #3036 was wrongly hard-blocked by the test-fixture literal "installation-token" (used 351+
+  // times across this repo's own test suite as a mock fetch-response token) — a lowercase-hyphenated word
+  // compound reads as a fixture/mock name, not a generated credential.
+  it.each([
+    ["installation-token", 'token: "installation-token"'],
+    ["access-token", 'token = "access-token"'],
+    ["some-mock-secret-value", 'secret: "some-mock-secret-value"'],
+  ])("does NOT flag a lowercase-hyphenated word compound: %s (#3041)", (_name, snippet) => {
+    expect(scanForSecrets(snippet).kinds).not.toContain("generic_secret_assignment");
+  });
+
+  it("still flags a real-looking generic secret with digits and mixed case (regression guard for #3041)", () => {
+    // Same fixture as the "high-entropy value" test above — proves the new lowercase-hyphenated exclusion
+    // doesn't broaden past its intended narrow shape: this value has digits + mixed case, not a pure
+    // lowercase-hyphenated phrase, so it must still be flagged.
+    const fakeSecret = "sk_live_" + "aK9xQ2mZw7Ln4Rv8Pt3Bh6";
+    expect(scanForSecrets(`fakeSecret = "${fakeSecret}"`).kinds).toContain("generic_secret_assignment");
+  });
+
+  it("a single lowercase word with no hyphen is unaffected by the new hyphenated-compound exclusion (#3041)", () => {
+    // 20 lowercase letters, no repeats and no sequential run, so it isn't already caught by the entropy/
+    // placeholder checks either -- proves LOWERCASE_HYPHENATED_COMPOUND_PATTERN specifically requires a
+    // hyphen (2+ segments) and does not accidentally match a single unhyphenated word.
+    const singleWord = "qwzxvbnmalskdjfhgpoiu";
+    expect(scanForSecrets(`token = "${singleWord}"`).kinds).toContain("generic_secret_assignment");
+  });
 });

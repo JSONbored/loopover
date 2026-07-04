@@ -158,13 +158,15 @@ docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/po
 
       <h2>Restore drill: what "restore-tested" actually verifies</h2>
       <p>
-        This exact flow was run against a real production backup on a live instance (2026-07-04):
-        the newest Postgres dump was restored into a throwaway, network-isolated scratch database (a
-        separate container, never the live one), which the script's own identity check confirmed was
-        distinct from the backup source before touching anything. The restore completed cleanly and
-        repopulated all 84 application tables, including the largest operational tables with their
-        full row counts intact (hundreds of thousands of rows in the biggest tables) — not just an
-        empty schema.
+        This exact flow was run against a real production backup on a live instance on 2026-07-04
+        (backup <code>gittensory-20260704T090939Z.dump</code>): the dump was restored into a
+        throwaway, network-isolated scratch database (a separate container, never the live one),
+        which the script's own identity check confirmed was distinct from the backup source before
+        touching anything. The restore completed cleanly and, at the time of this drill, repopulated
+        all 84 application tables, including the largest operational tables with their full row
+        counts intact (hundreds of thousands of rows in the biggest tables) — not just an empty
+        schema. Table and row counts will grow over time; treat them as a point-in-time result, not
+        an invariant.
       </p>
       <p>
         This proves the backup content and the restore path both work end-to-end against real data.
@@ -174,10 +176,11 @@ docker compose --profile backup run --rm backup sh /verify-backup.sh /backups/po
         <Link to="/docs/self-hosting-operations">Operations</Link>'s health endpoints section) —
         reproducing all of those for a disposable scratch instance would mean copying real
         credentials into new, throwaway infrastructure, which is a bigger risk than the drill is
-        worth. In an actual disaster recovery, the restored database is loaded onto trusted
-        infrastructure the operator already controls, using their own real credentials, so once the
-        <code>db</code> readiness check passes (which this drill proves the restored data supports),
-        the remaining checks reflect the same subsystems' live state as any other boot.
+        worth. This drill proves the dump can be restored and its contents inspected at the database
+        layer — it does not exercise the app's own <code>db</code> readiness probe, migration boot
+        path, or <code>/ready</code> response. A full disaster-recovery rehearsal still needs to
+        verify app readiness on the target infrastructure, using the operator's own real
+        credentials.
       </p>
 
       <p>

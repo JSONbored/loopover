@@ -1835,6 +1835,26 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     });
   });
 
+  describe("autoProjectMilestoneMatch precedence (#3183)", () => {
+    it("parses settings.autoProjectMilestoneMatch and drops an invalid value with a warning", () => {
+      const m = parseFocusManifest({ settings: { autoProjectMilestoneMatch: "suggest" } });
+      expect(m.settings.autoProjectMilestoneMatch).toBe("suggest");
+      const invalid = parseFocusManifest({ settings: { autoProjectMilestoneMatch: "sometimes" as never } });
+      expect(invalid.settings.autoProjectMilestoneMatch).toBeUndefined();
+      expect(invalid.warnings.some((w) => /settings\.autoProjectMilestoneMatch/.test(w))).toBe(true);
+    });
+
+    it("settings.autoProjectMilestoneMatch overlays (replaces) the DB value when set, and is preserved when omitted", () => {
+      const overridden = resolveEffectiveSettings(
+        { autoProjectMilestoneMatch: "off" } as unknown as RepositorySettings,
+        parseFocusManifest({ settings: { autoProjectMilestoneMatch: "auto" } }),
+      );
+      expect(overridden.autoProjectMilestoneMatch).toBe("auto");
+      const noOverride = resolveEffectiveSettings({ autoProjectMilestoneMatch: "suggest" } as unknown as RepositorySettings, parseFocusManifest({}));
+      expect(noOverride.autoProjectMilestoneMatch).toBe("suggest");
+    });
+  });
+
   it("an EXPLICIT yml null force-clears a DB-configured cap, distinct from an omitted key (regression, gate finding on #2467)", () => {
     // Omitted key preserves the DB value (already covered above); an explicit `null` must ALSO be able to
     // override a DB-configured cap back to "no cap" — the documented `yml > DB > null` precedence otherwise

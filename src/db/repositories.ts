@@ -480,6 +480,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
       reviewCheckMode: "disabled",
+      autoProjectMilestoneMatch: "off",
       gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "block",
@@ -550,6 +551,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
     reviewCheckMode: parseReviewCheckMode(row.reviewCheckMode),
+    autoProjectMilestoneMatch: parseProjectMilestoneMatchMode(row.projectMilestoneMatchMode),
     gatePack: parseGatePack(row.gatePack),
     linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
     duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
@@ -663,6 +665,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     // calling this, so `settings.reviewCheckMode` is never actually undefined for that path -- this fallback
     // only fires for callers that never cared about reviewCheckMode at all.
     reviewCheckMode: settings.reviewCheckMode ?? (settings.gateCheckMode === "enabled" ? "required" : "disabled"),
+    autoProjectMilestoneMatch: settings.autoProjectMilestoneMatch ?? "off",
     gatePack: parseGatePack(settings.gatePack),
     linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
     duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
@@ -734,6 +737,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
       reviewCheckMode: resolved.reviewCheckMode,
+      projectMilestoneMatchMode: resolved.autoProjectMilestoneMatch,
       gatePack: resolved.gatePack,
       linkedIssueGateMode: resolved.linkedIssueGateMode,
       duplicatePrGateMode: resolved.duplicatePrGateMode,
@@ -804,6 +808,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
         reviewCheckMode: resolved.reviewCheckMode,
+      projectMilestoneMatchMode: resolved.autoProjectMilestoneMatch,
         gatePack: resolved.gatePack,
         linkedIssueGateMode: resolved.linkedIssueGateMode,
         duplicatePrGateMode: resolved.duplicatePrGateMode,
@@ -6245,6 +6250,10 @@ function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] 
 
 function parseReviewCheckMode(value: string): RepositorySettings["reviewCheckMode"] {
   return value === "required" || value === "visible" ? value : "disabled";
+}
+
+function parseProjectMilestoneMatchMode(value: string): RepositorySettings["autoProjectMilestoneMatch"] {
+  return value === "suggest" || value === "auto" ? value : "off";
 }
 
 function parseGatePack(value: string | null | undefined): RepositorySettings["gatePack"] {

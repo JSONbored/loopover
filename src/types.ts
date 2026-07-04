@@ -550,6 +550,14 @@ export type GateRuleMode = "off" | "advisory" | "block";
  *                  cannot do this on the operator's behalf -- it is a GitHub branch-protection setting). */
 export type ReviewCheckMode = "required" | "visible" | "disabled";
 
+/** Auto-project/milestone matching (#3183): detects when a PR is likely part of an open GitHub Milestone even
+ *  with no closing-keyword issue link, and posts a bot-comment suggestion. `"off"` (default) runs no matching
+ *  at all; `"suggest"` matches and posts a single advisory comment, never mutating the PR; `"auto"` is accepted
+ *  by config today but behaves identically to `"suggest"` until #3185 wires real milestone attachment -- no
+ *  attach/auto-apply code exists yet, so treating it as inert-but-silent would be a worse failure mode than
+ *  degrading to the safe, visible suggest behavior. */
+export type ProjectMilestoneMatchMode = "off" | "suggest" | "auto";
+
 /** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: registry/emissions-
  *  aware, and it threads the author's confirmed status for on-chain scoring (the gate verdict itself blocks
  *  every author the same — confirmed status no longer changes it, #gate-nonconfirmed). `oss-anti-slop` = a
@@ -587,6 +595,9 @@ export type RepositorySettings = {
    *  See {@link ReviewCheckMode}. `gateCheckMode` above stays wired for API/back-compat display but no longer
    *  drives the publish decision on its own. */
   reviewCheckMode: ReviewCheckMode;
+  /** Auto-project/milestone matching (#3183). See {@link ProjectMilestoneMatchMode}. Always populated by the DB
+   *  layer (default `"off"`); optional so existing settings fixtures/callers need not be touched. */
+  autoProjectMilestoneMatch?: ProjectMilestoneMatchMode | undefined;
   /** Policy pack the gate evaluates under (#692). Default `gittensor` (registry-aware; threads confirmed
    *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;

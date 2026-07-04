@@ -3638,6 +3638,14 @@
                   "visible",
                   "disabled"
                 ]
+              },
+              "autoProjectMilestoneMatch": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "suggest",
+                  "auto"
+                ]
               }
             },
             "required": [
@@ -9175,6 +9183,14 @@
               "verifyBeforeClose",
               "closeDelaySeconds"
             ]
+          },
+          "autoProjectMilestoneMatch": {
+            "type": "string",
+            "enum": [
+              "off",
+              "suggest",
+              "auto"
+            ]
           }
         },
         "required": [
@@ -9283,6 +9299,14 @@
                         "required",
                         "visible",
                         "disabled"
+                      ]
+                    },
+                    "autoProjectMilestoneMatch": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "suggest",
+                        "auto"
                       ]
                     }
                   },
@@ -9862,6 +9886,14 @@
                   "required",
                   "visible",
                   "disabled"
+                ]
+              },
+              "autoProjectMilestoneMatch": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "suggest",
+                  "auto"
                 ]
               }
             },

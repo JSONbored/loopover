@@ -5239,7 +5239,7 @@ function itemKey(item: CollisionItem): string {
   return `${item.type}-${item.number}`;
 }
 
-type CollisionTerms = {
+export type CollisionTerms = {
   terms: Set<string>;
   size: number;
 };
@@ -5270,7 +5270,7 @@ function plannedContributionTerms(input: PreflightInput): CollisionTerms {
   return { terms, size: terms.size };
 }
 
-function termOverlap(left: CollisionTerms, right: CollisionTerms): { score: number; shared: number } {
+export function termOverlap(left: CollisionTerms, right: CollisionTerms): { score: number; shared: number } {
   if (left.size === 0 || right.size === 0) return { score: 0, shared: 0 };
   let shared = 0;
   const [smaller, larger] = left.size <= right.size ? [left.terms, right.terms] : [right.terms, left.terms];
@@ -5298,7 +5298,10 @@ function truncateText(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(0, maxChars) : value;
 }
 
-function tokenize(value: string): string[] {
+// Exported (#3183) so the project/milestone text matcher (src/integrations/project-tracker-adapter.ts) can
+// reuse the exact same term-overlap heuristic already proven here for duplicate-PR collision detection, rather
+// than re-implementing a second, subtly different tokenizer.
+export function tokenize(value: string): string[] {
   return value
     .toLowerCase()
     .split(/[^a-z0-9]+/g)

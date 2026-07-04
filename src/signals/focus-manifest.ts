@@ -193,6 +193,7 @@ export type FocusManifestSettings = Partial<
     | "checkRunDetailLevel"
     | "gateCheckMode"
     | "reviewCheckMode"
+    | "autoProjectMilestoneMatch"
     | "linkedIssueGateMode"
     | "duplicatePrGateMode"
     | "selfAuthoredLinkedIssueGateMode"
@@ -1070,6 +1071,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   // resolveEffectiveSettings, and wins when both are set).
   const reviewCheckMode = normalizeOptionalEnum(r.reviewCheckMode, "settings.reviewCheckMode", ["required", "visible", "disabled"] as const, warnings);
   if (reviewCheckMode !== null) out.reviewCheckMode = reviewCheckMode;
+  const autoProjectMilestoneMatch = normalizeOptionalEnum(r.autoProjectMilestoneMatch, "settings.autoProjectMilestoneMatch", ["off", "suggest", "auto"] as const, warnings);
+  if (autoProjectMilestoneMatch !== null) out.autoProjectMilestoneMatch = autoProjectMilestoneMatch;
   const linkedIssueGateMode = normalizeOptionalGateMode(r.linkedIssueGateMode, "settings.linkedIssueGateMode", warnings);
   if (linkedIssueGateMode !== null) out.linkedIssueGateMode = linkedIssueGateMode;
   const duplicatePrGateMode = normalizeOptionalGateMode(r.duplicatePrGateMode, "settings.duplicatePrGateMode", warnings);

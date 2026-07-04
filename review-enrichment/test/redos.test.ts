@@ -52,6 +52,21 @@ test("scanPatchForRedos cites the added-line number of a catastrophic literal", 
   assert.equal(findings[0]?.kind, "nested-quantifier");
 });
 
+test("scanPatchForRedos does not let a no-newline marker skew the line number", () => {
+  // `\ No newline at end of file` is not a new-file line; advancing past it would cite the
+  // catastrophic literal one line too high (same class as the iac-misconfig regression).
+  const patch = [
+    "@@ -1,1 +1,2 @@",
+    "-const x = 1;",
+    "\\ No newline at end of file",
+    "+const x = 1;",
+    "+const re = /(a+)+/;",
+  ].join("\n");
+  const findings = scanPatchForRedos("src/x.ts", patch);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.line, 2);
+});
+
 test("scanPatchForRedos ignores safe patterns and honours a zero finding budget", () => {
   const safe = ["@@ -1 +1,1 @@", "+const re = /(abc)+/;"].join("\n");
   assert.deepEqual(scanPatchForRedos("src/x.ts", safe), []);

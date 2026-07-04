@@ -37,6 +37,7 @@ import {
   queueStartupJitterMs,
   rateLimitRetryDelayWithJitter,
   matchesGitHubRateLimitAdmissionTarget,
+  type DeadLetterJob,
   type GitHubRateLimitAdmissionTarget,
   type SelfHostQueueSnapshot,
 } from "./queue-common";
@@ -88,6 +89,8 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
   job_key TEXT,
   claim_sort_key INTEGER NOT NULL DEFAULT 0
 );`;
+const DEAD_LETTER_INDEX_DDL = `
+CREATE INDEX IF NOT EXISTS ${TABLE}_dead ON ${TABLE}(status, dead_at, id);`;
 const STATS_DDL = `
 CREATE TABLE IF NOT EXISTS ${STATS_TABLE} (
   name TEXT PRIMARY KEY,
@@ -134,6 +137,9 @@ export interface DurableQueue {
   /** Top-N repos by backlog-convergence pending depth, for the observability dashboard's per-repo backlog panel
    *  (#selfhost-lane-observability). */
   topBacklogRepos(limit: number): BacklogRepoCount[];
+  /** Paginated dead-letter rows, newest-death-first, for the DLQ dashboard table (#2214). Also mirrored onto
+   *  `binding` (see queue-common.ts's SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
+  listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[];
 }
 
 interface JobRow {
@@ -208,9 +214,15 @@ export function createSqliteQueue(
   } catch {
     /* column already present */
   }
+  try {
+    driver.exec(`ALTER TABLE ${TABLE} ADD COLUMN dead_at INTEGER`);
+  } catch {
+    /* column already present */
+  }
   driver.exec(CLAIM_INDEX_DDL);
   driver.exec(JOB_KEY_INDEX_DDL);
   driver.exec(LANE_INDEX_DDL);
+  driver.exec(DEAD_LETTER_INDEX_DDL);
   driver.exec(FAIRNESS_DDL);
   driver.exec(`INSERT OR IGNORE INTO ${FAIRNESS_TABLE} (id, claim_sequence) VALUES ('singleton', 0)`);
   const priorityBackfilled = backfillJobPriorities(driver);
@@ -623,6 +635,40 @@ export function createSqliteQueue(
     return (rows as Array<{ repo: string; cnt: number }>).map((row) => ({ repo: row.repo, count: Number(row.cnt) }));
   }
 
+  function deadCount(): number {
+    return Number(
+      (driver.query(`SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead'`, []).rows[0] as { c: number }).c,
+    );
+  }
+
+  function listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[] {
+    const { rows } = driver.query(
+      `SELECT id, payload, attempts, last_error, created_at, dead_at
+         FROM ${TABLE}
+        WHERE status='dead'
+        ORDER BY COALESCE(dead_at, created_at) DESC, id DESC
+        LIMIT ? OFFSET ?`,
+      [Math.max(0, limit), Math.max(0, offset)],
+    );
+    return (
+      rows as Array<{
+        id: number;
+        payload: string;
+        attempts: number;
+        last_error: string | null;
+        created_at: number;
+        dead_at: number | null;
+      }>
+    ).map((row) => ({
+      id: row.id,
+      jobType: extractPayloadType(row.payload) ?? "unknown",
+      attempts: Number(row.attempts),
+      lastError: row.last_error,
+      createdAtMs: Number(row.created_at),
+      deadAtMs: row.dead_at === null ? null : Number(row.dead_at),
+    }));
+  }
+
   function claimNextWhere(
     now: number,
     priorityPredicate: string,
@@ -686,8 +732,8 @@ export function createSqliteQueue(
         message = JSON.parse(job.payload) as JobMessage;
       } catch {
         driver.query(
-          `UPDATE ${TABLE} SET status='dead', last_error='unparseable payload' WHERE id=?`,
-          [job.id],
+          `UPDATE ${TABLE} SET status='dead', last_error='unparseable payload', dead_at=? WHERE id=?`,
+          [Date.now(), job.id],
         );
         recordQueueMetric(driver, "gittensory_jobs_dead_total");
         logAudit({
@@ -881,8 +927,8 @@ export function createSqliteQueue(
         recordQueueMetric(driver, "gittensory_jobs_failed_total");
         if (attempts >= maxRetries) {
           driver.query(
-            `UPDATE ${TABLE} SET status='dead', attempts=?, last_error=? WHERE id=?`,
-            [attempts, errMsg, job.id],
+            `UPDATE ${TABLE} SET status='dead', attempts=?, last_error=?, dead_at=? WHERE id=?`,
+            [attempts, errMsg, Date.now(), job.id],
           );
           recordQueueMetric(driver, "gittensory_jobs_dead_total");
           console.error(
@@ -993,7 +1039,13 @@ export function createSqliteQueue(
         ).rows as Array<{ payload: string; status: string; run_after: number }>,
       );
     },
-  } as unknown as Queue & { snapshot(): SelfHostQueueSnapshot };
+    deadCount,
+    listDeadLetterJobs,
+  } as unknown as Queue & {
+    snapshot(): SelfHostQueueSnapshot;
+    deadCount(): number;
+    listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[];
+  };
 
   return {
     binding,
@@ -1037,16 +1089,7 @@ export function createSqliteQueue(
         ).c,
       );
     },
-    deadCount() {
-      return Number(
-        (
-          driver.query(
-            `SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead'`,
-            [],
-          ).rows[0] as { c: number }
-        ).c,
-      );
-    },
+    deadCount,
     processingCount() {
       return Number(
         (
@@ -1067,6 +1110,7 @@ export function createSqliteQueue(
       return maintenancePressureSignals(driver, Date.now());
     },
     topBacklogRepos,
+    listDeadLetterJobs,
   };
 }
 
@@ -1234,7 +1278,7 @@ function reviveEligibleDeadJobs(driver: SqliteDriver, maxRetries: number): numbe
     // that's already been claimed into 'processing' back to 'pending', letting it run a second time concurrently.
     // `changes` is 0 (not counted as revived) when the row already moved out of 'dead'.
     const { changes } = driver.query(
-      `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=NULL WHERE id=? AND status='dead'`,
+      `UPDATE ${TABLE} SET status='pending', run_after=?, last_error=NULL, dead_at=NULL WHERE id=? AND status='dead'`,
       [runAfter, row.id],
     );
     revived += changes;

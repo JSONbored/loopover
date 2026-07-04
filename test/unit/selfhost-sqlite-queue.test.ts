@@ -1710,6 +1710,78 @@ describe("createSqliteQueue (durable #980)", () => {
     });
   });
 
+  describe("listDeadLetterJobs (#2214)", () => {
+    it("returns an empty array when there are no dead-letter rows", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([]);
+    });
+
+    it("maps dead rows newest-death-first, extracting job type/attempts/error, and excludes non-dead rows", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 3, 0, 1000, 'boom', 5000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 1, 0, 2000, 'kaboom', 9000)",
+        [JSON.stringify(msg("github-webhook"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES (?, 'pending', 0, 0, 500)",
+        [JSON.stringify(msg("agent-regate-sweep"))],
+      );
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+        { id: 2, jobType: "github-webhook", attempts: 1, lastError: "kaboom", createdAtMs: 2000, deadAtMs: 9000 },
+        { id: 1, jobType: "agent-regate-pr", attempts: 3, lastError: "boom", createdAtMs: 1000, deadAtMs: 5000 },
+      ]);
+    });
+
+    it("falls back to created_at ordering and reports deadAtMs null for a legacy row with no dead_at", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      // Legacy row: no dead_at, but its created_at (7000) is newer than the other row's real dead_at (3000) --
+      // COALESCE(dead_at, created_at) must use 7000 here, so this row sorts FIRST despite having a null deadAtMs.
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error) VALUES (?, 'dead', 2, 0, 7000, 'legacy failure')",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES (?, 'dead', 1, 0, 1000, 'recent failure', 3000)",
+        [JSON.stringify(msg("agent-regate-pr"))],
+      );
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+        { id: 1, jobType: "agent-regate-pr", attempts: 2, lastError: "legacy failure", createdAtMs: 7000, deadAtMs: null },
+        { id: 2, jobType: "agent-regate-pr", attempts: 1, lastError: "recent failure", createdAtMs: 1000, deadAtMs: 3000 },
+      ]);
+    });
+
+    it("reports jobType 'unknown' for an unparseable payload", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      driver.query(
+        "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, last_error, dead_at) VALUES ('not-json', 'dead', 0, 0, 1000, 'unparseable payload', 1000)",
+        [],
+      );
+      expect(q.listDeadLetterJobs(10, 0)).toEqual([
+        { id: 1, jobType: "unknown", attempts: 0, lastError: "unparseable payload", createdAtMs: 1000, deadAtMs: 1000 },
+      ]);
+    });
+
+    it("paginates via limit/offset", () => {
+      const driver = makeDriver();
+      const q = createSqliteQueue(driver, async () => undefined);
+      for (let i = 0; i < 3; i++) {
+        driver.query(
+          "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, dead_at) VALUES (?, 'dead', 0, 0, ?, ?)",
+          [JSON.stringify(msg("agent-regate-pr")), 1000 + i, 1000 + i],
+        );
+      }
+      expect(q.listDeadLetterJobs(1, 1).map((job) => job.createdAtMs)).toEqual([1001]);
+    });
+  });
+
   it("retries then dead-letters after maxRetries", async () => {
     const driver = makeDriver();
     let calls = 0;
@@ -1726,6 +1798,10 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(calls).toBe(3);
     expect(q.deadCount()).toBe(1);
     expect(q.size()).toBe(0);
+    // #2214: a max-retries death also stamps dead_at, so the DLQ table can sort/report a real death time.
+    const [row] = q.listDeadLetterJobs(10, 0);
+    expect(row).toMatchObject({ jobType: "x", attempts: 3, lastError: "boom" });
+    expect(row!.deadAtMs).not.toBeNull();
   });
 
   describe("reviveDeadLetterJobs (#audit-rate-headroom)", () => {
@@ -1769,6 +1845,10 @@ describe("createSqliteQueue (durable #980)", () => {
       expect(row.status).not.toBe("dead");
       expect(row.attempts).toBe(1); // untouched -- one more failure re-dead-letters it, not a fresh budget
       expect(row.last_error).toBeNull();
+      // #2214: dead_at is cleared on revival too, so a re-dead-lettered job gets a fresh death timestamp
+      // instead of reporting when it FIRST died.
+      const { rows: deadAtRows } = driver.query("SELECT dead_at FROM _selfhost_jobs", []);
+      expect((deadAtRows[0] as { dead_at: number | null }).dead_at).toBeNull();
 
       await q.drain(); // the one extra attempt the revival granted
       expect(calls).toBe(1);
@@ -2813,6 +2893,10 @@ describe("createSqliteQueue (durable #980)", () => {
     driver.query("INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at) VALUES ('not-json','pending',0,0,0)", []);
     await q.drain();
     expect(q.deadCount()).toBe(1);
+    // #2214: an unparseable payload has no `type` field to extract -- the DLQ table falls back to "unknown".
+    const [row] = q.listDeadLetterJobs(10, 0);
+    expect(row).toMatchObject({ jobType: "unknown", lastError: "unparseable payload" });
+    expect(row!.deadAtMs).not.toBeNull();
   });
 
   it("sendBatch enqueues all; default backoff reschedules a failure into the future", async () => {

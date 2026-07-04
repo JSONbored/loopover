@@ -36,6 +36,7 @@ import {
   queueStartupJitterMs,
   rateLimitRetryDelayWithJitter,
   matchesGitHubRateLimitAdmissionTarget,
+  type DeadLetterJob,
   type GitHubRateLimitAdmissionTarget,
   type SelfHostQueueSnapshot,
 } from "./queue-common";
@@ -177,10 +178,12 @@ ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS job_key TEXT;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS claim_sort_key BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS is_maintenance INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS foreground_lane TEXT;
+ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS dead_at BIGINT;
 DROP INDEX IF EXISTS ${TABLE}_claim;
 CREATE INDEX IF NOT EXISTS ${TABLE}_claim ON ${TABLE}(status, priority, claim_sort_key, run_after);
 CREATE INDEX IF NOT EXISTS ${TABLE}_pending_job_key ON ${TABLE}(job_key, status);
 CREATE INDEX IF NOT EXISTS ${TABLE}_lane_claim ON ${TABLE}(status, foreground_lane, run_after);
+CREATE INDEX IF NOT EXISTS ${TABLE}_dead ON ${TABLE}(status, dead_at, id);
 CREATE TABLE IF NOT EXISTS ${STATS_TABLE} (
   name TEXT PRIMARY KEY,
   value BIGINT NOT NULL DEFAULT 0
@@ -219,6 +222,9 @@ export interface PgDurableQueue {
   /** Top-N repos by backlog-convergence pending depth, for the observability dashboard's per-repo backlog panel
    *  (#selfhost-lane-observability). */
   topBacklogRepos(limit: number): Promise<BacklogRepoCount[]>;
+  /** Paginated dead-letter rows, newest-death-first, for the DLQ dashboard table (#2214). Also mirrored onto
+   *  `binding` (see queue-common.ts's SelfHostQueueDeadLetterAdmin) so Hono routes can reach it via env.JOBS. */
+  listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]>;
 }
 
 interface JobRow {
@@ -498,6 +504,38 @@ export function createPgQueue(
     }));
   }
 
+  async function deadCount(): Promise<number> {
+    return Number((await pool.query(`SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead'`)).rows[0].c);
+  }
+
+  async function listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]> {
+    const res = await pool.query(
+      `SELECT id, payload, attempts, last_error, created_at, dead_at
+         FROM ${TABLE}
+        WHERE status='dead'
+        ORDER BY COALESCE(dead_at, created_at) DESC, id DESC
+        LIMIT $1 OFFSET $2`,
+      [Math.max(0, limit), Math.max(0, offset)],
+    );
+    return (
+      res.rows as Array<{
+        id: string | number;
+        payload: string;
+        attempts: number | string;
+        last_error: string | null;
+        created_at: number | string;
+        dead_at: number | string | null;
+      }>
+    ).map((row) => ({
+      id: Number(row.id),
+      jobType: extractPayloadType(row.payload) ?? "unknown",
+      attempts: Number(row.attempts),
+      lastError: row.last_error,
+      createdAtMs: Number(row.created_at),
+      deadAtMs: row.dead_at === null ? null : Number(row.dead_at),
+    }));
+  }
+
   async function recoverProcessingJobs(): Promise<number> {
     const res = await pool.query(
       `SELECT id, payload, job_key FROM ${TABLE} WHERE status='processing'`,
@@ -540,7 +578,7 @@ export function createPgQueue(
       // one fires) could flip a row that's already been claimed into 'processing' back to 'pending', letting it
       // run a second time concurrently. rowCount is 0 (not counted as revived) when another reviver won the race.
       const update = await pool.query(
-        `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=NULL WHERE id=$2 AND status='dead'`,
+        `UPDATE ${TABLE} SET status='pending', run_after=$1, last_error=NULL, dead_at=NULL WHERE id=$2 AND status='dead'`,
         [runAfter, row.id],
       );
       revived += update.rowCount ?? 0;
@@ -955,8 +993,8 @@ export function createPgQueue(
         message = JSON.parse(job.payload) as JobMessage;
       } catch {
         await pool.query(
-          `UPDATE ${TABLE} SET status='dead', last_error='unparseable payload' WHERE id=$1`,
-          [job.id],
+          `UPDATE ${TABLE} SET status='dead', last_error='unparseable payload', dead_at=$1 WHERE id=$2`,
+          [Date.now(), job.id],
         );
         await recordQueueMetric("gittensory_jobs_dead_total");
         logAudit({
@@ -1197,8 +1235,8 @@ export function createPgQueue(
         await recordQueueMetric("gittensory_jobs_failed_total");
         if (attempts >= maxRetries) {
           await pool.query(
-            `UPDATE ${TABLE} SET status='dead', attempts=$1, last_error=$2 WHERE id=$3`,
-            [attempts, errMsg, job.id],
+            `UPDATE ${TABLE} SET status='dead', attempts=$1, last_error=$2, dead_at=$3 WHERE id=$4`,
+            [attempts, errMsg, Date.now(), job.id],
           );
           await recordQueueMetric("gittensory_jobs_dead_total");
           console.error(
@@ -1306,7 +1344,13 @@ export function createPgQueue(
         res.rows as Array<{ payload: string; status: string; run_after: string | number }>,
       );
     },
-  } as unknown as Queue & { snapshot(): Promise<SelfHostQueueSnapshot> };
+    deadCount,
+    listDeadLetterJobs,
+  } as unknown as Queue & {
+    snapshot(): Promise<SelfHostQueueSnapshot>;
+    deadCount(): Promise<number>;
+    listDeadLetterJobs(limit: number, offset: number): Promise<DeadLetterJob[]>;
+  };
 
   return {
     binding,
@@ -1352,15 +1396,7 @@ export function createPgQueue(
         ).rows[0].c,
       );
     },
-    async deadCount() {
-      return Number(
-        (
-          await pool.query(
-            `SELECT COUNT(*) AS c FROM ${TABLE} WHERE status='dead'`,
-          )
-        ).rows[0].c,
-      );
-    },
+    deadCount,
     async processingCount() {
       return Number(
         (
@@ -1380,6 +1416,7 @@ export function createPgQueue(
       return maintenancePressureSignals(Date.now());
     },
     topBacklogRepos,
+    listDeadLetterJobs,
   };
 
   async function reclaimExpiredProcessingJobs(): Promise<number> {

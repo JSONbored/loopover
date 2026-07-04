@@ -720,6 +720,7 @@ export function buildOpenApiSpec() {
     "/v1/app/miner-dashboard",
     "/v1/app/maintainer-dashboard",
     "/v1/app/operator-dashboard",
+    "/v1/app/selfhost/queue/dead",
     "/v1/app/commands",
     "/v1/app/commands/usefulness",
     "/v1/app/digest",

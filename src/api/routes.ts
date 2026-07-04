@@ -271,6 +271,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
+import { queueDeadLetterPageFromBinding } from "../selfhost/queue-common";
 
 type AppBindings = { Bindings: Env };
 type AppContext = Context<AppBindings>;
@@ -434,6 +435,13 @@ const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
   body: z.string().max(40000).optional(),
 });
+
+const selfhostDeadLetterQueueQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().optional(),
+    offset: z.coerce.number().int().optional(),
+  })
+  .strict();
 
 const skippedPrAuditQuerySchema = z
   .object({
@@ -1365,6 +1373,26 @@ export function createApp() {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
     return c.json(await buildOperatorDashboardPayload(c.env));
+  });
+
+  // Dead-letter-queue table view (#2214), read-only: the self-host queue backend's admin surface is mirrored
+  // onto `env.JOBS` (see queueDeadLetterPageFromBinding) rather than a new Env field -- absent entirely on
+  // Cloudflare, where the plain Queue binding has neither method.
+  app.get("/v1/app/selfhost/queue/dead", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    const parsed = selfhostDeadLetterQueueQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return c.json({ error: "invalid_query", issues: parsed.error.issues }, 400);
+    const limit = clampInteger(parsed.data.limit ?? 25, 1, 100);
+    const offset = Math.max(0, parsed.data.offset ?? 0);
+    const page = await queueDeadLetterPageFromBinding(c.env.JOBS, limit, offset);
+    if (!page) {
+      return c.json(
+        { error: "dead_letter_admin_unavailable", message: "This deployment's queue backend does not expose dead-letter admin." },
+        501,
+      );
+    }
+    return c.json({ generatedAt: nowIso(), limit, offset, total: page.total, items: page.items });
   });
 
   // Global agent kill-switch (#2359): the write side (setGlobalAgentFrozen) previously had zero callers — the

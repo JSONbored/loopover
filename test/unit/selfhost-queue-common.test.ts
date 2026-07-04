@@ -29,6 +29,7 @@ import {
   parsePositiveIntEnv,
   queueBackgroundConcurrency,
   queueDeadLetterAutoRetryMaxExtraAttempts,
+  queueDeadLetterPageFromBinding,
   queueDeadLetterReviveIntervalMs,
   queueProcessingTimeoutMs,
   queueRecoveryJitterMs,
@@ -122,6 +123,58 @@ describe("self-host queue common helpers", () => {
 
     await expect(queueSnapshotFromBinding(binding)).resolves.toBe(snapshot);
     await expect(queueSnapshotFromBinding({ async send() {}, async sendBatch() {} } as unknown as Queue)).resolves.toBeNull();
+  });
+
+  it("reads a dead-letter-queue page only from self-host bindings that expose BOTH admin methods (#2214)", async () => {
+    const items = [
+      { id: 1, jobType: "agent-regate-pr", attempts: 3, lastError: "boom", createdAtMs: 1000, deadAtMs: 5000 },
+    ];
+    const binding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: (limit: number, offset: number) => {
+        expect(limit).toBe(25);
+        expect(offset).toBe(10);
+        return items;
+      },
+      deadCount: () => 7,
+    } as unknown as Queue;
+
+    await expect(queueDeadLetterPageFromBinding(binding, 25, 10)).resolves.toEqual({ items, total: 7 });
+
+    // Cloudflare's real Queue binding (and any binding missing either half of the surface) returns null rather
+    // than a false "zero dead-letter jobs" -- callers 501 instead of rendering a misleadingly-empty table.
+    await expect(
+      queueDeadLetterPageFromBinding({ async send() {}, async sendBatch() {} } as unknown as Queue, 25, 0),
+    ).resolves.toBeNull();
+    await expect(
+      queueDeadLetterPageFromBinding(
+        { async send() {}, async sendBatch() {}, deadCount: () => 0 } as unknown as Queue,
+        25,
+        0,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      queueDeadLetterPageFromBinding(
+        { async send() {}, async sendBatch() {}, listDeadLetterJobs: () => [] } as unknown as Queue,
+        25,
+        0,
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("awaits async (Postgres-backed) admin methods for a dead-letter-queue page", async () => {
+    const items = [
+      { id: 2, jobType: "github-webhook", attempts: 1, lastError: "kaboom", createdAtMs: 2000, deadAtMs: 9000 },
+    ];
+    const binding = {
+      async send() {},
+      async sendBatch() {},
+      listDeadLetterJobs: async () => items,
+      deadCount: async () => 1,
+    } as unknown as Queue;
+
+    await expect(queueDeadLetterPageFromBinding(binding, 25, 0)).resolves.toEqual({ items, total: 1 });
   });
 
   it("identifies GitHub-budget background jobs without pre-yielding fresh webhooks or manual re-gates", () => {

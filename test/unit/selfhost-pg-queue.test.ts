@@ -1338,6 +1338,87 @@ describe("createPgQueue (durable #977)", () => {
     });
   });
 
+  describe("listDeadLetterJobs (#2214)", () => {
+    // Same rationale as topBacklogRepos above: the ORDER BY/LIMIT/OFFSET run in SQL, which this mock can't
+    // execute, so these tests stub a pre-ordered row set and verify (a) param binding (limit/offset, clamped)
+    // and (b) row -> DeadLetterJob mapping (bigint-as-string coercion, jobType extraction, deadAtMs null
+    // passthrough). The query shape itself is verified directly against the real SQLite engine (identical SQL
+    // shape, ported 1:1) in selfhost-sqlite-queue.test.ts.
+    function stubDeadLetterRows(
+      rows: Array<{
+        id: string | number;
+        payload: string;
+        attempts: number | string;
+        last_error: string | null;
+        created_at: number | string;
+        dead_at: number | string | null;
+      }>,
+    ): {
+      pool: { query: Pool["query"] };
+      calls: Array<{ sql: string; params: unknown[] }>;
+    } {
+      const calls: Array<{ sql: string; params: unknown[] }> = [];
+      return {
+        pool: {
+          query: (async (sql: unknown, params?: unknown[]) => {
+            const q = String(sql);
+            if (q.includes("status='dead'") && q.includes("COALESCE(dead_at, created_at)")) {
+              calls.push({ sql: q, params: params ?? [] });
+              return { rows, rowCount: rows.length };
+            }
+            return { rows: [], rowCount: 0 };
+          }) as Pool["query"],
+        },
+        calls,
+      };
+    }
+
+    it("returns an empty array when there are no dead-letter rows", async () => {
+      const m = stubDeadLetterRows([]);
+      const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
+      expect(await q.listDeadLetterJobs(25, 0)).toEqual([]);
+    });
+
+    it("maps bigint-as-string rows to DeadLetterJob, binding limit/offset as params", async () => {
+      const m = stubDeadLetterRows([
+        {
+          id: "2",
+          payload: JSON.stringify(msg("github-webhook")),
+          attempts: "1",
+          last_error: "kaboom",
+          created_at: "2000",
+          dead_at: "9000",
+        },
+      ]);
+      const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
+
+      expect(await q.listDeadLetterJobs(25, 10)).toEqual([
+        { id: 2, jobType: "github-webhook", attempts: 1, lastError: "kaboom", createdAtMs: 2000, deadAtMs: 9000 },
+      ]);
+      expect(m.calls).toHaveLength(1);
+      expect(m.calls[0]?.params).toEqual([25, 10]);
+    });
+
+    it("reports deadAtMs null for a legacy row with no dead_at, and jobType 'unknown' for an unparseable payload", async () => {
+      const m = stubDeadLetterRows([
+        { id: 1, payload: "not-json", attempts: 0, last_error: "unparseable payload", created_at: 1000, dead_at: null },
+      ]);
+      const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
+
+      expect(await q.listDeadLetterJobs(25, 0)).toEqual([
+        { id: 1, jobType: "unknown", attempts: 0, lastError: "unparseable payload", createdAtMs: 1000, deadAtMs: null },
+      ]);
+    });
+
+    it("clamps a negative limit/offset to 0 rather than passing it through to SQL", async () => {
+      const m = stubDeadLetterRows([]);
+      const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
+
+      await q.listDeadLetterJobs(-5, -2);
+      expect(m.calls[0]?.params).toEqual([0, 0]);
+    });
+  });
+
   it("REGRESSION: releases the reserved background slot when a background claim query rejects (#selfhost-bg-slot-leak)", async () => {
     // A raw pool failure during the BACKGROUND claim (a dropped connection / lock timeout — the exact failures
     // pump() is documented to catch) rejects out of claimNext(), which runs OUTSIDE processOne's try/finally, so
@@ -1816,11 +1897,15 @@ describe("createPgQueue (durable #977)", () => {
       // count of 2, which would have double-counted the row another reviver already claimed.
       expect(revived).toBe(1);
       expect(m.fn).toHaveBeenCalledWith(
-        expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL WHERE id=$2 AND status='dead'"),
+        expect.stringContaining(
+          "SET status='pending', run_after=$1, last_error=NULL, dead_at=NULL WHERE id=$2 AND status='dead'",
+        ),
         expect.arrayContaining(["1"]),
       );
       expect(m.fn).toHaveBeenCalledWith(
-        expect.stringContaining("SET status='pending', run_after=$1, last_error=NULL WHERE id=$2 AND status='dead'"),
+        expect.stringContaining(
+          "SET status='pending', run_after=$1, last_error=NULL, dead_at=NULL WHERE id=$2 AND status='dead'",
+        ),
         expect.arrayContaining(["2"]),
       );
       expect(await renderMetrics()).toContain("gittensory_jobs_dead_letter_revived_total 1");
@@ -2170,7 +2255,7 @@ describe("createPgQueue (durable #977)", () => {
     );
     expect(m.pool.query).toHaveBeenCalledWith(
       expect.stringContaining("SET status='dead', attempts=$1"),
-      [2, "openai api rate limit exceeded", "1"],
+      [2, "openai api rate limit exceeded", expect.any(Number), "1"],
     );
     expect(m.pool.query).not.toHaveBeenCalledWith(
       expect.stringContaining("gittensory_jobs_rate_limited_total"),

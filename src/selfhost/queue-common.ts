@@ -48,6 +48,27 @@ export interface SelfHostQueueIntrospection {
   snapshot(): SelfHostQueueSnapshot | Promise<SelfHostQueueSnapshot>;
 }
 
+// Dead-letter-queue admin surface (#2214/#2215): a self-host-only slice of DurableQueue's rich introspection,
+// mirrored onto the `.binding` object (same trick as `snapshot` above) so the Hono routes -- which only ever see
+// `env.JOBS`, a plain Cloudflare `Queue` -- can reach it via an optional-cast feature check instead of a new
+// `Env` field. Cloudflare's real Queue binding never has these methods, so the feature check below is also the
+// production-safe "self-host only" gate.
+export type DeadLetterJob = {
+  id: number;
+  /** The job's `payload.type` discriminant (e.g. "agent-regate-pr"), or "unknown" if unparseable. */
+  jobType: string;
+  attempts: number;
+  lastError: string | null;
+  createdAtMs: number;
+  /** Epoch ms the job was marked dead. Null for rows that died before this column existed (#2214). */
+  deadAtMs: number | null;
+};
+
+export interface SelfHostQueueDeadLetterAdmin {
+  deadCount(): number | Promise<number>;
+  listDeadLetterJobs(limit: number, offset: number): DeadLetterJob[] | Promise<DeadLetterJob[]>;
+}
+
 // Webhook-driven work (a fresh PR -> its review) jumps ahead of heavy background jobs. Per-PR review refreshes
 // sit just below real webhooks, and sweep fan-out sits below those so stale surfaces are repaired during bursts.
 // Bot-generated comment edits are background noise; keeping them with real webhooks lets panel edits starve repair.
@@ -176,6 +197,24 @@ export async function queueSnapshotFromBinding(binding: Queue): Promise<SelfHost
   const snapshot = (binding as Queue & Partial<SelfHostQueueIntrospection>).snapshot;
   if (typeof snapshot !== "function") return null;
   return snapshot.call(binding);
+}
+
+export type DeadLetterQueuePage = { items: DeadLetterJob[]; total: number };
+
+/** Null on Cloudflare (the real Queue binding has neither method) or any binding that hasn't wired the
+ *  dead-letter admin surface -- callers 501 in that case rather than pretending the DLQ is simply empty. */
+export async function queueDeadLetterPageFromBinding(
+  binding: Queue,
+  limit: number,
+  offset: number,
+): Promise<DeadLetterQueuePage | null> {
+  const admin = binding as Queue & Partial<SelfHostQueueDeadLetterAdmin>;
+  if (typeof admin.listDeadLetterJobs !== "function" || typeof admin.deadCount !== "function") return null;
+  const [items, total] = await Promise.all([
+    Promise.resolve(admin.listDeadLetterJobs(limit, offset)),
+    Promise.resolve(admin.deadCount()),
+  ]);
+  return { items, total };
 }
 
 function queueStatus(value: unknown): SelfHostQueueJobStatus | null {

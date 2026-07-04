@@ -9,6 +9,7 @@ import {
   Stat,
   StatusPill,
 } from "@/components/site/control-primitives";
+import { DeadLetterQueuePanel } from "@/components/site/dead-letter-queue-panel";
 import { NotificationReadinessCard } from "@/components/site/notification-readiness-card";
 import { StateBoundary } from "@/components/site/state-views";
 import { getApiOrigin } from "@/lib/api/origin";
@@ -445,6 +446,7 @@ function OperatorDashboard() {
               ) : null}
             </div>
           </section>
+          <DeadLetterQueuePanel />
           <NotificationReadinessCard />
         </div>
       ) : null}

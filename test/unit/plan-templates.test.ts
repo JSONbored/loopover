@@ -125,6 +125,15 @@ describe("plan-templates", () => {
     expect(() => buildPlanTemplate("bogus" as PlanTemplateStage)).toThrow(/Unknown plan-template stage/);
   });
 
+  it.each(["constructor", "toString", "hasOwnProperty"])(
+    "rejects inherited Object.prototype stage '%s' instead of dispatching it",
+    (stage) => {
+      expect(() => buildPlanTemplate(stage as PlanTemplateStage, [] as unknown as never)).toThrow(
+        /Unknown plan-template stage/,
+      );
+    },
+  );
+
   it("exposes a frozen registry so the shared dispatch table cannot be mutated", () => {
     expect(Object.isFrozen(PLAN_TEMPLATE_BUILDERS)).toBe(true);
   });

@@ -82,14 +82,18 @@ interface ScanOptions {
 const REPO_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const SHA_RE = /^[0-9a-fA-F]{7,64}$/;
 
-function isBinaryAsset(path: string): boolean {
+/** True when a path's extension is a genuinely binary asset (image/font/media/archive/binary). Text formats
+ *  like .svg/.json are deliberately excluded — their bytes are already in the textual diff. Pure. */
+export function isBinaryAsset(path: string): boolean {
   const dot = path.lastIndexOf(".");
   return dot >= 0 && BINARY_EXTS.has(path.slice(dot + 1).toLowerCase());
 }
 
 type EnrichFile = NonNullable<EnrichRequest["files"]>[number];
 
-function basePathForGrowth(file: EnrichFile): string | null {
+/** The base-side path to measure growth against: the same path for a modified/changed file, the pre-rename
+ *  path for a rename, and null for anything else (added/removed have no comparable base size). Pure. */
+export function basePathForGrowth(file: EnrichFile): string | null {
   if (file.status === "modified" || file.status === "changed") return file.path;
   if (file.status === "renamed") return file.previousPath || null;
   return null;
@@ -104,7 +108,9 @@ function githubHeaders(token: string): Record<string, string> {
   };
 }
 
-function encodeRepoPath(path: string): string | null {
+/** Percent-encode each segment of a repo path for a Contents API URL, rejecting (null) an empty path or any
+ *  empty / `.` / `..` segment so a crafted path can never traverse out of the tree. Pure. */
+export function encodeRepoPath(path: string): string | null {
   const segments = path.split("/");
   if (!path || segments.some((seg) => !seg || seg === "." || seg === "..")) {
     return null;

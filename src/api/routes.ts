@@ -530,7 +530,7 @@ const focusManifestInputSchema = z
     message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
   });
 
-const localBranchAnalysisSchema = z
+export const localBranchAnalysisSchema = z
   .object({
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
     repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),

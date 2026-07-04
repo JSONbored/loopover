@@ -163,7 +163,10 @@ export type MaintainerQueueDigest = {
 
 export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
   if (!body) return null;
-  const match = body.match(/(?:^|\s)@gittensory(?:\s+([a-z-]+))?([^\n\r]*)/i);
+  // `(?![\w-])` requires the mention to end at a non-identifier char, so other usernames that merely
+  // start with "@gittensory" — `@gittensory-bot`, `@gittensorybot`, `@gittensory2` — are not misread as a
+  // bare `@gittensory help` command. A space, end-of-string, or punctuation still matches.
+  const match = body.match(/(?:^|\s)@gittensory(?![\w-])(?:\s+([a-z-]+))?([^\n\r]*)/i);
   if (!match) return null;
   const requested = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName | GittensoryActionCommandName;
   if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {

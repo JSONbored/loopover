@@ -39,6 +39,10 @@ describe("GitHub mention commands", () => {
       reason: "known false positive, shipping",
     });
     expect(parseGittensoryMentionCommand("gittensory preflight")).toBeNull();
+    // Other usernames that merely start with "@gittensory" must not be read as a bare "@gittensory help".
+    expect(parseGittensoryMentionCommand("@gittensory-bot can you take a look?")).toBeNull();
+    expect(parseGittensoryMentionCommand("@gittensorybot help")).toBeNull();
+    expect(parseGittensoryMentionCommand("@gittensory2 preflight")).toBeNull();
     expect(isMaintainerOnlyCommand("queue-summary")).toBe(true);
     expect(isMaintainerOnlyCommand("preflight")).toBe(false);
   });

@@ -361,3 +361,17 @@ test("scanPatch does not classify Anthropic sk-ant- keys as OpenAI project keys"
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, "anthropic_api_key");
 });
+
+test("scanPatch flags a Notion internal integration secret with high confidence", () => {
+  const fakeNotionSecret = "secret_" + "a".repeat(43);
+  const findings = scanPatch("src/config.ts", hunk([`const notion = "${fakeNotionSecret}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "notion_integration_secret");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch does not flag a truncated Notion integration secret", () => {
+  const truncated = "secret_" + "a".repeat(42);
+  const findings = scanPatch("src/config.ts", hunk([`const notion = "${truncated}";`]));
+  assert.equal(findings.length, 0);
+});

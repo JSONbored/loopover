@@ -89,6 +89,69 @@ describe("GitHubMilestonesAdapter (#3183)", () => {
     expect(result).toEqual({ attached: true });
     expect(patchedBody).toMatchObject({ milestone: 14 });
   });
+
+  it("attachToMilestone rejects a non-positive-integer milestoneId without calling GitHub", async () => {
+    let patched = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if ((init?.method ?? "GET") === "PATCH") {
+        patched = true;
+        return Response.json({});
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubMilestonesAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    for (const invalidId of ["not-a-number", "0", "-5", "3.5", ""]) {
+      const result = await adapter.attachToMilestone({ env, installationId: 123, repoFullName: "JSONbored/gittensory" }, 4, invalidId);
+      expect(result).toEqual({ attached: false });
+    }
+    expect(patched).toBe(false);
+  });
+
+  it("listOpenMilestones paginates past the first 100 results (regression: gate-flagged pagination gap)", async () => {
+    const pageOne = Array.from({ length: 100 }, (_, i) => ({ number: i + 1, title: `Milestone ${i + 1}` }));
+    const pageTwoMatch = { number: 101, title: "Self-host reliability roadmap" };
+    let requestedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        requestedPages.push(page);
+        if (page === 1) return Response.json(pageOne);
+        if (page === 2) return Response.json([pageTwoMatch]);
+        return Response.json([]);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubMilestonesAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    const result = await adapter.listOpenMilestones({ env, installationId: 123, repoFullName: "JSONbored/gittensory" });
+    expect(requestedPages).toEqual([1, 2]);
+    expect(result).toHaveLength(101);
+    expect(result).toContainEqual({ id: "101", title: "Self-host reliability roadmap" });
+  });
+
+  it("listOpenMilestones stops paginating at the configured page limit even if GitHub reports more", async () => {
+    let requestedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        requestedPages.push(page);
+        // Always a full page, so the loop would run forever without the hard page-limit cap.
+        return Response.json(Array.from({ length: 100 }, (_, i) => ({ number: page * 1000 + i, title: "filler" })));
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const adapter = new GitHubMilestonesAdapter();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await adapter.listOpenMilestones({ env, installationId: 123, repoFullName: "JSONbored/gittensory" });
+    expect(requestedPages).toEqual([1, 2, 3]);
+  });
 });
 
 describe("maybeSuggestMilestoneMatch (#3183)", () => {
@@ -122,6 +185,69 @@ describe("maybeSuggestMilestoneMatch (#3183)", () => {
     expect(posted).toHaveLength(1);
     expect(posted[0]).toContain(MILESTONE_SUGGEST_COMMENT_MARKER);
     expect(posted[0]).toContain("Self-host reliability roadmap");
+  });
+
+  it("code-formats the milestone title and strips literal backticks, neutralizing markdown/mention injection", async () => {
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "self host reliability roadmap `@everyone` **pwned**" }]);
+      if (url.includes("/issues/4/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        posted.push(body.body ?? "");
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await maybeSuggestMilestoneMatch(
+      { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
+      4,
+      "self host reliability roadmap convergence",
+      "self host reliability roadmap convergence work",
+    );
+    expect(posted).toHaveLength(1);
+    // The rendered title is wrapped in a single code span with every literal backtick stripped -- no unescaped
+    // backtick can break out of the span and re-enable the mention/emphasis markup it carries.
+    expect(posted[0]).toContain("`self host reliability roadmap @everyone **pwned**`");
+    expect(posted[0]).not.toMatch(/`[^`]*`[^`]*`/);
+  });
+
+  it("paginates the comment-marker search past the first 100 comments before deciding to post", async () => {
+    const pageOneComments = Array.from({ length: 100 }, (_, i) => ({ body: `unrelated comment ${i}`, user: { type: "User", login: "someone" } }));
+    let posted = false;
+    let requestedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
+      if (url.includes("/issues/4/comments") && method === "GET") {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        requestedPages.push(page);
+        if (page === 1) return Response.json(pageOneComments);
+        if (page === 2) return Response.json([{ body: MILESTONE_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
+        return Response.json([]);
+      }
+      if (url.includes("/issues/4/comments") && method === "POST") {
+        posted = true;
+        return Response.json({ id: 1 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const result = await maybeSuggestMilestoneMatch(
+      { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
+      4,
+      "Improve self-host reliability roadmap convergence",
+      "Follow-up on the self-host reliability roadmap work",
+    );
+    expect(requestedPages).toEqual([1, 2]);
+    expect(result).toEqual({ suggested: false });
+    expect(posted).toBe(false);
   });
 
   it("does nothing when no milestone matches (never calls the comment POST endpoint)", async () => {

@@ -49,6 +49,18 @@ type GitHubMilestone = {
   title: string;
 };
 
+// Bounded pagination for both the milestone list and the comment-marker search below (mirrors
+// src/github/comments.ts's COMMENT_SEARCH_PAGE_LIMIT): 3 pages * 100 = 300 items is generously above any
+// realistic open-milestone or PR-comment count, while still bounding worst-case GitHub API calls per PR event.
+const GITHUB_LIST_PAGE_LIMIT = 3;
+
+/** A positive-integer milestone/issue number as a string, or null if `value` isn't one. Guards against a
+ *  malformed/forged `milestoneId` reaching GitHub's PATCH as `NaN` or a negative/zero number. */
+function parsePositiveIntegerId(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 /** GitHub REST implementation of {@link ProjectTrackerAdapter}. Only the Milestone half is real (#3183) --
  *  Projects v2 is GraphQL-only and needs a separate `organization_projects` App permission not yet granted, so
  *  those two methods are inert placeholders until #3184. */
@@ -62,13 +74,19 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
     const token = await createInstallationToken(ctx.env, ctx.installationId);
     const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
-    const response = await octokit.request("GET /repos/{owner}/{repo}/milestones", {
-      owner,
-      repo,
-      state: "open",
-      per_page: 100,
-    });
-    const milestones = response.data as GitHubMilestone[];
+    const milestones: GitHubMilestone[] = [];
+    for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT; page += 1) {
+      const response = await octokit.request("GET /repos/{owner}/{repo}/milestones", {
+        owner,
+        repo,
+        state: "open",
+        per_page: 100,
+        page,
+      });
+      const batch = response.data as GitHubMilestone[];
+      milestones.push(...batch);
+      if (batch.length < 100) break;
+    }
     return milestones.map((milestone) => ({ id: String(milestone.number), title: milestone.title }));
   }
 
@@ -78,6 +96,8 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
   }
 
   async attachToMilestone(ctx: ProjectTrackerContext, pullNumber: number, milestoneId: string): Promise<ProjectTrackerAttachResult> {
+    const milestoneNumber = parsePositiveIntegerId(milestoneId);
+    if (milestoneNumber === null) return { attached: false };
     const { owner, repo } = parseRepoFullName(ctx.repoFullName);
     const token = await createInstallationToken(ctx.env, ctx.installationId);
     const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
@@ -85,7 +105,7 @@ export class GitHubMilestonesAdapter implements ProjectTrackerAdapter {
       owner,
       repo,
       issue_number: pullNumber,
-      milestone: Number(milestoneId),
+      milestone: milestoneNumber,
     });
     return { attached: true };
   }
@@ -128,11 +148,18 @@ export function matchOpenMilestones(prTitle: string, prBody: string | null | und
 
 export const MILESTONE_SUGGEST_COMMENT_MARKER = "<!-- gittensory-milestone-suggest:v1 -->";
 
+/** Code-formats a maintainer-authored title for safe Markdown embedding: backticks strip any literal backtick
+ *  from the title (so it can't break out of the code span) rather than escaping them, since a broken-out title
+ *  could otherwise re-enable `@mentions` or `**`/`_` emphasis the code span exists to neutralize. */
+function codeFormat(title: string): string {
+  return `\`${title.replace(/`/g, "")}\``;
+}
+
 function renderSuggestionComment(match: ProjectTrackerMatch): string {
   const confidencePercent = Math.round(match.score * 100);
   return [
     MILESTONE_SUGGEST_COMMENT_MARKER,
-    `This PR looks like it's part of the **${match.milestone.title}** milestone (${confidencePercent}% title/body term overlap).`,
+    `This PR looks like it's part of the ${codeFormat(match.milestone.title)} milestone (${confidencePercent}% title/body term overlap).`,
     "",
     "This is an advisory suggestion only — nothing has been attached automatically.",
   ].join("\n");
@@ -158,15 +185,19 @@ export async function maybeSuggestMilestoneMatch(ctx: ProjectTrackerContext, pul
   const token = await createInstallationToken(ctx.env, ctx.installationId);
   const octokit = makeInstallationOctokit(ctx.env, token, "live", githubRateLimitAdmissionKeyForInstallation(ctx.installationId));
   const botLogin = `${ctx.env.GITHUB_APP_SLUG}[bot]`;
-  const existing = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
-    owner,
-    repo,
-    issue_number: pullNumber,
-    per_page: 100,
-  });
-  const alreadyPosted = (existing.data as IssueComment[]).some(
-    (comment) => comment.user?.type === "Bot" && comment.user.login?.toLowerCase() === botLogin.toLowerCase() && comment.body?.includes(MILESTONE_SUGGEST_COMMENT_MARKER),
-  );
+  let alreadyPosted = false;
+  for (let page = 1; page <= GITHUB_LIST_PAGE_LIMIT && !alreadyPosted; page += 1) {
+    const existing = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner,
+      repo,
+      issue_number: pullNumber,
+      per_page: 100,
+      page,
+    });
+    const batch = existing.data as IssueComment[];
+    alreadyPosted = batch.some((comment) => comment.user?.type === "Bot" && comment.user.login?.toLowerCase() === botLogin.toLowerCase() && comment.body?.includes(MILESTONE_SUGGEST_COMMENT_MARKER));
+    if (batch.length < 100) break;
+  }
   if (alreadyPosted) return { suggested: false };
 
   await createIssueComment(ctx.env, ctx.installationId, ctx.repoFullName, pullNumber, renderSuggestionComment(match));

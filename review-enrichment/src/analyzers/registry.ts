@@ -17,6 +17,7 @@ import { scanIacMisconfig } from "./iac-misconfig.js";
 import { scanInstallScripts } from "./install-scripts.js";
 import { scanLicenses } from "./license-check.js";
 import { scanLockfileDrift } from "./lockfile-drift.js";
+import { scanMilestoneLifecycle } from "./milestone-lifecycle.js";
 import { scanNativeBuild } from "./native-build.js";
 import { scanPendingReviewRequests } from "./pending-review-requests.js";
 import { scanProvenance } from "./provenance.js";
@@ -679,6 +680,38 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanPendingReviewRequests(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "milestoneLifecycle",
+    title: "Milestone lifecycle signals",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["github-token"],
+    limits: {},
+    docs: {
+      summary:
+        "Flags a PR whose milestone's due date has already passed while the milestone is still open, or whose milestone has already been closed while the PR itself is still open.",
+      looksAt: "The PR's milestone (one call to the GitHub issues API) — its due date and state.",
+      reports: "The milestone title and either days overdue or that it's already closed — never issue/PR content.",
+      network: "Calls the GitHub issues API once.",
+      notes:
+        "Structured-fields-only: reads milestone.due_on/milestone.state, never diff or issue text. Fail-safe on missing token/fetch error.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Milestone lifecycle signals"];
+      for (const item of findings) {
+        if (item.kind === "overdue-milestone") {
+          lines.push(`- Milestone ${helpers.safeCodeSpan(item.milestoneTitle)} is ${item.daysOverdue} day(s) overdue and still open`);
+        } else {
+          lines.push(`- Milestone ${helpers.safeCodeSpan(item.milestoneTitle)} has already been closed while this PR is still open`);
+        }
+      }
+      return lines;
+    },
+    run: (req, { signal, analysis, diagnostics }) =>
+      scanMilestoneLifecycle(req, fetch, { signal, analysis, diagnostics }),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

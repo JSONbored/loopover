@@ -372,6 +372,14 @@ export interface PendingReviewRequestFinding {
   hoursPending: number;
 }
 
+/** A milestone/PR lifecycle mismatch, read from structured GitHub issue API fields only (`milestone.due_on`,
+ *  `milestone.state`) — never diff/file content. `overdue-milestone`: the PR's OPEN milestone's due date has
+ *  already passed. `milestone-already-closed`: the PR's milestone has been closed while the PR itself is still
+ *  open (the more actionable fact when both are true, so it takes priority over the due-date check). */
+export type MilestoneLifecycleFinding =
+  | { milestoneTitle: string; kind: "overdue-milestone"; daysOverdue: number }
+  | { milestoneTitle: string; kind: "milestone-already-closed" };
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -402,6 +410,7 @@ export interface BriefFindings {
   staleBranch?: StaleBranchFinding[];
   commitHygiene?: CommitHygieneFinding[];
   pendingReviewRequests?: PendingReviewRequestFinding[];
+  milestoneLifecycle?: MilestoneLifecycleFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

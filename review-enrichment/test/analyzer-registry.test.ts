@@ -38,6 +38,7 @@ const EXPECTED_ANALYZERS = [
   "staleBranch",
   "commitHygiene",
   "pendingReviewRequests",
+  "milestoneLifecycle",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

@@ -727,6 +727,26 @@ export const REES_ANALYZERS = [
         "Structured-fields-only: reads user.login/team.slug/event/created_at, never diff or comment text. Fail-safe on missing token/fetch error/an unconfirmed-complete timeline.",
     },
   },
+  {
+    name: "milestoneLifecycle",
+    title: "Milestone lifecycle signals",
+    category: "history",
+    cost: "github-light",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["github-token"],
+    limits: {},
+    docs: {
+      summary:
+        "Flags a PR whose milestone's due date has already passed while the milestone is still open, or whose milestone has already been closed while the PR itself is still open.",
+      looksAt: "The PR's milestone (one call to the GitHub issues API) — its due date and state.",
+      reports:
+        "The milestone title and either days overdue or that it's already closed — never issue/PR content.",
+      network: "Calls the GitHub issues API once.",
+      notes:
+        "Structured-fields-only: reads milestone.due_on/milestone.state, never diff or issue text. Fail-safe on missing token/fetch error.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

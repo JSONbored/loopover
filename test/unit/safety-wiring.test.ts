@@ -1235,7 +1235,7 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 
-  it("falls back to inline patches when makeGithubFileFetcher rejects", async () => {
+  it("still scans inline patches when makeGithubFileFetcher rejects", async () => {
     const env = createTestEnv();
     const adv = advisory();
     const files = [
@@ -1264,6 +1264,39 @@ describe("maybeAddSecretLeakFinding patch-less fallback wiring", () => {
       baseSha: "base-sha",
     });
     spy.mockRestore();
+    expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
+  });
+
+  it("blocks patch-less files when makeGithubFileFetcher rejects", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "secrets.env",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
+    ];
+    const groundingWire = await import("../../src/review/grounding-wire");
+    const spy = vi
+      .spyOn(groundingWire, "makeGithubFileFetcher")
+      .mockRejectedValue(new Error("installation token unavailable"));
+    await maybeAddSecretLeakFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      files,
+      installationId: 1,
+      headSha: "head-sha",
+      baseSha: "base-sha",
+    });
+    spy.mockRestore();
+    expect(adv.findings.some((f) => f.title.includes("could not be fully scanned"))).toBe(true);
     expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 

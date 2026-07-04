@@ -5537,6 +5537,19 @@ function shouldAttemptPatchLessSecretScan(
   return status === "added";
 }
 
+function markEligiblePatchLessFilesIncomplete(
+  files: Awaited<ReturnType<typeof listPullRequestFiles>>,
+  baseSha?: string | null | undefined,
+): Awaited<ReturnType<typeof listPullRequestFiles>> {
+  return files.map((file) => {
+    const existingPatch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+    if (existingPatch) return file;
+    const status = file.status ?? "modified";
+    if (!shouldAttemptPatchLessSecretScan(file, status, baseSha)) return file;
+    return markPatchLessSecretScanIncomplete(file);
+  });
+}
+
 export function incompletePatchLessSecretScanFinding(
   files: Awaited<ReturnType<typeof listPullRequestFiles>>,
 ): AdvisoryFinding | null {
@@ -6223,7 +6236,7 @@ export async function maybeAddSecretLeakFinding(
             error: errorMessage(error),
           }),
         );
-        scanFiles = files;
+        scanFiles = markEligiblePatchLessFilesIncomplete(files, args.baseSha);
       }
     }
     const incompleteFinding = incompletePatchLessSecretScanFinding(scanFiles);

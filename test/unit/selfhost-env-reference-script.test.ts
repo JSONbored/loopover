@@ -45,6 +45,15 @@ function fixtureRoot(): string {
   );
   mkdirSync(join(root, "scripts"), { recursive: true });
   writeFileSync(join(root, "scripts", "selfhost-smoke.mjs"), "const scriptOnly = process.env.SCRIPT_ONLY;\n");
+  mkdirSync(join(root, "src", "services"), { recursive: true });
+  writeFileSync(
+    join(root, "src", "services", "notify-discord.ts"),
+    [
+      "const serviceOnly = process.env.SERVICE_ONLY;",
+      "const helperOnly = envString(env, 'SERVICE_HELPER_ONLY');",
+      "",
+    ].join("\n"),
+  );
   return root;
 }
 
@@ -64,6 +73,8 @@ describe("gen-selfhost-env-reference (#2081)", () => {
       { name: "OBJECT_DESTRUCTURED", firstReference: "src/selfhost/a.ts:9" },
       { name: "SECOND", firstReference: "src/selfhost/a.ts:2" },
       { name: "SERVER_ONLY", firstReference: "src/server.ts:1" },
+      { name: "SERVICE_HELPER_ONLY", firstReference: "src/services/notify-discord.ts:2" },
+      { name: "SERVICE_ONLY", firstReference: "src/services/notify-discord.ts:1" },
     ]);
   });
 

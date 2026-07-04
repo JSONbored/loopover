@@ -50,11 +50,26 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/review/outcomes-wire.ts", // the pr_outcome + reversal telemetry that feeds self-tuning
 ];
 
+// Self-host runtime and persistence surface. These paths do not necessarily decide the verdict directly, but they
+// decide whether the review stack can boot, store, queue, notify, migrate, and export safely. Keep this scoped to
+// operational chokepoints so ordinary feature/review logic can still auto-merge when it is clean.
+export const SELFHOST_RUNTIME_GUARDRAIL_GLOBS = [
+  "src/selfhost/**",
+  "src/server.ts",
+  "src/db/**",
+  "Dockerfile",
+  "docker-compose*.yml*",
+  "docker-compose*.yaml*",
+  "compose*.yml*",
+  "compose*.yaml*",
+  "systemd/**",
+];
+
 /**
  * Resolve hard-guardrail path globs. Kept async to avoid touching the processor call graph, but this no longer
  * reads external policy storage; self-host review policy belongs in container-private `.gittensory.yml`, and these
  * engine-level guardrails are always-on invariants.
  */
 export async function loadHardGuardrailGlobs(_env: Env, _repoFullName: string): Promise<string[]> {
-  return [...DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ...CONFIG_AS_CODE_GUARDRAIL_GLOBS, ...ENGINE_DECISION_GUARDRAIL_GLOBS];
+  return [...DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ...CONFIG_AS_CODE_GUARDRAIL_GLOBS, ...ENGINE_DECISION_GUARDRAIL_GLOBS, ...SELFHOST_RUNTIME_GUARDRAIL_GLOBS];
 }

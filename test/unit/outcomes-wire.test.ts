@@ -170,6 +170,31 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
     });
   });
 
+  it("REGRESSION: does not send a duplicate Discord notification from the pull_request.closed outcome webhook", async () => {
+    const env = Object.assign(createTestEnv(), { DISCORD_REPO_WEBHOOKS: JSON.stringify({ "owner/repo": "https://discord.com/api/webhooks/repo/token" }) }) as Env;
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: {
+        name: "repo",
+        full_name: "owner/repo",
+        owner: { login: "owner" },
+      },
+      pull_request: pullRequestPayload({
+        number: 44,
+        merged_at: null,
+        user: { login: "contributor", type: "User" },
+      }),
+      sender: { login: "gittensory[bot]", type: "Bot" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({
+      target_id: "owner/repo#44",
+      decision: "closed",
+    });
+  });
+
   it("records NOTHING for an unmerged contributor PR self-close", async () => {
     const env = createTestEnv();
     await recordPrOutcome(env, "pull_request", {

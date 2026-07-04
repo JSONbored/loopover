@@ -8,6 +8,7 @@ export const DEFAULT_OUTPUT_PATH = "apps/gittensory-ui/src/lib/selfhost-env-refe
 export const DEFAULT_SOURCE_ROOTS = [
   "src/selfhost",
   "src/server.ts",
+  "src/services/notify-discord.ts",
   "scripts/build-selfhost.mjs",
   "scripts/migrate-selfhost-sqlite-to-postgres.ts",
   "scripts/smoke-observability-traces.mjs",
@@ -69,11 +70,23 @@ function collectEnvReads(source, fileName) {
         const name = bindingElementName(element);
         if (name) addRead(name, element.propertyName ?? element.name);
       }
+    } else if (ts.isCallExpression(node) && isStaticEnvHelperCall(node)) {
+      addRead(node.arguments[1].text, node.arguments[1]);
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
   return reads;
+}
+
+function isStaticEnvHelperCall(node) {
+  return (
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "envString" &&
+    node.arguments.length >= 2 &&
+    isEnvContainer(node.arguments[0]) &&
+    ts.isStringLiteralLike(node.arguments[1])
+  );
 }
 
 function bindingElementName(element) {

@@ -24,7 +24,6 @@
 // once a repo's merge precision actually drops below the floor over a real sample.
 
 import { recordAuditEvent } from "../db/repositories";
-import { notifyDiscordReview } from "../selfhost/discord-notify";
 import { incr } from "../selfhost/metrics";
 import type { GitHubWebhookPayload } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
@@ -338,21 +337,10 @@ export async function recordPrOutcome(
     ),
   );
 
-  // Per-repo Discord notification on the FINAL disposition (self-host; no-op unless a webhook is configured).
-  // Reason = the AI's recorded gate verdict for this PR, falling back to the plain disposition.
-  const fallbackReason = merged
-    ? "Pull request merged into the base branch."
-    : botWasActor
-      ? "Closed by Gittensory after review."
-      : "Pull request closed without merging.";
-  await notifyDiscordReview({
-    repoFullName,
-    prNumber: pr.number,
-    author: pr.user?.login ?? "unknown",
-    outcome: decision,
-    reason: await resolveDispositionReason(env, targetId, fallbackReason),
-    url: `https://github.com/${repoFullName}/pull/${pr.number}`,
-  });
+  // Discord/Slack action notifications are emitted by the action executor, which knows the exact bot action that
+  // was attempted and can audit the delivery. This outcome recorder only stores realized ground truth. Emitting
+  // another webhook from the GitHub `pull_request.closed` event duplicated bot-action notifications and could
+  // route through stale/global self-host webhook config.
 }
 
 // ── 2) reversals — a human undid a bot action ────────────────────────────────────────────────────────────────

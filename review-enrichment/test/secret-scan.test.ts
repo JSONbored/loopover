@@ -186,3 +186,19 @@ test("scanPatch flags an Anthropic key whose final body character is a hyphen", 
   assert.equal(findings[0].kind, "anthropic_api_key");
   assert.equal(findings[0].confidence, "high");
 });
+
+test("scanPatch does not let a no-newline marker skew the line number", () => {
+  // `\ No newline at end of file` is not a new-file line; advancing past it would cite the
+  // secret one line too high (same class as the iac-misconfig / redos / secret-log regression).
+  const patch = [
+    "@@ -1,1 +1,2 @@",
+    "-const x = 1;",
+    "\\ No newline at end of file",
+    "+const x = 1;",
+    `+const key = "${fakeAwsKey}";`,
+  ].join("\n");
+  const findings = scanPatch("src/config.ts", patch);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "aws_access_key_id");
+  assert.equal(findings[0].line, 2);
+});

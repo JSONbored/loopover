@@ -1115,6 +1115,35 @@ describe("agent approval queue (#779)", () => {
     expect((await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.pending_action.rejected").first<{ outcome: string }>())?.outcome).toBe("completed");
   });
 
+  it("REGRESSION: two concurrent rejects decide the row exactly once", async () => {
+    const env = createTestEnv({});
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    const [first, second] = await Promise.all([
+      decidePendingAgentAction(env, { id: action.id, decision: "reject", decidedBy: "owner" }),
+      decidePendingAgentAction(env, { id: action.id, decision: "reject", decidedBy: "owner" }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual(["already_decided", "rejected"]);
+    const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.pending_action.rejected").first<{ n: number }>();
+    expect(audit?.n).toBe(1);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+  });
+
+  it("REGRESSION (#2423): two concurrent accepts execute the staged action at most once", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const [first, second] = await Promise.all([
+      decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" }),
+      decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual(["accepted", "already_decided"]);
+    expect(mergePullRequest).toHaveBeenCalledTimes(1);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
+  });
+
   it("a second decision on a decided action is a no-op", async () => {
     const env = createTestEnv({});
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });

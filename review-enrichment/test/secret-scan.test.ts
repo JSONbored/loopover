@@ -375,3 +375,17 @@ test("scanPatch does not flag a truncated Notion integration secret", () => {
   const findings = scanPatch("src/config.ts", hunk([`const notion = "${truncated}";`]));
   assert.equal(findings.length, 0);
 });
+
+test("scanPatch flags a Mailgun API key with high confidence", () => {
+  const fakeMailgunKey = "key-" + "a".repeat(32);
+  const findings = scanPatch("src/config.ts", hunk([`const mg = "${fakeMailgunKey}";`]));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, "mailgun_api_key");
+  assert.equal(findings[0].confidence, "high");
+});
+
+test("scanPatch does not flag a truncated Mailgun API key", () => {
+  const truncated = "key-" + "a".repeat(31);
+  const findings = scanPatch("src/config.ts", hunk([`const mg = "${truncated}";`]));
+  assert.equal(findings.length, 0);
+});

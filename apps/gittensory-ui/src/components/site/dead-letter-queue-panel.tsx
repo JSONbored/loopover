@@ -239,12 +239,30 @@ function DeadLetterQueueTable({
                       >
                         Replay
                       </StateActionButton>
-                      <StateActionButton
-                        onClick={() => void runJobAction(item.id, "delete")}
-                        disabled={pendingRowId === item.id}
-                      >
-                        Delete
-                      </StateActionButton>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <StateActionButton disabled={pendingRowId === item.id}>
+                            Delete
+                          </StateActionButton>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete job #{item.id}?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This permanently removes this dead-letter job. This cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              onClick={() => void runJobAction(item.id, "delete")}
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </td>
                 </tr>

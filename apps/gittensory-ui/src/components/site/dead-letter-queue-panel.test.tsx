@@ -255,7 +255,44 @@ describe("DeadLetterQueuePanel row actions and purge", () => {
     expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("delete success: DELETEs the right path, toasts success, and refetches", async () => {
+  // Delete is confirm-gated (like Purge all): clicking the row trigger opens an AlertDialog, and only the
+  // dialog's own destructive confirm action actually fires the DELETE call.
+  function confirmRowDelete() {
+    fireEvent.click(getRowButton("Delete"));
+    const deleteButtons = screen.getAllByRole("button", { name: "Delete" });
+    fireEvent.click(deleteButtons[deleteButtons.length - 1]);
+  }
+
+  it("delete: clicking the row trigger opens a confirmation dialog naming the job id", async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, data: SAMPLE_PAGE });
+    render(<DeadLetterQueuePanel />);
+    await screen.findByText("github-webhook");
+
+    fireEvent.click(getRowButton("Delete"));
+    expect(await screen.findByText("Delete job #2?")).toBeTruthy();
+    expect(apiFetch).not.toHaveBeenCalledWith(
+      "https://api.test/v1/app/selfhost/queue/dead/2",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("delete: clicking Cancel closes the dialog without calling the delete endpoint", async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, data: SAMPLE_PAGE });
+    render(<DeadLetterQueuePanel />);
+    await screen.findByText("github-webhook");
+
+    fireEvent.click(getRowButton("Delete"));
+    await screen.findByText("Delete job #2?");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByText("Delete job #2?")).toBeNull());
+    expect(apiFetch).not.toHaveBeenCalledWith(
+      "https://api.test/v1/app/selfhost/queue/dead/2",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("delete success: confirming DELETEs the right path, toasts success, and refetches", async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, data: SAMPLE_PAGE }); // initial GET
     render(<DeadLetterQueuePanel />);
     await screen.findByText("github-webhook");
@@ -263,7 +300,7 @@ describe("DeadLetterQueuePanel row actions and purge", () => {
     apiFetch.mockResolvedValueOnce({ ok: true, data: { ok: true, id: 2 } }); // delete call
     apiFetch.mockResolvedValueOnce({ ok: true, data: SAMPLE_PAGE }); // refetch after reload
 
-    fireEvent.click(getRowButton("Delete"));
+    confirmRowDelete();
 
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith(
@@ -281,14 +318,14 @@ describe("DeadLetterQueuePanel row actions and purge", () => {
     );
   });
 
-  it("delete failure: toasts an error and does NOT refetch", async () => {
+  it("delete failure: confirming toasts an error and does NOT refetch", async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, data: SAMPLE_PAGE }); // initial GET
     render(<DeadLetterQueuePanel />);
     await screen.findByText("github-webhook");
 
     apiFetch.mockResolvedValueOnce({ ok: false, message: "not found" }); // delete call fails
 
-    fireEvent.click(getRowButton("Delete"));
+    confirmRowDelete();
 
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith(
@@ -391,6 +428,26 @@ describe("DeadLetterQueuePanel row actions and purge", () => {
     const [, options] = toastSuccess.mock.calls[0] as [string, { description?: string }];
     expect(options.description).toContain("2");
     expect(await screen.findByText("No dead-letter jobs")).toBeTruthy();
+  });
+
+  it("Purge all: confirming a single-job purge uses the singular 'job' wording", async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, data: SAMPLE_PAGE }); // initial GET
+    render(<DeadLetterQueuePanel />);
+    await screen.findByText("github-webhook");
+
+    apiFetch.mockResolvedValueOnce({ ok: true, data: { ok: true, purged: 1 } }); // purge call
+    apiFetch.mockResolvedValueOnce({ ok: true, data: { ...SAMPLE_PAGE, total: 0, items: [] } }); // refetch
+
+    fireEvent.click(screen.getByRole("button", { name: "Purge all" }));
+    await screen.findByText(
+      "This permanently deletes every dead-letter job. This cannot be undone.",
+    );
+    const purgeButtons = screen.getAllByRole("button", { name: "Purge all" });
+    fireEvent.click(purgeButtons[purgeButtons.length - 1]);
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    const [, options] = toastSuccess.mock.calls[0] as [string, { description?: string }];
+    expect(options.description).toBe("Purged 1 job.");
   });
 
   it("Purge all: failure toasts an error", async () => {

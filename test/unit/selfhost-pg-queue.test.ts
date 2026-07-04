@@ -1501,6 +1501,15 @@ describe("createPgQueue (durable #977)", () => {
       expect(m.calls[0]?.params).toEqual([expect.any(Number), 7]);
     });
 
+    it("REGRESSION: replayDeadLetterJob falls back to false (not null/undefined) when the driver omits rowCount", async () => {
+      // Same rationale as purgeDeadLetterJobs's own regression test below: rowCount:0 and rowCount:null both
+      // take the ">0 === false" branch, so only an explicit null proves the `?? 0` fallback itself fires.
+      const m = stubReplay(null);
+      const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
+
+      expect(await q.replayDeadLetterJob(7)).toBe(false);
+    });
+
     it("deleteDeadLetterJob deletes one dead row by id and returns true", async () => {
       const m = stubDeleteById(1);
       const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
@@ -1516,6 +1525,13 @@ describe("createPgQueue (durable #977)", () => {
 
       expect(await q.deleteDeadLetterJob(9)).toBe(false);
       expect(m.calls[0]?.params).toEqual([9]);
+    });
+
+    it("REGRESSION: deleteDeadLetterJob falls back to false (not null/undefined) when the driver omits rowCount", async () => {
+      const m = stubDeleteById(null);
+      const q = createPgQueue(m.pool as unknown as Pool, async () => undefined);
+
+      expect(await q.deleteDeadLetterJob(9)).toBe(false);
     });
 
     it("purgeDeadLetterJobs deletes every dead row with no id param and returns the count", async () => {

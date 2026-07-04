@@ -38,7 +38,7 @@ describe("applyPrecisionBreakers — chaining the merge + close precision breake
     expect(out.some((a) => a.actionClass === "close")).toBe(false);
     expect(out.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_READY)).toBe(false);
     expect(out.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(true); // KEPT
-    // needs-human-review added exactly once (the second downgrade is idempotent on the label).
+    // manual-review is added exactly once (the second downgrade is idempotent on the label).
     expect(out.filter((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toHaveLength(1);
   });
 });

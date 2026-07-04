@@ -291,7 +291,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
   // still merge a now-ineligible PR. Mirrors the planner's own owner/automation exemption (closeEligible) so an
   // owner's staged merge, which the hard rule never blocks in the first place, is not wrongly denied here.
   // Gated on the POST-downgrade `plan`, not `pending.actionClass`: the precision-breaker downgrade immediately
-  // above can already have replaced a staged merge with a needs-human-review label (downgradeMergeToHold) — that
+  // above can already have replaced a staged merge with a manual-review label (downgradeMergeToHold) — that
   // downgraded plan isn't going to merge anything, so a stale linked-issue violation must not reject the whole
   // row and suppress the hold label; it only matters while a merge is still the thing about to execute.
   if (plan.some((action) => action.actionClass === "merge") && pr) {

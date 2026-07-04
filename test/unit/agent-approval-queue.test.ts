@@ -587,7 +587,7 @@ describe("agent approval queue (#779)", () => {
     expect(fetchLiveCiAggregate).toHaveBeenCalledTimes(2);
   });
 
-  it("accept downgrades a staged merge to a needs-human-review label when the precision breaker engaged after staging (#2127)", async () => {
+  it("accept downgrades a staged merge to a manual-review label when the precision breaker engaged after staging (#2127)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", review_state_label: "auto" } });
     await seedInstallation(env);
@@ -604,7 +604,7 @@ describe("agent approval queue (#779)", () => {
 
   it("REGRESSION: a precision-breaker-downgraded merge still executes the hold/label plan even when the linked issue would now violate the hard rule", async () => {
     // Before the fix, the linked-issue recheck gated on pending.actionClass (the ORIGINAL staged class), not the
-    // post-downgrade plan -- so a merge already downgraded to a needs-human-review label by the #2127 precision
+    // post-downgrade plan -- so a merge already downgraded to a manual-review label by the #2127 precision
     // breaker above would still get its whole row rejected on a stale linked-issue violation, silently swallowing
     // the hold label the breaker was supposed to guarantee.
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
@@ -946,7 +946,7 @@ describe("agent approval queue (#779)", () => {
     expect(closePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7);
   });
 
-  it("accept downgrades a staged heuristic close to a needs-human-review label when the close breaker engaged (#2127)", async () => {
+  it("accept downgrades a staged heuristic close to a manual-review label when the close breaker engaged (#2127)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { close: "auto_with_approval", review_state_label: "auto" } });
     await seedInstallation(env);

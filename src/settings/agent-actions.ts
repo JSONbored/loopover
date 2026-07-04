@@ -351,7 +351,7 @@ function resolveAgentDispositionLabels(settings: AgentDispositionLabelSettings):
 /**
  * Accuracy circuit-breaker (#self-improve / GAP-4): when auto-merge is DISABLED for a repo (the auto-tuner
  * engaged the holdonly flag after merge precision dropped, or a human set it), DOWNGRADE a would-MERGE into a
- * human HOLD — drop the `merge` action and surface the needs-human-review label so the PR is held for a person
+ * human HOLD — drop the `merge` action and surface the configured manual-review label so the PR is held for a person
  * instead of auto-merged. Mirrors reviewbot non-content-gate.ts (~212: a would-merge becomes a hold under the
  * breaker; close/label/approve are untouched).
  *
@@ -362,7 +362,7 @@ export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: bo
   if (!holdOnly || !planned.some((action) => action.actionClass === "merge")) return planned;
   const labels = resolveAgentDispositionLabels(labelSettings);
   const next = planned.filter((action) => action.actionClass !== "merge");
-  // The dropped merge implies the PR is review-good — re-label it needs-human-review (replacing a stale
+  // The dropped merge implies the PR is review-good — re-label it for manual review (replacing a stale
   // ready-to-merge promise) so the held PR is clearly flagged for a person. Idempotent: only add when absent.
   const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
   const stagedMerge = planned.find((action) => action.actionClass === "merge");
@@ -383,7 +383,7 @@ export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: bo
 /**
  * CLOSE-precision circuit-breaker (the symmetric mirror of {@link downgradeMergeToHold}): when auto-CLOSE is
  * DISABLED for a repo (the auto-tuner engaged the `closehold` flag after CLOSE precision dropped, or a human set
- * it), DOWNGRADE a would-CLOSE into a human HOLD — drop the `close` action(s) and surface the needs-human-review
+ * it), DOWNGRADE a would-CLOSE into a human HOLD — drop the `close` action(s) and surface the configured manual-review
  * label so the PR is held for a person instead of auto-closed.
  *
  * TIGHTENING-ONLY in the close direction: it can ONLY remove a `close` action + ADD a label. It NEVER adds or
@@ -412,7 +412,7 @@ export function downgradeCloseToHold(planned: PlannedAgentAction[], closeHoldOnl
   const labels = resolveAgentDispositionLabels(labelSettings);
   // Drop ONLY the heuristic close(s); a deterministic linked-issue-hard-rule close (if any) is left intact.
   const next = planned.filter((action) => !isHeuristicClose(action));
-  // The dropped close means the PR is held for a person — surface needs-human-review. Idempotent: only add when
+  // The dropped close means the PR is held for a person — surface the manual-review label. Idempotent: only add when
   // absent (e.g. a guarded-but-passing plan may already carry it). NEVER adds a merge/approve.
   const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
   const droppedClose = planned.find(isHeuristicClose);
@@ -694,7 +694,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
-  // 2) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / needs-human-review
+  // 2) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / manual-review
   // (review-good but guarded) / changes-requested (not review-good → will be closed for a contributor, held for
   // the owner). A pending linked-issue hard-rule close (flag OR close pass) forces the changes-requested label
   // regardless of the gate verdict (the PR is about to be closed for an ineligible linked issue). Idempotent.
@@ -882,8 +882,33 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       closeRequiresMergeableState: isConflict,
     });
   }
-  // else: guarded → manual (needs-human/changes label above); not-good OWNER/automation → held
-  // (request-changes above); review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
+  // else: guarded → manual; not-good OWNER/automation → manual; action-required/unverified → manual;
+  // review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
+  const manualHoldReason =
+    guardrailHit
+      ? `verdict=${conclusion}; guarded path → manual review`
+      : ciUnverified
+        ? "CI could not be verified"
+        : conclusion === "action_required"
+          ? "review requires maintainer action"
+          : !reviewGood && !closeEligible
+            ? `verdict=${conclusion}${ciReason ? `; ${ciReason}` : ""}`
+            : null;
+  if (
+    manualHoldReason !== null &&
+    labels.manualReview !== null &&
+    !actions.some((action) => action.actionClass === "merge" || action.actionClass === "close") &&
+    !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)
+  ) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: reviewGood ? "merge" : "close",
+      requiresApproval: false,
+      reason: manualHoldReason,
+      label: labels.manualReview,
+      labelOp: "add",
+    });
+  }
 
   return actions;
 }

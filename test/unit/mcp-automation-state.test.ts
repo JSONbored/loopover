@@ -177,10 +177,10 @@ describe("MCP gittensory_propose_action (#784)", () => {
     const client = await connect(env);
     await client.callTool({
       name: "gittensory_propose_action",
-      arguments: { owner: "owner", repo: "repo", pullNumber: 9, actionClass: "close", label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" },
+      arguments: { owner: "owner", repo: "repo", pullNumber: 9, actionClass: "close", label: "custom-blocked", reviewBody: "please fix", closeComment: "closing as noise" },
     });
     const [staged] = await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" });
-    expect(staged?.params).toMatchObject({ label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" });
+    expect(staged?.params).toMatchObject({ label: "custom-blocked", reviewBody: "please fix", closeComment: "closing as noise" });
   });
 
   it("pins a proposed action to the PR's current head (expectedHeadSha) so the accept-time force-push guard can fire (#2255)", async () => {

@@ -484,7 +484,7 @@ describe("downgradeMergeToHold (pure)", () => {
     expect(downgradeMergeToHold(plan, false)).toBe(plan);
   });
 
-  it("holdOnly=true + a planned merge → drops the merge + ready label, adds needs-human-review", () => {
+  it("holdOnly=true + a planned merge → drops the merge + ready label, adds manual-review", () => {
     const out = downgradeMergeToHold([readyLabel, mergeAction], true);
     expect(out.some((a) => a.actionClass === "merge")).toBe(false);
     expect(

@@ -982,7 +982,7 @@ export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_appro
  *  anti-abuse enforcement labels tied 1:1 to a `close` in the same disposition (blacklist/contributor-cap/
  *  review-nag) -- those additionally require `close` to be acting, so `label` alone can't apply them without a
  *  close. `review_state_label` is a SEPARATE, independent gate for the planner's own disposition-communication
- *  labels (ready-to-merge / changes-requested / needs-human-review / migration-collision / the linked-issue
+ *  labels (ready-to-merge / changes-requested / manual-review / migration-collision / the linked-issue
  *  pending-closure flag / the account-age new-account label) -- these are advisory signals about the bot's own
  *  verdict, not enforcement actions, and default OFF (`observe`) like every other class so a one-shot-mode repo
  *  never sees them without an explicit opt-in. */

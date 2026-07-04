@@ -64,6 +64,14 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(collision)).not.toContain("merge");
   });
 
+  it("uses manualReviewLabel for manual holds without enabling ready/changes review-state labels", () => {
+    const guarded = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, manualReviewLabel: "human-review", readyToMergeLabel: null, changesRequestedLabel: null, changedPaths: ["src/settings/agent-actions.ts"], hardGuardrailGlobs: ["src/settings/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+    expect(guarded.some((a) => a.actionClass === "label" && a.label === "human-review" && a.autonomyClass === "merge")).toBe(true);
+    expect(guarded.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_READY)).toBe(false);
+    expect(guarded.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(false);
+    expect(classes(guarded)).not.toContain("merge");
+  });
+
   it("explicit null disables disposition labels without disabling the underlying decision", () => {
     expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, readyToMergeLabel: null }))).toEqual([]);
     expect(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { review_state_label: "auto" }, blockerTitles: ["x"], changesRequestedLabel: null }))).toEqual([]);
@@ -103,6 +111,13 @@ describe("planAgentMaintenanceActions (#778)", () => {
     // awaiting-action (e.g. a fork's CI awaiting approval) → HELD + labeled, NOT a one-shot close. (#harm-stop)
     expect(plan).not.toContain("close");
     expect(plan).toContain("label");
+  });
+
+  it("labels action-required manual holds even when review_state_label is off", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "action_required", autonomy: { close: "auto" }, manualReviewLabel: "human-review", readyToMergeLabel: null, changesRequestedLabel: null, blockerTitles: [] }));
+    expect(plan).toEqual([
+      expect.objectContaining({ actionClass: "label", autonomyClass: "close", label: "human-review", labelOp: "add" }),
+    ]);
   });
 
   it("approves a passing verdict and never re-approves; a failing one closes (never approves, never requests changes)", () => {
@@ -364,9 +379,9 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(plan).not.toContain("merge");
     });
 
-    it("labels a guarded passing PR `needs-human-review` (NOT `ready-to-merge`) and still does not merge it", () => {
+    it("labels a guarded passing PR manual-review (NOT ready-to-merge) and still does not merge it", () => {
       // A guardrail-hit PR that otherwise passes is withheld from auto-merge → the `ready-to-merge` label
-      // would be misleading. It must carry the distinct `needs-human-review` label instead, and never merge.
+      // would be misleading. It must carry the distinct manual-review label instead, and never merge.
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto", merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const label = plan.find((a) => a.actionClass === "label");
       expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
@@ -375,12 +390,12 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(classes(plan)).not.toContain("merge");
     });
 
-    it("does not re-plan the needs-human-review label when the guarded PR already carries it (idempotent)", () => {
+    it("does not re-plan the manual-review label when the guarded PR already carries it (idempotent)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { review_state_label: "auto" }, ...guarded, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW] } })));
       expect(plan).not.toContain("label");
     });
 
-    it("a guarded BLOCKING PR keeps the changes-requested label (not needs-human-review)", () => {
+    it("a guarded BLOCKING PR keeps the changes-requested label (not manual-review)", () => {
       const label = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { review_state_label: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [] } })).find((a) => a.actionClass === "label");
       expect(label?.label).toBe(AGENT_LABEL_CHANGES);
     });
@@ -631,6 +646,13 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(cls).not.toContain("close");
       expect(cls).not.toContain("request_changes"); // never a formal blocking review
       expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+
+    it("labels owner's red-CI manual hold with manualReviewLabel when ready/changes labels are disabled", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, manualReviewLabel: "human-review", readyToMergeLabel: null, changesRequestedLabel: null, ciState: "failed", failingCheckNames: ["codecov/patch"], authorIsOwner: true, pr: { labels: [] } }));
+      expect(plan).toEqual([
+        expect.objectContaining({ actionClass: "label", autonomyClass: "close", label: "human-review", labelOp: "add" }),
+      ]);
     });
 
     it("CLOSES (never approves or requests changes) a contributor's red-CI PR and cites the failing check", () => {
@@ -949,7 +971,7 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
       }),
     );
 
-  it("a real heuristic would-CLOSE plan drops the close + adds needs-human-review + KEEPS changes-requested", () => {
+  it("a real heuristic would-CLOSE plan drops the close + adds manual-review + KEEPS changes-requested", () => {
     const plan = heuristicClosePlan();
     // sanity: the planner really would heuristically close, with a changes-requested label, and the close
     // carries NO concrete evidence (so it stays subject to the breaker below).
@@ -974,7 +996,7 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
     expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(false);
   });
 
-  it("a deterministic linked-issue-hard-rule close is EXEMPT (NOT dropped, no needs-human-review added)", () => {
+  it("a deterministic linked-issue-hard-rule close is EXEMPT (NOT dropped, no manual-review added)", () => {
     const plan = linkedIssueClosePlan();
     expect(plan.some((a) => a.actionClass === "close" && a.closeKind === "linked-issue-hard-rule")).toBe(true);
     const held = downgradeCloseToHold(plan, true);
@@ -1006,7 +1028,7 @@ describe("downgradeCloseToHold — close-precision circuit-breaker (#close-preci
     expect(out.some((a) => a.actionClass === "merge")).toBe(true);
   });
 
-  it("does NOT re-add needs-human-review when it is already present (idempotent)", () => {
+  it("does NOT re-add manual-review when it is already present (idempotent)", () => {
     const needsReview: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "guarded", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" };
     const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "CI failing", closeKind: "heuristic" };
     const held = downgradeCloseToHold([needsReview, heuristicClose], true);

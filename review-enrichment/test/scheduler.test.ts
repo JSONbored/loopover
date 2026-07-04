@@ -327,3 +327,34 @@ test("eol runs for a *.dockerfile path (gate shares the analyzer's Dockerfile pr
   assert.equal(brief.analyzerStatus.eol, "ok");
   assert.notEqual(brief.telemetry.analyzers.eol.skipReason, "no_runtime_pin");
 });
+
+test("eol runs for runtime.txt and Gemfile paths (gate shares isRuntimePinPath)", async () => {
+  let eolRan = false;
+  const brief = await buildBrief(
+    {
+      repoFullName: "JSONbored/gittensory",
+      prNumber: 3253,
+      analyzers: ["eol"],
+      files: [
+        {
+          path: "runtime.txt",
+          patch: "@@ -1,0 +1,1 @@\n+python-3.11.6",
+        },
+        {
+          path: "Gemfile",
+          patch: '@@ -1,0 +1,1 @@\n+ruby "3.2.2"',
+        },
+      ],
+    },
+    {
+      eol: async () => {
+        eolRan = true;
+        return [];
+      },
+    },
+  );
+
+  assert.equal(eolRan, true);
+  assert.equal(brief.analyzerStatus.eol, "ok");
+  assert.notEqual(brief.telemetry.analyzers.eol.skipReason, "no_runtime_pin");
+});

@@ -56,7 +56,72 @@ const TOOL_VERSION_PRODUCT: Record<string, string> = {
   terraform: "terraform",
   elixir: "elixir",
   kotlin: "kotlin",
+  swift: "swift",
+  perl: "perl",
+  erlang: "erlang",
 };
+
+// Heroku `runtime.txt` runtime prefix → endoflife.date product slug.
+const RUNTIME_TXT_PRODUCT: Record<string, string> = {
+  python: "python",
+  ruby: "ruby",
+  nodejs: "nodejs",
+  node: "nodejs",
+};
+
+/** Parse one Heroku `runtime.txt` line (`python-3.11.6`, `ruby-3.2.2`) into an EOL product + version. Pure. */
+export function parseRuntimeTxtLine(
+  line: string,
+): { product: string; version: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const match = /^([a-z]+)-(.+)$/.exec(trimmed);
+  if (!match) return null;
+  const product = RUNTIME_TXT_PRODUCT[match[1]!.toLowerCase()];
+  const version = leadingVersion(match[2]!);
+  if (!product || !version) return null;
+  return { product, version };
+}
+
+/** Parse one Gemfile `ruby` directive into an EOL product + version. Pure. */
+export function parseGemfileRubyLine(
+  line: string,
+): { product: string; version: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const match = /^ruby\s+["']([^"']+)["']/.exec(trimmed);
+  if (!match) return null;
+  const version = leadingVersion(match[1]!.replace(/^[^0-9v]+/, ""));
+  if (!version) return null;
+  return { product: "ruby", version };
+};
+
+/** Whether `path` is a runtime-pin location the EOL analyzer parses. Exported so the scheduler gate shares
+ *  ONE predicate and cannot drift from what this analyzer scans. */
+export function isRuntimePinPath(path: string): boolean {
+  const base = path.split("/").pop() ?? path;
+  return (
+    isDockerfile(path) ||
+    base === ".nvmrc" ||
+    base === ".node-version" ||
+    base === ".python-version" ||
+    base === ".ruby-version" ||
+    base === ".php-version" ||
+    base === ".go-version" ||
+    base === ".rust-version" ||
+    base === ".java-version" ||
+    base === ".terraform-version" ||
+    base === ".elixir-version" ||
+    base === ".kotlin-version" ||
+    base === ".swift-version" ||
+    base === ".perl-version" ||
+    base === ".erlang-version" ||
+    base === ".tool-versions" ||
+    base === "runtime.txt" ||
+    base === "Gemfile" ||
+    base === "go.mod"
+  );
+}
 
 /** Parse one asdf `.tool-versions` line (`tool version [system]`) into an EOL product + version. Pure. */
 export function parseToolVersionLine(
@@ -159,6 +224,36 @@ export function extractVersionPins(
         // asdf/kotlin pin file — same leading-version format, product is Kotlin.
         const version = leadingVersion(line);
         if (version) pins.push({ file: file.path, product: "kotlin", version });
+      } else if (base === ".swift-version") {
+        // swiftenv/asdf pin file — same leading-version format, product is Swift.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "swift", version });
+      } else if (base === ".perl-version") {
+        // plenv/asdf pin file — same leading-version format, product is Perl.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "perl", version });
+      } else if (base === ".erlang-version") {
+        // kerl/asdf pin file — same leading-version format, product is Erlang.
+        const version = leadingVersion(line);
+        if (version) pins.push({ file: file.path, product: "erlang", version });
+      } else if (base === "runtime.txt") {
+        // Heroku stack runtime pin — `python-3.11.6`, `ruby-3.2.2`, etc.
+        const parsed = parseRuntimeTxtLine(line);
+        if (parsed)
+          pins.push({
+            file: file.path,
+            product: parsed.product,
+            version: parsed.version,
+          });
+      } else if (base === "Gemfile") {
+        // Bundler `ruby "X.Y.Z"` directive — the repo's declared Ruby runtime.
+        const parsed = parseGemfileRubyLine(line);
+        if (parsed)
+          pins.push({
+            file: file.path,
+            product: parsed.product,
+            version: parsed.version,
+          });
       } else if (base === ".tool-versions") {
         // asdf multi-tool pin file — one `tool version` pair per line.
         const parsed = parseToolVersionLine(line);

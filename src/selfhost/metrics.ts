@@ -36,6 +36,7 @@ const histograms = new Map<string, HistogramState>();
 const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_queue_pending", { help: "Current in-process queue depth.", type: "gauge" }],
   ["gittensory_queue_dead", { help: "Current in-process dead queue depth.", type: "gauge" }],
+  ["gittensory_dlq_dead_lettered_recent", { help: "DLQ messages dead-lettered within the recent trailing window, sampled at scrape.", type: "gauge" }],
   ["gittensory_queue_processing", { help: "Jobs currently claimed and mid-flight.", type: "gauge" }],
   ["gittensory_queue_runnable_now", { help: "Pending jobs, any priority, currently due (run_after<=now).", type: "gauge" }],
   ["gittensory_queue_live_pending", { help: "Current live-work queue depth.", type: "gauge" }],

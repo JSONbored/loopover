@@ -83,9 +83,9 @@ const SECTION_LINKS = [
     to: "/docs/self-hosting-releases",
   },
   {
-    title: "Beta release checklist",
+    title: "Release checklist",
     description:
-      "The smoke matrix to run against a candidate image before tagging an orb-vX.Y.Z release.",
+      "Versioning, the smoke matrix, an image-contents audit, and release notes for an orb-vX.Y.Z release.",
     to: "/docs/self-hosting-release-checklist",
   },
   {
@@ -174,8 +174,8 @@ function MaintainerSelfHosting() {
           production traffic.
         </li>
         <li>
-          Run the <Link to="/docs/self-hosting-release-checklist">beta release checklist</Link>{" "}
-          before tagging or promoting a candidate image.
+          Run the <Link to="/docs/self-hosting-release-checklist">release checklist</Link> before
+          tagging or promoting a candidate image.
         </li>
       </ol>
 

@@ -366,14 +366,21 @@ export function createSqliteQueue(
    *  against CURRENT observations, independent of how long ago it was deferred. Returns true when it would be
    *  admitted right now (no longer blocked); false when still blocked OR the payload is unparseable (best-
    *  effort -- an unparseable payload is left for the normal dead-letter path, never force-released here). */
-  function isRateLimitAdmissionNowClear(payload: string): boolean {
+  function isRateLimitAdmissionNowClear(payload: string, admissionCache: Map<string, boolean>): boolean {
     let message: JobMessage;
     try {
       message = JSON.parse(payload) as JobMessage;
     } catch {
       return false;
     }
-    return rateLimitAdmissionDelayMs(driver, message) === null;
+    const target = githubRateLimitAdmissionTargetForJob(message);
+    if (target === null) return true;
+    const cacheKey = `${target.kind}:${target.admissionKey ?? ""}`;
+    const cached = admissionCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const clear = rateLimitAdmissionDelayMs(driver, message) === null;
+    admissionCache.set(cacheKey, clear);
+    return clear;
   }
 
   /** See foreground-liveness.ts for the full rationale. A bounded candidate SELECT (foreground-priority, pending,
@@ -390,18 +397,38 @@ export function createSqliteQueue(
    *  allows, selectForegroundDeferralsToRelease picks the oldest first -- a large inherited backlog drains
    *  gradually over several sweep ticks instead of flooding GitHub with every re-attempt at once. Logs +
    *  records a metric ONCE per sweep (aggregate count), not per row, so a large release batch cannot spam the
-   *  log. */
+   *  log.
+   *
+   *  Candidate selection queries an OLDEST window AND a NEWEST window (#selfhost-queue-liveness clear-bucket
+   *  starvation fix), not just one oldest-first window. A single `ORDER BY created_at ASC LIMIT` window can be
+   *  filled ENTIRELY by older still-rate-limited jobs once the backlog exceeds the limit -- selectForegroundDeferralsToRelease's
+   *  clear-bucket-priority sort can only prioritize candidates it is actually shown, so a large-enough glut of
+   *  older blocked jobs would permanently hide every newer, already-admittable candidate from it, defeating the
+   *  whole point of the clear-bucket check. The newest window guarantees a fresh clear-bucket candidate is
+   *  always represented in `eligible` regardless of how large the older-blocked backlog grows, at the same
+   *  total worst-case row/admission-check budget as before (still `maxReleasePerSweep * 2` candidates, just
+   *  split fairly across both ends of the age spectrum instead of packed entirely into the oldest end). */
   function releaseStaleForegroundDeferrals(): number {
     if (!foregroundLivenessConfig.enabled) return 0;
     const now = Date.now();
-    const { rows } = driver.query(
-      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>?`,
-      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now],
-    );
+    const candidateLimit = foregroundLivenessConfig.maxReleasePerSweep;
+    const oldest = driver.query(
+      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? ORDER BY created_at ASC, id ASC LIMIT ?`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+    ).rows;
+    const newest = driver.query(
+      `SELECT id, payload, created_at FROM ${TABLE} WHERE status='pending' AND priority>=? AND run_after>? ORDER BY created_at DESC, id DESC LIMIT ?`,
+      [FOREGROUND_QUEUE_PRIORITY_FLOOR, now, candidateLimit],
+    ).rows;
+    const candidateRowsById = new Map<number, { id: number; payload: string; created_at: number }>();
+    for (const row of [...oldest, ...newest] as Array<{ id: number; payload: string; created_at: number }>) {
+      candidateRowsById.set(row.id, row);
+    }
     const eligible: Array<{ id: number; pendingSinceMs: number; ageStale: boolean; rateLimitClear: boolean }> = [];
-    for (const row of rows as Array<{ id: number; payload: string; created_at: number }>) {
+    const admissionCache = new Map<string, boolean>();
+    for (const row of candidateRowsById.values()) {
       const ageStale = isForegroundDeferralStale(foregroundLivenessConfig, row.created_at, now);
-      const rateLimitClear = isRateLimitAdmissionNowClear(row.payload);
+      const rateLimitClear = isRateLimitAdmissionNowClear(row.payload, admissionCache);
       if (!ageStale && !rateLimitClear) continue;
       eligible.push({ id: row.id, pendingSinceMs: row.created_at, ageStale, rateLimitClear });
     }

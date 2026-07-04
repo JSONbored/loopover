@@ -281,7 +281,7 @@
       },
       "docs": {
         "summary": "Checks changed runtime and base-image pins against EOL calendars.",
-        "looksAt": "Dockerfile FROM lines, .nvmrc, and go.mod runtime pins.",
+        "looksAt": "Dockerfile FROM lines, version-manager pin files (.nvmrc, .python-version, …), Heroku runtime.txt, Gemfile ruby directives, and go.mod runtime pins.",
         "reports": "File, product, version, EOL date, and whether the release is already EOL or close to EOL.",
         "network": "Calls endoflife.date. No GitHub token required.",
         "notes": "Only changed pins are checked; existing old runtimes outside the PR are not reported."

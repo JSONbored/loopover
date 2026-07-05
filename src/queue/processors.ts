@@ -4886,8 +4886,10 @@ async function maybeCloseIssueOverContributorCap(
   // cooldown already honor -- see the matching comment on the PR-side per-repo cap in the PR maintenance path.
   if (typeof cap !== "number" || isAutoCloseExempt(authorLogin, settings.autoCloseExemptLogins)) return;
 
-  const effectiveIssueCap =
-    isNewAccount ? Math.max(1, Math.ceil(cap / 2)) : cap;
+  let effectiveIssueCap = cap;
+  if (isNewAccount) {
+    effectiveIssueCap = Math.max(1, Math.ceil(cap / 2));
+  }
 
   const otherOpenIssues = await listOpenIssues(env, repoFullName);
   const authorLoginLower = authorLogin.toLowerCase();
@@ -5659,12 +5661,13 @@ async function processGitHubWebhook(
                 agentPaused: issueSettings.agentPaused,
                 agentDryRun: issueSettings.agentDryRun,
               });
+              const newAccountLabel = issueSettings.newAccountLabel ?? "new-account";
               await ensurePullRequestLabel(
                 env,
                 installationId,
                 payload.repository.full_name,
                 issue.number,
-                issueSettings.newAccountLabel ?? "new-account",
+                newAccountLabel,
                 { createMissingLabel: issueSettings.createMissingLabel, mode: newAccountMode },
               ).catch(
                 /* v8 ignore next -- fail-safe: a label-application failure must never block the rest of the handler */

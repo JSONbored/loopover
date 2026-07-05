@@ -72,3 +72,13 @@ test("classifyAddedFile flags committed scientific data and columnar artifacts a
   assert.equal(classifyAddedFile("src/parquet.ts"), null);
   assert.equal(classifyAddedFile("lib/npy_utils.py"), null);
 });
+
+test("classifyAddedFile treats minified bundles as vendored and leaves manifest/source paths as ordinary (#2098)", () => {
+  for (const path of ["dist/app.min.js", "static/lib.min.mjs", "assets/vendor.min.css"]) {
+    assert.equal(classifyAddedFile(path), "vendored", path);
+  }
+  // Dependency manifests and normal source are not binary/vendored by path — attestation checks handle them separately.
+  for (const path of ["package.json", "package-lock.json", "requirements.txt", "pyproject.toml", "src/index.ts"]) {
+    assert.equal(classifyAddedFile(path), null, path);
+  }
+});

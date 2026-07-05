@@ -4,7 +4,9 @@
 #
 # Copy this file to your repo root as `.gittensory.yml` and customize from here.
 # (This filename is not read directly — only `.gittensory.yml` / `.github/gittensory.yml` are.)
-# For every supported field, defaults, and examples see `.gittensory.yml.example`.
+# Also shipped at config/examples/gittensory.minimal.yml for self-host operators.
+# For every supported field, defaults, and examples see `.gittensory.yml.example` or
+# config/examples/gittensory.full.yml.
 #
 # Safe by default:
 #   - Gate off (enable explicitly when you are ready)

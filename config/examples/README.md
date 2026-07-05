@@ -5,6 +5,10 @@ This directory ships **generic, safe** examples for the self-host **private** co
 contains no real policy, thresholds, logins, or repo names — copy what you need into your own
 mounted config directory and edit it there (never in this repo).
 
+See **[TEMPLATES.md](./TEMPLATES.md)** for the full template catalog (minimal + exhaustive
+`gittensory.yml` starters, public-vs-private usage, and fleet notes for `gittensory`,
+`awesome-claude`, and `metagraphed` without committing private policy).
+
 The private config directory is read by `src/selfhost/private-config.ts` and is kept **out of the
 public GitHub repo** on purpose: contributors can read a public `.gittensory.yml`, so anti-abuse
 thresholds, maintainer/admin allowlists, autonomy dials, and model/effort settings belong here
@@ -22,10 +26,11 @@ ${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml               # 4. global default,
 ```
 
 `.yaml` and `.json` are accepted everywhere `.yml` is. Every one of these files uses the **exact
-same schema** as the public `.gittensory.yml` — see [`.gittensory.yml.example`](../../.gittensory.yml.example)
-at the repo root for the exhaustive, field-by-field reference (not duplicated here, so the two
-never drift out of sync). For the smallest safe starter, copy [`.gittensory.minimal.yml`](../../.gittensory.minimal.yml)
-to your repo root as `.gittensory.yml` and customize from there.
+same schema** as the public `.gittensory.yml` — see [`gittensory.full.yml`](./gittensory.full.yml)
+(or [`.gittensory.yml.example`](../../.gittensory.yml.example) at the repo root) for the exhaustive,
+field-by-field reference. For the smallest safe starter, copy [`gittensory.minimal.yml`](./gittensory.minimal.yml)
+(or [`.gittensory.minimal.yml`](../../.gittensory.minimal.yml)) to your repo root as `.gittensory.yml`
+or into your private mount and customize from there.
 
 ## Precedence chain
 

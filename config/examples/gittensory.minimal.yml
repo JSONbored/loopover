@@ -1,0 +1,33 @@
+# ============================================================================
+# gittensory.minimal.yml — smallest safe starter config (#1682)
+# ============================================================================
+#
+# WHERE TO COPY (pick one):
+#   PUBLIC REPO — repo root as `.gittensory.yml` (or `.github/gittensory.yml`). Contributors can read it.
+#   PRIVATE SELF-HOST — `${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml` (global default) or
+#     `${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.gittensory.yml` (per-repo override). Never commit real
+#     policy here to a public repo — use the private mount for thresholds, allowlists, and autonomy.
+#
+# Canonical copy also lives at the repo root as `.gittensory.minimal.yml` (kept in sync by CI).
+# For every supported field, defaults, and allowed values see `gittensory.full.yml` or
+# `.gittensory.yml.example`. See `TEMPLATES.md` in this directory for fleet examples.
+#
+# Safe by default:
+#   - Gate off (enable explicitly when you are ready)
+#   - Autonomy observe-only (deny-by-default — no auto-merge, auto-close, or auto-label)
+#   - No auto-maintain / write behavior unless you add it later
+# ============================================================================
+
+# Optional: declare work areas you want contributors to focus on.
+# wantedPaths:
+#   - "src/**"
+
+gate:
+  enabled: false
+
+settings:
+  autonomy:
+    merge: observe
+    close: observe
+    label: observe
+    review_state_label: observe

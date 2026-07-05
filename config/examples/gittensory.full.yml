@@ -1,16 +1,29 @@
 # ============================================================================
+# gittensory.full.yml — exhaustive commented template (#1682)
+# ============================================================================
+#
+# WHERE TO COPY (pick one):
+#   PUBLIC REPO — repo root as `.gittensory.yml` (or `.github/gittensory.yml`). Use for work-area
+#     guidance (`wantedPaths`, test expectations) that contributors may read.
+#   PRIVATE SELF-HOST — `${GITTENSORY_REPO_CONFIG_DIR}/.gittensory.yml` or a per-repo file under
+#     `owner__repo/`. Use for anti-abuse thresholds, maintainer allowlists, autonomy, and anything
+#     contributors must not see or game. See `TEMPLATES.md` for public-vs-private split.
+#
+# Canonical copy also lives at the repo root as `.gittensory.yml.example` (kept in sync by CI).
+#
+# STARTER TEMPLATES (this directory):
+#   gittensory.minimal.yml  — smallest safe copy-paste starter (gate off, observe-only autonomy)
+#   gittensory.full.yml     — this file — every gate:/settings:/review:/features: field documented
+#   global.gittensory.yml   — private fleet global default (illustrative placeholders only)
+#   repo-override.gittensory.yml — private per-repo overlay example
+#
+# ============================================================================
 # .gittensory.yml — per-repo configuration for gittensory CI & gittensory review
 # ============================================================================
 #
 # Drop this file at the root of any repo gittensory watches to tune how the
 # review engine scores, gates, and comments on its pull requests — as
 # config-as-code, versioned alongside the project it governs.
-#
-# STARTER TEMPLATES (also shipped under config/examples/ for self-host operators):
-#   config/examples/gittensory.minimal.yml — smallest safe starter (gate off, observe-only autonomy)
-#   config/examples/gittensory.full.yml    — exhaustive reference (body synced with this file)
-#   .gittensory.minimal.yml                — same minimal starter at repo root
-#   .gittensory.yml.example                — this file
 #
 # WHERE IT LIVES (first match wins):
 #   .gittensory.yml  →  .github/gittensory.yml  →  .gittensory.json  →  .github/gittensory.json

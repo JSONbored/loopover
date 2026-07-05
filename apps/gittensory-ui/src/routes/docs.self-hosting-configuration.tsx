@@ -91,13 +91,81 @@ function SelfHostingConfiguration() {
       <p>
         This page covers the environment layer and the shape of the config file. For the full field
         list — every <code>gate:</code> and <code>settings:</code> key, its default, and what it
-        does — see <Link to="/docs/tuning">Tuning your reviews</Link>, and for a complete,
-        commented, copy-pasteable manifest see{" "}
-        <a href="https://github.com/JSONbored/gittensory/blob/main/.gittensory.yml.example">
-          <code>.gittensory.yml.example</code>
-        </a>{" "}
-        in the repo — the authoritative reference for every field, including several documented only
-        in its comments (see below).
+        does — see <Link to="/docs/tuning">Tuning your reviews</Link>, and for copy-paste templates
+        see the table below (also shipped inside the self-host image at{" "}
+        <code>config/examples/</code>).
+      </p>
+
+      <h2>Config templates</h2>
+      <p>
+        Start from a template instead of reverse-engineering env flags, private-config precedence,
+        and the parser. Every template uses the same schema for a public repo-root{" "}
+        <code>.gittensory.yml</code> or a container-private <code>GITTENSORY_REPO_CONFIG_DIR</code>{" "}
+        mount — only what you put in each file differs.
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "gittensory.minimal.yml",
+            description:
+              "Smallest safe starter — gate off, observe-only autonomy, no accidental merge/close/label writes. Copy to the repo root or a private mount.",
+          },
+          {
+            title: "gittensory.full.yml",
+            description:
+              "Exhaustive commented reference — every gate:, settings:, review:, and features: field with defaults and allowed values. Body kept in sync with .gittensory.yml.example.",
+          },
+          {
+            title: "global.gittensory.yml + repo-override.gittensory.yml",
+            description:
+              "Private self-host only — illustrative fleet global default and per-repo overlay (deep-merge). Never commit real policy into these example paths.",
+          },
+        ]}
+      />
+      <CodeBlock
+        lang="bash"
+        code={`# Public repo (contributor-visible)
+cp config/examples/gittensory.minimal.yml .gittensory.yml
+
+# Self-host private mount (operator-only policy)
+mkdir -p gittensory-config
+cp config/examples/global.gittensory.yml gittensory-config/.gittensory.yml`}
+      />
+      <Callout variant="note">
+        Keep anti-abuse thresholds, maintainer allowlists, and autonomy dials in the{" "}
+        <strong>private</strong> mount — not in a public <code>.gittensory.yml</code> contributors
+        can read. <code>config/examples/TEMPLATES.md</code> documents the public-vs-private split
+        and how to apply the templates to <code>gittensory</code>, <code>awesome-claude</code>, and{" "}
+        <code>metagraphed</code> without committing private policy. Lint before deploy:{" "}
+        <code>npx tsx scripts/gittensory-config-lint.ts path/to/.gittensory.yml</code>.
+      </Callout>
+      <p>Authoritative copies in git:</p>
+      <ul>
+        <li>
+          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/gittensory.minimal.yml">
+            <code>config/examples/gittensory.minimal.yml</code>
+          </a>
+        </li>
+        <li>
+          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/gittensory.full.yml">
+            <code>config/examples/gittensory.full.yml</code>
+          </a>{" "}
+          (same body as{" "}
+          <a href="https://github.com/JSONbored/gittensory/blob/main/.gittensory.yml.example">
+            <code>.gittensory.yml.example</code>
+          </a>
+          )
+        </li>
+        <li>
+          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/TEMPLATES.md">
+            <code>config/examples/TEMPLATES.md</code>
+          </a>{" "}
+          — catalog + fleet usage notes
+        </li>
+      </ul>
+      <p>
+        Several gate-only fields are documented only in the full template comments — see below for
+        the config-as-code blocks with no dashboard equivalent.
       </p>
 
       <h2>Required baseline env</h2>

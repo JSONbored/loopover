@@ -143,6 +143,11 @@ describe('release-selfhost.yml "GitHub Release" step changelog generation', () =
     // The tag being released must never be diffed against itself.
     expect(r.calls).toContain("previous_tag_name=orb-v0.1.0");
     expect(r.calls).not.toContain("previous_tag_name=orb-v0.2.0");
+    // Lock the explicit range as ONE call, not just two substrings present somewhere in the log --
+    // tag_name and previous_tag_name must be parameters of the same generate-notes invocation.
+    const apiCall = r.calls.split("\n").find((line) => line.includes("gh api"));
+    expect(apiCall).toContain("tag_name=orb-v0.2.0");
+    expect(apiCall).toContain("previous_tag_name=orb-v0.1.0");
   });
 
   it("falls back to the plain notes with no changelog section when there is no prior orb-v tag", () => {

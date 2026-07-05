@@ -7,11 +7,13 @@
 #
 # `exclude.authors` matches the exact GitHub API login, which for a bot account includes the `[bot]`
 # suffix (confirmed against this repo's own PR history: dependabot's login is literally
-# `dependabot[bot]`, not `dependabot`) -- excludes the two pure dependency-bump bots so routine version
-# bumps don't clutter an operator-facing image changelog. Deliberately does NOT exclude
-# `sentry[bot]` (Seer-authored fixes for real production errors, e.g. #3305, get a normal
-# `gittensor:bug` label and are exactly the kind of change this changelog exists to surface) or
-# `gittensory-orb[bot]` (the review engine's own rare, real content changes, e.g. #3397).
+# `dependabot[bot]`, not `dependabot`) -- excludes `dependabot[bot]`/`renovate[bot]` (routine dependency
+# version bumps) and `github-actions[bot]` (no PRs here currently, but automation-authored chore/release
+# PRs are the same operator-facing noise if that ever changes) so none of the three clutter an
+# operator-facing image changelog. Deliberately does NOT exclude `sentry[bot]` (Seer-authored fixes for
+# real production errors, e.g. #3305, get a normal `gittensor:bug` label and are exactly the kind of
+# change this changelog exists to surface) or `gittensory-orb[bot]` (the review engine's own rare, real
+# content changes, e.g. #3397).
 changelog:
   exclude:
     authors:

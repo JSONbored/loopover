@@ -10,6 +10,7 @@ export const REES_ANALYZER_NAMES = [
   "license",
   "installScript",
   "heavyDependency",
+  "hardcodedUrl",
   "actionPin",
   "eol",
   "redos",
@@ -24,6 +25,7 @@ export const REES_ANALYZER_NAMES = [
   "history",
   "docCommentDrift",
   "duplication",
+  "errorSwallow",
   "churnHotspot",
   "blameLink",
   "approvalIntegrity",
@@ -39,6 +41,7 @@ export const REES_ANALYZER_NAMES = [
   "todoMarker",
   "magicNumber",
   "conflictMarker",
+  "debugLeftover",
   "commitLint",
 ] as const;
 

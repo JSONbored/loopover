@@ -392,6 +392,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Statsig server secret key: `secret-` + base62 body (SDK validates this prefix).
+    kind: "statsig_server_secret_key",
+    re: /\bsecret-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Paddle API key: `pdl_(live|sdbx)_apikey_` + fixed 26/22/3 alnum segments.
+    kind: "paddle_api_key",
+    re: /\bpdl_(?:live|sdbx)_apikey_[A-Za-z0-9]{26}_[A-Za-z0-9]{22}_[A-Za-z0-9]{3}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

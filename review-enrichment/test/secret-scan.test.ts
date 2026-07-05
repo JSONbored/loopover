@@ -1140,6 +1140,58 @@ test("scanPatch does not flag truncated Knock/Sourcegraph tokens or identifier c
   );
 });
 
+test("scanPatch flags Statsig server secret and Paddle API keys with high confidence", () => {
+  const fakeStatsigKey = "secret-" + "a".repeat(20);
+  const statsigFindings = scanPatch("src/config.ts", hunk([`const statsig = "${fakeStatsigKey}";`]));
+  assert.equal(statsigFindings.length, 1);
+  assert.equal(statsigFindings[0].kind, "statsig_server_secret_key");
+  assert.equal(statsigFindings[0].confidence, "high");
+
+  const fakePaddleKey = ["pdl_", "live", "_apikey_", "a".repeat(26), "_", "b".repeat(22), "_", "c".repeat(3)].join("");
+  const paddleFindings = scanPatch("src/config.ts", hunk([`const paddle = "${fakePaddleKey}";`]));
+  assert.equal(paddleFindings.length, 1);
+  assert.equal(paddleFindings[0].kind, "paddle_api_key");
+  assert.equal(paddleFindings[0].confidence, "high");
+
+  const fakePaddleKeyMixed = ["pdl_", "sdbx", "_apikey_", "A".repeat(26), "_", "b".repeat(22), "_", "c".repeat(3)].join("");
+  const paddleMixedFindings = scanPatch("src/config.ts", hunk([`const paddle = "${fakePaddleKeyMixed}";`]));
+  assert.equal(paddleMixedFindings.length, 1);
+  assert.equal(paddleMixedFindings[0].kind, "paddle_api_key");
+});
+
+test("scanPatch does not flag truncated Statsig/Paddle keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const statsig = "secret-${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const statsig = "secret-${"a".repeat(20)}_suffix";`])).some((f) => f.kind === "statsig_server_secret_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const statsig = "secret-${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "statsig_server_secret_key"),
+    false,
+  );
+
+  const shortPaddleKey = ["pdl_", "live", "_apikey_", "a".repeat(25), "_", "b".repeat(22), "_", "c".repeat(3)].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const paddle = "${shortPaddleKey}";`])).some((f) => f.kind === "paddle_api_key"),
+    false,
+  );
+  const paddleSuffixKey = ["pdl_", "live", "_apikey_", "a".repeat(26), "_", "b".repeat(22), "_", "c".repeat(3), "-suffix"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const paddle = "${paddleSuffixKey}";`])).some((f) => f.kind === "paddle_api_key"),
+    false,
+  );
+  const paddleUnderscoreKey = ["pdl_", "live", "_apikey_", "a".repeat(26), "_", "b".repeat(22), "_", "c".repeat(3), "_suffix"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const paddle = "${paddleUnderscoreKey}";`])).some((f) => f.kind === "paddle_api_key"),
+    false,
+  );
+  const paddleAlphaSuffixKey = ["pdl_", "live", "_apikey_", "a".repeat(26), "_", "b".repeat(22), "_", "c".repeat(3), "z"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const paddle = "${paddleAlphaSuffixKey}";`])).some((f) => f.kind === "paddle_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

@@ -236,6 +236,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Voyage AI API key: `pa-` (platform) or `al-` (MongoDB Atlas) + base62 body.
+    kind: "voyage_api_key",
+    re: /\b(?:pa|al)-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Firecrawl API key: `fc-` + base62 body (alnum only; reject hyphen-continued identifiers).
+    kind: "firecrawl_api_key",
+    re: /\bfc-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

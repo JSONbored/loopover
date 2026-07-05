@@ -599,6 +599,44 @@ test("scanPatch does not flag malformed Pinecone/Tavily keys or identifier conti
   );
 });
 
+test("scanPatch flags Voyage AI and Firecrawl API keys with high confidence", () => {
+  const fakeVoyagePlatform = "pa-" + "a".repeat(20);
+  const voyagePlatformFindings = scanPatch("src/config.ts", hunk([`const voyage = "${fakeVoyagePlatform}";`]));
+  assert.equal(voyagePlatformFindings.length, 1);
+  assert.equal(voyagePlatformFindings[0].kind, "voyage_api_key");
+  assert.equal(voyagePlatformFindings[0].confidence, "high");
+
+  const fakeVoyageAtlas = "al-" + "b".repeat(20);
+  const voyageAtlasFindings = scanPatch("src/config.ts", hunk([`const atlas = "${fakeVoyageAtlas}";`]));
+  assert.equal(voyageAtlasFindings.length, 1);
+  assert.equal(voyageAtlasFindings[0].kind, "voyage_api_key");
+  assert.equal(voyageAtlasFindings[0].confidence, "high");
+
+  const fakeFirecrawlKey = "fc-" + "c".repeat(16);
+  const firecrawlFindings = scanPatch("src/config.ts", hunk([`const firecrawl = "${fakeFirecrawlKey}";`]));
+  assert.equal(firecrawlFindings.length, 1);
+  assert.equal(firecrawlFindings[0].kind, "firecrawl_api_key");
+  assert.equal(firecrawlFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Voyage/Firecrawl keys or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const voyage = "pa-${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const voyage = "pa-${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "voyage_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const voyage = "al-${"b".repeat(20)}_suffix";`])).some((f) => f.kind === "voyage_api_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const firecrawl = "fc-${"c".repeat(15)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const firecrawl = "fc-${"c".repeat(16)}-suffix";`])).some((f) => f.kind === "firecrawl_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

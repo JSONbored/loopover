@@ -9,6 +9,7 @@ import { runManageStatus } from "../lib/manage-status.js";
 import { runPlanCli } from "../lib/plan-store-cli.js";
 import { runQueueCli } from "../lib/portfolio-queue-cli.js";
 import { runStateCli } from "../lib/run-state-cli.js";
+import { runInit } from "../lib/laptop-init.js";
 import { runDoctor, runStatus } from "../lib/status.js";
 import {
   awaitOpportunisticUpdateCheck,
@@ -18,9 +19,13 @@ import {
 
 const cliArgs = process.argv.slice(2);
 
-// `status` and `doctor` are strictly local, offline commands — their contract is to make NO network calls. Dispatch
-// them BEFORE the opportunistic npm-registry update check is even started, so they can never reach that network
-// path (the update check runs for the remaining commands below).
+// `init`, `status`, and `doctor` are strictly local, offline commands — their contract is to make NO network calls.
+// Dispatch them BEFORE the opportunistic npm-registry update check is even started, so they can never reach that
+// network path (the update check runs for the remaining commands below).
+if (cliArgs[0] === "init") {
+  process.exit(runInit(cliArgs.slice(1)));
+}
+
 if (cliArgs[0] === "status") {
   process.exit(runStatus(cliArgs.slice(1)));
 }

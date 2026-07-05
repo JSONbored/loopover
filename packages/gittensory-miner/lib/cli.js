@@ -14,6 +14,7 @@ export function printHelp(input) {
       "  gittensory-miner --version",
       "  gittensory-miner help",
       "  gittensory-miner version",
+      "  gittensory-miner init [--json]                                Bootstrap laptop-mode local SQLite state",
       "  gittensory-miner status [--json]                              Show installed versions + local state paths",
       "  gittensory-miner doctor [--json]                              Check this laptop is set up correctly",
       "  gittensory-miner manage status [--json]                       Show managed PR rows from local portfolio + ledger",

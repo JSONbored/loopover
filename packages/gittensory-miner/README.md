@@ -34,6 +34,19 @@ See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.gittensory-mi
 
 See [`DEPLOYMENT.md`](DEPLOYMENT.md) for laptop vs fleet deployment.
 
+### Laptop-mode quickstart
+
+Zero-infra local install — no Docker, Redis, or Postgres required:
+
+```sh
+npm install -g @jsonbored/gittensory-miner
+gittensory-miner init
+gittensory-miner doctor
+gittensory-miner status
+```
+
+`init` creates `~/.config/gittensory-miner/` (or `GITTENSORY_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only).
+
 From a local checkout:
 
 ```sh
@@ -48,6 +61,9 @@ gittensory-miner --help
 gittensory-miner help
 gittensory-miner --version
 gittensory-miner version
+gittensory-miner init [--json]
+gittensory-miner status [--json]
+gittensory-miner doctor [--json]
 ```
 
 ## Version check

@@ -9,6 +9,7 @@ import {
   runDoctorChecks,
   runStatus,
 } from "../../packages/gittensory-miner/lib/status.js";
+import { initLaptopState } from "../../packages/gittensory-miner/lib/laptop-init.js";
 
 const roots: string[] = [];
 
@@ -51,12 +52,20 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     expect(JSON.parse(String(log.mock.calls[0]?.[0])).stateDir).toBe("/s");
   });
 
-  it("doctor passes on a healthy setup (writable state dir under this Node)", () => {
+  it("doctor passes on a healthy setup (writable state dir, initialized sqlite, optional Docker)", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const checks = runDoctorChecks({ GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") });
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    initLaptopState(env);
+    const checks = runDoctorChecks(env);
     expect(checks.every((check) => check.ok)).toBe(true);
-    expect(checks.map((check) => check.name)).toEqual(["node-version", "engine-resolves", "state-dir-writable"]);
-    expect(runDoctor([], { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") })).toBe(0);
+    expect(checks.map((check) => check.name)).toEqual([
+      "node-version",
+      "engine-resolves",
+      "state-dir-writable",
+      "laptop-state-sqlite",
+      "docker-present",
+    ]);
+    expect(runDoctor([], env)).toBe(0);
     expect(log).toHaveBeenCalled();
   });
 
@@ -79,8 +88,10 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     });
     vi.stubGlobal("fetch", fetchStub);
     vi.spyOn(console, "log").mockImplementation(() => {});
-    runStatus(["--json"], { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") }, tempRoot());
-    runDoctor([], { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") });
+    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    initLaptopState(env);
+    runStatus(["--json"], env, tempRoot());
+    runDoctor([], env);
     expect(fetchStub).not.toHaveBeenCalled();
   });
 });

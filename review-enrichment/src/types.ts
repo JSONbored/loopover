@@ -368,6 +368,16 @@ export interface UnusedExportFinding {
   symbol: string;
 }
 
+/** A TS enum member or string-literal union variant newly ADDED by the PR that a previously exhaustive switch still
+ *  omits. Reports the type name, added member, and optional consumer file — never full file contents. (#2028) */
+export interface ExhaustivenessFinding {
+  file: string;
+  line: number;
+  unionName: string;
+  addedMember: string;
+  consumerFile?: string;
+}
+
 /** A review/approval integrity signal, read from structured PR-reviews API fields only (state, commit_id,
  *  user.login, submitted_at) — never diff/file content. `stale-approval`: the reviewer's latest APPROVED review
  *  predates the PR's current head commit. `self-approval`: the PR author approved their own PR.
@@ -620,6 +630,7 @@ export interface BriefFindings {
   a11y?: A11yFinding[];
   i18n?: I18nFinding[];
   unusedExport?: UnusedExportFinding[];
+  exhaustiveness?: ExhaustivenessFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

@@ -45,6 +45,7 @@ import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
 import { scanUndocumentedExport } from "./undocumented-export.js";
 import { scanUnusedExport } from "./unused-export.js";
+import { scanExhaustivenessDrift } from "./exhaustiveness-drift.js";
 import type {
   AnalyzerDescriptor,
   AnalyzerFn,
@@ -1258,6 +1259,40 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanUnusedExport(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "exhaustiveness",
+    title: "Enum/union exhaustiveness drift",
+    category: "quality",
+    cost: "github-light",
+    defaultEnabled: true,
+    requires: ["files", "github-token", "head-sha"],
+    limits: { maxFiles: 10, maxFetches: 10, maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags when a PR adds a new enum member or string-literal union variant but an exhaustive switch still omits it.",
+      looksAt:
+        "Added enum/union members in changed TS/JS files, comparing pre-PR vs headSha member sets and scanning changed files for switches that covered all old members.",
+      reports: "Type file, line, union/enum name, added member, and optional consumer file — never file contents.",
+      network:
+        "Bounded GitHub contents fetches at headSha for changed source files. Requires GitHub token forwarding for private repos.",
+      notes:
+        "Conservative: only explicit enum/union case labels; switches with a default branch are skipped. Fail-safe on fetch errors or ambiguous type parsing.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Enum/union exhaustiveness drift (switch missing a newly added member)"];
+      for (const item of findings) {
+        const where = item.consumerFile
+          ? `${helpers.safeCodeSpan(item.consumerFile)} switch`
+          : helpers.safeCodeSpan(`${item.file}:${item.line}`);
+        lines.push(
+          `- ${where} omits ${helpers.safeCodeSpan(item.unionName)}.${helpers.safeCodeSpan(item.addedMember)} after it was added at ${helpers.safeCodeSpan(`${item.file}:${item.line}`)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanExhaustivenessDrift(req, fetch, { signal }),
   }),
   descriptor({
     name: "commitLint",

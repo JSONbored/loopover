@@ -1294,6 +1294,34 @@
       }
     },
     {
+      "name": "exhaustiveness",
+      "title": "Enum/union exhaustiveness drift",
+      "category": "quality",
+      "cost": "github-light",
+      "defaultEnabled": true,
+      "profiles": [
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files",
+        "github-token",
+        "head-sha"
+      ],
+      "limits": {
+        "maxFiles": 10,
+        "maxFetches": 10,
+        "maxFindings": 25
+      },
+      "docs": {
+        "summary": "Flags when a PR adds a new enum member or string-literal union variant but an exhaustive switch still omits it.",
+        "looksAt": "Added enum/union members in changed TS/JS files, comparing pre-PR vs headSha member sets and scanning changed files for switches that covered all old members.",
+        "reports": "Type file, line, union/enum name, added member, and optional consumer file — never file contents.",
+        "network": "Bounded GitHub contents fetches at headSha for changed source files. Requires GitHub token forwarding for private repos.",
+        "notes": "Conservative: only explicit enum/union case labels; switches with a default branch are skipped. Fail-safe on fetch errors or ambiguous type parsing."
+      }
+    },
+    {
       "name": "commitLint",
       "title": "Conventional-commit subjects",
       "category": "quality",

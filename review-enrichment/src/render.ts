@@ -494,6 +494,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("a11y", findings.a11y));
   lines.push(...renderDescriptorSection("i18n", findings.i18n));
   lines.push(...renderDescriptorSection("unusedExport", findings.unusedExport));
+  lines.push(...renderDescriptorSection("exhaustiveness", findings.exhaustiveness));
   lines.push(...renderDescriptorSection("hardcodedUrl", findings.hardcodedUrl));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
 

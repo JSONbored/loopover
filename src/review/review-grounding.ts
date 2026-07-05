@@ -51,7 +51,7 @@ export interface ReviewGrounding {
 const FILE_CONTENT_BUDGET = 60_000; // total chars inlined across all changed files
 const MAX_SINGLE_FILE = 24_000; // a file larger than this is marked truncated (review it from the diff)
 // Binary / generated / lockfile paths carry no review signal as full text — skip inlining them.
-const SKIP_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|heic|svg|ico|pdf|lock|min\.js|min\.css|map|woff2?|ttf|eot|mp4|webm|zip|gz|tgz|wasm)$/i;
+const SKIP_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|heic|svg|ico|pdf|lock|min\.js|min\.css|map|woff2?|ttf|eot|mp4|webm|zip|gz|tgz|wasm|class|jar|pyc|pyo)$/i;
 
 /** The grounding feature flags (subset of reviewbot's FeatureToggles). */
 export interface GroundingFlags {

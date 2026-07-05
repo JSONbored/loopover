@@ -161,7 +161,17 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
         return "SHOULD_NOT_FETCH";
       },
     };
-    const binary = ["logo.png", "assets/photo.avif", "assets/poster.bmp", "assets/icon.heic", "dist/pkg.tgz"];
+    const binary = [
+      "logo.png",
+      "assets/photo.avif",
+      "assets/poster.bmp",
+      "assets/icon.heic",
+      "dist/pkg.tgz",
+      "build/App.class",
+      "lib/service.jar",
+      "__pycache__/mod.pyc",
+      "gen/stub.pyo",
+    ];
     const out = await fetchFullFileContents(
       { ciGrounding: false, fullFileContext: true },
       "sha",
@@ -173,6 +183,10 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
         ["assets/poster.bmp"],
         ["assets/icon.heic"],
         ["dist/pkg.tgz"],
+        ["build/App.class"],
+        ["lib/service.jar"],
+        ["__pycache__/mod.pyc"],
+        ["gen/stub.pyo"],
         ["old.ts", "removed"],
       ),
       fetcher,

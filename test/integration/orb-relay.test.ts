@@ -141,6 +141,22 @@ describe("readOrbRelayRegisterBody", () => {
     const req = new Request("http://localhost/r", { method: "POST", body: "x".repeat(MAX_ORB_RELAY_REGISTER_BODY_BYTES + 1) });
     expect(await readOrbRelayRegisterBody(req, null)).toBeNull();
   });
+
+  it("REGRESSION (#orb-broker-500): returns null instead of throwing when the underlying stream errors mid-read", async () => {
+    // Simulates a dropped connection / network reset while GitHub Sentry observed as "Orb broker token exchange
+    // failed (500)" (GITTENSORY-J) — this function is called BEFORE each of its three route call sites' own
+    // try/catch, so an uncaught throw here previously escaped as a bare framework 500 rather than the route's
+    // own clean 4xx/503 JSON response. A first successful chunk (some bytes already arrived) followed by a
+    // stream error is the realistic shape of a mid-read network drop, not an error on the very first read.
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"relayUrl":'));
+        controller.error(new Error("simulated network reset"));
+      },
+    });
+    const req = new Request("http://localhost/r", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+    await expect(readOrbRelayRegisterBody(req, null)).resolves.toBeNull();
+  });
 });
 
 describe("relaySignature", () => {

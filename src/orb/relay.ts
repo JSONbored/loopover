@@ -163,7 +163,13 @@ function parseContentLength(header: string | null | undefined): number | null {
   return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
-/** Read the relay-registration JSON with a small hard ceiling; returns null when the sender exceeds it. */
+/** Read the relay-registration JSON with a small hard ceiling; returns null when the sender exceeds it OR when
+ *  the underlying stream itself errors (a dropped connection / network reset mid-read, #orb-broker-500 — every
+ *  caller already treats null identically to "reject this request", so a transient read failure degrades the
+ *  same way an oversized payload does, instead of throwing UNCAUGHT out of this function. Each of this
+ *  function's three route call sites (POST /v1/orb/token, /v1/orb/relay/register, /v1/orb/relay pull) calls it
+ *  BEFORE its own try/catch, so an uncaught throw here previously escaped as a bare framework 500 instead of the
+ *  route's own clean 4xx/503 JSON error response — fixed once here rather than wrapping all three callers. */
 export async function readOrbRelayRegisterBody(request: Request, contentLengthHeader: string | null | undefined): Promise<string | null> {
   const declared = parseContentLength(contentLengthHeader);
   if (declared !== null && declared > MAX_ORB_RELAY_REGISTER_BODY_BYTES) return null;
@@ -174,17 +180,21 @@ export async function readOrbRelayRegisterBody(request: Request, contentLengthHe
   const decoder = new TextDecoder();
   let total = 0;
   let out = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_ORB_RELAY_REGISTER_BODY_BYTES) {
-      await reader.cancel();
-      return null;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_ORB_RELAY_REGISTER_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      out += decoder.decode(value, { stream: true });
     }
-    out += decoder.decode(value, { stream: true });
+    return out + decoder.decode();
+  } catch {
+    return null;
   }
-  return out + decoder.decode();
 }
 
 export type RelayEnrollment = { enrollId: string; installationId: number };

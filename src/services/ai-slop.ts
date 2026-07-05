@@ -220,8 +220,9 @@ export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput):
   let opinion: SlopOpinion | null;
   let usage: AiReviewActualUsage | undefined;
   if (input.providerKey) {
-    const { text } = await callAiProvider(input.providerKey, SLOP_SYSTEM_PROMPT, user, maxTokens);
+    const { text, usage: byokUsage } = await callAiProvider(input.providerKey, SLOP_SYSTEM_PROMPT, user, maxTokens);
     opinion = text ? parseSlopOpinion(text) : null;
+    usage = byokUsage;
   } else {
     ({ opinion, usage } = await runWorkersSlopOpinion(env, SLOP_SYSTEM_PROMPT, user, maxTokens));
   }

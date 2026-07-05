@@ -266,6 +266,47 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("records real BYOK usage (tokens + cost) on the durable audit row", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: slopJson({ band: "elevated" }) }],
+              usage: { input_tokens: 500, output_tokens: 50 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = enabledEnv(vi.fn());
+    const result = await runGittensoryAiSlopAdvisory(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-x", model: "claude-sonnet-5" },
+    });
+    expect(result.status).toBe("ok");
+    const row = await env.DB.prepare(
+      `select provider, input_tokens, output_tokens, total_tokens, cost_usd
+       from ai_usage_events where feature = ? order by rowid desc limit 1`,
+    )
+      .bind("ai_slop_pr")
+      .first<{
+        provider: string | null;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+        cost_usd: number;
+      }>();
+    expect(row).toMatchObject({
+      provider: "anthropic",
+      input_tokens: 500,
+      output_tokens: 50,
+      total_tokens: 550,
+      cost_usd: 0.00225,
+    });
+  });
 });
 
 describe("the AI slop advisory can never become a gate blocker", () => {

@@ -830,6 +830,247 @@ describe("BYOK provider dispatch", () => {
       ).model,
     ).toBe("claude-custom");
   });
+
+  it("records real Anthropic BYOK usage (tokens + cost) on the durable audit row", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: reviewJson({ assessment: "BYOK review." }) }],
+              usage: { input_tokens: 1000, output_tokens: 200 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret", model: "claude-sonnet-5" },
+    });
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: {
+          provider: "anthropic",
+          model: "claude-sonnet-5",
+          inputTokens: 1000,
+          outputTokens: 200,
+          totalTokens: 1200,
+          costUsd: 0.006,
+        },
+      }),
+    ]);
+    const row = await env.DB.prepare(
+      `select provider, input_tokens, output_tokens, total_tokens, cost_usd
+       from ai_usage_events where feature = ? order by rowid desc limit 1`,
+    )
+      .bind("ai_review_pr")
+      .first<{
+        provider: string | null;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+        cost_usd: number;
+      }>();
+    expect(row).toMatchObject({
+      provider: "anthropic",
+      input_tokens: 1000,
+      output_tokens: 200,
+      total_tokens: 1200,
+      cost_usd: 0.006,
+    });
+  });
+
+  it("records real OpenAI BYOK usage using the provider's own total_tokens", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: reviewJson({ assessment: "BYOK review." }) } }],
+              usage: { prompt_tokens: 800, completion_tokens: 100, total_tokens: 900 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "openai", key: "sk-secret", model: "gpt-5.4" },
+    });
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: {
+          provider: "openai",
+          model: "gpt-5.4",
+          inputTokens: 800,
+          outputTokens: 100,
+          totalTokens: 900,
+          costUsd: 0.0035,
+        },
+      }),
+    ]);
+  });
+
+  it("leaves BYOK costUsd undefined for a model absent from the pricing table, without dropping tokens", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: reviewJson({ assessment: "BYOK review." }) }],
+              usage: { input_tokens: 50, output_tokens: 10 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    // No `model` override — falls back to the provider default, which this pricing table doesn't cover.
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: expect.objectContaining({
+          inputTokens: 50,
+          outputTokens: 10,
+          totalTokens: 60,
+          costUsd: undefined,
+        }),
+      }),
+    ]);
+  });
+
+  it("leaves BYOK usage undefined when the response's usage object has no recognized fields", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: reviewJson({ assessment: "BYOK review." }) } }],
+              usage: {},
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "openai", key: "sk-secret", model: "gpt-5.4" },
+    });
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({ usage: undefined }),
+    ]);
+  });
+
+  it("sums a lone output_tokens toward totalTokens when input_tokens is absent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: reviewJson({ assessment: "BYOK review." }) }],
+              usage: { output_tokens: 40 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: expect.objectContaining({ inputTokens: undefined, outputTokens: 40, totalTokens: 40 }),
+      }),
+    ]);
+  });
+
+  it("sums a lone input_tokens toward totalTokens when output_tokens is absent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: reviewJson({ assessment: "BYOK review." }) }],
+              usage: { input_tokens: 25 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({
+        usage: expect.objectContaining({ inputTokens: 25, outputTokens: undefined, totalTokens: 25 }),
+      }),
+    ]);
+  });
+
+  it("treats a non-object BYOK response body as empty output with no usage", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("null", { status: 200 })));
+    const env = createTestEnv({
+      AI: { run: vi.fn() } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    const result = await runGittensoryAiReview(env, {
+      ...baseInput,
+      providerKey: { provider: "anthropic", key: "sk-ant-secret" },
+    });
+    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
+    expect(result.status === "ok" && result.reviewDiagnostics).toEqual([
+      expect.objectContaining({ status: "empty_output", usage: undefined }),
+    ]);
+  });
 });
 
 describe("Workers AI fallback + degraded output", () => {

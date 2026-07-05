@@ -884,17 +884,95 @@ type ProviderReviewOutcome = {
   diagnostic?: AiReviewDiagnostic | undefined;
 };
 
+/** Static USD-per-million-token pricing for BYOK models. Anthropic/OpenAI responses report token counts but
+ *  never a dollar figure, so this table is the only source for a BYOK call's `costUsd`. A model absent here
+ *  (e.g. a maintainer-configured override this table hasn't been updated for) leaves `costUsd` undefined —
+ *  never fabricated — matching how every other unavailable usage field already degrades in this file. */
+const BYOK_MODEL_PRICING_USD_PER_MTOK: Record<
+  AiReviewProviderKey["provider"],
+  Record<string, { input: number; output: number }>
+> = {
+  anthropic: {
+    "claude-opus-4-8": { input: 5, output: 25 },
+    "claude-opus-4-7": { input: 5, output: 25 },
+    "claude-opus-4-6": { input: 5, output: 25 },
+    "claude-sonnet-5": { input: 3, output: 15 },
+    "claude-sonnet-4-6": { input: 3, output: 15 },
+    "claude-haiku-4-5": { input: 1, output: 5 },
+  },
+  openai: {
+    "gpt-5.5": { input: 5, output: 30 },
+    "gpt-5.5-pro": { input: 30, output: 180 },
+    "gpt-5.4": { input: 2.5, output: 15 },
+    "gpt-5.4-mini": { input: 0.75, output: 4.5 },
+    "gpt-5.4-nano": { input: 0.2, output: 1.25 },
+  },
+};
+
+function priceByokUsageUsd(
+  provider: AiReviewProviderKey["provider"],
+  model: string,
+  inputTokens: number | undefined,
+  outputTokens: number | undefined,
+): number | undefined {
+  if (inputTokens === undefined || outputTokens === undefined) return undefined;
+  const pricing = BYOK_MODEL_PRICING_USD_PER_MTOK[provider][model];
+  if (!pricing) return undefined;
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+}
+
+/** Normalize a BYOK provider's native usage envelope into the same shape `coerceAiUsage` produces for the
+ *  free/self-host path. Anthropic reports `usage: {input_tokens, output_tokens}`; OpenAI reports
+ *  `usage: {prompt_tokens, completion_tokens, total_tokens}` — both snake_case and provider-specific, unlike
+ *  the already-camelCase envelope `coerceAiUsage` reads from `env.AI.run()`. Anthropic's `usage` can also
+ *  carry `cache_creation_input_tokens`/`cache_read_input_tokens`, priced differently than `input_tokens` —
+ *  intentionally not read here, since `callAiProvider` never sends `cache_control`, so Anthropic never
+ *  populates them on this path. */
+function coerceByokUsage(
+  providerKey: AiReviewProviderKey,
+  model: string,
+  rawResult: unknown,
+): AiReviewActualUsage | undefined {
+  if (!rawResult || typeof rawResult !== "object") return undefined;
+  const usage = (rawResult as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return undefined;
+  const record = usage as Record<string, unknown>;
+  const inputTokens =
+    providerKey.provider === "anthropic"
+      ? finiteUsageInteger(record.input_tokens)
+      : finiteUsageInteger(record.prompt_tokens);
+  const outputTokens =
+    providerKey.provider === "anthropic"
+      ? finiteUsageInteger(record.output_tokens)
+      : finiteUsageInteger(record.completion_tokens);
+  const totalTokens =
+    providerKey.provider === "openai" ? finiteUsageInteger(record.total_tokens) : undefined;
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined)
+    return undefined;
+  // The `?? 0` fallback below is always safe: the guard above guarantees that whenever totalTokens is
+  // undefined, at least one of inputTokens/outputTokens is defined.
+  return {
+    provider: providerKey.provider,
+    model,
+    inputTokens,
+    outputTokens,
+    totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+    costUsd: priceByokUsageUsd(providerKey.provider, model, inputTokens, outputTokens),
+  };
+}
+
 /**
- * POST to the maintainer's BYOK provider and return the raw response text (or null + a failure reason).
- * Never throws. Shared by every BYOK AI path (review, slop, …) so the endpoint/timeout/error handling
- * lives in one place; callers parse the returned text into their own shape.
+ * POST to the maintainer's BYOK provider and return the raw response text (or null + a failure reason),
+ * plus real usage (tokens/cost) when the response body included a parseable `usage` field. Never throws.
+ * Shared by every BYOK AI path (review, slop, …) so the endpoint/timeout/error/usage handling lives in one
+ * place; callers parse the returned text into their own shape.
  */
 export async function callAiProvider(
   providerKey: AiReviewProviderKey,
   system: string,
   user: string,
   maxTokens: number,
-): Promise<{ text: string | null; failure?: ProviderFailure }> {
+): Promise<{ text: string | null; usage?: AiReviewActualUsage | undefined; failure?: ProviderFailure }> {
   const model =
     providerKey.model || PROVIDER_DEFAULT_MODEL[providerKey.provider];
   try {
@@ -934,7 +1012,8 @@ export async function callAiProvider(
       });
     }
     if (!response.ok) return { text: null, failure: "http_error" };
-    return { text: coerceAiText(await response.json()) };
+    const body = await response.json();
+    return { text: coerceAiText(body), usage: coerceByokUsage(providerKey, model, body) };
   } catch (error) {
     // AbortSignal.timeout rejects with a TimeoutError; everything else is a network/parse exception.
     const failure: ProviderFailure =
@@ -953,7 +1032,7 @@ async function runProviderReview(
   user: string,
   maxTokens: number,
 ): Promise<ProviderReviewOutcome> {
-  const { text, failure } = await callAiProvider(
+  const { text, usage, failure } = await callAiProvider(
     providerKey,
     system,
     user,
@@ -972,6 +1051,7 @@ async function runProviderReview(
       status: review ? "parsed" : textValue ? "unparseable_output" : "empty_output",
       responseChars: textValue.length,
       hasJsonObject: Boolean(textValue && extractLastJsonObject(textValue)),
+      usage,
     },
   };
 }

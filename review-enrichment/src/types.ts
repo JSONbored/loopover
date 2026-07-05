@@ -378,6 +378,14 @@ export interface ExhaustivenessFinding {
   consumerFile?: string;
 }
 
+/** A changed test file that appears in recent default-branch CI test-check failure history. Counts only — never
+ *  logs or output text. (#2033) */
+export interface FlakyTestFinding {
+  file: string;
+  recentFailures: number;
+  window: string;
+}
+
 /** A review/approval integrity signal, read from structured PR-reviews API fields only (state, commit_id,
  *  user.login, submitted_at) — never diff/file content. `stale-approval`: the reviewer's latest APPROVED review
  *  predates the PR's current head commit. `self-approval`: the PR author approved their own PR.
@@ -631,6 +639,7 @@ export interface BriefFindings {
   i18n?: I18nFinding[];
   unusedExport?: UnusedExportFinding[];
   exhaustiveness?: ExhaustivenessFinding[];
+  flakyTest?: FlakyTestFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

@@ -51,6 +51,7 @@ export const REES_ANALYZER_NAMES = [
   "i18n",
   "unusedExport",
   "exhaustiveness",
+  "flakyTest",
   "commitLint",
 ] as const;
 

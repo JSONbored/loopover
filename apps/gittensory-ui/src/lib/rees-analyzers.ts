@@ -1169,6 +1169,34 @@ export const REES_ANALYZERS = [
     },
   },
   {
+    name: "flakyTest",
+    title: "Flaky-test history",
+    category: "history",
+    cost: "github-heavy",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["files", "github-token"],
+    limits: {
+      maxFilesProbed: 6,
+      maxCommitsPerFile: 5,
+      maxCheckRunFetches: 12,
+      windowDays: 30,
+      maxFindings: 25,
+    },
+    docs: {
+      summary:
+        "For test files this PR touches, surfaces recent default-branch CI test-check failures that reference each file.",
+      looksAt:
+        "Changed test paths, then bounded default-branch commits per file and their check-runs (structured output fields only).",
+      reports:
+        "Test file path, failure-event count, and lookback window — never check logs or output text.",
+      network:
+        "Calls GitHub repo, commits, and check-runs APIs with strict fanout caps. Requires GitHub token forwarding for private repos.",
+      notes:
+        "Conservative: only test-named checks whose output references the file; requires at least two failure events in the window. Emits partial status when the probe budget is exhausted.",
+    },
+  },
+  {
     name: "commitLint",
     title: "Conventional-commit subjects",
     category: "quality",

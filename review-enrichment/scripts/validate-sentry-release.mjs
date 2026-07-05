@@ -214,7 +214,7 @@ export async function validateSentryRelease(env = process.env, fetchImpl = globa
     if (config.requireCommits && commitCount <= 0 && commitIds.length === 0) {
       failures.push("release has no associated commits");
     }
-    if (config.expectedCommitSha && !commitMatches(config.expectedCommitSha, commitIds)) {
+    if (config.requireCommits && config.expectedCommitSha && !commitMatches(config.expectedCommitSha, commitIds)) {
       failures.push(`release commits do not include expected commit ${config.expectedCommitSha}`);
     }
   }

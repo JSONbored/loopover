@@ -119,6 +119,29 @@ test("validateSentryRelease rejects a release missing the expected commit", asyn
   );
 });
 
+test("REGRESSION: validateSentryRelease does NOT enforce the expected-commit match when SENTRY_REQUIRE_COMMITS=false", async () => {
+  // Same mismatched-commit fixture as the strict-mode test above ("def456" vs the expected "abc123"), but with
+  // requireCommits off (upload-sourcemaps.ts's non-strict deploy path: SENTRY_REQUIRE_COMMITS: fields.strict ?
+  // "true" : "false"). SENTRY_COMMIT_SHA is still passed unconditionally (it's the deploy's actual git SHA, not
+  // itself a strictness signal), so expectedCommitSha stays set -- the bug this guards was that the match check
+  // read only `config.expectedCommitSha`, never `config.requireCommits`, so it fired regardless of strict mode.
+  const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/commits/")) return response([{ id: "def456" }]);
+    if (path.endsWith("/deploys/")) return response([{ name: "deploy-1", environment: "production" }]);
+    return response({
+      version: "gittensory-rees@abc123",
+      dateReleased: "2026-06-29T00:00:00Z",
+      commitCount: 1,
+      deployCount: 1,
+      projects: [{ slug: "gittensory" }],
+    });
+  };
+
+  const result = await validateSentryRelease(validationEnv({ SENTRY_REQUIRE_COMMITS: "false" }), fetchImpl);
+  assert.equal(result.release, "gittensory-rees@abc123");
+});
+
 test("validateSentryRelease rejects a release missing the required deploy", async () => {
   const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
     const path = new URL(String(input)).pathname;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankOpportunities, rankOpportunityScore, type OpportunityRankInput } from "../../packages/gittensory-engine/src/opportunity-ranker";
+import { rankOpportunityScore, rankOpportunities, pickTopRankedOpportunities } from "../../packages/gittensory-engine/src/opportunity-ranker";
 
 // A neutral, all-passing candidate (every factor 1, no contention → score 1); tests override one field at a time.
 function input(over: Partial<OpportunityRankInput> = {}): OpportunityRankInput {
@@ -135,5 +135,54 @@ describe("rankOpportunities", () => {
 
   it("returns an empty array for no candidates", () => {
     expect(rankOpportunities([])).toEqual([]);
+  });
+});
+
+describe("pickTopRankedOpportunities", () => {
+  const candidates = [
+    { id: "mid", ...input({ potential: 0.5 }) },
+    { id: "top", ...input() },
+    { id: "low", ...input({ freshness: 0.25 }) },
+  ];
+
+  it("returns the highest-scoring candidates up to the limit", () => {
+    const topTwo = pickTopRankedOpportunities(candidates, 2);
+    expect(topTwo.map((entry) => entry.id)).toEqual(["top", "mid"]);
+    expect(topTwo.map((entry) => entry.rankScore)).toEqual([1, 0.5]);
+  });
+
+  it("returns every candidate when the limit exceeds the list size", () => {
+    expect(pickTopRankedOpportunities(candidates, 10).map((entry) => entry.id)).toEqual([
+      "top",
+      "mid",
+      "low",
+    ]);
+  });
+
+  it("returns an empty array for a zero, negative, or non-finite limit", () => {
+    expect(pickTopRankedOpportunities(candidates, 0)).toEqual([]);
+    expect(pickTopRankedOpportunities(candidates, -1)).toEqual([]);
+    expect(pickTopRankedOpportunities(candidates, Number.NaN)).toEqual([]);
+    expect(pickTopRankedOpportunities(candidates, Number.POSITIVE_INFINITY)).toEqual([]);
+  });
+
+  it("returns an empty array for no candidates", () => {
+    expect(pickTopRankedOpportunities([], 3)).toEqual([]);
+  });
+
+  it("preserves rankOpportunities tie-breaking within the slice", () => {
+    const tie = input({ potential: 0.5 });
+    const tied = [
+      { id: "first", ...tie },
+      { id: "second", ...tie },
+      { id: "winner", ...input() },
+    ];
+    expect(pickTopRankedOpportunities(tied, 2).map((entry) => entry.id)).toEqual(["winner", "first"]);
+  });
+
+  it("is exported from the package barrel", async () => {
+    const barrel = await import("../../packages/gittensory-engine/src/index");
+    expect(typeof barrel.pickTopRankedOpportunities).toBe("function");
+    expect(barrel.pickTopRankedOpportunities(candidates, 1).map((entry) => entry.id)).toEqual(["top"]);
   });
 });

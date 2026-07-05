@@ -5,6 +5,7 @@
 // focus-manifest parse/compile core, duplicate-winner adjudication, and their engine-parity fixtures).
 // More modules land in follow-up issues.
 export {
+  pickTopRankedOpportunities,
   rankOpportunityScore,
   rankOpportunities,
   type OpportunityRankInput,

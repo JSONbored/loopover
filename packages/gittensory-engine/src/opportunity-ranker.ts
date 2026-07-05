@@ -80,3 +80,17 @@ export function rankOpportunities<T>(
     .sort((a, b) => b.rankScore - a.rankScore || a.index - b.index)
     .map(({ candidate, rankScore }) => ({ ...candidate, rankScore }));
 }
+
+/**
+ * Rank candidates and return the top `limit` entries. Non-finite or negative limits return an empty list.
+ * Pure — delegates to {@link rankOpportunities} for ordering and tie-breaking.
+ */
+export function pickTopRankedOpportunities<T>(
+  candidates: Array<T & OpportunityRankInput>,
+  limit: number,
+): Array<Omit<T, "rankScore"> & OpportunityRankInput & { rankScore: number }> {
+  if (!Number.isFinite(limit)) return [];
+  const safeLimit = Math.max(0, Math.trunc(limit));
+  if (safeLimit === 0 || candidates.length === 0) return [];
+  return rankOpportunities(candidates).slice(0, safeLimit);
+}

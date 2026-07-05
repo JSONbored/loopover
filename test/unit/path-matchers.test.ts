@@ -120,6 +120,12 @@ describe("isGeneratedFile", () => {
     expect(classifyChangedFile("proto/messages.pb.cr")).toBe("generated");
   });
 
+  it("matches Haskell protobuf output alongside the other protoc plugins", () => {
+    expect(isGeneratedFile("proto/messages.pb.hs")).toBe(true);
+    expect(isGeneratedFile("src/Main.hs")).toBe(false);
+    expect(classifyChangedFile("proto/messages.pb.hs")).toBe("generated");
+  });
+
   it("matches Swift protobuf, Dart freezed/retrofit, C# designer/XAML, and Objective-C protoc output", () => {
     for (const path of [
       "proto/messages.pb.swift",
@@ -446,6 +452,7 @@ describe("classifyChangedFile", () => {
       ["proto/messages.pb.hrl", "generated"],
       ["proto/messages.pb.cr", "generated"],
       ["dist/pkg.wasm.map", "generated"],
+      ["proto/messages.pb.hs", "generated"],
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
       ["bun.lock", "lockfile"],

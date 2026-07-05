@@ -54,10 +54,11 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     // `.pb.cc` / `.pb.h`, the Swift plugin emits `.pb.swift`, the Dart plugin emits `.pb.dart`,
     // the Kotlin plugin emits `.pb.kt`, the C# plugin emits `.pb.cs`, the Rust plugin emits `.pb.rs`,
     // the Elixir plugin emits `.pb.ex`, the Erlang gpb plugin emits `.pb.erl` / `.pb.hrl`, the Crystal
-    // plugin emits `.pb.cr`, and the Objective-C plugin emits `.pbobjc.{h,m}` plus gRPC `.pbrpc.{h,m}`
-    // service stubs. Swift gRPC emits sibling `.grpc.swift` service stubs.
+    // plugin emits `.pb.cr`, the Haskell plugin emits `.pb.hs`, and the Objective-C plugin emits
+    // `.pbobjc.{h,m}` plus gRPC `.pbrpc.{h,m}` service stubs. Swift gRPC emits sibling `.grpc.swift`
+    // service stubs.
     // `.pb.dart`/`.pb.kt`/`.pb.cs` (the `.pb` infix keeps hand-written sources from matching).
-    /\.pb\.(go|ts|js|cc|h|swift|dart|kt|cs|rs|ex|erl|hrl|cr)$/.test(norm) ||
+    /\.pb\.(go|ts|js|cc|h|swift|dart|kt|cs|rs|ex|erl|hrl|cr|hs)$/.test(norm) ||
     /\.grpc\.swift$/.test(norm) ||
     /\.pbobjc\.(h|m)$/.test(norm) ||
     /\.pbrpc\.(h|m)$/.test(norm) ||

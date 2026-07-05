@@ -30,6 +30,7 @@ import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanCommitLint } from "./commit-lint.js";
+import { scanErrorSwallow } from "./error-swallow.js";
 import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
@@ -958,6 +959,45 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanCommitLint(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "errorSwallow",
+    title: "Swallowed errors",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags newly-added catch blocks that swallow the error: an empty body, a body that just returns null/undefined, or one that neither rethrows, logs, nor references the caught binding.",
+      looksAt: "Added lines in JS/TS source (a single-line `catch` block) and Python (`except …: pass`).",
+      reports: "File, line, and the swallow kind — never line content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Single-line by design: a catch body spread across lines is not tracked (the safe, false-negative direction). String literals and comments are blanked first.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (kind: (typeof findings)[number]["kind"]): string => {
+        switch (kind) {
+          case "empty-catch":
+            return "an empty catch body silently discards the error";
+          case "return-null":
+            return "the catch returns null/undefined, swallowing the error";
+          case "unused-binding":
+            return "the catch never rethrows, logs, or references the caught error";
+        }
+      };
+      const lines = ["### Swallowed errors (silent failure risk)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.kind)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanErrorSwallow(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

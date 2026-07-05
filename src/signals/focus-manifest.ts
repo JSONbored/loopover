@@ -4,7 +4,7 @@ import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../setting
 import { normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { mergeContributorBlacklists, normalizeContributorBlacklist } from "../settings/contributor-blacklist";
 import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
-import { DEFAULT_TYPE_LABELS, normalizeTypeLabelSet } from "../settings/pr-type-label";
+import { DEFAULT_TYPE_LABELS, MAX_TYPE_LABEL_NAME_LENGTH, normalizeTypeLabelSet } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION, normalizeLinkedIssueLabelPropagationConfig, VALID_LINKED_ISSUE_LABEL_PROPAGATION_MODES } from "../review/linked-issue-label-propagation";
 import { DEFAULT_LINKED_ISSUE_HARD_RULES, isLinkedIssueHardRuleMode, normalizeLinkedIssueHardRulesConfig } from "../review/linked-issue-hard-rules-config";
 import { normalizeModerationLabel, normalizeModerationRules } from "../settings/moderation-rules";
@@ -1154,7 +1154,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   // that fallback into the sparse override would silently overwrite a DB-customized value with the
   // built-in default on a config typo, instead of leaving the DB value alone. The loop is generic over
   // whatever keys the raw object actually has (not hardcoded to bug/feature/priority), so an arbitrary
-  // custom category (e.g. `security`) sparse-overrides exactly like a built-in one.
+  // custom category (e.g. `security`) sparse-overrides exactly like a built-in one. The normalizer
+  // enforces the category-count and label-name caps before a sparse key can survive into the override.
   if (typeof r.typeLabels === "object" && r.typeLabels !== null && !Array.isArray(r.typeLabels)) {
     const rawTypeLabels = r.typeLabels as Record<string, unknown>;
     if (Object.keys(rawTypeLabels).length === 0) {
@@ -1166,10 +1167,10 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
       out.typeLabels = null;
     } else {
       const validated = normalizeTypeLabelSet(rawTypeLabels, warnings);
-      const isValidLabelName = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
+      const isValidLabelName = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0 && value.trim().length <= MAX_TYPE_LABEL_NAME_LENGTH;
       const sparseTypeLabels: Partial<PrTypeLabelSet> = {};
       for (const key of Object.keys(rawTypeLabels)) {
-        if (isValidLabelName(rawTypeLabels[key])) sparseTypeLabels[key] = validated[key];
+        if (isValidLabelName(rawTypeLabels[key]) && validated[key] !== undefined) sparseTypeLabels[key] = validated[key];
       }
       out.typeLabels = sparseTypeLabels;
     }

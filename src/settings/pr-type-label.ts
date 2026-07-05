@@ -6,7 +6,7 @@
 //              changed files, AI output, or existing PR labels.
 //   feature  — genuine NEW functionality only (conventional-commit `feat`/`feature`).
 //   bug      — EVERYTHING ELSE: fix, test, docs, chore, refactor, perf, ci, build, style, revert.
-// A self-hoster can register any number of ADDITIONAL categories in `typeLabels` beyond these three (e.g.
+// A self-hoster can register a bounded number of ADDITIONAL categories in `typeLabels` beyond these three (e.g.
 // `security: "area:security"`) — an extra category is never chosen by title-classification (only bug/
 // feature are), only ever by a configured `linkedIssueLabelPropagation` mapping's `prLabel` (which can
 // target ANY string, registered in `typeLabels` or not); registering it here just makes it participate
@@ -33,6 +33,9 @@ export const DEFAULT_TYPE_LABELS: PrTypeLabelSet = {
  *  property access here, a configured set can carry more or fewer categories than the default. */
 export const ALL_TYPE_LABELS: readonly string[] = Object.values(DEFAULT_TYPE_LABELS);
 
+export const MAX_TYPE_LABEL_CATEGORIES = 32;
+export const MAX_TYPE_LABEL_NAME_LENGTH = 50;
+
 const FEATURE_TITLE_ACTION_RE = /\b(add|adds|added|create|creates|created|enable|enables|enabled|implement|implements|implemented|integrate|integrates|integrated|introduce|introduces|introduced|launch|launches|launched|support|supports|supported|wire|wires|wired)\b/i;
 const FEATURE_TITLE_DOWNGRADE_RE = /\b(avoid|block|bug|bugfix|cache|classify|classifies|classifying|cleanup|clean-up|clean up|detect|detects|detecting|docs?|fix|format|guard|lint|normalize|recognize|recognizes|recognizing|refactor|regression|rename|test|tests|testing|tighten|typo)\b/i;
 
@@ -55,7 +58,8 @@ export function deriveKindFromTitle(title: string | undefined): "bug" | "feature
  *  back to the corresponding built-in default — so a repo can override just one built-in label name
  *  (e.g. only `priority`) and keep the others default. Any EXTRA key present in `input` beyond the
  *  built-in set (a self-hoster's own custom category, e.g. `security`) is included verbatim when
- *  valid; there is no built-in default for it to fall back to, so an invalid extra-category value is
+ *  valid, up to `MAX_TYPE_LABEL_CATEGORIES` total categories and GitHub's 50-character label-name
+ *  limit; there is no built-in default for it to fall back to, so an invalid extra-category value is
  *  dropped entirely (warned, not defaulted) rather than silently defaulted. A non-object input yields
  *  the full default set; omitted is normal (no warning), present-but-wrong-shaped warns. An input that
  *  IS a valid object but has zero own keys (`{}`) also yields the full default set here — this
@@ -78,16 +82,22 @@ export function normalizeTypeLabelSet(input: unknown, warnings: string[]): PrTyp
   const result: PrTypeLabelSet = {};
   for (const key of keys) {
     const value = record[key];
+    const wouldAddCategory = result[key] === undefined;
+    if (wouldAddCategory && Object.keys(result).length >= MAX_TYPE_LABEL_CATEGORIES) {
+      if (value !== undefined) warnings.push(`settings.typeLabels has more than ${MAX_TYPE_LABEL_CATEGORIES} categories; ignoring ${key}.`);
+      continue;
+    }
     const builtInDefault: string | undefined = DEFAULT_TYPE_LABELS[key];
-    if (typeof value === "string" && value.trim().length > 0) {
+    if (typeof value === "string" && value.trim().length > 0 && value.trim().length <= MAX_TYPE_LABEL_NAME_LENGTH) {
       result[key] = value.trim();
       continue;
     }
     if (value !== undefined) {
+      const reason = typeof value === "string" && value.trim().length > MAX_TYPE_LABEL_NAME_LENGTH ? `a non-empty string no longer than ${MAX_TYPE_LABEL_NAME_LENGTH} characters` : "a non-empty string";
       warnings.push(
         builtInDefault !== undefined
-          ? `settings.typeLabels.${key} must be a non-empty string; using the default "${builtInDefault}".`
-          : `settings.typeLabels.${key} must be a non-empty string; ignoring it.`,
+          ? `settings.typeLabels.${key} must be ${reason}; using the default "${builtInDefault}".`
+          : `settings.typeLabels.${key} must be ${reason}; ignoring it.`,
       );
     }
     // Reached for BOTH an invalid present value and an absent one -- a built-in category (bug/feature/
@@ -137,7 +147,7 @@ export function resolvePrTypeLabel(input: {
 }): PrTypeLabelDecision {
   const labels = input.labels ?? DEFAULT_TYPE_LABELS;
   const isRealLabel = (label: string | undefined): label is string => typeof label === "string" && label.length > 0;
-  const typeLabelSet = Object.values(labels).filter(isRealLabel);
+  const typeLabelSet = Object.values(labels).filter(isRealLabel).filter((label) => label.length <= MAX_TYPE_LABEL_NAME_LENGTH).slice(0, MAX_TYPE_LABEL_CATEGORIES);
   const titleLabel: string | undefined = labels[deriveKindFromTitle(input.title)];
   const decide = (applyLabels: ReadonlyArray<string | undefined>, source: PrTypeLabelDecision["source"]): PrTypeLabelDecision => {
     const apply = [...new Set(applyLabels.filter(isRealLabel))];

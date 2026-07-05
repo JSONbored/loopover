@@ -23,6 +23,7 @@ import {
   type FocusManifest,
 } from "../../src/signals/focus-manifest";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY } from "../../src/settings/command-authorization";
+import { MAX_TYPE_LABEL_CATEGORIES, MAX_TYPE_LABEL_NAME_LENGTH } from "../../src/settings/pr-type-label";
 import type { RepositorySettings } from "../../src/types";
 
 const FULL_MANIFEST = {
@@ -2060,6 +2061,27 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
       const db = { typeLabels: { bug: "kind:bug", feature: "kind:feature", priority: "kind:priority" } } as unknown as RepositorySettings;
       const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { typeLabels: { security: "area:security" } } }));
       expect(eff.typeLabels).toEqual({ bug: "kind:bug", feature: "kind:feature", priority: "kind:priority", security: "area:security" });
+    });
+
+    it("caps a sparse manifest override before it reaches effective settings", () => {
+      const rawTypeLabels = Object.fromEntries(Array.from({ length: MAX_TYPE_LABEL_CATEGORIES + 5 }, (_, index) => [`custom${index}`, `area:${index}`]));
+
+      const parsed = parseFocusManifest({ settings: { typeLabels: rawTypeLabels } });
+      const eff = resolveEffectiveSettings({ typeLabels: {} } as unknown as RepositorySettings, parsed);
+
+      expect(Object.keys(parsed.settings.typeLabels ?? {})).toHaveLength(MAX_TYPE_LABEL_CATEGORIES - 3);
+      expect(eff.typeLabels).toEqual(Object.fromEntries(Array.from({ length: MAX_TYPE_LABEL_CATEGORIES - 3 }, (_, index) => [`custom${index}`, `area:${index}`])));
+      expect(parsed.warnings.some((w) => w.includes("more than 32 categories") && w.includes("custom29"))).toBe(true);
+    });
+
+    it("drops overlong labels from a sparse manifest override before merging with DB settings", () => {
+      const parsed = parseFocusManifest({ settings: { typeLabels: { security: "x".repeat(MAX_TYPE_LABEL_NAME_LENGTH + 1) } } });
+      const db = { typeLabels: { bug: "kind:bug" } } as unknown as RepositorySettings;
+      const eff = resolveEffectiveSettings(db, parsed);
+
+      expect(parsed.settings.typeLabels).toEqual({});
+      expect(eff.typeLabels).toEqual(db.typeLabels);
+      expect(parsed.warnings.some((w) => w.includes("settings.typeLabels.security") && w.includes("no longer than 50"))).toBe(true);
     });
 
     it("does not unexpectedly reset unrelated categories when a sparse override only adds a new one (invariant: sparse overrides layer correctly)", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TYPE_LABELS, deriveKindFromTitle, normalizeTypeLabelSet, resolvePrTypeLabel } from "../../src/settings/pr-type-label";
+import { DEFAULT_TYPE_LABELS, MAX_TYPE_LABEL_CATEGORIES, MAX_TYPE_LABEL_NAME_LENGTH, deriveKindFromTitle, normalizeTypeLabelSet, resolvePrTypeLabel } from "../../src/settings/pr-type-label";
 import type { LinkedIssueLabelPropagationConfig } from "../../src/types";
 
 describe("deriveKindFromTitle", () => {
@@ -159,6 +159,24 @@ describe("resolvePrTypeLabel (#priority-linked-issue-gate)", () => {
       expect(result).toEqual({ applyLabels: ["area:security"], removeLabels: [], source: "propagation_additive" });
     });
 
+    it("caps cleanup to the bounded type-label category set", () => {
+      const labels = Object.fromEntries(Array.from({ length: MAX_TYPE_LABEL_CATEGORIES + 20 }, (_, index) => [`custom${index}`, `area:${index}`]));
+
+      const result = resolvePrTypeLabel({ title: "fix: y", labels });
+
+      expect(result.applyLabels).toEqual([]);
+      expect(result.removeLabels).toHaveLength(MAX_TYPE_LABEL_CATEGORIES);
+      expect(result.removeLabels).toEqual(Array.from({ length: MAX_TYPE_LABEL_CATEGORIES }, (_, index) => `area:${index}`));
+    });
+
+    it("ignores overlong labels when computing cleanup", () => {
+      const overlong = "x".repeat(MAX_TYPE_LABEL_NAME_LENGTH + 1);
+
+      const result = resolvePrTypeLabel({ title: "fix: y", labels: { bug: "kind:bug", feature: overlong, priority: "kind:priority" } });
+
+      expect(result).toEqual({ applyLabels: ["kind:bug"], removeLabels: ["kind:priority"], source: "title" });
+    });
+
     it("only cleans up categories actually configured when a repo drops down to a subset of the built-in triad", () => {
       // A self-hoster who only wants a bug/feature split, no priority category at all.
       const result = resolvePrTypeLabel({ title: "feat: add provider fallback", labels: { bug: "gittensor:bug", feature: "gittensor:feature" } });
@@ -238,6 +256,31 @@ describe("normalizeTypeLabelSet (#priority-linked-issue-gate)", () => {
         security: "area:security",
         docs: "area:docs",
       });
+    });
+
+    it("caps custom categories to a bounded set and warns for overflow entries", () => {
+      const warnings: string[] = [];
+      const input = Object.fromEntries(Array.from({ length: MAX_TYPE_LABEL_CATEGORIES + 5 }, (_, index) => [`custom${index}`, `area:${index}`]));
+
+      const result = normalizeTypeLabelSet(input, warnings);
+
+      expect(Object.keys(result)).toHaveLength(MAX_TYPE_LABEL_CATEGORIES);
+      expect(result.custom28).toBe("area:28");
+      expect(result.custom29).toBeUndefined();
+      expect(warnings.some((w) => w.includes("more than 32 categories") && w.includes("custom29"))).toBe(true);
+    });
+
+    it("rejects overlong label names and warns", () => {
+      const warnings: string[] = [];
+      const overlong = "x".repeat(MAX_TYPE_LABEL_NAME_LENGTH + 1);
+
+      expect(normalizeTypeLabelSet({ security: overlong, bug: overlong }, warnings)).toEqual({
+        bug: DEFAULT_TYPE_LABELS.bug,
+        feature: DEFAULT_TYPE_LABELS.feature,
+        priority: DEFAULT_TYPE_LABELS.priority,
+      });
+      expect(warnings.some((w) => w.includes("settings.typeLabels.security") && w.includes("no longer than 50"))).toBe(true);
+      expect(warnings.some((w) => w.includes("settings.typeLabels.bug") && w.includes("no longer than 50") && w.includes(DEFAULT_TYPE_LABELS.bug!))).toBe(true);
     });
 
     it("drops an invalid custom category entirely (no built-in default to fall back to) and warns", () => {

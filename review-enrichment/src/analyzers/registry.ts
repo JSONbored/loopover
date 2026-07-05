@@ -1,3 +1,4 @@
+import { scanA11y } from "./a11y-regression.js";
 import { scanActionPins } from "./actions-pin.js";
 import { scanApprovalIntegrity } from "./approval-integrity.js";
 import { scanAssetWeight } from "./asset-weight.js";
@@ -1205,6 +1206,47 @@ export const ANALYZER_DESCRIPTORS = [
     },
     run: (req, { signal, analysis, diagnostics }) =>
       scanCommitLint(req, fetch, { signal, analysis, diagnostics }),
+  }),
+  descriptor({
+    name: "a11y",
+    title: "Accessibility regressions",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags common accessibility regressions in added JSX/HTML markup: an <img> without alt, a clickable non-interactive element with no keyboard handler or role, a form control with no label association, and a positive tabindex.",
+      looksAt: "Self-contained added tags (open through close on one line) in .jsx, .tsx, .html, and .vue files.",
+      reports: "File, line, and public-safe rule kind — never markup content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Only matches tags whose full opening tag appears on a single added line; multi-line attribute lists are not scanned.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const explain = (rule: (typeof findings)[number]["rule"]): string => {
+        switch (rule) {
+          case "img-alt":
+            return "<img> missing alt text";
+          case "click-events-have-key-events":
+            return "onClick on a non-interactive element with no keyboard handler or role";
+          case "label-control":
+            return "form control with no way to associate a label";
+          case "positive-tabindex":
+            return "positive tabindex breaks natural tab order";
+        }
+      };
+      const lines = ["### Accessibility regressions (added markup)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${explain(item.rule)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanA11y(req, signal),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

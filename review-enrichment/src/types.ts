@@ -545,6 +545,18 @@ export interface CommitLintFinding {
   reason: "bad-type" | "missing-colon" | "too-long" | "empty";
 }
 
+/** An accessibility regression in added JSX/HTML markup — the a11y half of the #1499 epic 'accessibility and i18n
+ *  regression' idea (#2026, part of #1499). Reports location + rule only, never markup content. */
+export interface A11yFinding {
+  file: string;
+  line: number;
+  rule:
+    | "img-alt"
+    | "click-events-have-key-events"
+    | "label-control"
+    | "positive-tabindex";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -591,6 +603,7 @@ export interface BriefFindings {
   i18n?: I18nFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
+  a11y?: A11yFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

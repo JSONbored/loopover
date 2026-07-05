@@ -54,6 +54,7 @@ const EXPECTED_ANALYZERS = [
   "errorSwallow",
   "i18n",
   "commitLint",
+  "a11y",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

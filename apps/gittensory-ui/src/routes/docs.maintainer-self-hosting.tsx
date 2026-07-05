@@ -203,6 +203,94 @@ function MaintainerSelfHosting() {
         <Link to="/docs/tuning">Tuning your reviews</Link> for gate semantics and this section for
         running the service yourself.
       </p>
+
+      <h2>Moving a repo between hosted and self-host</h2>
+      <p>
+        &quot;Hosted&quot; here means the private managed-beta shared <code>gittensory</code> App
+        described in <Link to="/docs/github-app">GitHub App configuration</Link> — a repo installed
+        there is reviewed by gittensory&apos;s own cloud Worker and its own database.
+        &quot;Self-host&quot; means your own container from{" "}
+        <Link to="/docs/self-hosting-quickstart">Quickstart</Link>, with its own GitHub App (or
+        brokered Orb enrollment) and its own data store. There is{" "}
+        <strong>no automated migration path between the two</strong> today — moving a repo is a
+        manual App swap plus re-creating whatever settings you had, not a toggle.
+      </p>
+
+      <h3>Switching a repo from hosted to self-host</h3>
+      <ol>
+        <li>
+          Stand up your self-host instance first and confirm <code>/ready</code> is healthy — see{" "}
+          <Link to="/docs/self-hosting-quickstart">Quickstart</Link> — before touching the hosted
+          install, so the repo is never briefly reviewed by nothing.
+        </li>
+        <li>
+          Create <strong>your own</strong> GitHub App via the self-host{" "}
+          <Link to="/docs/self-hosting-github-app">setup wizard</Link> (or brokered Orb enrollment).
+          You cannot repoint the existing shared hosted App at your self-host container — the shared
+          App&apos;s credentials belong to gittensory&apos;s cloud Worker, and{" "}
+          <code>src/selfhost/setup-wizard.ts</code> always mints a distinct App tied to your
+          instance&apos;s own webhook URL.
+        </li>
+        <li>
+          Install your new self-host App on the repo, choosing only that repo (or the org, if you're
+          migrating several at once).
+        </li>
+        <li>
+          Uninstall the shared hosted App from that repo (repo Settings → Integrations → GitHub Apps
+          → gittensory → Uninstall, or the equivalent org-level App settings page) once you&apos;ve
+          confirmed the self-host App is reviewing PRs correctly. Leaving both installed means two
+          reviewers post competing checks and comments on the same PRs.
+        </li>
+      </ol>
+
+      <h3>What does not carry over automatically</h3>
+      <p>
+        Hosted-side settings live in gittensory&apos;s own cloud database, keyed by repo full name —{" "}
+        <code>resolveRepositorySettings</code> (<code>src/settings/repository-settings.ts</code>)
+        reads them from <code>env.DB</code>, which is a completely different database instance than
+        your self-host container&apos;s. A self-host instance has no access to, and no import path
+        for, whatever thresholds, gate modes, or review-mode settings you configured on the hosted
+        side through the control panel or API. If you want the same behavior, you have to
+        re-configure it on the new instance from scratch — there is no export/import tool for this
+        today.
+      </p>
+      <p>
+        <strong>
+          One thing genuinely does carry over: a repo&apos;s own <code>.gittensory.yml</code>
+        </strong>{" "}
+        (config-as-code), because it lives in the repository&apos;s git history, not in either
+        service&apos;s database. <code>resolveRepositorySettings</code> overlays it on top of
+        whatever DB settings exist, on either hosted or self-host — so gate-mode overrides,
+        thresholds, and other settings expressed in that file apply identically the moment the new
+        App starts reviewing, with nothing to re-enter.
+      </p>
+      <Callout variant="warn" title="Review history does not move">
+        Past review comments, check-run history, and any per-PR state gittensory recorded while the
+        hosted App was active stay wherever they were created — GitHub comments and check runs are
+        never deleted or copied by an uninstall/install, but nothing in the self-host database is
+        backfilled from the hosted side. A migrated repo starts its self-host review history from
+        zero.
+      </Callout>
+      <p>
+        What stays identical for contributors either way: the review still posts as a{" "}
+        <code>gittensory[bot]</code>-style comment (under your own App&apos;s slug once you migrate,
+        not literally <code>gittensory[bot]</code>) plus the same check-run shape, and the gate
+        semantics in <Link to="/docs/tuning">Tuning your reviews</Link> and{" "}
+        <Link to="/docs/how-reviews-work">How reviews work</Link> are unchanged — only the
+        infrastructure and the settings storage location differ.
+      </p>
+
+      <h3>Switching a repo from self-host back to hosted</h3>
+      <p>
+        The reverse migration has the same shape and the same gap: uninstall your self-host App from
+        the repo, install the shared hosted App (if you have managed-beta access — see{" "}
+        <Link to="/docs/github-app">GitHub App configuration</Link>), and re-create any DB-backed
+        settings on the hosted side. <code>.gittensory.yml</code> again carries over for free since
+        it travels with the repo; nothing else does. Your self-host instance&apos;s data volumes are
+        untouched by this — see{" "}
+        <Link to="/docs/self-hosting-operations">Uninstalling and decommissioning</Link> if you also
+        intend to shut the instance down rather than keep it idle or reuse it for other repos.
+      </p>
     </DocsPage>
   );
 }

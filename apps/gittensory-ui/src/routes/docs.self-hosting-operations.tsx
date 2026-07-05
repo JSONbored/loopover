@@ -10,13 +10,13 @@ export const Route = createFileRoute("/docs/self-hosting-operations")({
       {
         name: "description",
         content:
-          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, routine checks, and safe updates/rollback.",
+          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, routine checks, safe updates/rollback, and clean uninstall/decommissioning.",
       },
       { property: "og:title", content: "Self-host operations — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, routine checks, and safe updates/rollback.",
+          "Operate the self-hosted Gittensory review service: readiness, metrics, logs, dashboards, jobs, queues, routine checks, safe updates/rollback, and clean uninstall/decommissioning.",
       },
       { property: "og:url", content: "/docs/self-hosting-operations" },
     ],
@@ -609,6 +609,117 @@ docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q gittensory)"
       <p>
         If an operating check fails, go to{" "}
         <Link to="/docs/self-hosting-troubleshooting">Self-host troubleshooting</Link>.
+      </p>
+
+      <h2>Uninstalling and decommissioning</h2>
+      <p>
+        Tearing an instance down cleanly touches four independent things: the GitHub App
+        installation, the data volumes, brokered-mode enrollment, and control-panel access. None of
+        this is scripted today — do each step deliberately, in this order, and decide what to keep
+        before you delete anything.
+      </p>
+
+      <h3>1. Revoke the GitHub App installation</h3>
+      <p>
+        Uninstalling stops GitHub from sending any further webhook events and immediately revokes
+        the App&apos;s installation tokens — nothing on the self-host side needs to be told; there
+        is no <code>installation</code> <code>deleted</code> webhook handler to run first. From the
+        repo or org: Settings → Integrations → GitHub Apps → your App → Uninstall. Do this before
+        stopping the container so you are not left with a dangling install pointed at a dead webhook
+        URL.
+      </p>
+      <p>
+        If you only want to pause reviews without losing the App&apos;s configuration (permissions,
+        webhook URL, private key), suspend the installation instead of uninstalling it — GitHub
+        stops delivering events to a suspended install but keeps everything else intact for a later
+        resume.
+      </p>
+
+      <h3>2. Decide what happens to the data volumes</h3>
+      <p>
+        Stopping the container does not delete anything — <code>docker compose stop</code> or{" "}
+        <code>docker compose down</code> (without <code>-v</code>) leaves every named volume (
+        <code>gittensory-data</code>, <code>gittensory-pg</code>, <code>qdrant-data</code>,{" "}
+        <code>gittensory-backups</code>, <code>grafana-data</code>, and the rest declared in{" "}
+        <code>docker-compose.yml</code>) on disk, along with the <code>./gittensory-config</code>{" "}
+        host directory (a bind mount, not a named volume, so it is never affected by <code>-v</code>{" "}
+        either way). Pick one:
+      </p>
+      <FeatureRow
+        items={[
+          {
+            title: "Keep (pause, don't decommission)",
+            description:
+              "docker compose stop. Volumes and .env stay as-is; restarting later resumes with the same data. Use this if you might come back.",
+          },
+          {
+            title: "Export, then delete",
+            description:
+              "Run the backup profile one last time (docker compose --profile backup up -d, then confirm with verify-backup.sh — see Backup and scaling) and copy the resulting archive off-host before removing anything.",
+          },
+          {
+            title: "Delete everything",
+            description:
+              "docker compose down -v removes every named volume permanently — the review database, vector index, Grafana dashboards state, and any local backup archives in gittensory-backups go with it. This does not touch ./gittensory-config (delete that host directory yourself if it should go too).",
+          },
+        ]}
+      />
+      <Callout variant="warn" title="down -v is irreversible without an existing backup">
+        If you have not exported a backup off-host first, <code>docker compose down -v</code>{" "}
+        permanently destroys review history, settings, and the vector index with no recovery path —
+        the volumes are the only copy. See{" "}
+        <Link to="/docs/self-hosting-backup-scaling">Backup and scaling</Link> before running it on
+        an instance you care about.
+      </Callout>
+
+      <h3>3. Deregister from the Orb broker (brokered mode only)</h3>
+      <p>
+        If this instance runs in brokered mode (<code>ORB_ENROLLMENT_SECRET</code> is set — see{" "}
+        <Link to="/docs/self-hosting-github-app">GitHub App and Orb</Link>), be aware there is{" "}
+        <strong>no self-service revocation endpoint today</strong> — the &quot;Minimum broker
+        safeguards&quot; checklist on that page lists a revocation path as a prerequisite for a
+        public brokered rollout that has not shipped yet. An enrollment record (
+        <code>orb_enrollments</code>) lives in gittensory&apos;s own central database, not your
+        container, and nothing in this codebase writes a <code>revoked_at</code> value to it outside
+        of tests. Practical steps until that exists:
+      </p>
+      <ul>
+        <li>
+          Uninstalling the GitHub App (step 1) stops new webhook traffic and installation-token
+          issuance from reaching your instance in practice, even though the enrollment row itself
+          stays marked enrolled centrally.
+        </li>
+        <li>
+          Stop the container and let <code>ORB_ENROLLMENT_SECRET</code> go with it — with nothing
+          polling or listening, the secret is inert even if it still resolves to a valid enrollment.
+        </li>
+        <li>
+          If the secret may have leaked or you want it invalidated outright rather than just
+          orphaned, treat this the same as any other suspected credential compromise: contact the
+          Orb operator to have the enrollment revoked centrally, since there is no in-product way to
+          do it yourself yet.
+        </li>
+      </ul>
+
+      <h3>4. Remove ADMIN_GITHUB_LOGINS access</h3>
+      <p>
+        <code>ADMIN_GITHUB_LOGINS</code> is read fresh from the environment on every control-panel
+        request (<code>isAuthorizedGitHubSessionLogin</code> in <code>src/auth/security.ts</code>) —
+        it is never cached at startup or baked into an issued session. To remove someone&apos;s
+        operator access, delete their login from the comma/whitespace-separated list in{" "}
+        <code>.env</code> and restart the <code>gittensory</code> service so the process picks up
+        the new value:
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`$EDITOR .env   # remove the login from ADMIN_GITHUB_LOGINS
+docker compose up -d --no-deps gittensory`}
+      />
+      <p>
+        This takes effect on their very next control-panel request after the restart — no signed-in
+        session is grandfathered in, because authorization is re-checked against the current
+        allowlist every time, not read from the session itself. If you are decommissioning the whole
+        instance rather than removing one operator, this step is moot once the container is stopped.
       </p>
     </DocsPage>
   );

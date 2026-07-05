@@ -19,6 +19,7 @@ import {
 } from "./external-fetch.js";
 import { isWorkflowPath } from "./workflow-path.js";
 import { isSupportedLockfile } from "./lockfile-path.js";
+import { BINARY_EXT_RE } from "./analyzers/binary-extensions.js";
 
 type ChangedFile = NonNullable<EnrichRequest["files"]>[number];
 
@@ -448,11 +449,10 @@ function categorizeFile(path: string): FileCategory {
   ) {
     return { path, extension, category: "docs" };
   }
-  if (
-    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".zip", ".gz", ".zst"].includes(
-      extension,
-    )
-  ) {
+  // Binary assets — delegate to the shared binary-extension inventory (used by asset-weight/provenance) so any
+  // media/font/archive/model-weight blob categorizes as an asset instead of falling through to `source`.
+  // `.svg` is text, so it is not in BINARY_EXT_RE, but categorization still treats it as an asset.
+  if (BINARY_EXT_RE.test(path) || extension === ".svg") {
     return { path, extension, category: "asset" };
   }
   if (extension) return { path, extension, category: "source" };

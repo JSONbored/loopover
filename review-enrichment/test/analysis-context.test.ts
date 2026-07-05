@@ -570,6 +570,39 @@ test("createAnalysisContext classifies long-form doc extensions as docs", () => 
   );
 });
 
+test("createAnalysisContext categorizes shared binary inventory entries as assets", () => {
+  const context = createAnalysisContext({
+    repoFullName: "JSONbored/gittensory",
+    prNumber: 3359,
+    files: [
+      // A legacy image extension that was already an asset before this change.
+      { path: "ui/logo.png", patch: null, status: "added" },
+      // Binaries beyond the original narrow image/archive list — now recognized via the shared inventory.
+      { path: "media/demo.mp4", patch: null, status: "added" },
+      { path: "fonts/Inter.woff2", patch: null, status: "added" },
+      { path: "vendor/lib.wasm", patch: null, status: "added" },
+      { path: "models/llama.safetensors", patch: null, status: "added" },
+      // .svg is text but still an asset for categorization (kept explicitly).
+      { path: "icons/logo.svg", patch: "@@ -1,0 +1,1 @@\n+<svg/>" },
+      // A real source file is unaffected.
+      { path: "src/index.ts", patch: "@@ -1,0 +1,1 @@\n+export {};" },
+    ],
+  });
+
+  assert.deepEqual(
+    context.fileCategories.map((file) => [file.path, file.category]),
+    [
+      ["ui/logo.png", "asset"],
+      ["media/demo.mp4", "asset"],
+      ["fonts/Inter.woff2", "asset"],
+      ["vendor/lib.wasm", "asset"],
+      ["models/llama.safetensors", "asset"],
+      ["icons/logo.svg", "asset"],
+      ["src/index.ts", "source"],
+    ],
+  );
+});
+
 test("createAnalysisContext classifies lockfile paths case-insensitively", () => {
   const context = createAnalysisContext({
     repoFullName: "JSONbored/gittensory",

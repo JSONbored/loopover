@@ -19,6 +19,15 @@ const DOCKER_PRODUCT: Record<string, string> = {
   debian: "debian",
   ubuntu: "ubuntu",
   alpine: "alpine",
+  // Common database/cache base images with real endoflife.date calendars. The
+  // official image name differs from the endoflife.date slug for postgres/mongo,
+  // so these are genuine mappings (not just new keys) needed to flag an EOL
+  // `FROM postgres:14` / `FROM mongo:5` base image.
+  postgres: "postgresql",
+  mysql: "mysql",
+  mariadb: "mariadb",
+  redis: "redis",
+  mongo: "mongodb",
 };
 
 interface VersionPin {

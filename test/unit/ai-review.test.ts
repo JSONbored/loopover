@@ -2354,6 +2354,181 @@ describe("pure helpers", () => {
         "gittensory_ai_review_tiebreak_order_unstable_total",
       );
     });
+
+    it("parseDualAiTieBreakJudgeResponse returns null when extracted JSON fails JSON.parse", () => {
+      expect(parseDualAiTieBreakJudgeResponse("{ favored: not-json }")).toBeNull();
+      expect(
+        parseDualAiTieBreakJudgeResponse('{"favored":"consensus","consensusTitle":"Boost your reward payout"}'),
+      ).toEqual({ verdict: "consensus" });
+    });
+
+    it("dualAiTieBreakVerdictsOrderStable rejects empty consensus titles and mixed consensus/decisive pairs", () => {
+      expect(
+        dualAiTieBreakVerdictsOrderStable(
+          { verdict: "consensus", consensusTitle: "  " },
+          { verdict: "consensus", consensusTitle: "" },
+        ),
+      ).toBe(false);
+      expect(
+        dualAiTieBreakVerdictsOrderStable(
+          { verdict: "consensus", consensusTitle: "Null deref" },
+          { verdict: "consensus" },
+        ),
+      ).toBe(false);
+      expect(
+        dualAiTieBreakVerdictsOrderStable(
+          { verdict: "consensus", consensusTitle: "Null deref" },
+          { verdict: "reviewer_0" },
+        ),
+      ).toBe(false);
+      expect(
+        dualAiTieBreakVerdictsOrderStable(
+          { verdict: "reviewer_1" },
+          { verdict: "reviewer_0" },
+        ),
+      ).toBe(true);
+    });
+
+    it("mapDualAiTieBreakVerdictToCombineResult uses consensusDefectOf for matching blockers", () => {
+      expect(
+        mapDualAiTieBreakVerdictToCombineResult([blockedA, blockedA], "consensus").defect?.title,
+      ).toContain("Null deref");
+      expect(
+        mapDualAiTieBreakVerdictToCombineResult([blockedA, clean], "consensus"),
+      ).toMatchObject({ defect: null, split: true, inconclusive: false });
+    });
+
+    it("dualAiReviewersDisagree treats absent primary blockers as empty when find misses", () => {
+      const spy = vi
+        .spyOn(Array.prototype, "find")
+        .mockReturnValueOnce(undefined as never)
+        .mockReturnValueOnce(undefined as never);
+      try {
+        expect(dualAiReviewersDisagree(blockedA, blockedB)).toBe(false);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("runDualAiTieBreakJudgeCall returns null without AI binding and records usage when present", async () => {
+      const env = createTestEnv({});
+      expect(
+        await runDualAiTieBreakJudgeCall(env, "m", "", blockedA, clean, false, []),
+      ).toBeNull();
+
+      const run = vi.fn(async () => ({
+        response: '{"favored":"reviewer_0"}',
+        usage: { inputTokens: 12, outputTokens: 4 },
+      }));
+      const envWithAi = createTestEnv({ AI: { run } as unknown as Ai });
+      const diagnostics: Array<{ status: string; usage?: unknown }> = [];
+      await runDualAiTieBreakJudgeCall(
+        envWithAi,
+        "primary",
+        "primary",
+        blockedA,
+        clean,
+        false,
+        diagnostics as never,
+      );
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          status: "parsed",
+          usage: expect.objectContaining({ inputTokens: 12, outputTokens: 4 }),
+        }),
+      ]);
+      expect(run).toHaveBeenCalledWith("primary", expect.any(Object), undefined);
+    });
+
+    it("resolveDualAiTieBreakWithOrderStability treats matching inconclusive judge pairs as stable", async () => {
+      const run = vi.fn(async () => ({
+        response: '{"favored":"inconclusive"}',
+      }));
+      const env = createTestEnv({ AI: { run } as unknown as Ai });
+      expect(
+        await resolveDualAiTieBreakWithOrderStability({
+          env,
+          model: "primary-model",
+          fallback: "primary-model",
+          reviewA: blockedA,
+          reviewB: clean,
+          diagnostics: [],
+        }),
+      ).toEqual({
+        stable: true,
+        verdict: "inconclusive",
+        orderUnstable: false,
+      });
+    });
+
+    it("swap-stable inconclusive tie-break keeps conservative combineReviews without unstable metric", async () => {
+      resetMetrics();
+      let aiCalls = 0;
+      let judgeCalls = 0;
+      const run = vi.fn(async (_model: string, payload: { messages?: Array<{ role: string; content: string }> }) => {
+        aiCalls += 1;
+        const system = payload.messages?.[0]?.content ?? "";
+        if (system.includes("impartial judge")) {
+          judgeCalls += 1;
+          return { response: '{"favored":"inconclusive"}' };
+        }
+        return {
+          response: reviewJson({
+            present: aiCalls === 1,
+            title: "Null deref in src/a.ts",
+          }),
+        };
+      });
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      expect(result.split).toBe(true);
+      expect(judgeCalls).toBe(2);
+      expect(await renderMetrics()).not.toContain(
+        "gittensory_ai_review_tiebreak_order_unstable_total",
+      );
+    });
+
+    it("synthesis combiner skips tie-break judge on reviewer disagreement", async () => {
+      let judgeCalls = 0;
+      let aiCalls = 0;
+      const run = vi.fn(async (_model: string, payload: { messages?: Array<{ role: string; content: string }> }) => {
+        aiCalls += 1;
+        const system = payload.messages?.[0]?.content ?? "";
+        if (system.includes("impartial judge")) {
+          judgeCalls += 1;
+          return { response: '{"favored":"reviewer_0"}' };
+        }
+        return {
+          response: reviewJson({
+            present: aiCalls <= 2,
+            title: aiCalls === 1 ? "Null deref in src/a.ts" : "Race in src/b.ts",
+          }),
+        };
+      });
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+        AI_REVIEW_PLAN: {
+          reviewers: [{ model: "claude-code" }, { model: "codex" }],
+          combine: "synthesis",
+        } as never,
+      });
+      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      expect(judgeCalls).toBe(0);
+      expect(result.split).toBe(false);
+      expect(result.consensusDefect?.title).toContain("Null deref");
+    });
   });
 
   it("consensusDefectOf requires a concrete blocker in BOTH reviews and drops unsafe titles", () => {

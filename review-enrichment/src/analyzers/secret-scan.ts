@@ -663,6 +663,49 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Inngest signing key: `signkey-prod-`/`signkey-test-` + 64 hex.
+    kind: "inngest_signing_key",
+    re: /\bsignkey-(?:prod|test)-[a-f0-9]{64}\b/,
+    confidence: "high",
+  },
+  {
+    // Trigger.dev API key: `tr_prod_`/`tr_dev_` + >=20 base62 (word-char body → `\b` terminator).
+    kind: "trigger_dev_key",
+    re: /\btr_(?:prod|dev)_[A-Za-z0-9]{20,}\b/,
+    confidence: "high",
+  },
+  {
+    // Cal.com API key: `cal_live_`/`cal_test_` + >=20 hex (word-char body → `\b` terminator).
+    kind: "cal_com_api_key",
+    re: /\bcal_(?:live|test)_[a-f0-9]{20,}\b/,
+    confidence: "high",
+  },
+  {
+    // Cerebras API key: `csk-` + >=40 base62 (word-char body → `\b` terminator).
+    kind: "cerebras_api_key",
+    re: /\bcsk-[A-Za-z0-9]{40,}\b/,
+    confidence: "high",
+  },
+  {
+    // Helicone API key: `sk-helicone-` + a UUID-shaped body (distinct from the OpenAI/Anthropic `sk-` keys).
+    // Body can end in `-`, so a negative-lookahead terminator (not `\b`), matching the SendGrid/Anthropic rules.
+    kind: "helicone_api_key",
+    re: /\bsk-helicone-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Langfuse secret key: `sk-lf-` + a UUID-shaped body (lookahead terminator, as above).
+    kind: "langfuse_secret_key",
+    re: /\bsk-lf-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Neon API key: `napi_` + >=40 base62 (word-char body → `\b` terminator).
+    kind: "neon_api_key",
+    re: /\bnapi_[A-Za-z0-9]{40,}\b/,
+    confidence: "high",
+  },
+  {
     kind: "private_key",
     re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
     confidence: "high",

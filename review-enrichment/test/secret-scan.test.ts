@@ -778,3 +778,41 @@ test("scanPatch does not flag near-miss variants of the observability/CI formats
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags developer-platform (CI/AI/DB) credential formats", () => {
+  const cases = [
+    ["inngest_signing_key", "signkey-prod-" + hex(64)],
+    ["trigger_dev_key", "tr_prod_" + b62(20)],
+    ["cal_com_api_key", "cal_live_" + hex(20)],
+    ["cerebras_api_key", "csk-" + b62(40)],
+    ["helicone_api_key", "sk-helicone-" + b62(20)],
+    ["langfuse_secret_key", "sk-lf-" + b62(20)],
+    ["neon_api_key", "napi_" + b62(40)],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag near-miss variants of the developer-platform formats", () => {
+  const nearMisses = [
+    "signkey-prod-" + hex(63),
+    "tr_prod_" + b62(19),
+    "cal_live_" + hex(19),
+    "csk-" + b62(39),
+    "sk-helicone-" + b62(19),
+    "sk-lf-" + b62(19),
+    "napi_" + b62(39),
+    // A hex/base62 run that continues into a non-hex word char is NOT a completed token: the `\b` terminator
+    // must reject the embedded prefix (a `(?![a-f0-9])`-style lookahead would wrongly flag it).
+    "cal_live_" + hex(20) + "g",
+    "napi_" + b62(40) + "_extra",
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

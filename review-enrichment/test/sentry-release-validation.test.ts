@@ -125,9 +125,37 @@ test("REGRESSION: validateSentryRelease does NOT enforce the expected-commit mat
   // "true" : "false"). SENTRY_COMMIT_SHA is still passed unconditionally (it's the deploy's actual git SHA, not
   // itself a strictness signal), so expectedCommitSha stays set -- the bug this guards was that the match check
   // read only `config.expectedCommitSha`, never `config.requireCommits`, so it fired regardless of strict mode.
+  const calls: string[] = [];
   const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
     const path = new URL(String(input)).pathname;
+    calls.push(path);
     if (path.endsWith("/commits/")) return response([{ id: "def456" }]);
+    if (path.endsWith("/deploys/")) return response([{ name: "deploy-1", environment: "production" }]);
+    return response({
+      version: "gittensory-rees@abc123",
+      dateReleased: "2026-06-29T00:00:00Z",
+      commitCount: 1,
+      deployCount: 1,
+      projects: [{ slug: "gittensory" }],
+    });
+  };
+
+  const result = await validateSentryRelease(validationEnv({ SENTRY_REQUIRE_COMMITS: "false" }), fetchImpl);
+  assert.equal(result.release, "gittensory-rees@abc123");
+  // Non-strict mode must not even CALL the commits endpoint -- confirmed below with a second regression pinning
+  // this exact call-skip, since a real Sentry API hiccup on /commits/ would otherwise still fail a non-strict
+  // deploy (sentryJson throws on any non-OK response) even though no commit check would run on the result.
+  assert.equal(calls.includes("/api/0/organizations/jsonbored/releases/gittensory-rees%40abc123/commits/"), false);
+});
+
+test("REGRESSION: validateSentryRelease never calls the commits endpoint at all when SENTRY_REQUIRE_COMMITS=false, even if that endpoint is unhealthy", async () => {
+  // The specific gap the AI reviewer caught on the first pass of this fix: gating only the FAILURE pushes on
+  // requireCommits, while leaving the fetch itself conditioned on `requireCommits || expectedCommitSha`, meant a
+  // non-strict deploy still depended on /commits/ succeeding even though nothing would ever fail from its result.
+  // Prove it directly: the endpoint returns a hard 500, and non-strict validation must still succeed.
+  const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/commits/")) return response({ detail: "internal error" }, 500);
     if (path.endsWith("/deploys/")) return response([{ name: "deploy-1", environment: "production" }]);
     return response({
       version: "gittensory-rees@abc123",

@@ -197,7 +197,13 @@ export async function validateSentryRelease(env = process.env, fetchImpl = globa
   }
 
   let commits = [];
-  if (config.requireCommits || config.expectedCommitSha) {
+  // Gated on requireCommits ALONE (not `|| config.expectedCommitSha`): upload-sourcemaps.ts always passes
+  // SENTRY_COMMIT_SHA (the deploy's actual git SHA, not itself a strictness signal), so expectedCommitSha is
+  // essentially always set -- fetching here whenever it was merely present, independent of requireCommits, meant
+  // a non-strict deploy still depended on the /commits/ endpoint being reachable (sentryJson throws on any non-OK
+  // response) even though the checks that consume the result are now all requireCommits-gated below. Skipping the
+  // fetch entirely in non-strict mode is the only way "non-strict" actually means "commits don't matter."
+  if (config.requireCommits) {
     commits = asArray(
       await sentryJson(
         config,
@@ -211,10 +217,10 @@ export async function validateSentryRelease(env = process.env, fetchImpl = globa
       ...commitIdsFrom(release),
       ...commits.flatMap((commit) => commitIdsFrom(commit)),
     ];
-    if (config.requireCommits && commitCount <= 0 && commitIds.length === 0) {
+    if (commitCount <= 0 && commitIds.length === 0) {
       failures.push("release has no associated commits");
     }
-    if (config.requireCommits && config.expectedCommitSha && !commitMatches(config.expectedCommitSha, commitIds)) {
+    if (config.expectedCommitSha && !commitMatches(config.expectedCommitSha, commitIds)) {
       failures.push(`release commits do not include expected commit ${config.expectedCommitSha}`);
     }
   }

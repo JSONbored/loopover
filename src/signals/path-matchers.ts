@@ -51,9 +51,9 @@ function isGeneratedFileFrom(parts: NormalizedPath): boolean {
     /(^|\/)(__generated__|generated)\//.test(norm) ||
     /\.(generated|gen)\.[^/]+$/.test(norm) ||
     // protoc output: Go/TS/JS plugins emit `.pb.{go,ts,js}`, the reference C++ plugin emits
-    // `.pb.cc` / `.pb.h`, and the Swift plugin emits `.pb.swift` (the `.pb` infix keeps a
-    // hand-written `.h`/`.cc`/`.swift` from matching).
-    /\.pb\.(go|ts|js|cc|h|swift)$/.test(norm) ||
+    // `.pb.cc` / `.pb.h`, the Swift plugin emits `.pb.swift`, and the Dart plugin emits
+    // `.pb.dart` (the `.pb` infix keeps hand-written `.dart` from matching).
+    /\.pb\.(go|ts|js|cc|h|swift|dart)$/.test(norm) ||
     // Python protobuf: message stubs are `*_pb2.py[i]`; the gRPC plugin emits sibling
     // `*_pb2_grpc.py[i]` service stubs, which are the same machine-generated output.
     /_pb2(_grpc)?\.pyi?$/.test(norm) ||

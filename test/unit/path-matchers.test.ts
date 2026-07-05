@@ -76,6 +76,7 @@ describe("isGeneratedFile", () => {
   it("matches Swift protobuf, Dart freezed/retrofit, and C# designer/XAML codegen", () => {
     for (const path of [
       "proto/messages.pb.swift",
+      "proto/messages.pb.dart",
       "lib/user.freezed.dart",
       "lib/api_client.gr.dart",
       "ui/MainForm.Designer.cs",

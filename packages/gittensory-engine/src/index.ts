@@ -148,6 +148,7 @@ export { hasPlanSkippedSteps } from "./plan-skipped.js";
 export { hasPlanCompletedSteps } from "./plan-completed.js";
 export { isPlanBlocked } from "./plan-blocked.js";
 export { isPlanProgressComplete } from "./plan-progress-complete.js";
+export { resolvePlanOverallStatus, type PlanOverallStatus } from "./plan-overall-status.js";
 export * from "./plan-templates.js";
 export * from "./portfolio/queue.js";
 export {

@@ -306,6 +306,86 @@ function isReviewerConsensusCalibrationIngestion(value: unknown): value is Revie
   return isRecord(value) && Array.isArray(value.accepted) && Array.isArray(value.rejected);
 }
 
+function sanitizeReviewerConsensusCalibrationIngestion(
+  ingestion: ReviewerConsensusCalibrationIngestion,
+): ReviewerConsensusCalibrationIngestion {
+  const accepted: ReviewerConsensusCalibrationSignal[] = [];
+  const rejected: ReviewerConsensusCalibrationIngestion["rejected"] = [];
+
+  for (const signal of ingestion.accepted) {
+    if (!isRecord(signal) || !Array.isArray(signal.dimensions)) continue;
+    const repoFullName = typeof signal.repoFullName === "string" ? normalizeRepoFullName(signal.repoFullName) : null;
+    const replayRunId = typeof signal.replayRunId === "string" ? normalizeId(signal.replayRunId) : null;
+    const reviewRunId = typeof signal.reviewRunId === "string" ? normalizeId(signal.reviewRunId) : null;
+    if (!repoFullName || !replayRunId || !reviewRunId) continue;
+    const dimensions = signal.dimensions.flatMap((dimension): ReviewerConsensusDimensionSignal[] => {
+      if (
+        !isRecord(dimension) ||
+        typeof dimension.dimension !== "string" ||
+        typeof dimension.voteCount !== "number" ||
+        typeof dimension.majorityOutcome !== "string" ||
+        typeof dimension.agreement !== "number"
+      ) {
+        return [];
+      }
+      const normalizedDimension = normalizeDimension(dimension.dimension);
+      const majorityOutcome = normalizeVote(dimension.majorityOutcome);
+      if (
+        !normalizedDimension ||
+        !majorityOutcome ||
+        !Number.isFinite(dimension.voteCount) ||
+        dimension.voteCount <= 0 ||
+        !Number.isInteger(dimension.voteCount) ||
+        !Number.isFinite(dimension.agreement)
+      ) {
+        return [];
+      }
+      const agreement = roundScore(dimension.agreement);
+      return [
+        {
+          dimension: normalizedDimension,
+          voteCount: dimension.voteCount,
+          majorityOutcome,
+          agreement,
+          score: agreement,
+        },
+      ];
+    });
+    const score = scoreDimensions(dimensions);
+    if (dimensions.length === 0 || score === null) continue;
+    accepted.push({
+      repoFullName,
+      replayRunId,
+      reviewRunId,
+      observedAt: typeof signal.observedAt === "string" ? normalizeObservedAt(signal.observedAt) : null,
+      dimensions,
+      score,
+    });
+  }
+
+  for (const row of ingestion.rejected) {
+    if (!isRecord(row)) continue;
+    const repoFullName =
+      typeof row.repoFullName === "string"
+        ? (normalizeRepoFullName(row.repoFullName) ?? normalizeId(row.repoFullName))
+        : null;
+    const replayRunId = typeof row.replayRunId === "string" ? normalizeId(row.replayRunId) : null;
+    const reviewRunId = typeof row.reviewRunId === "string" ? normalizeId(row.reviewRunId) : null;
+    const reason = row.reason;
+    if (
+      !repoFullName ||
+      !replayRunId ||
+      !reviewRunId ||
+      !["not_opted_in", "empty_dimensions", "invalid_repo", "invalid_run_id"].includes(reason as string)
+    ) {
+      continue;
+    }
+    rejected.push({ repoFullName, replayRunId, reviewRunId, reason });
+  }
+
+  return { accepted, rejected };
+}
+
 function normalizeCompositeWeights(weights: ReviewerConsensusCalibrationWeights | undefined): {
   objectiveAnchor: number;
   pairwiseJudge: number;
@@ -472,7 +552,7 @@ export function computeReviewerConsensusCompositeCalibrationScore(input: {
   weights?: ReviewerConsensusCalibrationWeights | undefined;
 }): ReviewerConsensusCompositeCalibrationScore {
   const ingestion = isReviewerConsensusCalibrationIngestion(input.reviewerConsensus)
-    ? input.reviewerConsensus
+    ? sanitizeReviewerConsensusCalibrationIngestion(input.reviewerConsensus)
     : ingestReviewerConsensusCalibrationSignals(input.reviewerConsensus);
   const objectiveAnchorScore =
     typeof input.objectiveAnchor === "number" ? roundScore(input.objectiveAnchor) : input.objectiveAnchor.score;

@@ -309,6 +309,111 @@ test("composite honors custom weights and falls back to objective-only when all 
   assert.equal(allZero.compositeScore, 0.4);
 });
 
+test("composite sanitizes pre-ingested reviewer-consensus rows before auditing", () => {
+  const poisoned = {
+    accepted: [
+      {
+        repoFullName: "ACME/Widgets",
+        replayRunId: " replay-1 ",
+        reviewRunId: "review-1",
+        observedAt: "2026-07-04T00:00:00Z",
+        score: 0,
+        privateMetadata: "do-not-leak",
+        dimensions: [
+          {
+            dimension: "coverage",
+            voteCount: 2,
+            majorityOutcome: "success",
+            agreement: 1,
+            score: 0,
+            rawReviewText: "do-not-leak",
+          },
+          {
+            dimension: "security",
+            voteCount: 2,
+            majorityOutcome: "fail",
+            agreement: "not-a-number",
+            rawReviewText: "do-not-leak",
+          },
+        ],
+      },
+    ],
+    rejected: [
+      {
+        repoFullName: "ACME/Widgets",
+        replayRunId: "replay-2",
+        reviewRunId: "review-2",
+        reason: "not_opted_in",
+        privateMetadata: "do-not-leak",
+      },
+      {
+        repoFullName: "bad",
+        replayRunId: "replay-3",
+        reviewRunId: "review-3",
+        reason: "invalid_repo",
+        privateMetadata: "do-not-leak",
+      },
+      {
+        repoFullName: "ACME/Widgets",
+        replayRunId: "replay-4",
+        reviewRunId: "review-4",
+        reason: "private_reason",
+        privateMetadata: "do-not-leak",
+      },
+    ],
+  };
+
+  const result = computeReviewerConsensusCompositeCalibrationScore({
+    objectiveAnchor: 0.5,
+    pairwise: null,
+    reviewerConsensus: poisoned as never,
+  });
+
+  assert.equal(result.structuredReviewerConsensusScore, 1);
+  assert.deepEqual(result.audit.contributingRepos, [
+    {
+      repoFullName: "acme/widgets",
+      replayRunId: "replay-1",
+      reviewRunId: "review-1",
+      observedAt: "2026-07-04T00:00:00.000Z",
+      score: 1,
+      dimensions: [{ dimension: "tests", voteCount: 2, majorityOutcome: "pass", agreement: 1, score: 1 }],
+    },
+  ]);
+  assert.deepEqual(result.audit.rejected, [
+    { repoFullName: "acme/widgets", replayRunId: "replay-2", reviewRunId: "review-2", reason: "not_opted_in" },
+    { repoFullName: "bad", replayRunId: "replay-3", reviewRunId: "review-3", reason: "invalid_repo" },
+  ]);
+  assert.ok(!JSON.stringify(result).includes("do-not-leak"));
+});
+
+test("composite drops malformed pre-ingested rows instead of rendering invalid dimensions", () => {
+  const result = computeReviewerConsensusCompositeCalibrationScore({
+    objectiveAnchor: 0.5,
+    pairwise: 0.7,
+    reviewerConsensus: {
+      accepted: [
+        {
+          repoFullName: "acme/widgets",
+          replayRunId: "replay-1",
+          reviewRunId: "review-1",
+          observedAt: null,
+          score: 1,
+          dimensions: [
+            { dimension: "correctness", voteCount: 1, majorityOutcome: "pass", agreement: "1", score: 1 },
+          ],
+        },
+      ],
+      rejected: [{ repoFullName: "acme/widgets", replayRunId: "replay-2", reviewRunId: "review-2" }],
+    } as never,
+  });
+
+  assert.equal(result.structuredReviewerConsensusScore, null);
+  assert.deepEqual(result.audit.contributingRepos, []);
+  assert.deepEqual(result.audit.rejected, []);
+  assert.doesNotThrow(() => renderReviewerConsensusCalibrationAuditMarkdown(result));
+});
+
 test("renderAuditMarkdown is deterministic, public-safe, and reports contributors and rejections", () => {
   const ingestion = ingestReviewerConsensusCalibrationSignals([
     signal({ repoFullName: "acme/widgets", observedAt: "2026-07-04T00:00:00Z" }),

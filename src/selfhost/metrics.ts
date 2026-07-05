@@ -97,6 +97,8 @@ const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["gittensory_orb_events_exported_total", { help: "Orb events exported from the self-host runtime.", type: "counter" }],
   ["gittensory_orb_export_errors_total", { help: "Orb event export errors.", type: "counter" }],
   ["gittensory_orb_relay_drains_total", { help: "Orb relay drain outcomes.", type: "counter" }],
+  ["gittensory_orb_relay_register_consecutive_failures", { help: "Current consecutive orb relay registration failure streak, reset to 0 on any success.", type: "gauge" }],
+  ["gittensory_orb_relay_drain_seconds_since_last", { help: "Seconds since the pull-mode orb relay drain loop last completed successfully, or -1 if never (or in push mode).", type: "gauge" }],
   ["gittensory_orb_webhook_total", { help: "Orb webhook outcomes.", type: "counter" }],
   ["gittensory_ai_requests_total", { help: "AI provider request outcomes.", type: "counter" }],
   ["gittensory_ai_cost_usd_total", { help: "Estimated AI provider cost in USD.", type: "counter" }],

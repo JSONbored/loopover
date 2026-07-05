@@ -165,6 +165,7 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
         "Agent Permission-Denied Actions (total)",
         "Agent Permission-Denied Actions by Class (denied vs suppressed-repeat rate)",
         "Orb Relay Registration Attempts by Mode/Result (rate)",
+        "Orb Relay Registration: Streak vs Drain Progress (one hiccup vs actually stuck)",
       ]),
     );
     // Every stat-panel counter is sum()-wrapped, matching its siblings -- a multi-instance self-host scrape
@@ -179,6 +180,15 @@ describe("Gittensory Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_total[5m]))")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (actionClass) (rate(gittensory_agent_action_permission_denied_suppressed_total[5m]))")).toBe(true);
     expect(targets.some((target) => target.expr === "sum by (mode, result) (rate(gittensory_orb_relay_register_total[5m]))")).toBe(true);
+    // #selfhost-runtime-drift follow-up: the streak-vs-drain-progress panel is the dashboard-visible
+    // counterpart to isOrbRelayRegistrationAlerting's gate -- a lone registration timeout must not read as
+    // a dashboard error on its own as long as the drain loop is still making progress.
+    expect(targets.some((target) => target.expr === "gittensory_orb_relay_register_consecutive_failures or vector(0)")).toBe(true);
+    expect(targets.some((target) => target.expr === "gittensory_orb_relay_drain_seconds_since_last or vector(0)")).toBe(true);
+
+    const alerts = readFileSync(selfhostAlertsPath, "utf8");
+    expect(alerts).toContain("alert: GittensoryOrbRelayRegistrationStuck");
+    expect(alerts).toContain("gittensory_orb_relay_register_consecutive_failures >= 3 or gittensory_orb_relay_drain_seconds_since_last > 1800");
   });
 
   it("surfaces the backlog-vs-fresh-intake lane fairness panels (#selfhost-lane-observability)", () => {

@@ -389,6 +389,20 @@ groups:
           description: "Webhook enqueue failures are occurring for over 2m. Labels event/action show which GitHub event class is failing."
           runbook: "Check WEBHOOKS queue availability and the durable queue backend. If this coincides with Orb relay drains, inspect gittensory_orb_webhook_total{result=\"enqueue_failed\"}."
 
+      - alert: GittensoryOrbRelayRegistrationStuck
+        # #selfhost-runtime-drift follow-up: mirrors isOrbRelayRegistrationAlerting's own gate (3 consecutive
+        # registration failures, OR the pull-mode drain loop gone quiet for 30m) so Prometheus escalates on
+        # EXACTLY the same evidence the app itself uses to decide "actually stuck" vs "one hiccup, still
+        # draining fine". A single transient registration timeout will not trip this on its own.
+        expr: gittensory_orb_relay_register_consecutive_failures >= 3 or gittensory_orb_relay_drain_seconds_since_last > 1800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory orb relay registration looks actually stuck, not just a transient hiccup"
+          description: "Either the consecutive registration-failure streak has reached {{ $value | printf \"%.0f\" }}, or the pull-mode drain loop hasn't completed in over 30m. A lone registration timeout alone would not trigger this."
+          runbook: "Check gittensory_orb_relay_register_total{result=\"failed\"} by mode for the failure pattern, and confirm ORB_BROKER_URL / ORB_ENROLLMENT_SECRET are still valid. If pull mode, verify the drain loop itself isn't crash-looping (selfhost_orb_relay_register_failed logs at level=error)."
+
   # ── HTTP serving health (uses the PLANNED status label + duration histogram) ─
   # NOTE: gittensory_http_requests_total is gaining a status="2xx|3xx|4xx|5xx" label,
   # and gittensory_http_request_duration_seconds (a histogram) is being added. Both

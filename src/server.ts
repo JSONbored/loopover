@@ -955,6 +955,12 @@ async function main(): Promise<void> {
   setInterval(runOrbExport, 3_600_000); // then hourly
   /* v8 ignore stop */
 
+  // Pull-mode relay drain state is declared here (ahead of registration below) so a failed registration
+  // attempt can consult `relayDrainState.lastDrainAtMs` -- a single registration timeout must not alert
+  // while the drain loop is still proving the relay connection itself is alive (#selfhost-runtime-drift
+  // follow-up). Stays undefined in push mode, where there is no drain loop.
+  const relayDrainState = process.env.ORB_RELAY_MODE === "pull" ? { pendingAck: [] as string[], lastDrainAtMs: null as number | null } : undefined;
+
   // Brokered self-host: register our relay target with the central Orb (best-effort). PUSH mode (default)
   // registers a public relay URL the Orb POSTs to; PULL mode (ORB_RELAY_MODE=pull) registers no URL and the
   // drain loop below pulls events outbound — the right fit behind NAT/tailnet (no inbound endpoint exposed).
@@ -975,19 +981,26 @@ async function main(): Promise<void> {
       env: orbRelayEnv,
       state: orbRelayRegistrationState,
       register: registerOrbRelayTargetWithRetry,
+      ...(relayDrainState ? { drainState: relayDrainState } : {}),
     }).catch((error) => captureError(error, { kind: "orb_relay_register" }));
   void attemptOrbRelayRegistration();
   setInterval(() => void attemptOrbRelayRegistration(), 60_000);
+  // Dashboard-visible counterparts to the streak/no-progress alert gate in isOrbRelayRegistrationAlerting:
+  // an operator staring at the registration-failures counter alone can't tell "one hiccup" from "actually
+  // stuck" -- these two gauges are the SAME two signals that gate, sampled live at scrape time.
+  gauge("gittensory_orb_relay_register_consecutive_failures", () => orbRelayRegistrationState.consecutiveFailures);
+  gauge("gittensory_orb_relay_drain_seconds_since_last", () =>
+    relayDrainState?.lastDrainAtMs == null ? -1 : Math.floor((Date.now() - relayDrainState.lastDrainAtMs) / 1000),
+  );
   /* v8 ignore stop */
 
   // Pull-mode relay drain (#secure-relay): when ORB_RELAY_MODE=pull, the engine DRAINS its events from the Orb on a
   // timer instead of exposing an inbound endpoint — the right fit behind NAT/tailnet. Acks the previous batch so the
   // Orb deletes delivered events; best-effort (a failed tick retries next interval). Each event enqueues into the
   // same WEBHOOKS lane the push receiver uses.
-  if (process.env.ORB_RELAY_MODE === "pull" && process.env.ORB_ENROLLMENT_SECRET) {
+  if (process.env.ORB_RELAY_MODE === "pull" && process.env.ORB_ENROLLMENT_SECRET && relayDrainState) {
     const { drainOrbRelay } = await import("./orb/broker-client");
     const { enqueueWebhookByEnv } = await import("./github/webhook");
-    const relayDrainState = { pendingAck: [] as string[] };
     /* v8 ignore start -- pull-mode relay loop is a live self-host timer; monitor semantics are covered in selfhost tests. */
     const drainRelay = async (): Promise<void> => {
       await drainOrbRelayWithMonitor({

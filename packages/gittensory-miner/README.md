@@ -28,6 +28,10 @@ The package also includes an append-only governor decision ledger: `initGovernor
 persist structured allow/deny/throttle/kill-switch outcomes in local SQLite for contributor audit. Insert-only —
 no enforcement wiring yet. (#2328)
 
+The package also includes a local soft-claim ledger: `openClaimLedger` / `claimIssue` / `releaseClaim` /
+`listActiveClaims` persist which issues this miner instance has claimed on this machine. The table is local
+bookkeeping only — duplicate winners are adjudicated elsewhere via `@jsonbored/gittensory-engine`. (#2291)
+
 ## Install
 
 See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.gittensory-miner.yml` field reference and [`.gittensory-miner.yml.example`](../../.gittensory-miner.yml.example) at the repo root.

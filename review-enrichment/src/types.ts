@@ -613,6 +613,22 @@ export interface ApiBreakFinding {
   symbol: string;
 }
 
+/** A changed file where the PR re-introduces added lines in a region a PRIOR revert commit removed — a signal the
+ *  change may be re-treading a known-bad path that was already reverted/hot-fixed out (#1514, part of #1499).
+ *  Derived from the public commit history and the revert commit's own patch: the PR's added new-file line ranges
+ *  are intersected with the old-file line ranges the revert deleted in the same file. Reports the file, a
+ *  re-introduced line, and a short revert commit-SHA prefix (with the reverted PR number when the revert message
+ *  names one) — never file contents. */
+export interface RevertRecurrenceFinding {
+  file: string;
+  /** New-file line where the PR's re-introduced range that overlaps the reverted region begins. */
+  line: number;
+  /** Short prefix of the prior revert commit's SHA (prefix only — never the full SHA). */
+  revertShaPrefix: string;
+  /** The PR the revert undid, when the revert message names it (`Revert "<title> (#N)"`). */
+  revertedPr?: number;
+}
+
 export interface BriefFindings {
   dependency?: DependencyFinding[];
   dependencyDiff?: DependencyDiffFinding[];
@@ -665,6 +681,7 @@ export interface BriefFindings {
   commitLint?: CommitLintFinding[];
   apiBreak?: ApiBreakFinding[];
   deprecatedDep?: DeprecatedDependencyFinding[];
+  revertRecurrence?: RevertRecurrenceFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

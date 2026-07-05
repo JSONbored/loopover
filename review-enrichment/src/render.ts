@@ -500,6 +500,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
   lines.push(...renderDescriptorSection("apiBreak", findings.apiBreak));
   lines.push(...renderDescriptorSection("deprecatedDep", findings.deprecatedDep));
+  lines.push(...renderDescriptorSection("revertRecurrence", findings.revertRecurrence));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

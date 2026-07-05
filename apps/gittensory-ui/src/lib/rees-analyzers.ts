@@ -1268,6 +1268,33 @@ export const REES_ANALYZERS = [
         "Conservative: only an exact match against the bundled list is flagged, so a package it does not name is never reported. Bounded by manifest, patch-line, and finding caps; fail-safe on absent patches or an aborted signal.",
     },
   },
+  {
+    name: "revertRecurrence",
+    title: "Revert recurrence",
+    category: "history",
+    cost: "github-heavy",
+    defaultEnabled: true,
+    profiles: ["balanced", "deep"],
+    requires: ["files", "github-token"],
+    limits: {
+      maxFilesProbed: 5,
+      commitsPerFile: 15,
+      maxRevertLookups: 10,
+      maxFindings: 25,
+    },
+    docs: {
+      summary:
+        "Flags a changed file where the PR re-introduces added lines in a region a prior revert commit removed — a signal it may be re-treading a path that was already reverted or hot-fixed out.",
+      looksAt:
+        "For each changed file's added line-ranges, the file's recent commit history and the patch of any revert commit in it, intersecting the reverted (removed) old-file line-ranges with this PR's added new-file line-ranges.",
+      reports:
+        "File, a re-introduced line, a short revert commit-SHA prefix, and the reverted PR number when the revert message names one — never file contents.",
+      network:
+        "Calls the GitHub commits API per probed file and the single-commit API per revert commit, both bounded by fixed fanout caps. Requires GitHub token forwarding for private repos.",
+      notes:
+        "Conservative: only a message-confirmed revert commit whose removed range overlaps an added range is reported (one finding per file); line-range overlap is a heuristic across history, and lockfiles/generated/binary paths are skipped. Fail-safe on missing token/invalid slug/fetch error or an aborted signal.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

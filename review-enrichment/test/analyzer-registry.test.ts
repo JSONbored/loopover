@@ -61,6 +61,7 @@ const EXPECTED_ANALYZERS = [
   "commitLint",
   "apiBreak",
   "deprecatedDep",
+  "revertRecurrence",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

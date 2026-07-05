@@ -802,6 +802,42 @@ test("scanPatch does not flag truncated Cartesia/Apify tokens or identifier cont
   );
 });
 
+test("scanPatch flags Baseten federated and Laminar API keys with high confidence", () => {
+  const fakeBasetenKey = ["sky_", "sCqhBwEy4kPd", ".", "a".repeat(20)].join("");
+  const basetenFindings = scanPatch("src/config.ts", hunk([`const baseten = "${fakeBasetenKey}";`]));
+  assert.equal(basetenFindings.length, 1);
+  assert.equal(basetenFindings[0].kind, "baseten_federated_api_key");
+  assert.equal(basetenFindings[0].confidence, "high");
+
+  const fakeLaminarKey = "lmnr_" + "b".repeat(20);
+  const laminarFindings = scanPatch("src/config.ts", hunk([`const laminar = "${fakeLaminarKey}";`]));
+  assert.equal(laminarFindings.length, 1);
+  assert.equal(laminarFindings[0].kind, "laminar_api_key");
+  assert.equal(laminarFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Baseten/Laminar keys or identifier continuation", () => {
+  const shortBasetenPrefix = ["sky_", "abcd", ".", "a".repeat(20)].join("");
+  assert.equal(scanPatch("src/config.ts", hunk([`const baseten = "${shortBasetenPrefix}";`])).length, 0);
+  const shortBasetenSecret = ["sky_", "sCqhBwEy4kPd", ".", "a".repeat(19)].join("");
+  assert.equal(scanPatch("src/config.ts", hunk([`const baseten = "${shortBasetenSecret}";`])).length, 0);
+  const basetenDotSuffix = ["sky_", "sCqhBwEy4kPd", ".", "a".repeat(20), ".suffix"].join("");
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const baseten = "${basetenDotSuffix}";`])).some((f) => f.kind === "baseten_federated_api_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const laminar = "lmnr_${"b".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const laminar = "lmnr_${"b".repeat(20)}_suffix";`])).some((f) => f.kind === "laminar_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const laminar = "lmnr_${"b".repeat(20)}-suffix";`])).some((f) => f.kind === "laminar_api_key"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

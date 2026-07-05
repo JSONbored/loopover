@@ -296,6 +296,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Baseten federated API key: `sky_{prefix}.{secret}` (prefix is 9-16 chars after `sky_`).
+    kind: "baseten_federated_api_key",
+    re: /\bsky_[A-Za-z0-9]{5,12}\.[A-Za-z0-9+/=_-]{20,}(?![A-Za-z0-9+/=_.-])/,
+    confidence: "high",
+  },
+  {
+    // Laminar project API key: `lmnr_` + base62 body.
+    kind: "laminar_api_key",
+    re: /\blmnr_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

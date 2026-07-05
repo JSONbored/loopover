@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CLAIM_STATUSES,
+  claimIssue,
   closeDefaultClaimLedger,
+  listActiveClaims,
   openClaimLedger,
   resolveClaimLedgerDbPath,
 } from "../../packages/gittensory-miner/lib/claim-ledger.js";
@@ -23,6 +25,8 @@ function tempLedger() {
 afterEach(() => {
   for (const ledger of ledgers.splice(0)) ledger.close();
   closeDefaultClaimLedger();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -136,4 +140,45 @@ describe("gittensory-miner claim ledger (#2314)", () => {
     expect(source).toContain("does NOT adjudicate contested duplicates");
     expect(source).toContain("isDuplicateClusterWinnerByClaim");
   });
+
+  it("claimIssue and listActiveClaims expose the foundation-phase API surface (#3351)", () => {
+    const ledger = tempLedger();
+    const claim = ledger.claimIssue("o/a", 42, "via-alias");
+    expect(claim).toMatchObject({ repoFullName: "o/a", issueNumber: 42, status: "active", note: "via-alias" });
+    expect(ledger.listActiveClaims()).toEqual([claim]);
+    ledger.claimIssue("o/b", 1);
+    ledger.releaseClaim("o/a", 42);
+    expect(ledger.listActiveClaims("o/a")).toEqual([]);
+    expect(ledger.listActiveClaims("o/b").map((c) => c.issueNumber)).toEqual([1]);
+    expect(ledger.listActiveClaims().map((c) => c.repoFullName)).toEqual(["o/b"]);
+    expect(ledger.claimIssue("o/c", 3).note).toBeNull();
+  });
+
+  it("claimIssue on an already-active claim is idempotent (#3353)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T00:00:00Z"));
+    const ledger = tempLedger();
+    const first = ledger.claimIssue("o/a", 7, "first");
+    vi.setSystemTime(new Date("2026-07-05T01:00:00Z"));
+    const second = ledger.claimIssue("o/a", 7, "ignored");
+    expect(second).toEqual(first);
+    expect(ledger.listActiveClaims()).toHaveLength(1);
+  });
+
+  it("top-level claimIssue and listActiveClaims use the default ledger store", () => {
+    const root = tempRoot();
+    vi.stubEnv("GITTENSORY_MINER_CLAIM_LEDGER_DB", join(root, "claim-ledger.sqlite3"));
+    closeDefaultClaimLedger();
+    const claim = claimIssue("o/a", 99, "default-store");
+    expect(claim).toMatchObject({ issueNumber: 99, status: "active" });
+    expect(listActiveClaims()).toEqual([claim]);
+    expect(listActiveClaims("o/a")).toEqual([claim]);
+    expect(listActiveClaims("o/missing")).toEqual([]);
+  });
 });
+
+function tempRoot() {
+  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-claim-default-"));
+  roots.push(root);
+  return root;
+}

@@ -23,9 +23,11 @@ export type ListClaimsFilter = {
 export type ClaimLedger = {
   dbPath: string;
   recordClaim(claim: RecordClaimInput): ClaimEntry;
+  claimIssue(repoFullName: string, issueNumber: number, note?: string): ClaimEntry;
   releaseClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
   expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
   listClaims(filter?: ListClaimsFilter): ClaimEntry[];
+  listActiveClaims(repoFullName?: string): ClaimEntry[];
   close(): void;
 };
 
@@ -42,5 +44,9 @@ export function releaseClaim(repoFullName: string, issueNumber: number): ClaimEn
 export function expireClaim(repoFullName: string, issueNumber: number): ClaimEntry | null;
 
 export function listClaims(filter?: ListClaimsFilter): ClaimEntry[];
+
+export function claimIssue(repoFullName: string, issueNumber: number, note?: string): ClaimEntry;
+
+export function listActiveClaims(repoFullName?: string): ClaimEntry[];
 
 export function closeDefaultClaimLedger(): void;

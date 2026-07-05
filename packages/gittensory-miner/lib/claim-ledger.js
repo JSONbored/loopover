@@ -136,7 +136,7 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
     return status;
   }
 
-  return {
+  const ledger = {
     dbPath: resolvedPath,
     recordClaim(claim) {
       const repoFullName = normalizeRepoFullName(claim?.repoFullName);
@@ -178,10 +178,19 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       }
       return rows.map(rowToClaim);
     },
+    claimIssue(repoFullName, issueNumber, note) {
+      return ledger.recordClaim({ repoFullName, issueNumber, note });
+    },
+    listActiveClaims(repoFullName) {
+      const filter = { status: "active" };
+      if (repoFullName !== undefined) filter.repoFullName = repoFullName;
+      return ledger.listClaims(filter);
+    },
     close() {
       db.close();
     },
   };
+  return ledger;
 }
 
 function getDefaultClaimLedger() {
@@ -203,6 +212,16 @@ export function expireClaim(repoFullName, issueNumber) {
 
 export function listClaims(filter) {
   return getDefaultClaimLedger().listClaims(filter);
+}
+
+/** Foundation-phase alias for `recordClaim({ repoFullName, issueNumber, note })`. (#3351) */
+export function claimIssue(repoFullName, issueNumber, note) {
+  return getDefaultClaimLedger().claimIssue(repoFullName, issueNumber, note);
+}
+
+/** List only `active` claims, optionally scoped to one repo. (#3351) */
+export function listActiveClaims(repoFullName) {
+  return getDefaultClaimLedger().listActiveClaims(repoFullName);
 }
 
 export function closeDefaultClaimLedger() {

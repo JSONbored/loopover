@@ -143,6 +143,7 @@ export { isPlanFullyCompleted } from "./plan-completion.js";
 export { hasPlanFailedSteps } from "./plan-failure.js";
 export { hasPlanPendingSteps } from "./plan-pending.js";
 export { hasPlanRunningSteps } from "./plan-running.js";
+export { hasPlanSkippedSteps } from "./plan-skipped.js";
 export * from "./plan-templates.js";
 export * from "./portfolio/queue.js";
 export {

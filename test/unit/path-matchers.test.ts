@@ -144,6 +144,12 @@ describe("isGeneratedFile", () => {
     expect(classifyChangedFile("gen/GreeterGrpcKt.kt")).toBe("generated");
   });
 
+  it("matches Java gRPC service stubs alongside the other protoc plugins", () => {
+    expect(isGeneratedFile("gen/GreeterGrpc.java")).toBe(true);
+    expect(isGeneratedFile("src/Greeter.java")).toBe(false);
+    expect(classifyChangedFile("gen/GreeterGrpc.java")).toBe("generated");
+  });
+
   it("matches Swift protobuf, Dart freezed/retrofit, C# designer/XAML, and Objective-C protoc output", () => {
     for (const path of [
       "proto/messages.pb.swift",
@@ -474,6 +480,7 @@ describe("classifyChangedFile", () => {
       ["gen/service_pb.nim", "generated"],
       ["gen/service_pb.lua", "generated"],
       ["gen/GreeterGrpcKt.kt", "generated"],
+      ["gen/GreeterGrpc.java", "generated"],
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
       ["bun.lock", "lockfile"],

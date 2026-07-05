@@ -121,6 +121,16 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(replayed).toMatchObject({ actionClass: "label", autonomyClass: "close", requiresApproval: false, reason: "blacklisted contributor", label: "slop", labelOp: "add" });
   });
 
+  it("REGRESSION: actionParams round-trips assign assignees through approval replay", () => {
+    const assign: PlannedAgentAction = { actionClass: "assign", requiresApproval: true, reason: "auto-assign PR opener", assignee: "alice" };
+
+    const persisted = actionParams(assign);
+    const replayed = pendingActionToPlanned({ actionClass: "assign", params: persisted, reason: assign.reason });
+
+    expect(persisted).toEqual({ assignee: "alice" });
+    expect(replayed).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" });
+  });
+
   it("actionParams round-trips structured closeReasons so approval replay preserves every close cause", () => {
     const closeWithReasons: PlannedAgentAction = {
       actionClass: "close",

@@ -1055,6 +1055,8 @@ export type AgentPendingActionParams = {
   comment?: string;
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
+  // For an `assign` action (#3182): the GitHub login to assign when a staged action is accepted.
+  assignee?: string;
   closeComment?: string;
   // Individual close reasons, persisted for approval-queue replay so the eventual audit row keeps the structured
   // reason list rather than only the flattened `reason` field.

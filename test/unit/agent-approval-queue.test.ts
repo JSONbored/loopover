@@ -1211,6 +1211,7 @@ describe("agent approval queue (#779)", () => {
     expect(actionParams({ actionClass: "label", autonomyClass: "review_state_label", requiresApproval: false, reason: "x", label: "L" })).toEqual({ autonomyClass: "review_state_label", label: "L" });
     expect(actionParams({ actionClass: "request_changes", requiresApproval: false, reason: "x", reviewBody: "B" })).toEqual({ reviewBody: "B" });
     expect(actionParams({ actionClass: "merge", requiresApproval: false, reason: "x", mergeMethod: "rebase" })).toEqual({ mergeMethod: "rebase" });
+    expect(actionParams({ actionClass: "assign", requiresApproval: false, reason: "x", assignee: "alice" })).toEqual({ assignee: "alice" });
     expect(actionParams({ actionClass: "close", requiresApproval: false, reason: "x", closeComment: "C", closeReasons: ["x"] })).toEqual({ closeComment: "C", closeReasons: ["x"] });
     // closeKind must round-trip through staging — without it the close-precision breaker could never match a
     // staged close as heuristic on accept (#2127).
@@ -1232,6 +1233,7 @@ describe("agent approval queue (#779)", () => {
   it("pendingActionToPlanned clears requiresApproval and defaults the reason", () => {
     expect(pendingActionToPlanned({ actionClass: "merge", params: { mergeMethod: "squash" } })).toMatchObject({ actionClass: "merge", requiresApproval: false, reason: "maintainer-approved", mergeMethod: "squash" });
     expect(pendingActionToPlanned({ actionClass: "label", params: { label: "L" }, reason: "explicit" }).reason).toBe("explicit");
+    expect(pendingActionToPlanned({ actionClass: "assign", params: { assignee: "alice" }, reason: "auto-assign PR opener" })).toMatchObject({ actionClass: "assign", requiresApproval: false, reason: "auto-assign PR opener", assignee: "alice" });
     expect(pendingActionToPlanned({ actionClass: "close", params: { closeReasons: ["ci failed", "blocker"] }, reason: "ci failed; blocker" })).toMatchObject({
       actionClass: "close",
       requiresApproval: false,

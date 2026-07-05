@@ -1,7 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { scanPatchForIacMisconfig } from "../dist/analyzers/iac-misconfig.js";
+import { isRelevantConfigPath, scanPatchForIacMisconfig } from "../dist/analyzers/iac-misconfig.js";
+
+test("isRelevantConfigPath recognizes Terraform .tfvars and HCL files (siblings of .tf)", () => {
+  // `.tf` was already scanned; `.tfvars` and `.hcl` end after `tf`, so the extension
+  // group missed them and scanIacMisconfig skipped these canonical IaC files entirely.
+  assert.ok(isRelevantConfigPath("infra/terraform.tfvars"));
+  assert.ok(isRelevantConfigPath("env/prod.auto.tfvars"));
+  assert.ok(isRelevantConfigPath("packer/build.pkr.hcl"));
+  assert.ok(isRelevantConfigPath("infra/main.tf")); // the pre-existing sibling still matches
+  assert.equal(isRelevantConfigPath("src/app.ts"), false); // a non-config source file does not
+});
 
 test("scanPatchForIacMisconfig flags hostNetwork and compose host network mode", () => {
   const k8s = scanPatchForIacMisconfig(

@@ -4,7 +4,7 @@ const MAX_FINDINGS = 25;
 const MAX_LINE_CHARS = 2000;
 
 const CONFIG_PATH_RE =
-  /(?:^|\/)(?:docker-compose[^/]*\.ya?ml|compose[^/]*\.ya?ml|values(?:\.[^/]+)?\.ya?ml|.*\.(?:tf|ya?ml|json|toml|ini|conf|env)|Dockerfile(?:\.[^/]+)?|nginx[^/]*\.conf)$/i;
+  /(?:^|\/)(?:docker-compose[^/]*\.ya?ml|compose[^/]*\.ya?ml|values(?:\.[^/]+)?\.ya?ml|.*\.(?:tf|tfvars|hcl|ya?ml|json|toml|ini|conf|env)|Dockerfile(?:\.[^/]+)?|nginx[^/]*\.conf)$/i;
 
 const CORS_ORIGIN_RE =
   /\b(?:access-control-allow-origin|allow_origin|cors_origin|origin)\b[\s"'=:,\[\]-]*\*/i;

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { Callout } from "@/components/site/primitives";
@@ -73,9 +73,10 @@ function AiSummariesDoc() {
 
       <h2>Model choice</h2>
       <p>
-        There is no per-user or per-session model picker. The self-hosted or hosted operator
-        configures one fixed Cloudflare Workers AI model (<code>WORKERS_AI_SUMMARY_MODEL</code>,
-        default a small Llama instruct model) for the whole instance. Summaries are off by default (
+        There is no per-user or per-session model picker. The operator configures one AI provider
+        for the whole instance — see{" "}
+        <Link to="/docs/self-hosting-ai-providers">self-hosting AI providers</Link> for the
+        Codex/Claude Code/Ollama/OpenAI-compatible/Anthropic options. Summaries are off by default (
         <code>AI_SUMMARIES_ENABLED</code>); public-comment rewriting is a separate,
         also-off-by-default switch (<code>AI_PUBLIC_COMMENTS_ENABLED</code>).
       </p>

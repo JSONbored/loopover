@@ -87,6 +87,15 @@ describe("performRepoDocRefresh (#3003)", () => {
     expect(Number.isFinite(Date.parse(attemptedAt!))).toBe(true);
   });
 
+  it("uses the requested repo name when no installed repository can be canonicalized", async () => {
+    const env = createTestEnv();
+
+    const result = await performRepoDocRefresh(env, "Owner/Missing");
+
+    expect(result).toEqual({ opened: false, reason: "repository is not installed" });
+    expect(await getLastRepoDocRefreshAttemptedAt(env, "Owner/Missing")).not.toBeNull();
+  });
+
   it("records an attempt even when the repo declines (e.g. generation disabled)", async () => {
     const env = envWithKey();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: REPO, private: false, owner: { login: "owner" } }, 555);
@@ -109,5 +118,24 @@ describe("performRepoDocRefresh (#3003)", () => {
     const result = await performRepoDocRefresh(env, REPO);
     expect(result).toEqual({ opened: false, reason: 'repo-doc pull request not opened: action mode is "paused"' });
     expect(tokenMinted).toBe(false);
+  });
+
+  it("uses the stored repository casing for settings before opening repo-doc pull requests", async () => {
+    const env = envWithKey();
+    await seedInstalledEnabledRepo(env);
+    await upsertRepositorySettings(env, { repoFullName: REPO, agentPaused: true });
+    let tokenMinted = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (TOKEN_URL.test(url)) tokenMinted = true;
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await performRepoDocRefresh(env, "Owner/Widgets");
+
+    expect(result).toEqual({ opened: false, reason: 'repo-doc pull request not opened: action mode is "paused"' });
+    expect(tokenMinted).toBe(false);
+    expect(await getLastRepoDocRefreshAttemptedAt(env, REPO)).not.toBeNull();
+    expect(await getLastRepoDocRefreshAttemptedAt(env, "Owner/Widgets")).toBeNull();
   });
 });

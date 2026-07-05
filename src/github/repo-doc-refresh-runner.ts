@@ -9,7 +9,7 @@
 // this, matching #3002's own "manifest-only, no DB layer" precedent for this whole feature. The marker is
 // recorded here (not in the sweep itself) so a MANUAL trigger also resets that clock, keeping the sweep from
 // immediately re-checking a repo an operator just refreshed by hand.
-import { getRepositorySettings, listLatestSignalSnapshotsForTargets, listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
+import { getRepository, getRepositorySettings, listLatestSignalSnapshotsForTargets, listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import { resolveRepoActionMode } from "./client";
 import { openRepoDocPullRequest, type RepoDocPullRequestResult } from "./repo-doc-pr";
 import { nowIso } from "../utils/json";
@@ -52,9 +52,11 @@ async function recordRepoDocRefreshAttempt(env: Env, repoFullName: string): Prom
  * scheduled sweep doesn't re-check this repo again until its own configured interval elapses.
  */
 export async function performRepoDocRefresh(env: Env, repoFullName: string): Promise<RepoDocPullRequestResult> {
-  const settings = await getRepositorySettings(env, repoFullName);
+  const repository = await getRepository(env, repoFullName);
+  const canonicalRepoFullName = repository?.fullName ?? repoFullName;
+  const settings = await getRepositorySettings(env, canonicalRepoFullName);
   const mode = await resolveRepoActionMode(env, settings);
-  const result = await openRepoDocPullRequest(env, repoFullName, mode);
-  await recordRepoDocRefreshAttempt(env, repoFullName);
+  const result = await openRepoDocPullRequest(env, canonicalRepoFullName, mode);
+  await recordRepoDocRefreshAttempt(env, canonicalRepoFullName);
   return result;
 }

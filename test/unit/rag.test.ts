@@ -45,6 +45,11 @@ describe("rag: code-not-content filtering (free-tier cost guard)", () => {
   it("indexes source code + docs, skips content/data/deps/binaries", () => {
     expect(classifyRepoFile("src/core/runtime.ts")).toBe("code");
     expect(classifyRepoFile("scripts/build.mjs")).toBe("code");
+    // TypeScript module extensions (parity with signals/local-branch isCodeFile)
+    expect(classifyRepoFile("src/loader.mts")).toBe("code");
+    expect(classifyRepoFile("src/setup.cts")).toBe("code");
+    expect(filePriority("src/loader.mts")).toBe(0);
+    expect(isIndexablePath("src/setup.cts")).toBe(true);
     // additional source languages (parity with the changed-file source classifiers)
     for (const p of [
       "lib/widget.dart",

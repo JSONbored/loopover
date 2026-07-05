@@ -167,6 +167,8 @@ describe('release-selfhost.yml "GitHub Release" step changelog generation', () =
     expect(r.notesPassed).toContain("Changelog omitted");
     expect(r.notesPassed).toContain("https://github.com/JSONbored/gittensory/compare/orb-v0.1.0...orb-v0.2.0");
     expect(r.notesPassed.length).toBeLessThan(121000);
+    // The fallback must not drop the operator-critical pull command along with the oversized changelog.
+    expect(r.notesPassed).toContain("docker pull ghcr.io/jsonbored/gittensory-selfhost:orb-v0.2.0");
   });
 
   it("uses release create when the release does not exist yet, and release edit when it does", () => {

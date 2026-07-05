@@ -4,11 +4,20 @@
 # into the categories below by label. `gittensor:feature` and `gittensor:bug` are applied
 # automatically by gittensory's own review engine on every merged PR, so this works without any
 # separate manual-labeling process.
+#
+# `exclude.authors` matches the exact GitHub API login, which for a bot account includes the `[bot]`
+# suffix (confirmed against this repo's own PR history: dependabot's login is literally
+# `dependabot[bot]`, not `dependabot`) -- excludes the two pure dependency-bump bots so routine version
+# bumps don't clutter an operator-facing image changelog. Deliberately does NOT exclude
+# `sentry[bot]` (Seer-authored fixes for real production errors, e.g. #3305, get a normal
+# `gittensor:bug` label and are exactly the kind of change this changelog exists to surface) or
+# `gittensory-orb[bot]` (the review engine's own rare, real content changes, e.g. #3397).
 changelog:
   exclude:
     authors:
-      - dependabot
-      - github-actions
+      - dependabot[bot]
+      - renovate[bot]
+      - github-actions[bot]
   categories:
     - title: 🚀 Features
       labels:

@@ -20,6 +20,15 @@ interface AiRunOptions {
   text?: string[]; // embedding input — the core's embedTexts passes { text: string[] }
   max_tokens?: number;
   temperature?: number;
+  // Correlation context for a provider-failure log (#codex-timeout-fields): purely observational, never read by a
+  // provider's own request logic. The caller (runWorkersOpinion) passes whatever of these it already has in scope
+  // for THIS review — job id and attempt are per-attempt, repoFullName/pullNumber identify the PR being reviewed —
+  // so an operator can correlate a `selfhost_ai_provider_failed` line back to the job/PR without cross-referencing
+  // timestamps. All optional: absent ⇒ the log line is byte-identical to before.
+  jobId?: string;
+  repoFullName?: string;
+  pullNumber?: number;
+  attempt?: number;
 }
 /** A chat completion (`response`) or an embedding result (`data`). Both optional: the core reads whichever it
  *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent.
@@ -580,6 +589,13 @@ function logSelfHostAiProviderFailed(input: {
   timeoutMs?: number | undefined;
   error: unknown;
   knownSecrets?: readonly string[] | undefined;
+  // Correlation context (#codex-timeout-fields), forwarded from the caller's AiRunOptions when supplied — never
+  // fabricated here. Undefined fields are dropped by JSON.stringify, so an omitted value keeps the log line
+  // byte-identical to before this field existed.
+  jobId?: string | undefined;
+  repoFullName?: string | undefined;
+  pullNumber?: number | undefined;
+  attempt?: number | undefined;
 }): void {
   console.error(
     JSON.stringify({
@@ -589,6 +605,10 @@ function logSelfHostAiProviderFailed(input: {
       model: input.model || "default",
       effort: input.effort,
       timeoutMs: input.timeoutMs,
+      jobId: input.jobId,
+      repoFullName: input.repoFullName,
+      pullNumber: input.pullNumber,
+      attempt: input.attempt,
       error: errorMessage(input.error, input.knownSecrets),
     }),
   );
@@ -636,7 +656,18 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
         if (!text) throw new Error("claude_code_empty_output");
         return { response: text, usage: cliUsageFromStdout("claude-code", claudeModel, effort, stdoutForMetrics) };
       } catch (error) {
-        logSelfHostAiProviderFailed({ provider: "claude-code", model: claudeModel, effort, timeoutMs, error, knownSecrets: token ? [token] : [] });
+        logSelfHostAiProviderFailed({
+          provider: "claude-code",
+          model: claudeModel,
+          effort,
+          timeoutMs,
+          error,
+          knownSecrets: token ? [token] : [],
+          jobId: options.jobId,
+          repoFullName: options.repoFullName,
+          pullNumber: options.pullNumber,
+          attempt: options.attempt,
+        });
         throw error;
       } finally {
         if (attempted) recordCliUsageMetrics("claude-code", claudeModel, effort, stdoutForMetrics);
@@ -708,7 +739,17 @@ export function createCodexAi(
         if (!text) throw new Error("codex_empty_output");
         return { response: text, usage: cliUsageFromStdout("codex", codexModel, effort, stdoutForMetrics) };
       } catch (error) {
-        logSelfHostAiProviderFailed({ provider: "codex", model: codexModel, effort, timeoutMs, error });
+        logSelfHostAiProviderFailed({
+          provider: "codex",
+          model: codexModel,
+          effort,
+          timeoutMs,
+          error,
+          jobId: options.jobId,
+          repoFullName: options.repoFullName,
+          pullNumber: options.pullNumber,
+          attempt: options.attempt,
+        });
         throw error;
       } finally {
         if (attempted) recordCliUsageMetrics("codex", codexModel, effort, stdoutForMetrics);
@@ -805,7 +846,18 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
         } catch (error) {
           lastError = error;
           failures.push({ provider: p.name, error: errorMessage(error) });
-          console.error(JSON.stringify({ level: "warn", event: "selfhost_ai_provider_failed_in_chain", provider: p.name, error: errorMessage(error) }));
+          console.error(
+            JSON.stringify({
+              level: "warn",
+              event: "selfhost_ai_provider_failed_in_chain",
+              provider: p.name,
+              jobId: options.jobId,
+              repoFullName: options.repoFullName,
+              pullNumber: options.pullNumber,
+              attempt: options.attempt,
+              error: errorMessage(error),
+            }),
+          );
         }
       }
       recordAiProvidersExhausted();

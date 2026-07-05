@@ -203,6 +203,57 @@ describe("createChainAi (fallback)", () => {
     const b = { name: "b", ai: { run: async () => { throw new Error("err-b"); } } };
     await expect(createChainAi([a, b]).run("m", { prompt: "x" })).rejects.toThrow(/err-b/);
   });
+
+  it("REGRESSION (#codex-timeout-fields): a Codex timeout falls through to Claude Code, and the failure log carries job/PR/attempt context with no secret leaked", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const token = "oauth-tok-abcdef123456";
+    const timedOut: StubSpawn = async () => ({ stdout: "", code: null, stderr: "connection reset", timedOut: true });
+    const claudeOk: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "claude review" }), code: 0 });
+    const codex = createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, timedOut, noAuthCheck);
+    const claudeCode = createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: token }, claudeOk);
+    const chain = createChainAi([
+      { name: "codex", ai: codex },
+      { name: "claude-code", ai: claudeCode },
+    ]);
+
+    const result = await chain.run("m", {
+      prompt: "review this diff",
+      jobId: "delivery-123",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 42,
+      attempt: 0,
+    });
+
+    // (a) the review still completes successfully via the fallback provider.
+    expect(result.response).toBe("claude review");
+
+    const logged = errorSpy.mock.calls.map((call) => JSON.parse(String(call[0])));
+    const codexFailure = logged.find((entry) => entry.event === "selfhost_ai_provider_failed" && entry.provider === "codex");
+    const chainFailure = logged.find((entry) => entry.event === "selfhost_ai_provider_failed_in_chain" && entry.provider === "codex");
+
+    // (b) both the provider-level and chain-level failure logs carry the new correlation fields.
+    expect(codexFailure).toMatchObject({ jobId: "delivery-123", repoFullName: "JSONbored/gittensory", pullNumber: 42, attempt: 0 });
+    expect(chainFailure).toMatchObject({ jobId: "delivery-123", repoFullName: "JSONbored/gittensory", pullNumber: 42, attempt: 0 });
+
+    // (c) the Codex timeout detail is present but no secret value ever appears in the logged error text.
+    expect(codexFailure.error).toContain("codex_timeout");
+    expect(JSON.stringify(logged)).not.toContain(token);
+
+    errorSpy.mockRestore();
+  });
+
+  it("omits the correlation fields (byte-identical log shape) when the caller supplies none", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failing = { name: "a", ai: { run: async () => { throw new Error("down"); } } };
+    const working = { name: "b", ai: { run: async () => ({ response: "from b" }) } };
+    await createChainAi([failing, working]).run("m", { prompt: "x" });
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0]));
+    expect(logged.jobId).toBeUndefined();
+    expect(logged.repoFullName).toBeUndefined();
+    expect(logged.pullNumber).toBeUndefined();
+    expect(logged.attempt).toBeUndefined();
+    errorSpy.mockRestore();
+  });
 });
 
 describe("per-provider circuit breaker (#2540 — skip fast during a sustained outage)", () => {

@@ -278,6 +278,13 @@ export type GittensoryAiReviewInput = {
    * has ANY test-path changes ⇒ no section is appended (byte-identical to today).
    */
   changedFiles?: ReadonlyArray<{ path: string }> | null | undefined;
+  /**
+   * The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — the closest thing this
+   * queue has to a job id. Forwarded to a self-host provider's `selfhost_ai_provider_failed` log purely for
+   * operator correlation; never read by any review logic. Absent (e.g. a sweep/repair fan-out with no single
+   * originating delivery, or a unit test) ⇒ the log line omits it, byte-identical to before this field existed.
+   */
+  jobId?: string | undefined;
 };
 
 /** A consensus critical defect, already public-safe, ready to become a gate blocker finding. */
@@ -719,6 +726,15 @@ function buildRepoInstructionsSystemAppend(repoInstructions: string | null | und
     : "";
 }
 
+/** Correlation context for a self-host provider-failure log (#codex-timeout-fields): forwarded to `env.AI.run`'s
+ *  options purely for observability, never read by any provider's own request logic. `jobId` is the inbound
+ *  webhook delivery id that triggered this review — the closest thing this queue has to a job id. */
+type AiRunCorrelation = {
+  jobId?: string | undefined;
+  repoFullName?: string | undefined;
+  pullNumber?: number | undefined;
+};
+
 /** One reviewer opinion (whichever provider `env.AI` resolves to — self-host Codex/Claude Code/etc, or the
  *  legacy Workers-AI pair) with a per-slot reliable fallback and a 3× retry on the primary. */
 async function runWorkersOpinion(
@@ -730,6 +746,7 @@ async function runWorkersOpinion(
   maxTokens: number,
   diagnostics: AiReviewDiagnostic[] = [],
   systemAppend = "",
+  correlation?: AiRunCorrelation,
 ): Promise<ReviewerOpinionOutcome> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { review: null };
@@ -764,6 +781,10 @@ async function runWorkersOpinion(
               { role: "user", content: user },
             ],
             ...(cliSystemAppend ? { systemAppend: cliSystemAppend } : {}),
+            ...(correlation?.jobId !== undefined ? { jobId: correlation.jobId } : {}),
+            ...(correlation?.repoFullName !== undefined ? { repoFullName: correlation.repoFullName } : {}),
+            ...(correlation?.pullNumber !== undefined ? { pullNumber: correlation.pullNumber } : {}),
+            attempt,
           },
           extra,
         );
@@ -1340,6 +1361,12 @@ export async function runGittensoryAiReview(
   let advisoryReview: ModelReview | null;
   const reviewDiagnostics: AiReviewDiagnostic[] = [];
   const fallbackNotes: string[] = [];
+  // Forwarded to a self-host provider's failure log (#codex-timeout-fields) — never anything BYOK-billed reads.
+  const aiRunCorrelation: AiRunCorrelation = {
+    jobId: input.jobId,
+    repoFullName: input.repoFullName,
+    pullNumber: input.prNumber,
+  };
   if (input.providerKey) {
     const outcome = await runProviderReview(
       input.providerKey,
@@ -1361,6 +1388,7 @@ export async function runGittensoryAiReview(
       maxTokens,
       reviewDiagnostics,
       repoInstructionsSystemAppend,
+      aiRunCorrelation,
     );
     advisoryReview = outcome.review;
     if (outcome.fallbackNote) fallbackNotes.push(outcome.fallbackNote);
@@ -1387,6 +1415,7 @@ export async function runGittensoryAiReview(
               maxTokens,
               reviewDiagnostics,
               repoInstructionsSystemAppend,
+              aiRunCorrelation,
             )
           : Promise.resolve<ReviewerOpinionOutcome>({ review: advisoryReview }),
         runWorkersOpinion(
@@ -1398,6 +1427,7 @@ export async function runGittensoryAiReview(
           maxTokens,
           reviewDiagnostics,
           repoInstructionsSystemAppend,
+          aiRunCorrelation,
         ),
       ]);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
@@ -1423,6 +1453,7 @@ export async function runGittensoryAiReview(
             maxTokens,
             reviewDiagnostics,
             repoInstructionsSystemAppend,
+            aiRunCorrelation,
           )
         : ({ review: advisoryReview } as ReviewerOpinionOutcome);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);

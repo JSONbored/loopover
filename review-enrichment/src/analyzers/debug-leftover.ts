@@ -11,7 +11,7 @@ const MAX_FINDINGS = 25;
 const MAX_LINE_CHARS = 2000;
 
 const DEBUGGER_RE = /\bdebugger\s*;/;
-const CONSOLE_RE = /\bconsole\s*\.\s*(?:log|debug|info|warn|error|trace|dir|table)\s*\(/;
+const CONSOLE_RE = /\bconsole\s*\.\s*(?:log|debug|info|warn|error|trace|dir|dirxml|table|count|countReset|group|groupCollapsed|groupEnd)\s*\(/;
 const PRINT_RE = /(?<![\w.])print\s*\(/;
 
 /** Classify one added line for a debug leftover, or null. Pure. */

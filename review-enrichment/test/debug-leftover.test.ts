@@ -16,6 +16,11 @@ test("detectDebugLeftover: recognizes debugger, console sinks, and print()", () 
   assert.equal(detectDebugLeftover("  debugger;"), "debugger");
   assert.equal(detectDebugLeftover("console.log('hi')"), "console");
   assert.equal(detectDebugLeftover("  console.debug(state)"), "console");
+  // Additional console inspection/debug sinks left in code.
+  assert.equal(detectDebugLeftover("console.group('scope')"), "console");
+  assert.equal(detectDebugLeftover("  console.groupCollapsed('x')"), "console");
+  assert.equal(detectDebugLeftover("console.count('hits')"), "console");
+  assert.equal(detectDebugLeftover("console.dirxml(node)"), "console");
   assert.equal(detectDebugLeftover("print('debug')", "lib/b.py"), "print");
 });
 

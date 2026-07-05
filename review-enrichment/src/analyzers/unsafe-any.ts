@@ -12,7 +12,7 @@ const TS_EXTS = new Set(["ts", "tsx", "mts", "cts"]);
 
 const CAST_RE = /\bas\s+any\b/;
 const ASSERTION_RE = /<\s*any\s*>/;
-const ANNOTATION_RE = /:\s*any\b/;
+const ANNOTATION_RE = /:\s*any\b(?!\s*\})/;
 
 function isTypeScriptPath(path: string): boolean {
   const ext = /\.([^.]+)$/.exec(path)?.[1]?.toLowerCase();
@@ -25,12 +25,15 @@ function stripComments(code: string): string {
   return slash >= 0 ? noBlock.slice(0, slash) : noBlock;
 }
 
+function isFullLineComment(line: string): boolean {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("//")) return true;
+  return /^\s*\/\*[\s\S]*\*\/\s*$/.test(line);
+}
+
 /** Classify one added TS line for an unsafe-`any` pattern, or null. Pure. */
 export function detectUnsafeAny(line: string): UnsafeAnyFinding["kind"] | null {
-  const trimmed = line.trimStart();
-  if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) {
-    return null;
-  }
+  if (isFullLineComment(line)) return null;
   const code = stripComments(codeOnly(line));
   if (CAST_RE.test(code)) return "cast";
   if (ASSERTION_RE.test(code)) return "assertion";

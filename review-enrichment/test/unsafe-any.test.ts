@@ -46,6 +46,11 @@ test("scanPatchForUnsafeAny: flags added lines with correct locations", () => {
 
 test("detectUnsafeAny: ignores block comments after real code", () => {
   assert.equal(detectUnsafeAny("const x = 1; /* as any */"), null);
+  assert.equal(detectUnsafeAny("/* @internal */ const value: any = input;"), "annotation");
+});
+
+test("detectUnsafeAny: does not treat object-literal values as type annotations", () => {
+  assert.equal(detectUnsafeAny("return { value: any };"), null);
 });
 
 test("scanPatchForUnsafeAny: accepts .mts and .cts extensions", () => {

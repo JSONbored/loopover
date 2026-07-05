@@ -1615,3 +1615,41 @@ test("scanPatch does not flag near-misses of the deployment-hook URL formats", (
     assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
   }
 });
+
+test("scanPatch flags managed-database connection strings that embed credentials", () => {
+  // `<user>:<password>` fragments joined into a URI at test time — never a contiguous real secret in source.
+  const u = "dbuser";
+  const p = "s3cr3tP" + "w0rd1234";
+  const cases = [
+    ["mongodb_atlas_uri", "mongodb+srv://" + u + ":" + p + "@cluster0.ab12c.mongodb.net/mydb"],
+    ["neon_postgres_uri", "postgresql://" + u + ":" + p + "@ep-cool-name-123.us-east-2.aws.neon.tech/neondb"],
+    ["supabase_postgres_uri", "postgres://" + u + ":" + p + "@db.abcdefghij.supabase.co:5432/postgres"],
+    ["upstash_redis_uri", "rediss://default:" + p + "@apn1-cool-cat-12345.upstash.io:6379"],
+    ["planetscale_mysql_uri", "mysql://" + u + ":" + p + "@aws.connect.psdb.cloud/mydb"],
+    ["cockroachdb_uri", "postgresql://" + u + ":" + p + "@cool-cluster-123.abc.cockroachlabs.cloud:26257/defaultdb"],
+  ];
+  for (const [kind, secret] of cases) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${secret}";`]));
+    assert.equal(findings.length, 1, `${kind}: expected exactly one finding, got ${JSON.stringify(findings)}`);
+    assert.equal(findings[0].kind, kind, `${kind}: wrong kind`);
+    assert.equal(findings[0].confidence, "high", `${kind}: wrong confidence`);
+  }
+});
+
+test("scanPatch does not flag connection-string placeholders or non-managed hosts", () => {
+  const p = "s3cr3tP" + "w0rd1234";
+  const nearMisses = [
+    // Angle-bracket docs placeholders — `<user>`/`<password>` are excluded by the rule's charset.
+    "mongodb+srv://<user>:<password>@cluster0.ab12c.mongodb.net/mydb",
+    "postgresql://<user>:<password>@ep-x.neon.tech/db",
+    // A plain local/self-hosted host is not a managed provider, so nothing is flagged.
+    "postgres://dbuser:" + p + "@localhost:5432/postgres",
+    "redis://default:" + p + "@127.0.0.1:6379",
+    // A look-alike suffix host must not match via the provider host prefix.
+    "mongodb+srv://dbuser:" + p + "@cluster0.ab12c.mongodb.net.evil.com/mydb",
+  ];
+  for (const nm of nearMisses) {
+    const findings = scanPatch("src/config.ts", hunk([`const c = "${nm}";`]));
+    assert.equal(findings.length, 0, `near-miss should not match: ${nm}`);
+  }
+});

@@ -956,6 +956,47 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Managed-database connection strings that embed credentials, like the `cloudinary_url` rule above:
+    // `scheme://<user>:<password>@<host>`. Each requires a NON-empty user:password pair (so an angle-bracket
+    // `<user>:<password>` docs placeholder does not match — `<`/`>` are excluded) AND a distinctive provider
+    // host, so an ordinary `postgres://user:pass@localhost` (no managed host) is never flagged. The host is
+    // followed by a negative lookahead so a look-alike suffix host (`…mongodb.net.evil.com`) can't match.
+    kind: "mongodb_atlas_uri",
+    re: /\bmongodb(?:\+srv)?:\/\/[^\s:/<>]+:[^\s@/<>]+@[a-z0-9.-]+\.mongodb\.net(?![a-z0-9.-])/i,
+    confidence: "high",
+  },
+  {
+    // Neon serverless-Postgres connection string (`…@<host>.neon.tech`).
+    kind: "neon_postgres_uri",
+    re: /\bpostgres(?:ql)?:\/\/[^\s:/<>]+:[^\s@/<>]+@[a-z0-9.-]+\.neon\.tech(?![a-z0-9.-])/i,
+    confidence: "high",
+  },
+  {
+    // Supabase Postgres connection string (`…@db.<ref>.supabase.co`).
+    kind: "supabase_postgres_uri",
+    re: /\bpostgres(?:ql)?:\/\/[^\s:/<>]+:[^\s@/<>]+@[a-z0-9.-]+\.supabase\.co(?![a-z0-9.-])/i,
+    confidence: "high",
+  },
+  {
+    // Upstash Redis connection string (`rediss://default:<password>@<host>.upstash.io`). Upstash uses the
+    // default user, so the user segment may be empty.
+    kind: "upstash_redis_uri",
+    re: /\brediss?:\/\/[^\s:/<>]*:[^\s@/<>]+@[a-z0-9.-]+\.upstash\.io(?![a-z0-9.-])/i,
+    confidence: "high",
+  },
+  {
+    // PlanetScale MySQL connection string (`…@<region>.connect.psdb.cloud`).
+    kind: "planetscale_mysql_uri",
+    re: /\bmysql:\/\/[^\s:/<>]+:[^\s@/<>]+@[a-z0-9.-]+\.psdb\.cloud(?![a-z0-9.-])/i,
+    confidence: "high",
+  },
+  {
+    // CockroachDB Cloud connection string (`…@<host>.cockroachlabs.cloud`).
+    kind: "cockroachdb_uri",
+    re: /\bpostgres(?:ql)?:\/\/[^\s:/<>]+:[^\s@/<>]+@[a-z0-9.-]+\.cockroachlabs\.cloud(?![a-z0-9.-])/i,
+    confidence: "high",
+  },
+  {
     // Netlify build-hook URL — the trailing id triggers a production build, like the webhook rules above.
     kind: "netlify_build_hook_url",
     re: /https:\/\/api\.netlify\.com\/build_hooks\/[0-9a-f]{24}/,

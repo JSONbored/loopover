@@ -709,6 +709,20 @@ describe("verdictReason on a held/blocked headline (FIX D2)", () => {
     expect(body).toContain("Gittensory Orb Review Agent: blocked by policy");
   });
 
+  it("renders the Manual Review headline with no reason bullet when the whole fallback chain is exhausted (no matching warning, blank summary, blank title)", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "action_required", title: "  ", summary: "  ", warnings: [] }),
+      panelRows,
+      readinessTotal: 55,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Suggested Action - Manual Review");
+    // "held" has no default reason (unlike ready/advisory/blocked), so an exhausted chain renders the bare
+    // heading with no trailing "- reason" bullet at all -- not even an empty one.
+    expect(body).not.toMatch(/Suggested Action - Manual Review\*\*\n-/);
+  });
+
   it("does NOT overwrite the positive ready wording on a passing (merge) verdict", () => {
     const body = buildUnifiedCommentBody({
       gate: gate({ conclusion: "success", title: "Gittensory Orb Review Agent passed", summary: "No configured hard blocker was found." }),

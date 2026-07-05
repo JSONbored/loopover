@@ -461,6 +461,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("magicNumber", findings.magicNumber));
   lines.push(...renderDescriptorSection("conflictMarker", findings.conflictMarker));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
+  lines.push(...renderDescriptorSection("errorSwallow", findings.errorSwallow));
 
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 

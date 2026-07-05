@@ -463,6 +463,14 @@ export interface CommitLintFinding {
   reason: "bad-type" | "missing-colon" | "too-long" | "empty";
 }
 
+/** A newly-added catch block that swallows the error — an empty body, a null/undefined return, or a body that
+ *  never rethrows, logs, or references the caught binding (#2014, part of #1499). Reports location + kind. */
+export interface ErrorSwallowFinding {
+  file: string;
+  line: number;
+  kind: "empty-catch" | "unused-binding" | "return-null";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -501,6 +509,7 @@ export interface BriefFindings {
   magicNumber?: MagicNumberFinding[];
   conflictMarker?: ConflictMarkerFinding[];
   commitLint?: CommitLintFinding[];
+  errorSwallow?: ErrorSwallowFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

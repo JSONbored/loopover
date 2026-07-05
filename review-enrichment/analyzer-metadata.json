@@ -1023,6 +1023,32 @@
         "network": "Calls the GitHub PR-commits API once, bounded to one page.",
         "notes": "Structured-fields-only: reads commit.message subjects, linted independently, never cross-line state. Fail-safe on missing token/fetch error."
       }
+    },
+    {
+      "name": "errorSwallow",
+      "title": "Swallowed errors",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags newly-added catch blocks that swallow the error: an empty body, a body that just returns null/undefined, or one that neither rethrows, logs, nor references the caught binding.",
+        "looksAt": "Added lines in JS/TS source (a single-line `catch` block) and Python (`except …: pass`).",
+        "reports": "File, line, and the swallow kind — never line content.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "Single-line by design: a catch body spread across lines is not tracked (the safe, false-negative direction). String literals and comments are blanked first."
+      }
     }
   ]
 }

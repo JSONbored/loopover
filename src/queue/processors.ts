@@ -5663,7 +5663,10 @@ async function processGitHubWebhook(
                 issue.number,
                 issueSettings.newAccountLabel ?? "new-account",
                 { createMissingLabel: issueSettings.createMissingLabel, mode: newAccountMode },
-              ).catch(() => undefined);
+              ).catch(
+                /* v8 ignore next -- fail-safe: a label-application failure must never block the rest of the handler */
+                () => undefined,
+              );
             }
           }
         }

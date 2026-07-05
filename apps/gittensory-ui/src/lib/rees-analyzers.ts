@@ -865,6 +865,29 @@ export const REES_ANALYZERS = [
         "Precision-first: common values such as 0, 1, -1, 2, 100, 1000, and powers of ten are silent.",
     },
   },
+  {
+    name: "unsafeAny",
+    title: "Unsafe `any` usage",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Counts and locates explicit `any` usage a PR adds in TypeScript: `: any` annotations, `as any` casts, and `<any>` assertions.",
+      looksAt:
+        "Added lines in .ts/.tsx/.mts/.cts files (string literals and same-line comments blanked first).",
+      reports: "File, line, and the `any`-usage kind — never line content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural regex only, no type-checker; a cheap best-effort string/comment strip keeps a mention of `any` in prose or a string out, so the signal reflects real type-safety erosion.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

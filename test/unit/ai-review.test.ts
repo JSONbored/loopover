@@ -342,6 +342,41 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
     );
   });
 
+  it("review.ai_model (#selfhost-ai-model-override) threads claudeModel/claudeEffort/codexModel/codexEffort through to ai.run's options", async () => {
+    const optionsOf = (run: ReturnType<typeof vi.fn>): Record<string, unknown> =>
+      (run.mock.calls[0]?.[1] as Record<string, unknown>) ?? {};
+    const runWithOverride = async (over: Partial<GittensoryAiReviewInput>) => {
+      const run = vi.fn(async () => ({ response: reviewJson() }));
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await runGittensoryAiReview(env, { ...baseInput, ...over });
+      return optionsOf(run);
+    };
+    const options = await runWithOverride({
+      claudeModel: "claude-haiku-4-5",
+      claudeEffort: "low",
+      codexModel: "gpt-5.4-mini",
+      codexEffort: "high",
+    });
+    expect(options).toMatchObject({
+      claudeModel: "claude-haiku-4-5",
+      claudeEffort: "low",
+      codexModel: "gpt-5.4-mini",
+      codexEffort: "high",
+    });
+    // Absent/null override fields are OMITTED, not present-as-undefined — byte-identical to before this knob existed.
+    const withNull = await runWithOverride({ claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null });
+    const withAbsent = await runWithOverride({});
+    for (const key of ["claudeModel", "claudeEffort", "codexModel", "codexEffort"]) {
+      expect(withNull).not.toHaveProperty(key);
+      expect(withAbsent).not.toHaveProperty(key);
+    }
+  });
+
   it("repoInstructions (#review-instructions) is appended to the system prompt; absent leaves it byte-identical", async () => {
     const optionsOf = (run: ReturnType<typeof vi.fn>): { messages?: Array<{ content?: string }>; systemAppend?: string } => {
       const calls = run.mock.calls as unknown as Array<[unknown, { messages?: Array<{ content?: string }>; systemAppend?: string }]>;
@@ -2071,6 +2106,39 @@ describe("pure helpers", () => {
     );
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards correlation + self-host ai_model override fields into ai.run's options, omitting absent ones (#selfhost-ai-model-override)", async () => {
+    let seenOptions: Record<string, unknown> = {};
+    const run = vi.fn(async (_model: string, options: Record<string, unknown>) => {
+      seenOptions = options;
+      return { response: reviewJson() };
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256, [], "", {
+      jobId: "job-1",
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      claudeModel: "claude-haiku-4-5",
+      claudeEffort: "low",
+      codexModel: "gpt-5.4-mini",
+      codexEffort: "high",
+    });
+    expect(seenOptions).toMatchObject({
+      jobId: "job-1",
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      claudeModel: "claude-haiku-4-5",
+      claudeEffort: "low",
+      codexModel: "gpt-5.4-mini",
+      codexEffort: "high",
+    });
+    // No correlation at all → every one of these keys is OMITTED (not present-with-undefined), matching how
+    // the pre-existing jobId/repoFullName/pullNumber fields already degrade.
+    await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256);
+    for (const key of ["jobId", "repoFullName", "pullNumber", "claudeModel", "claudeEffort", "codexModel", "codexEffort"]) {
+      expect(seenOptions).not.toHaveProperty(key);
+    }
   });
 
   it("logs ai_review_provider_exhausted at error level when every attempt throws (#26 fail-loud)", async () => {

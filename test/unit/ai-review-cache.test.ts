@@ -17,6 +17,7 @@ const baseFingerprintInput = (): AiReviewCacheInput => ({
   gatePack: null,
   reviewerPlan: null,
   selfHostProviderConfig: null,
+  selfHostAiModelOverride: null,
   reviewFiles: [],
   profile: null,
   securityFocus: false,

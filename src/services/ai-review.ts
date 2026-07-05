@@ -251,6 +251,17 @@ export type GittensoryAiReviewInput = {
    */
   securityFocus?: boolean | undefined;
   /**
+   * `.gittensory.yml` `review.ai_model` (#selfhost-ai-model-override), resolved by the caller from the
+   * (already-cached) manifest. Self-host only — overrides that repo's claude-code/codex model+effort for THIS
+   * review, taking priority over the operator's global CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT/CODEX_AI_MODEL/
+   * CODEX_AI_EFFORT env vars. A hosted (Workers-AI) `env.AI` ignores these fields entirely. Absent/null ⇒
+   * byte-identical to today (global env var, then the provider's own default).
+   */
+  claudeModel?: string | null | undefined;
+  claudeEffort?: string | null | undefined;
+  codexModel?: string | null | undefined;
+  codexEffort?: string | null | undefined;
+  /**
    * `.gittensory.yml` `review.path_instructions` (#review-path-instructions), pre-resolved by the caller to the
    * entries whose glob matched THIS PR's changed files (via `resolveReviewPathInstructions`) — a ready-to-append
    * prompt section. Absent / empty ⇒ the reviewer prompt is byte-identical. Public-safe by construction (the
@@ -726,13 +737,20 @@ function buildRepoInstructionsSystemAppend(repoInstructions: string | null | und
     : "";
 }
 
-/** Correlation context for a self-host provider-failure log (#codex-timeout-fields): forwarded to `env.AI.run`'s
- *  options purely for observability, never read by any provider's own request logic. `jobId` is the inbound
- *  webhook delivery id that triggered this review — the closest thing this queue has to a job id. */
+/** Correlation + per-repo override context forwarded to `env.AI.run`'s options. `jobId`/`repoFullName`/
+ *  `pullNumber` (#codex-timeout-fields) are purely observational — a self-host provider-failure log, never read
+ *  by any provider's own request logic. `claudeModel`/`claudeEffort`/`codexModel`/`codexEffort`
+ *  (#selfhost-ai-model-override) are the exception: the self-host claude-code/codex providers DO read their
+ *  matching pair to pick the model/effort for THIS repo, taking priority over that provider's global env var.
+ *  Both self-host-only; a hosted (Workers-AI) `env.AI` ignores every field here. */
 type AiRunCorrelation = {
   jobId?: string | undefined;
   repoFullName?: string | undefined;
   pullNumber?: number | undefined;
+  claudeModel?: string | undefined;
+  claudeEffort?: string | undefined;
+  codexModel?: string | undefined;
+  codexEffort?: string | undefined;
 };
 
 /** One reviewer opinion (whichever provider `env.AI` resolves to — self-host Codex/Claude Code/etc, or the
@@ -784,6 +802,10 @@ async function runWorkersOpinion(
             ...(correlation?.jobId !== undefined ? { jobId: correlation.jobId } : {}),
             ...(correlation?.repoFullName !== undefined ? { repoFullName: correlation.repoFullName } : {}),
             ...(correlation?.pullNumber !== undefined ? { pullNumber: correlation.pullNumber } : {}),
+            ...(correlation?.claudeModel !== undefined ? { claudeModel: correlation.claudeModel } : {}),
+            ...(correlation?.claudeEffort !== undefined ? { claudeEffort: correlation.claudeEffort } : {}),
+            ...(correlation?.codexModel !== undefined ? { codexModel: correlation.codexModel } : {}),
+            ...(correlation?.codexEffort !== undefined ? { codexEffort: correlation.codexEffort } : {}),
             attempt,
           },
           extra,
@@ -1446,11 +1468,17 @@ export async function runGittensoryAiReview(
   let advisoryReview: ModelReview | null;
   const reviewDiagnostics: AiReviewDiagnostic[] = [];
   const fallbackNotes: string[] = [];
-  // Forwarded to a self-host provider's failure log (#codex-timeout-fields) — never anything BYOK-billed reads.
+  // jobId/repoFullName/pullNumber: forwarded to a self-host provider's failure log (#codex-timeout-fields) —
+  // never anything BYOK-billed reads. claudeModel/claudeEffort/codexModel/codexEffort (#selfhost-ai-model-
+  // override): the per-repo manifest override, read by the matching self-host provider's own request logic.
   const aiRunCorrelation: AiRunCorrelation = {
     jobId: input.jobId,
     repoFullName: input.repoFullName,
     pullNumber: input.prNumber,
+    claudeModel: input.claudeModel ?? undefined,
+    claudeEffort: input.claudeEffort ?? undefined,
+    codexModel: input.codexModel ?? undefined,
+    codexEffort: input.codexEffort ?? undefined,
   };
   if (input.providerKey) {
     const outcome = await runProviderReview(

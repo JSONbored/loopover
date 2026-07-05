@@ -29,6 +29,16 @@ interface AiRunOptions {
   repoFullName?: string;
   pullNumber?: number;
   attempt?: number;
+  // `.gittensory.yml` `review.ai_model` (#selfhost-ai-model-override): per-repo override for the subscription
+  // CLI providers, resolved by the caller from the repo's manifest and forwarded here so this file makes no
+  // manifest fetch of its own. Each field is read ONLY by its matching provider's `.run()` (claude-code reads
+  // the claude* pair, codex reads the codex* pair) and takes priority over that provider's global env var, which
+  // in turn still wins over this file's own hardcoded default. Absent ⇒ byte-identical to today (global env var,
+  // then default, exactly as before this override existed).
+  claudeModel?: string;
+  claudeEffort?: string;
+  codexModel?: string;
+  codexEffort?: string;
 }
 /** A chat completion (`response`) or an embedding result (`data`). Both optional: the core reads whichever it
  *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent.
@@ -84,12 +94,15 @@ function firstConfigured(...values: Array<string | undefined>): string | undefin
   return values.find((value) => value !== undefined && value.trim() !== "");
 }
 
-function configuredClaudeModel(env: Record<string, string | undefined>): string | undefined {
-  return firstConfigured(env.CLAUDE_AI_MODEL);
+// `repoOverride` (from `review.ai_model`, #selfhost-ai-model-override) takes priority over the global env var —
+// a per-repo config narrows/redirects the operator's own already-permitted choice, so it must outrank the
+// operator-wide default without ever being ABLE to escape it (there is no third, wider tier to escalate to).
+function configuredClaudeModel(env: Record<string, string | undefined>, repoOverride?: string | undefined): string | undefined {
+  return firstConfigured(repoOverride, env.CLAUDE_AI_MODEL);
 }
 
-function configuredCodexModel(env: Record<string, string | undefined>): string | undefined {
-  return firstConfigured(env.CODEX_AI_MODEL);
+function configuredCodexModel(env: Record<string, string | undefined>, repoOverride?: string | undefined): string | undefined {
+  return firstConfigured(repoOverride, env.CODEX_AI_MODEL);
 }
 
 function configuredAnthropicModel(env: Record<string, string | undefined>): string | undefined {
@@ -231,7 +244,7 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
           .map((m) => m.content)
           .join("\n\n") || undefined;
       const messages = msgs.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
-      const resolvedModel = resolveModel(opts.model, model, "claude-sonnet-4-6");
+      const resolvedModel = resolveModel(opts.model, model, "claude-sonnet-5");
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
@@ -687,8 +700,8 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       // claude's empty-prompt text answer as "success" and never reach the embed provider → RAG silently breaks.
       if (options.text) throw new Error("claude_code_no_embed");
       const token = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
-      const claudeModel = resolveModel(configuredClaudeModel(parentEnv), model, "claude-sonnet-4-6");
-      const effort = resolveEffort(firstConfigured(parentEnv.CLAUDE_AI_EFFORT));
+      const claudeModel = resolveModel(configuredClaudeModel(parentEnv, options.claudeModel), model, "claude-sonnet-5");
+      const effort = resolveEffort(firstConfigured(options.claudeEffort, parentEnv.CLAUDE_AI_EFFORT));
       const timeoutMs = resolveClaudeCliTimeoutMs(parentEnv);
       let attempted = false;
       let stdoutForMetrics = "";
@@ -754,8 +767,8 @@ export function createCodexAi(
       // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).
       // `--skip-git-repo-check` lets it run outside a git repo. Pass `--model` ONLY when one is explicitly
       // configured: otherwise Codex selects the account default.
-      const codexModel = resolveModel(configuredCodexModel(parentEnv), model, "");
-      const effort = resolveCodexEffort(firstConfigured(parentEnv.CODEX_AI_EFFORT));
+      const codexModel = resolveModel(configuredCodexModel(parentEnv, options.codexModel), model, "");
+      const effort = resolveCodexEffort(firstConfigured(options.codexEffort, parentEnv.CODEX_AI_EFFORT));
       const timeoutMs = resolveCodexCliTimeoutMs(parentEnv);
       // Clamp below timeoutMs so a misconfigured/low CODEX_AI_TIMEOUT_MS (its own floor is 30_000ms, the same as
       // this deadline's default) can never make the fast-fail deadline equal or exceed the outer safety net —

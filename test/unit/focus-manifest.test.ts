@@ -24,10 +24,13 @@ import {
   resolveReviewPromptOverrides,
   composeManifestReviewInstructions,
   EMPTY_AUTO_REVIEW_CONFIG,
+  EMPTY_SELF_HOST_AI_MODEL_CONFIG,
+  resolveReviewSelfHostAiModel,
   repoDocGenerationConfigToJson,
   reviewConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
+  type SelfHostAiModelConfig,
 } from "../../src/signals/focus-manifest";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY } from "../../src/settings/command-authorization";
 import type { RepositorySettings } from "../../src/types";
@@ -548,7 +551,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, dryRun: null, firstTimeContributorGrace: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } },
       features: { present: false, rag: null, reputation: null, unifiedComment: null, safety: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
       repoDocGeneration: { present: false, enabled: false, scope: ["agents"], allowOverwriteExisting: false, refreshIntervalDays: 7 },
@@ -2602,9 +2605,9 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
     const manifest = parseFocusManifest({ review: { profile: "chill", security_focus: true, inline_comments: true, path_instructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", exclude_paths: ["**/*.lock"], path_filters: ["src/**", "!src/generated/**"] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", tone: null, securityFocus: true, inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", excludePaths: ["**/*.lock"], pathFilters: ["src/**", "!src/generated/**"] });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", tone: null, securityFocus: true, inlineComments: true, pathInstructions: [{ path: "src/**", instructions: "be strict" }], instructions: "Follow our async-error conventions.", excludePaths: ["**/*.lock"], pathFilters: ["src/**", "!src/generated/**"], selfHostAiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } });
     // A null manifest (load failure) yields the byte-identical defaults; inline comments + security focus default OFF.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, tone: null, securityFocus: false, inlineComments: false, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [] });
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, tone: null, securityFocus: false, inlineComments: false, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], selfHostAiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } });
     // An explicit false / absent toggle both resolve to the strict-boolean false.
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { inline_comments: false } })).inlineComments).toBe(false);
     expect(resolveReviewPromptOverrides(parseFocusManifest({ review: { profile: "chill" } })).inlineComments).toBe(false);
@@ -2849,6 +2852,69 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     });
     expect(many.review.autoReview.ignoreTitleKeywords).toHaveLength(50);
     expect(many.warnings.some((w) => /ignore_title_keywords.*capped/.test(w))).toBe(true);
+  });
+});
+
+describe("review.ai_model (#selfhost-ai-model-override)", () => {
+  it("parses all four knobs, marks present, and round-trips", () => {
+    const m = parseFocusManifest({
+      review: {
+        ai_model: {
+          claude_model: "claude-opus-4-8",
+          claude_effort: "high",
+          codex_model: "gpt-5.5-pro",
+          codex_effort: "xhigh",
+        },
+      },
+    });
+    expect(m.review.aiModel).toEqual({
+      claudeModel: "claude-opus-4-8",
+      claudeEffort: "high",
+      codexModel: "gpt-5.5-pro",
+      codexEffort: "xhigh",
+    });
+    expect(m.review.present).toBe(true);
+    expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.aiModel).toEqual(m.review.aiModel);
+  });
+
+  it("absent/null ai_model yields the empty defaults and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.aiModel).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG });
+    expect(parseFocusManifest({ review: { ai_model: null } }).review.aiModel).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG });
+    expect(parseFocusManifest({}).review.present).toBe(false);
+  });
+
+  it("ignores a non-mapping ai_model with a warning", () => {
+    const bad = parseFocusManifest({ review: { ai_model: "claude-sonnet-5" } });
+    expect(bad.review.aiModel).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG });
+    expect(bad.warnings.some((w) => /review\.ai_model.*must be a mapping/.test(w))).toBe(true);
+  });
+
+  it("drops an unsafe value with a warning but keeps the other three fields (each is independently optional)", () => {
+    const m = parseFocusManifest({ review: { ai_model: { claude_model: "claude-sonnet-5", claude_effort: "reward payout" } } });
+    expect(m.review.aiModel.claudeModel).toBe("claude-sonnet-5");
+    expect(m.review.aiModel.claudeEffort).toBeNull();
+    expect(m.review.aiModel.codexModel).toBeNull();
+    expect(m.review.aiModel.codexEffort).toBeNull();
+    expect(m.warnings.some((w) => /review\.ai_model\.claude_effort.*not public-safe/.test(w))).toBe(true);
+  });
+
+  it("round-trips individual ai_model fields through reviewConfigToJson", () => {
+    const claudeOnly = parseFocusManifest({ review: { ai_model: { claude_model: "claude-sonnet-5" } } });
+    expect(reviewConfigToJson(claudeOnly.review)).toEqual({ ai_model: { claude_model: "claude-sonnet-5" } });
+    const codexOnly = parseFocusManifest({ review: { ai_model: { codex_effort: "low" } } });
+    expect(reviewConfigToJson(codexOnly.review)).toEqual({ ai_model: { codex_effort: "low" } });
+  });
+
+  it("resolveReviewSelfHostAiModel: null manifest yields empty defaults; a set manifest passes through", () => {
+    expect(resolveReviewSelfHostAiModel(null)).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG });
+    const manifest = parseFocusManifest({ review: { ai_model: { codex_model: "gpt-5.5" } } });
+    expect(resolveReviewSelfHostAiModel(manifest)).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG, codexModel: "gpt-5.5" });
+  });
+
+  it("resolveReviewPromptOverrides folds in selfHostAiModel alongside the other AI-reviewer overrides", () => {
+    const manifest = parseFocusManifest({ review: { ai_model: { claude_effort: "xhigh" } } });
+    const overrides: SelfHostAiModelConfig = resolveReviewPromptOverrides(manifest).selfHostAiModel;
+    expect(overrides).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG, claudeEffort: "xhigh" });
   });
 });
 

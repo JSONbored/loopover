@@ -370,6 +370,7 @@ import {
   type FocusManifest,
   type ReviewPathInstruction,
   type ReviewProfile,
+  type SelfHostAiModelConfig,
 } from "../signals/focus-manifest";
 import { decideReviewEligibility } from "../review/review-eligibility";
 import {
@@ -6379,6 +6380,10 @@ export async function runAiReviewForAdvisory(
     // (the per-repo toggle). ANDed here with the operator flag + cutover allowlist to decide whether to ASK the
     // model for line-anchored inline findings. Absent/false ⇒ the reviewer prompt is byte-identical (no findings).
     reviewInlineComments?: boolean | undefined;
+    // `.gittensory.yml` review.ai_model (#selfhost-ai-model-override), resolved by the caller from the cached
+    // manifest. Self-host only — overrides that repo's claude-code/codex model+effort, taking priority over the
+    // operator's global env vars. Absent/all-null ⇒ byte-identical (global env var, then provider default).
+    reviewSelfHostAiModel?: SelfHostAiModelConfig | undefined;
     // The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — forwarded to a
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
@@ -6626,6 +6631,13 @@ export async function runAiReviewForAdvisory(
       onMerge: args.settings.aiReviewOnMerge ?? undefined,
       reviewers: args.settings.aiReviewReviewers ?? undefined,
       securityFocus: args.reviewSecurityFocus === true,
+      // Self-host per-repo model/effort override (#selfhost-ai-model-override): absent/null fields fall through
+      // runGittensoryAiReview -> runWorkersOpinion -> the self-host provider's own global-env/hardcoded default,
+      // exactly as if review.ai_model had never been set.
+      claudeModel: args.reviewSelfHostAiModel?.claudeModel ?? null,
+      claudeEffort: args.reviewSelfHostAiModel?.claudeEffort ?? null,
+      codexModel: args.reviewSelfHostAiModel?.codexModel ?? null,
+      codexEffort: args.reviewSelfHostAiModel?.codexEffort ?? null,
       // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
       // the cutover allowlist, AND the per-repo manifest toggle all pass. Otherwise the prompt is byte-identical.
       inlineFindings: shouldRequestInlineFindings(
@@ -8167,13 +8179,14 @@ async function maybePublishPrPublicSurface(
         async () => {
           const reviewManifest = await resolveReviewManifestForAiReview(env, repoFullName, reviewManifestForAutoReview);
           // `.gittensory.yml` review.profile + review.security_focus + review.path_instructions +
-          // review.exclude_paths + review.path_filters (#review-profile / #review-security-focus /
-          // #review-path-instructions / #review-exclude-paths / #2043): resolve from the manifest (cached from
-          // settings resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile
-          // shapes nitpickiness; security-focus adds elevated scrutiny for a security-defect category (orthogonal
-          // to profile); path-instructions add per-path guidance; exclude-paths drop files from review; path-filters
-          // positively scope the review set after excludes. Absent ⇒ byte-identical prompt. Fail-safe to defaults on
-          // any read error (resolveReviewPromptOverrides).
+          // review.exclude_paths + review.path_filters + review.ai_model (#review-profile / #review-security-focus /
+          // #review-path-instructions / #review-exclude-paths / #2043 / #selfhost-ai-model-override): resolve from
+          // the manifest (cached from settings resolution, so a cheap cache hit — no extra fetch) and thread them
+          // into the AI review. Profile shapes nitpickiness; security-focus adds elevated scrutiny for a
+          // security-defect category (orthogonal to profile); path-instructions add per-path guidance; exclude-paths
+          // drop files from review; path-filters positively scope the review set after excludes; ai_model overrides
+          // which self-host model/effort reviews THIS repo. Absent ⇒ byte-identical prompt/provider. Fail-safe to
+          // defaults on any read error (resolveReviewPromptOverrides).
           const {
             profile: reviewProfile,
             securityFocus: reviewSecurityFocus,
@@ -8183,6 +8196,7 @@ async function maybePublishPrPublicSurface(
             tone: reviewTone,
             excludePaths: reviewExcludePaths,
             pathFilters: reviewPathFilters,
+            selfHostAiModel: reviewSelfHostAiModel,
           } = resolveReviewPromptOverrides(reviewManifest);
           inlineCommentsEnabledForReview = shouldRequestInlineFindings(
             env,
@@ -8261,6 +8275,7 @@ async function maybePublishPrPublicSurface(
                   anthropicModel: env.ANTHROPIC_AI_MODEL,
                 }
               : null,
+            selfHostAiModelOverride: reviewSelfHostAiModel,
             profile: reviewProfile,
             securityFocus: reviewSecurityFocus,
             inlineComments: inlineCommentsEnabledForReview,
@@ -8378,6 +8393,7 @@ async function maybePublishPrPublicSurface(
               reviewExcludePaths,
               reviewPathFilters,
               reviewInlineComments,
+              reviewSelfHostAiModel,
               deliveryId: webhook.deliveryId,
             });
             // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return

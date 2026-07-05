@@ -877,7 +877,7 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("t");
   });
 
-  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort medium; CLAUDE_AI_* overrides explicitly", async () => {
+  it("Claude Code pins the default model (claude-sonnet-5) + --effort medium; CLAUDE_AI_* overrides explicitly", async () => {
     let seen: string[] = [];
     let timeout = 0;
     const cap: StubSpawn = async (_c, a, o) => {
@@ -885,9 +885,9 @@ describe("subscription CLI helpers + fail-safe", () => {
       timeout = o.timeoutMs;
       return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
     };
-    // Empty model id (the router default) + no CLAUDE_AI_MODEL → pinned claude-sonnet-4-6; unset effort → medium.
+    // Empty model id (the router default) + no CLAUDE_AI_MODEL → pinned claude-sonnet-5; unset effort → medium.
     await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
-    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-5");
     expect(seen[seen.indexOf("--effort") + 1]).toBe("medium");
     expect(seen).not.toContain("--append-system-prompt");
     expect(timeout).toBe(120_000); // medium → 120s by default to conserve fallback subscription tokens
@@ -896,6 +896,30 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
     expect(seen[seen.indexOf("--effort") + 1]).toBe("max");
     expect(timeout).toBe(600_000); // max → 600s, so a large max-effort review isn't SIGKILLed at 120s
+  });
+
+  it("Claude Code's per-repo review.ai_model override (#selfhost-ai-model-override) outranks CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT, which outrank the hardcoded default", async () => {
+    let seen: string[] = [];
+    const cap: StubSpawn = async (_c, a) => {
+      seen = a;
+      return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
+    };
+    // Global env set, but this call's per-repo override wins for both model and effort.
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", CLAUDE_AI_MODEL: "claude-opus-4-8", CLAUDE_AI_EFFORT: "max" }, cap).run("", {
+      prompt: "x",
+      claudeModel: "claude-haiku-4-5",
+      claudeEffort: "low",
+    });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-haiku-4-5");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("low");
+    // No override on this call → falls through to the global env var, unaffected by the PRIOR call's override.
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", CLAUDE_AI_MODEL: "claude-opus-4-8", CLAUDE_AI_EFFORT: "max" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("max");
+    // No override AND no global env → falls all the way through to the hardcoded default.
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-5");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("medium");
   });
 
   it("Claude Code passes systemAppend through --append-system-prompt and strips the duplicate stdin copy (#1471)", async () => {
@@ -976,6 +1000,30 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CODEX_AI_MODEL).toBeUndefined();
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
     await expect(createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, bad, noAuthCheck).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+  });
+
+  it("Codex's per-repo review.ai_model override (#selfhost-ai-model-override) outranks CODEX_AI_MODEL/CODEX_AI_EFFORT, which outrank the account default", async () => {
+    let seen: string[] = [];
+    const ok: StubSpawn = async (_c, a) => {
+      seen = a;
+      return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 };
+    };
+    // Global env set, but this call's per-repo override wins for both model and effort.
+    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", {
+      prompt: "x",
+      codexModel: "gpt-5.4-mini",
+      codexEffort: "low",
+    });
+    expect(seen.join(" ")).toContain("--model gpt-5.4-mini");
+    expect(seen.join(" ")).toContain('model_reasoning_effort="low"');
+    // No override on this call → falls through to the global env var.
+    await createCodexAi({ CODEX_AI_MODEL: "gpt-5.5", CODEX_AI_EFFORT: "high", GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
+    expect(seen.join(" ")).toContain("--model gpt-5.5");
+    expect(seen.join(" ")).toContain('model_reasoning_effort="high"');
+    // No override AND no global env → no --model flag at all (Codex picks the account default), effort medium.
+    await createCodexAi({ GITTENSORY_ENABLE_UNSAFE_CODEX_REVIEWER: "1" }, ok, noAuthCheck).run("", { prompt: "x" });
+    expect(seen).not.toContain("--model");
+    expect(seen.join(" ")).toContain('model_reasoning_effort="medium"');
   });
 
   it("Codex prepends systemAppend to stdin once and strips an existing system copy (#1471)", async () => {

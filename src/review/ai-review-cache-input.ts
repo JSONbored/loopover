@@ -1,6 +1,7 @@
 import type {
   ReviewPathInstruction,
   ReviewProfile,
+  SelfHostAiModelConfig,
 } from "../signals/focus-manifest";
 import { sha256Hex } from "../utils/crypto";
 
@@ -72,6 +73,12 @@ export type AiReviewCacheInput = {
       }
     | null
     | undefined;
+  // `.gittensory.yml` review.ai_model (#selfhost-ai-model-override): the PER-REPO override, distinct from
+  // selfHostProviderConfig above (the operator's global env vars) -- a repo flipping its own ai_model warrants a
+  // fresh review under the new model/effort, not a replay of a decision made under the old one. All-null (the
+  // default, no override set) fingerprints the same as an absent manifest, so this is a no-op for every repo that
+  // has never configured it.
+  selfHostAiModelOverride: SelfHostAiModelConfig | null | undefined;
   profile: ReviewProfile | null | undefined;
   securityFocus: boolean;
   inlineComments: boolean;
@@ -146,6 +153,14 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
           openaiModel: input.selfHostProviderConfig.openaiModel ?? null,
           anthropicBaseUrl: input.selfHostProviderConfig.anthropicBaseUrl ?? null,
           anthropicModel: input.selfHostProviderConfig.anthropicModel ?? null,
+        }
+      : null,
+    selfHostAiModelOverride: input.selfHostAiModelOverride
+      ? {
+          claudeModel: input.selfHostAiModelOverride.claudeModel ?? null,
+          claudeEffort: input.selfHostAiModelOverride.claudeEffort ?? null,
+          codexModel: input.selfHostAiModelOverride.codexModel ?? null,
+          codexEffort: input.selfHostAiModelOverride.codexEffort ?? null,
         }
       : null,
     profile: input.profile ?? null,

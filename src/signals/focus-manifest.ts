@@ -345,6 +345,11 @@ export type FocusManifestReviewConfig = {
    *  repo's `autoLabelEnabled` is set. Reserved `gittensor:` labels are refused at parse. Empty (default) ⇒ no
    *  suggestion (byte-identical). (#2045, part of #1959) */
   labelingRules: LabelingRule[];
+  /** `review.ai_model`: per-repo self-host reviewer model/effort overrides (claude-code / codex). Self-host only
+   *  — a hosted (Workers-AI) repo ignores this entirely. All-null (default, absent) ⇒ the operator's global
+   *  CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT/CODEX_AI_MODEL/CODEX_AI_EFFORT env vars apply unchanged (byte-identical).
+   *  (#selfhost-ai-model-override) */
+  aiModel: SelfHostAiModelConfig;
 };
 
 /** One `review.labeling_rules[]` entry: a non-reserved `label` plus the deterministic `when` criteria that must ALL
@@ -377,6 +382,29 @@ export const EMPTY_AUTO_REVIEW_CONFIG: AutoReviewConfig = {
   ignoreTitleKeywords: [],
   baseBranches: [],
   autoPauseAfterReviewedCommits: null,
+};
+
+/** Per-repo self-host reviewer model/effort overrides under `review.ai_model`. Each field independently overrides
+ *  the matching global env var (CLAUDE_AI_MODEL / CLAUDE_AI_EFFORT / CODEX_AI_MODEL / CODEX_AI_EFFORT) for THIS
+ *  repo only — it never widens what the operator's own env already permits, only narrows/redirects it, so a
+ *  compromised repo config can change which model reviews it but not grant itself a new credential or provider.
+ *  (#selfhost-ai-model-override) */
+export type SelfHostAiModelConfig = {
+  /** `review.ai_model.claude_model`: overrides CLAUDE_AI_MODEL for this repo's claude-code reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
+  claudeModel: string | null;
+  /** `review.ai_model.claude_effort`: overrides CLAUDE_AI_EFFORT for this repo's claude-code reviewer. null (default) ⇒ the operator's global env var, then "medium". */
+  claudeEffort: string | null;
+  /** `review.ai_model.codex_model`: overrides CODEX_AI_MODEL for this repo's codex reviewer. null (default) ⇒ the operator's global env var, then the account default. */
+  codexModel: string | null;
+  /** `review.ai_model.codex_effort`: overrides CODEX_AI_EFFORT for this repo's codex reviewer. null (default) ⇒ the operator's global env var, then "medium". */
+  codexEffort: string | null;
+};
+
+export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
+  claudeModel: null,
+  claudeEffort: null,
+  codexModel: null,
+  codexEffort: null,
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
@@ -538,7 +566,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } },
   features: { ...EMPTY_FEATURES_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
   repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -568,7 +596,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } },
     features: { ...EMPTY_FEATURES_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
     repoDocGeneration: { ...EMPTY_REPO_DOC_GENERATION_CONFIG },
@@ -1483,7 +1511,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [] };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, labelingRules: [], aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG } };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -1527,6 +1555,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const preMergeChecks = parseReviewPreMergeChecks(r.pre_merge_checks, warnings);
   const autoReview = parseAutoReviewConfig(r.auto_review, warnings);
   const labelingRules = parseReviewLabelingRules(r.labeling_rules, warnings);
+  const aiModel = parseSelfHostAiModelConfig(r.ai_model, warnings);
   return {
     present:
       footerText !== null ||
@@ -1542,12 +1571,14 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       preMergeChecks.length > 0 ||
       autoReviewPresent(autoReview) ||
       labelingRules.length > 0 ||
+      selfHostAiModelPresent(aiModel) ||
       Object.keys(fields).length > 0 ||
       Object.keys(enrichmentAnalyzers).length > 0,
     footerText,
     note,
     fields,
     autoReview,
+    aiModel,
     enrichmentAnalyzers,
     profile,
     tone,
@@ -1637,6 +1668,35 @@ function parseAutoReviewConfig(value: JsonValue | undefined, warnings: string[])
       "review.auto_review.auto_pause_after_reviewed_commits",
       warnings,
     ),
+  };
+}
+
+function selfHostAiModelPresent(config: SelfHostAiModelConfig): boolean {
+  return (
+    config.claudeModel !== null ||
+    config.claudeEffort !== null ||
+    config.codexModel !== null ||
+    config.codexEffort !== null
+  );
+}
+
+/** Parse `review.ai_model` — per-repo self-host reviewer model/effort overrides. Values are opaque, bounded,
+ *  public-safe strings (like `review.tone`) — never validated against a fixed model/effort enum here, so this
+ *  parser never drifts from the provider's own effort allowlist (`src/selfhost/ai.ts`); an invalid effort value
+ *  degrades the SAME way an invalid env-sourced one already does (falls back to "medium" at resolve time).
+ *  (#selfhost-ai-model-override) */
+function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: string[]): SelfHostAiModelConfig {
+  if (value === undefined || value === null) return { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push(`Manifest field "review.ai_model" must be a mapping; ignoring it.`);
+    return { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  return {
+    claudeModel: parsePublicSafeText(record.claude_model, "review.ai_model.claude_model", warnings),
+    claudeEffort: parsePublicSafeText(record.claude_effort, "review.ai_model.claude_effort", warnings),
+    codexModel: parsePublicSafeText(record.codex_model, "review.ai_model.codex_model", warnings),
+    codexEffort: parsePublicSafeText(record.codex_effort, "review.ai_model.codex_effort", warnings),
   };
 }
 
@@ -1878,6 +1938,14 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
       return entry;
     });
   }
+  if (selfHostAiModelPresent(review.aiModel)) {
+    const aiModel: Record<string, JsonValue> = {};
+    if (review.aiModel.claudeModel !== null) aiModel.claude_model = review.aiModel.claudeModel;
+    if (review.aiModel.claudeEffort !== null) aiModel.claude_effort = review.aiModel.claudeEffort;
+    if (review.aiModel.codexModel !== null) aiModel.codex_model = review.aiModel.codexModel;
+    if (review.aiModel.codexEffort !== null) aiModel.codex_effort = review.aiModel.codexEffort;
+    out.ai_model = aiModel;
+  }
   return out;
 }
 
@@ -1967,15 +2035,15 @@ export function composeManifestReviewInstructions(instructions: string | null, t
 }
 
 /** Resolve the AI-reviewer overrides (`review.profile` + `review.tone` + `review.security_focus` + `review.path_instructions` +
- *  `review.exclude_paths` + `review.path_filters`) from a possibly-null manifest (null = load failure). A null
- *  manifest yields the byte-identical defaults. Centralized so the AI-review caller threads them in one place
- *  with the null-manifest branch covered here (unit-tested) rather than inline in the processor.
- *  (#review-profile / #review-tone / #review-security-focus / #review-path-instructions / #review-exclude-paths / #2043) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[] } {
+ *  `review.exclude_paths` + `review.path_filters` + `review.ai_model`) from a possibly-null manifest (null = load
+ *  failure). A null manifest yields the byte-identical defaults. Centralized so the AI-review caller threads them
+ *  in one place with the null-manifest branch covered here (unit-tested) rather than inline in the processor.
+ *  (#review-profile / #review-tone / #review-security-focus / #review-path-instructions / #review-exclude-paths / #2043 / #selfhost-ai-model-override) */
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; tone: string | null; securityFocus: boolean; inlineComments: boolean; pathInstructions: ReviewPathInstruction[]; instructions: string | null; excludePaths: string[]; pathFilters: string[]; selfHostAiModel: SelfHostAiModelConfig } {
   // inlineComments resolves to a strict boolean — true ONLY when the manifest explicitly set review.inline_comments:
   // true; null/false/absent ⇒ false. The caller ANDs this per-repo toggle with the operator flag + cutover allowlist.
   // securityFocus resolves the same way — true ONLY when the manifest explicitly set review.security_focus: true.
-  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [] };
+  return { profile: manifest?.review.profile ?? null, tone: manifest?.review.tone ?? null, securityFocus: manifest?.review.securityFocus === true, inlineComments: manifest?.review.inlineComments === true, pathInstructions: manifest?.review.pathInstructions ?? [], instructions: manifest?.review.instructions ?? null, excludePaths: manifest?.review.excludePaths ?? [], pathFilters: manifest?.review.pathFilters ?? [], selfHostAiModel: resolveReviewSelfHostAiModel(manifest) };
 }
 
 /** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized
@@ -1993,6 +2061,14 @@ export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): Pre
  *  (#2060) */
 export function resolveReviewAutoReviewConfig(manifest: FocusManifest | null): AutoReviewConfig {
   return manifest?.review.autoReview ?? { ...EMPTY_AUTO_REVIEW_CONFIG };
+}
+
+/** Resolve `review.ai_model` from a possibly-null manifest (null = load failure ⇒ no per-repo override). The
+ *  self-host AI layer then falls back to its own global env vars / hardcoded defaults, same as an explicit
+ *  all-null config — a manifest read failure never blocks a review, it just loses the per-repo override for
+ *  that one pass. (#selfhost-ai-model-override) */
+export function resolveReviewSelfHostAiModel(manifest: FocusManifest | null): SelfHostAiModelConfig {
+  return manifest?.review.aiModel ?? { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG };
 }
 
 export function resolveEnrichmentAnalyzerToggles(manifest: FocusManifest | null): Partial<Record<ReesAnalyzerName, boolean>> {

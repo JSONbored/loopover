@@ -50,6 +50,7 @@ const EXPECTED_ANALYZERS = [
   "debugLeftover",
   "sizeSmell",
   "commitLint",
+  "a11y",
 ];
 
 test("analyzer descriptors cover the runtime registry in stable order", () => {

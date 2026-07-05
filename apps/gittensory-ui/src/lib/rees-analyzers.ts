@@ -1004,6 +1004,29 @@ export const REES_ANALYZERS = [
         "Structured-fields-only: reads commit.message subjects, linted independently, never cross-line state. Fail-safe on missing token/fetch error.",
     },
   },
+  {
+    name: "a11y",
+    title: "Accessibility regressions",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+      maxLineChars: 2000,
+    },
+    docs: {
+      summary:
+        "Flags common accessibility regressions in added JSX/HTML markup: an <img> without alt, a clickable non-interactive element with no keyboard handler or role, a form control with no label association, and a positive tabindex.",
+      looksAt:
+        "Self-contained added tags (open through close on one line) in .jsx, .tsx, .html, and .vue files.",
+      reports: "File, line, and public-safe rule kind — never markup content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Only matches tags whose full opening tag appears on a single added line; multi-line attribute lists are not scanned.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

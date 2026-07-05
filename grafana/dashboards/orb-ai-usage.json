@@ -4,7 +4,7 @@
   "tags": ["gittensory", "ai", "orb"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "30s",
   "time": { "from": "now-7d", "to": "now" },
   "description": "Durable, provider-neutral AI usage from ai_usage_events (migration 0109) — every configured provider (Codex, Claude Code, OpenAI-compatible, Ollama, Anthropic BYOK), not just Codex. Every AI feature (ai_review_pr, agent_private_summary, agent_public_summary, pr_intelligence_comment, ai_slop_pr, issue_plan) threads real usage through recordAiUsageEvent on a completed call; a row still lands as estimated_neurons-only when the call never happened (quota_exceeded/disabled/unavailable), is a BYOK call (not yet usage-tracked), or the provider omitted a parseable usage field — see the 'Events missing real usage' panel. See 'Gittensory - Codex usage (self-host)' for a Codex-focused view and 'Gittensory — Claude usage (OTEL)' for Claude Code's own CLI/session telemetry (a separate, non-durable data source).",
@@ -71,7 +71,7 @@
       "id": 5,
       "type": "stat",
       "title": "Events missing real usage",
-      "description": "Completed AI calls (status='ok', a response was actually returned) with no provider attribution. Excludes quota_exceeded/disabled/unavailable rows (no call was attempted, so no usage was ever possible) and ai_key_change audit rows (not an AI call at all — recordAiKeyChange's status is always \"set\"/\"replace\"/\"delete\", never \"ok\", but the feature is excluded explicitly here too so this panel doesn't rely on that invariant holding in another file) — those never carry provider/usage data by design, not by gap. A nonzero count here means either a BYOK call (callAiProvider does not yet capture usage) or a provider response that omitted a parseable usage field.",
+      "description": "Completed AI calls (status='ok', a response was actually returned) with no real usage captured — either no provider attribution at all, or a provider attributed with input_tokens/output_tokens/total_tokens/cost_usd all still at their zero default. (input_tokens/output_tokens/total_tokens/cost_usd are NOT NULL DEFAULT 0 per migration 0109 — recordAiUsageEvent's finiteNumber() coercion means they can never be SQL NULL, so a zero-value check, not an IS NULL check, is the real \"no data\" signal here; coerceAiUsage extracts provider independently of the numeric fields, so a provider name with no parseable token counts is a real, reachable row shape.) Excludes quota_exceeded/disabled/unavailable rows (no call was attempted, so no usage was ever possible) and ai_key_change audit rows (not an AI call at all — recordAiKeyChange's status is always \"set\"/\"replace\"/\"delete\", never \"ok\", but the feature is excluded explicitly here too so this panel doesn't rely on that invariant holding in another file). A nonzero count here means either a BYOK call (callAiProvider does not yet capture usage) or a provider response that omitted a parseable usage field.",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
       "datasource": { "type": "frser-sqlite-datasource", "uid": "gittensory-db" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "orange" } } },
@@ -80,8 +80,8 @@
         {
           "refId": "A",
           "queryType": "table",
-          "queryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE provider IS NULL AND status = 'ok' AND feature <> 'ai_key_change'",
-          "rawQueryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE provider IS NULL AND status = 'ok' AND feature <> 'ai_key_change'"
+          "queryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE status = 'ok' AND feature <> 'ai_key_change' AND (provider IS NULL OR (input_tokens = 0 AND output_tokens = 0 AND total_tokens = 0 AND cost_usd = 0))",
+          "rawQueryText": "SELECT count(*) AS unattributed FROM ai_usage_events WHERE status = 'ok' AND feature <> 'ai_key_change' AND (provider IS NULL OR (input_tokens = 0 AND output_tokens = 0 AND total_tokens = 0 AND cost_usd = 0))"
         }
       ]
     },

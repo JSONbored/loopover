@@ -447,6 +447,14 @@ export interface MagicNumberFinding {
   value: string;
 }
 
+/** A leftover VCS conflict marker a PR committed in an added line — an unresolved merge/rebase artifact that
+ *  must be removed (#2032, part of #1499). Reports the location + the marker shape only. */
+export interface ConflictMarkerFinding {
+  file: string;
+  line: number;
+  marker: "<<<<<<<" | "|||||||" | "=======" | ">>>>>>>";
+}
+
 /** Structured analyzer output. Each analyzer fills its own key; more land as analyzers ship (#1477/#1478). */
 export interface BriefFindings {
   dependency?: DependencyFinding[];
@@ -483,6 +491,7 @@ export interface BriefFindings {
   terminology?: TerminologyFinding[];
   todoMarker?: TodoMarkerFinding[];
   magicNumber?: MagicNumberFinding[];
+  conflictMarker?: ConflictMarkerFinding[];
 }
 
 /** A JSDoc/TSDoc block whose `@param` tags name parameters the adjacent function no longer declares — a

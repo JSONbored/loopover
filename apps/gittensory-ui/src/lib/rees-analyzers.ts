@@ -865,6 +865,27 @@ export const REES_ANALYZERS = [
         "Precision-first: common values such as 0, 1, -1, 2, 100, 1000, and powers of ten are silent.",
     },
   },
+  {
+    name: "conflictMarker",
+    title: "Leftover conflict markers",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    profiles: ["fast", "balanced", "deep"],
+    requires: ["files"],
+    limits: {
+      maxFindings: 25,
+    },
+    docs: {
+      summary:
+        "Flags leftover VCS conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) accidentally committed in added lines.",
+      looksAt: "Added lines in every changed file.",
+      reports: "File, line, and the marker shape — never line content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural: an exactly-seven-character marker run at column 0. The ambiguous `=======` separator is not flagged in Markdown/AsciiDoc files, where it is a legitimate section rule.",
+    },
+  },
 ] as const satisfies readonly ReesAnalyzerDoc[];
 
 export const REES_ANALYZER_NAMES = REES_ANALYZERS.map((analyzer) => analyzer.name);

@@ -28,6 +28,7 @@ import { scanTestRatio } from "./test-ratio.js";
 import { scanMigrationSafety } from "./migration-safety.js";
 import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
+import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
 import { scanTyposquat } from "./typosquat.js";
@@ -885,6 +886,35 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanMagicNumbers(req, signal),
+  }),
+  descriptor({
+    name: "conflictMarker",
+    title: "Leftover conflict markers",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25 },
+    docs: {
+      summary:
+        "Flags leftover VCS conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) accidentally committed in added lines.",
+      looksAt: "Added lines in every changed file.",
+      reports: "File, line, and the marker shape — never line content.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "Structural: an exactly-seven-character marker run at column 0. The ambiguous `=======` separator is not flagged in Markdown/AsciiDoc files, where it is a legitimate section rule.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Leftover conflict markers (unresolved merge/rebase — must be removed)"];
+      for (const item of findings) {
+        lines.push(
+          `- ${helpers.safeCodeSpan(`${item.file}:${item.line}`)} — ${helpers.safeCodeSpan(item.marker)}`,
+        );
+      }
+      return lines;
+    },
+    run: (req) => scanConflictMarkers(req),
   }),
 ] as const satisfies readonly AnyAnalyzerDescriptor[];
 

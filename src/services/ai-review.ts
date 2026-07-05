@@ -1197,6 +1197,295 @@ export function consensusDefectOf(
   return { title, detail, confidence: Math.min(a.confidence, b.confidence) };
 }
 
+/** Verdict returned by the dual-AI tie-break judge (#2997). `reviewer_0`/`reviewer_1` are presentation-order
+ *  slots in THAT call's prompt — compare across swapped orderings with `dualAiTieBreakVerdictsOrderStable`. */
+export type DualAiTieBreakVerdict =
+  | "reviewer_0"
+  | "reviewer_1"
+  | "consensus"
+  | "inconclusive";
+
+const TIE_BREAK_JUDGE_SYSTEM_PROMPT = [
+  "You are an impartial judge resolving a disagreement between two AI code reviewers of the same pull request.",
+  "Respond with ONLY a JSON object of this exact shape (no prose, no code fence):",
+  '{"favored":"reviewer_0|reviewer_1|consensus|inconclusive","consensusTitle"?:string}',
+  "- reviewer_0: trust the FIRST reviewer's blockers; dismiss the second reviewer's conflicting opinion.",
+  "- reviewer_1: trust the SECOND reviewer's blockers.",
+  "- consensus: BOTH reviewers identify the same must-fix defect — name it in consensusTitle.",
+  "- inconclusive: you cannot confidently adjudicate the disagreement.",
+].join(" ");
+
+/** True when the two independent reviewer opinions disagree enough to need a tie-break judge (#2997). */
+export function dualAiReviewersDisagree(a: ModelReview, b: ModelReview): boolean {
+  const aBlocked = a.blockers.some((blocker) => blocker.trim().length > 0);
+  const bBlocked = b.blockers.some((blocker) => blocker.trim().length > 0);
+  if (aBlocked !== bBlocked) return true;
+  if (!aBlocked) return false;
+  const aPrimary =
+    a.blockers.map((blocker) => blocker.trim()).find((blocker) => blocker.length > 0) ?? "";
+  const bPrimary =
+    b.blockers.map((blocker) => blocker.trim()).find((blocker) => blocker.length > 0) ?? "";
+  return aPrimary !== bPrimary;
+}
+
+export function parseDualAiTieBreakJudgeResponse(text: string): {
+  verdict: DualAiTieBreakVerdict;
+  consensusTitle?: string;
+} | null {
+  const json = extractLastJsonObject(text);
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as { favored?: unknown; consensusTitle?: unknown };
+    const favored = typeof parsed.favored === "string" ? parsed.favored.trim() : "";
+    const consensusTitle =
+      typeof parsed.consensusTitle === "string"
+        ? (toPublicSafe(parsed.consensusTitle) ?? undefined)
+        : undefined;
+    if (
+      favored === "reviewer_0" ||
+      favored === "reviewer_1" ||
+      favored === "consensus" ||
+      favored === "inconclusive"
+    ) {
+      return {
+        verdict: favored,
+        ...(consensusTitle && favored === "consensus" ? { consensusTitle } : {}),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** True when two tie-break judge calls (normal vs swapped presentation order) favor the same physical outcome. */
+export function dualAiTieBreakVerdictsOrderStable(
+  normalOrder: { verdict: DualAiTieBreakVerdict; consensusTitle?: string | undefined },
+  swappedOrder: { verdict: DualAiTieBreakVerdict; consensusTitle?: string | undefined },
+): boolean {
+  if (normalOrder.verdict === "inconclusive" || swappedOrder.verdict === "inconclusive") {
+    return normalOrder.verdict === "inconclusive" && swappedOrder.verdict === "inconclusive";
+  }
+  if (normalOrder.verdict === "consensus" && swappedOrder.verdict === "consensus") {
+    const a = (normalOrder.consensusTitle ?? "").trim().toLowerCase();
+    const b = (swappedOrder.consensusTitle ?? "").trim().toLowerCase();
+    return a.length > 0 && a === b;
+  }
+  if (normalOrder.verdict === "consensus" || swappedOrder.verdict === "consensus") return false;
+  // Same physical reviewer: normal slot 0 ↔ swapped slot 1 (and vice versa).
+  return (
+    (normalOrder.verdict === "reviewer_0" && swappedOrder.verdict === "reviewer_1") ||
+    (normalOrder.verdict === "reviewer_1" && swappedOrder.verdict === "reviewer_0")
+  );
+}
+
+/** Gate a tie-break resolution on order-swapped stability (#2997). Unstable → inconclusive (caller applies fallback). */
+export function resolveOrderSwappedDualAiTieBreakVerdict(input: {
+  normalOrder: { verdict: DualAiTieBreakVerdict; consensusTitle?: string | undefined };
+  swappedOrder: { verdict: DualAiTieBreakVerdict; consensusTitle?: string | undefined };
+}): {
+  stable: boolean;
+  verdict: DualAiTieBreakVerdict;
+  consensusTitle?: string | undefined;
+} {
+  if (!dualAiTieBreakVerdictsOrderStable(input.normalOrder, input.swappedOrder)) {
+    return { stable: false, verdict: "inconclusive" };
+  }
+  return {
+    stable: true,
+    verdict: input.normalOrder.verdict,
+    ...(input.normalOrder.consensusTitle
+      ? { consensusTitle: input.normalOrder.consensusTitle }
+      : {}),
+  };
+}
+
+/** Map a swap-stable tie-break verdict into the combineReviews result shape (#2997). */
+export function mapDualAiTieBreakVerdictToCombineResult(
+  reviews: ReadonlyArray<ModelReview>,
+  verdict: DualAiTieBreakVerdict,
+  consensusTitle?: string | undefined,
+): {
+  defect: AiConsensusDefect | null;
+  split: boolean;
+  inconclusive: boolean;
+  splitConfidence?: number;
+} {
+  const [a, b] = reviews;
+  if (!a || !b) return { defect: null, split: false, inconclusive: true };
+  if (verdict === "inconclusive") {
+    return combineReviews([a, b], { strategy: "consensus" });
+  }
+  if (verdict === "consensus") {
+    const defect = consensusDefectOf(a, b);
+    if (defect) return { defect, split: false, inconclusive: false };
+    if (consensusTitle) {
+      const safe = toPublicSafe(consensusTitle);
+      if (safe) {
+        return {
+          defect: {
+            title: safe,
+            detail: safe,
+            confidence: Math.min(a.confidence, b.confidence),
+          },
+          split: false,
+          inconclusive: false,
+        };
+      }
+    }
+    return combineReviews([a, b], { strategy: "consensus" });
+  }
+  const favored = verdict === "reviewer_0" ? a : b;
+  const favoredBlocked = favored.blockers.some((blocker) => blocker.trim().length > 0);
+  if (favoredBlocked) {
+    return {
+      defect: synthesizeDefect([favored]),
+      split: false,
+      inconclusive: false,
+    };
+  }
+  // Judge sided with a clean reviewer — trust the pass even when the other reviewer flagged.
+  return { defect: null, split: false, inconclusive: false };
+}
+
+function buildDualAiTieBreakJudgeUserPrompt(
+  reviewA: ModelReview,
+  reviewB: ModelReview,
+  swapped: boolean,
+): string {
+  const first = swapped ? reviewB : reviewA;
+  const second = swapped ? reviewA : reviewB;
+  const summarize = (review: ModelReview) =>
+    JSON.stringify({
+      assessment: review.assessment,
+      blockers: review.blockers,
+      confidence: review.confidence,
+    });
+  return `Reviewer 0:\n${summarize(first)}\n\nReviewer 1:\n${summarize(second)}`;
+}
+
+/** One tie-break judge call with the two reviewer opinions in the given presentation order (#2997). */
+async function runDualAiTieBreakJudgeCall(
+  env: Env,
+  model: string,
+  fallback: string,
+  reviewA: ModelReview,
+  reviewB: ModelReview,
+  swapped: boolean,
+  diagnostics: AiReviewDiagnostic[],
+  correlation?: AiRunCorrelation,
+): Promise<{ verdict: DualAiTieBreakVerdict; consensusTitle?: string | undefined } | null> {
+  const ai = env.AI as unknown as AiRunner | undefined;
+  if (!ai || typeof ai.run !== "function") return null;
+  const gatewayId = env.AI_GATEWAY_ID?.trim();
+  const extra: AiGatewayOptions | undefined = gatewayId
+    ? { gateway: { id: gatewayId } }
+    : undefined;
+  const user = buildDualAiTieBreakJudgeUserPrompt(reviewA, reviewB, swapped);
+  const models = fallback && fallback !== model ? [model, fallback] : [model];
+  for (const [modelIndex, activeModel] of models.entries()) {
+    if (modelIndex > 0) {
+      incr("gittensory_ai_review_model_fallback_total", { primary: model, fallback: activeModel });
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const result = await ai.run(
+          activeModel,
+          {
+            max_tokens: 512,
+            temperature: 0,
+            messages: [
+              { role: "system", content: TIE_BREAK_JUDGE_SYSTEM_PROMPT },
+              { role: "user", content: user },
+            ],
+            ...(correlation?.jobId !== undefined ? { jobId: correlation.jobId } : {}),
+            ...(correlation?.repoFullName !== undefined
+              ? { repoFullName: correlation.repoFullName }
+              : {}),
+            ...(correlation?.pullNumber !== undefined ? { pullNumber: correlation.pullNumber } : {}),
+            attempt,
+          },
+          extra,
+        );
+        const text = coerceAiText(result);
+        const usage = coerceAiUsage(result);
+        const usageFields = usage ? { usage } : {};
+        const parsed = parseDualAiTieBreakJudgeResponse(text);
+        if (parsed) {
+          diagnostics.push({
+            model: activeModel,
+            attempt,
+            status: "parsed",
+            responseChars: text.length,
+            hasJsonObject: Boolean(extractLastJsonObject(text)),
+            ...usageFields,
+          });
+          return parsed;
+        }
+        diagnostics.push({
+          model: activeModel,
+          attempt,
+          status: "unparseable_output",
+          responseChars: text.length,
+          hasJsonObject: Boolean(extractLastJsonObject(text)),
+          ...usageFields,
+        });
+      } catch (error) {
+        diagnostics.push({
+          model: activeModel,
+          attempt,
+          status: "provider_error",
+          error: errorMessage(error),
+        });
+      }
+    }
+  }
+  return null;
+}
+
+/** Run the tie-break judge twice (normal + swapped order) and accept only swap-stable resolutions (#2997). */
+async function resolveDualAiTieBreakWithOrderStability(input: {
+  env: Env;
+  model: string;
+  fallback: string;
+  reviewA: ModelReview;
+  reviewB: ModelReview;
+  diagnostics: AiReviewDiagnostic[];
+  correlation?: AiRunCorrelation | undefined;
+}): Promise<{
+  stable: boolean;
+  verdict: DualAiTieBreakVerdict;
+  consensusTitle?: string | undefined;
+  /** True only when both judge calls parsed but disagreed across orderings (#2997). */
+  orderUnstable: boolean;
+}> {
+  const normalOrder = await runDualAiTieBreakJudgeCall(
+    input.env,
+    input.model,
+    input.fallback,
+    input.reviewA,
+    input.reviewB,
+    false,
+    input.diagnostics,
+    input.correlation,
+  );
+  const swappedOrder = await runDualAiTieBreakJudgeCall(
+    input.env,
+    input.model,
+    input.fallback,
+    input.reviewA,
+    input.reviewB,
+    true,
+    input.diagnostics,
+    input.correlation,
+  );
+  if (!normalOrder || !swappedOrder) {
+    return { stable: false, verdict: "inconclusive", orderUnstable: false };
+  }
+  const resolved = resolveOrderSwappedDualAiTieBreakVerdict({ normalOrder, swappedOrder });
+  return { ...resolved, orderUnstable: !resolved.stable };
+}
+
 /** Deterministic SYNTHESIS of one public-safe defect from the reviews that named a blocker — same public-safe
  *  discipline as `consensusDefectOf` (cite the primary blocker; an unsafe title drops the whole block, fail-safe).
  *  Used by the `synthesis` and `single` combine strategies. The defect carries the CONFIDENCE of the reviewer that
@@ -1521,7 +1810,42 @@ export async function runGittensoryAiReview(
       // Combine per the configured strategy (#dual-ai-combiner). Default `consensus` is byte-identical to the
       // historical logic: block only on agreement, lone blocker → split, a missing opinion → inconclusive
       // (fail-closed, HELD for a human). `synthesis` merges both into one decision (no split/hold-on-disagree).
-      const combined = combineReviews([a.review, b.review], { strategy: combine, onMerge });
+      // On reviewer disagreement in `consensus` mode, run the tie-break judge twice (order-swapped) and accept
+      // only swap-stable resolutions (#2997); unstable or inconclusive → conservative combineReviews fallback.
+      let combined = combineReviews([a.review, b.review], { strategy: combine, onMerge });
+      if (
+        combine === "consensus" &&
+        a.review &&
+        b.review &&
+        dualAiReviewersDisagree(a.review, b.review)
+      ) {
+        const tieBreak = await resolveDualAiTieBreakWithOrderStability({
+          env,
+          model: primary.model,
+          fallback: primaryFallback,
+          reviewA: a.review,
+          reviewB: b.review,
+          diagnostics: reviewDiagnostics,
+          correlation: aiRunCorrelation,
+        });
+        if (tieBreak.orderUnstable) {
+          incr("gittensory_ai_review_tiebreak_order_unstable_total", { mode: input.mode });
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "ai_review_tiebreak_order_unstable",
+              repoFullName: input.repoFullName,
+              pullNumber: input.prNumber,
+            }),
+          );
+        } else if (tieBreak.verdict !== "inconclusive") {
+          combined = mapDualAiTieBreakVerdictToCombineResult(
+            [a.review, b.review],
+            tieBreak.verdict,
+            tieBreak.consensusTitle,
+          );
+        }
+      }
       consensusDefect = combined.defect;
       aiReviewSplit = combined.split;
       splitConfidence = combined.splitConfidence;
@@ -1710,11 +2034,16 @@ async function record(
 export const __aiReviewInternals = {
   parseModelReview,
   parseReviewConfidence,
+  parseDualAiTieBreakJudgeResponse,
   coerceAiText,
   composeAdvisoryNotes,
   composeInlineFindings,
   consensusDefectOf,
   combineReviews,
+  dualAiReviewersDisagree,
+  dualAiTieBreakVerdictsOrderStable,
+  resolveOrderSwappedDualAiTieBreakVerdict,
+  mapDualAiTieBreakVerdictToCombineResult,
   synthesizeDefect,
   toPublicSafe,
   estimateNeurons,

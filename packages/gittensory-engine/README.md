@@ -407,6 +407,60 @@ injected-clock semantics for local miners.
 They only deny on small, explicit AI-contribution ban phrases in `AI-USAGE.md` or `CONTRIBUTING.md`; ambiguous,
 missing, or empty policy text stays allowed so discovery does not invent a ban.
 
+`resolveAiPolicyFatigueVerdict()` adds a softer metadata-only tier for repos that show signs of AI-contribution
+fatigue before a formal ban lands. It keeps the hard-ban verdict authoritative and attaches a separate `fatigue`
+object instead of changing `allowed`:
+
+```ts
+import { resolveAiPolicyFatigueVerdict } from "@jsonbored/gittensory-engine";
+
+const verdict = resolveAiPolicyFatigueVerdict({
+  now: "2026-07-05T00:00:00Z",
+  docs: {
+    aiUsage: null,
+    contributing: "Please keep pull requests focused.",
+  },
+  pullRequests: [
+    {
+      state: "closed",
+      title: "AI-assisted parser cleanup",
+      labels: ["ai-generated"],
+      closedAt: "2026-07-04T00:00:00Z",
+      reviewDecision: "changes_requested",
+      maintainerResponse: "terse_rejection",
+    },
+  ],
+  docChanges: [
+    {
+      path: "CONTRIBUTING.md",
+      changedAt: "2026-07-04T12:00:00Z",
+      addedPhrases: ["Disclose AI or automation assistance."],
+    },
+  ],
+});
+```
+
+The fatigue verdict has four levels:
+
+- `none` leaves ranking unchanged and uses a long recheck interval.
+- `watch` and `deprioritize` return `priorityAdjustment: "deprioritize"` so miners can rank the repo lower without
+  treating it as banned.
+- `defer` returns `priorityAdjustment: "defer"` with a short recheck interval for stronger but still reversible
+  signals.
+
+Evidence is deliberately metadata-only: AI-attributed closed PR rows, terse/template rejection metadata, and recent
+AI/automation language added to policy docs that does not match a formal ban phrase. `renderAiPolicyFatigueMarkdown()`
+turns the verdict into a deterministic observability artifact. Fresh cache entries can be passed back through
+`cache`; expired entries are recomputed.
+
+Miner ranking/fanout code can pass the verdict to `applyAiPolicyFatigueToRankInput()`. Formal bans still zero the
+candidate, but fatigue-only verdicts merely reduce `potential` (`watch` = 0.7x, `deprioritize` = 0.35x, `defer` =
+0.05x) and carry a `deferUntilHours` hint when the repo should be revisited later.
+
+`createAiPolicyFatigueCacheEntry()` and `describeAiPolicyFatigueCache()` provide the cache surface for the miner's
+shorter fatigue recheck interval. Cache keys normalize repo names to lowercase `owner/name`, record an ISO
+`computedAt`, and are considered fresh for 24 hours.
+
 ## Governor ledger
 
 `normalizeGovernorLedgerEvent` validates append-only governor decision rows before the local miner persists them.

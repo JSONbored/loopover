@@ -9,6 +9,7 @@ import {
   getRepoAuthorPullRequestHistory,
   getLatestScoringModelSnapshot,
   getFreshOfficialMinerDetection,
+  getPullRequest,
   listPullRequests,
   listPullRequestDetailSyncStates,
   listRepoSyncSegments,
@@ -361,6 +362,47 @@ describe("database row parser hardening", () => {
     const resynced = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 6);
     expect(resynced?.title).toBe("Synced again"); // the sync ran
     expect(resynced?.lastRegatedAt).toBe(stamped); // but the marker survived
+  });
+
+  it("REGRESSION: a sparse sync (payload.body absent) does NOT wipe an already-claimed linked issue (#linked-issue-sparse-payload-preserve)", async () => {
+    const env = createTestEnv();
+    // A full sync (e.g. pull_request.opened) correctly claims the linked issue.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "Fix the bug", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], body: "Closes #42" });
+    const claimed = await getPullRequest(env, "owner/repo", 7);
+    expect(claimed?.linkedIssues).toEqual([42]);
+    expect(typeof claimed?.linkedIssueClaimedAt).toBe("string");
+
+    // A NARROWER event's embedded pull_request sub-object (e.g. a pull_request_review payload shape) can omit
+    // `body` entirely -- `undefined`, not an explicit empty string/null. This upsert must not re-derive an
+    // empty linkedIssues from the absent body and clobber the already-correct claim.
+    const resynced = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "Fix the bug", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(resynced.linkedIssues).toEqual([42]); // the function's own return value is corrected too
+    expect(resynced.linkedIssueClaimedAt).toBe(claimed?.linkedIssueClaimedAt); // claim timestamp is untouched
+
+    const stored = await getPullRequest(env, "owner/repo", 7);
+    expect(stored?.linkedIssues).toEqual([42]);
+    expect(stored?.linkedIssueClaimedAt).toBe(claimed?.linkedIssueClaimedAt);
+  });
+
+  it("a genuinely empty body (explicit null/\"\", not absent) DOES clear a previously-claimed linked issue", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 8, title: "Fix the bug", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], body: "Closes #42" });
+    // The contributor genuinely deleted their PR description -- GitHub reports this as body: null, a real signal
+    // distinct from a sparse payload's absent field, and it must still update the stored claim.
+    const cleared = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 8, title: "Fix the bug", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], body: null });
+    expect(cleared.linkedIssues).toEqual([]);
+    const stored = await getPullRequest(env, "owner/repo", 8);
+    expect(stored?.linkedIssues).toEqual([]);
+    expect(stored?.linkedIssueClaimedAt).toBeNull();
+  });
+
+  it("a sparse sync on a brand-new PR (no existing row to preserve) falls through to the empty default", async () => {
+    const env = createTestEnv();
+    // No prior row exists for PR #9 -- the sparse-preserve branch has nothing to preserve, so this must behave
+    // exactly as it always has: derive from the (absent) body, yielding no linked issues.
+    const created = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "New PR", state: "open", user: { login: "bob" }, labels: [] });
+    expect(created.linkedIssues).toEqual([]);
+    expect(created.linkedIssueClaimedAt).toBeNull();
   });
 
   it("countRecentDeadLetters counts github_app.dlq_dead_lettered audits since a cutoff, independent of any ops flag (#1276)", async () => {

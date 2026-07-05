@@ -320,15 +320,23 @@ export async function upsertPullRequestFromGitHub(
   const db = getDb(env.DB);
   const syncedAt = nowIso();
   const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? syncedAt) : null;
-  const linkedIssuesJson = jsonString(record.linkedIssues);
-  const observedLinkedIssueClaimedAt = record.linkedIssues.length > 0 ? syncedAt : null;
   const existingClaimRows = await db
     .select({ linkedIssuesJson: pullRequests.linkedIssuesJson, linkedIssueClaimedAt: pullRequests.linkedIssueClaimedAt })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
     .limit(1);
+  // A sparse GitHub payload (e.g. a narrower webhook event's embedded pull_request sub-object, as opposed to a
+  // full `GET /pulls/{n}` read) can omit `body` entirely (`undefined`) rather than reporting it as explicitly
+  // empty (`null`/`""`) — `GitHubPullRequestPayload.body` is typed `string | null` precisely because a caller
+  // may not have it at all. Re-deriving linked issues from an ABSENT body would silently wipe an
+  // already-correctly-claimed linked issue (and reset its claim timestamp via resolveLinkedIssueClaimedAt's own
+  // `linkedIssues.length === 0` branch) on any such upsert. Fall back to whatever is already stored in that
+  // case; only a genuinely observed (possibly empty) body updates the claim. (#linked-issue-sparse-payload-preserve)
+  const linkedIssues = pr.body === undefined && existingClaimRows[0] ? parseLinkedIssuesJson(existingClaimRows[0].linkedIssuesJson) : record.linkedIssues;
+  const linkedIssuesJson = pr.body === undefined && existingClaimRows[0] ? existingClaimRows[0].linkedIssuesJson : jsonString(linkedIssues);
+  const observedLinkedIssueClaimedAt = linkedIssues.length > 0 ? syncedAt : null;
   const linkedIssueClaimedAt = resolveLinkedIssueClaimedAt(
-    record.linkedIssues,
+    linkedIssues,
     linkedIssuesJson,
     existingClaimRows[0],
     observedLinkedIssueClaimedAt,
@@ -375,7 +383,7 @@ export async function upsertPullRequestFromGitHub(
         updatedAt: syncedAt,
       },
     });
-  return { ...record, linkedIssueClaimedAt };
+  return { ...record, linkedIssues, linkedIssueClaimedAt };
 }
 
 function resolveLinkedIssueClaimedAt(

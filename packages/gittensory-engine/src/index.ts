@@ -122,6 +122,7 @@ export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { isPlanFullyCompleted } from "./plan-completion.js";
 export { hasPlanFailedSteps } from "./plan-failure.js";
+export { hasPlanPendingSteps } from "./plan-pending.js";
 export * from "./plan-templates.js";
 export * from "./portfolio/queue.js";
 export {

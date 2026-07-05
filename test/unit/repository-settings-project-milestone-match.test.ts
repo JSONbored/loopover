@@ -46,3 +46,31 @@ describe("repository_settings: autoProjectMilestoneMatch default + round-trip (#
     expect(settings.autoProjectMilestoneMatch).toBe("off");
   });
 });
+
+// #3186: autoProjectMilestoneMatchBackend selects which tracker the match/attach logic queries -- "github"
+// (Milestones + Projects v2, the conservative default) or "linear" (an opted-in per-repo API key).
+describe("repository_settings: autoProjectMilestoneMatchBackend default + round-trip (#3186)", () => {
+  it("getRepositorySettings returns github for a repo with no DB row at all", async () => {
+    const env = createTestEnv();
+    const settings = await getRepositorySettings(env, "acme/brand-new-repo");
+    expect(settings.autoProjectMilestoneMatchBackend).toBe("github");
+  });
+
+  it("an explicit linear opt-in round-trips through a re-upsert that carries it forward explicitly", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "acme/linear-backend", autoProjectMilestoneMatchBackend: "linear" });
+    const settings = await getRepositorySettings(env, "acme/linear-backend");
+    expect(settings.autoProjectMilestoneMatchBackend).toBe("linear");
+    await upsertRepositorySettings(env, { ...settings, repoFullName: "acme/linear-backend" });
+    const after = await getRepositorySettings(env, "acme/linear-backend");
+    expect(after.autoProjectMilestoneMatchBackend).toBe("linear");
+  });
+
+  it("an invalid persisted DB value fails closed to github on read", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, { repoFullName: "acme/malformed-backend" });
+    await env.DB.prepare("UPDATE repository_settings SET auto_project_milestone_match_backend = ? WHERE repo_full_name = ?").bind("jira", "acme/malformed-backend").run();
+    const settings = await getRepositorySettings(env, "acme/malformed-backend");
+    expect(settings.autoProjectMilestoneMatchBackend).toBe("github");
+  });
+});

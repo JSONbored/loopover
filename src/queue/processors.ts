@@ -7844,18 +7844,33 @@ async function maybePublishPrPublicSurface(
       settings.contributorBlacklist,
     );
     // #regate-churn (maintainer-gated freeze): once a PR is held for manual review -- the manual-review label is
-    // already on it from a PRIOR pass -- a repeat contributor push must not buy a fresh, real AI review. That is
+    // already on it from a PRIOR pass -- a repeat CONTRIBUTOR push must not buy a fresh, real AI review. That is
     // exactly the gaming surface this closes: iterating pushes hoping to slip a green verdict past the bot (or
     // just to see what the AI says next), at real LLM cost, instead of waiting for the human judgment the hold
     // exists for. Only an explicit maintainer/collaborator retrigger (the PR-panel checkbox, which sets
-    // `webhook.forceAiReview`) may unfreeze it. CI/mergeable facts and label/assignee reconciliation are
-    // UNAFFECTED — both are recomputed fresh every pass below regardless of this flag; only the AI's own
-    // substantive verdict/findings are pinned. The very FIRST pass that establishes the hold is never frozen: the
-    // label is applied by the disposition executor AFTER this pass publishes, so `pr.labels` (read at the top of
-    // this sweep, before that write) does not carry it yet.
+    // `webhook.forceAiReview`) may unfreeze a contributor's held PR. CI/mergeable facts and label/assignee
+    // reconciliation are UNAFFECTED — both are recomputed fresh every pass below regardless of this flag; only
+    // the AI's own substantive verdict/findings are pinned. The very FIRST pass that establishes the hold is
+    // never frozen: the label is applied by the disposition executor AFTER this pass publishes, so `pr.labels`
+    // (read at the top of this sweep, before that write) does not carry it yet.
+    //
+    // #freeze-owner-exemption (incident, confirmed live 2026-07-05 on PR #3476): the freeze must NOT apply to
+    // the repo owner's own PR, an ADMIN_GITHUB_LOGINS fleet-operator's, or a protected automation bot's -- same
+    // exemption this codebase already grants these authors everywhere else (auto-close, review-nag, contributor
+    // caps). The gaming concern this freeze exists to close is specific to a CONTRIBUTOR iterating pushes
+    // against the bot; it never applies to the maintainer's own PRs. Without this exemption, a maintainer
+    // pushing a genuine fix to their OWN held PR kept replaying the ORIGINAL (now-stale) AI verdict pass after
+    // pass, hiding the maintainer's own fix from the review meant to evaluate it -- confirmed live via
+    // `github_app.ai_review_frozen_reuse` firing on every one of #3476's own follow-up commits.
     const manualReviewLabel = settings.manualReviewLabel === null ? null : (settings.manualReviewLabel ?? AGENT_LABEL_NEEDS_REVIEW);
+    const authorIsExemptFromFreeze =
+      author !== null &&
+      (author.toLowerCase() === repoOwnerLoginFromFullName(repoFullName).toLowerCase() ||
+        parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS).has(author.toLowerCase()) ||
+        isProtectedAutomationAuthor(author));
     const isFrozenForManualReview =
       webhook.forceAiReview !== true &&
+      !authorIsExemptFromFreeze &&
       manualReviewLabel !== null &&
       pr.labels.some((label) => label.toLowerCase() === manualReviewLabel.toLowerCase());
     const aiReviewWillRun =

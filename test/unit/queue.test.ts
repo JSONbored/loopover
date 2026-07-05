@@ -4147,6 +4147,125 @@ describe("queue processors", () => {
       expect(bypassAudit?.outcome).toBe("completed"); // the retrigger genuinely bypassed the freeze, not just a coincidental reuse
     });
 
+    it("#freeze-owner-exemption (incident, confirmed live on PR #3476): the repo owner's OWN held PR is never frozen -- a new push gets a fresh AI review", async () => {
+      // The owner pushing a genuine fix to their OWN held PR must not keep replaying the ORIGINAL, now-stale
+      // verdict pass after pass -- confirmed live via github_app.ai_review_frozen_reuse firing on every one of
+      // #3476's own follow-up commits, hiding the owner's own fix from the review meant to evaluate it. The
+      // anti-gaming concern the freeze exists for is specific to a CONTRIBUTOR iterating pushes against the
+      // bot; it must never apply to the repo owner, matching the same exemption this codebase already grants
+      // owner/admin/automation-bot authors everywhere else (auto-close, review-nag, contributor caps).
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh owner fix.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 79, title: "Owner's held PR", state: "open", user: { login: "JSONbored" }, head: { sha: "a79-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 79, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await putCachedAiReview(env, "JSONbored/gittensory", 79, "a79-v1", "block", { notes: "Original stale review.", reviewerCount: 1 });
+      await markAiReviewPublished(env, "JSONbored/gittensory", 79, "a79-v1");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        // The owner pushed a genuine fix: a new head SHA, still carrying the manual-review label.
+        if (url.includes("/pulls/79/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const fixed = true;" }]);
+        if (url.endsWith("/pulls/79")) return Response.json({ number: 79, title: "Owner's held PR", state: "open", user: { login: "JSONbored" }, head: { sha: "a79-v2" }, labels: [{ name: "manual-review" }], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a79-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a79-v2/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/79/comments")) return method === "POST" || method === "PATCH" ? Response.json({ id: 1 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "owner-held-push", repoFullName: "JSONbored/gittensory", prNumber: 79, installationId: 123 });
+
+      expect(aiCalls).toBeGreaterThan(0); // NOT frozen -- the owner's own push gets a real, fresh AI review
+      const freezeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_frozen_reuse", "JSONbored/gittensory#79")
+        .first<{ n: number }>();
+      expect(freezeAudit?.n).toBe(0); // never took the frozen-reuse path at all
+    });
+
+    it("#freeze-owner-exemption: an ADMIN_GITHUB_LOGINS fleet-operator's held PR is never frozen either", async () => {
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        ADMIN_GITHUB_LOGINS: "fleet-admin",
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh admin fix.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 80, title: "Admin's held PR", state: "open", user: { login: "fleet-admin" }, head: { sha: "a80-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 80, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await putCachedAiReview(env, "JSONbored/gittensory", 80, "a80-v1", "block", { notes: "Original stale review.", reviewerCount: 1 });
+      await markAiReviewPublished(env, "JSONbored/gittensory", 80, "a80-v1");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/80/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const fixed = true;" }]);
+        if (url.endsWith("/pulls/80")) return Response.json({ number: 80, title: "Admin's held PR", state: "open", user: { login: "fleet-admin" }, head: { sha: "a80-v2" }, labels: [{ name: "manual-review" }], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a80-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a80-v2/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/80/comments")) return method === "POST" || method === "PATCH" ? Response.json({ id: 1 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "admin-held-push", repoFullName: "JSONbored/gittensory", prNumber: 80, installationId: 123 });
+
+      expect(aiCalls).toBeGreaterThan(0);
+      const freezeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_frozen_reuse", "JSONbored/gittensory#80")
+        .first<{ n: number }>();
+      expect(freezeAudit?.n).toBe(0);
+    });
+
+    it("#freeze-owner-exemption: a protected automation bot's held PR is never frozen either", async () => {
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh bot fix.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 81, title: "Bot's held PR", state: "open", user: { login: "dependabot[bot]" }, head: { sha: "a81-v1" }, labels: [{ name: "manual-review" }], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 81, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await putCachedAiReview(env, "JSONbored/gittensory", 81, "a81-v1", "block", { notes: "Original stale review.", reviewerCount: 1 });
+      await markAiReviewPublished(env, "JSONbored/gittensory", 81, "a81-v1");
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/81/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 0, changes: 2, patch: "@@\n+export const fixed = true;" }]);
+        if (url.endsWith("/pulls/81")) return Response.json({ number: 81, title: "Bot's held PR", state: "open", user: { login: "dependabot[bot]" }, head: { sha: "a81-v2" }, labels: [{ name: "manual-review" }], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a81-v2/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a81-v2/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/81/comments")) return method === "POST" || method === "PATCH" ? Response.json({ id: 1 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "bot-held-push", repoFullName: "JSONbored/gittensory", prNumber: 81, installationId: 123 });
+
+      expect(aiCalls).toBeGreaterThan(0);
+      const freezeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.ai_review_frozen_reuse", "JSONbored/gittensory#81")
+        .first<{ n: number }>();
+      expect(freezeAudit?.n).toBe(0);
+    });
+
     it("maintainer-gated freeze never engages when manualReviewLabel is explicitly disabled (null)", async () => {
       let aiCalls = 0;
       const env = createTestEnv({

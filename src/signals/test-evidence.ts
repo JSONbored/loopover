@@ -41,11 +41,24 @@ const NEGATES_AFTER_TEST_STEM = new RegExp(`\\b${TEST_STEM}\\b(?:\\s+${SAME_SENT
 // A compound negated adjective with no separating whitespace at all ("untested", "unvalidated", "unverified").
 const NEGATES_TEST_STEM_PREFIX = /\bun(?:tested|validated|verified)\b/i;
 
+const AFFIRMATIVE_TEST_MENTION = /\b(test(?:ed|s|ing)?|validation|validated|verified|manual check|smoke|pytest|vitest|npm test|pnpm test|cargo test|go test)\b/i;
+
+// A body can contain BOTH a genuine negated clause ("No tests run locally.") and a separate, later clause
+// with real affirmative evidence ("Validated with npm run test:ci.") -- evaluating the negation checks
+// against the WHOLE body would let the first clause veto the second, discarding real evidence the manifest
+// gate is specifically trying to detect (#3304, round 3). Split on the same clause-boundary punctuation the
+// proximity checks already treat as a hard stop, and require at least one clause to be an affirmative,
+// non-negated mention -- so an earlier honest "no tests" disclosure can no longer suppress later evidence.
 export function hasValidationNote(value: string): boolean {
-  if (NEGATES_TEST_STEM_PREFIX.test(value) || NEGATES_BEFORE_TEST_STEM.test(value) || NEGATES_AFTER_TEST_STEM.test(value)) {
-    return false;
-  }
-  return /\b(test(?:ed|s|ing)?|validation|validated|verified|manual check|smoke|pytest|vitest|npm test|pnpm test|cargo test|go test)\b/i.test(value);
+  return value
+    .split(/[.,!?;]+/)
+    .some(
+      (clause) =>
+        !NEGATES_TEST_STEM_PREFIX.test(clause) &&
+        !NEGATES_BEFORE_TEST_STEM.test(clause) &&
+        !NEGATES_AFTER_TEST_STEM.test(clause) &&
+        AFFIRMATIVE_TEST_MENTION.test(clause),
+    );
 }
 
 /**

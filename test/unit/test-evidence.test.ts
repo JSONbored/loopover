@@ -117,6 +117,20 @@ describe("test evidence helpers", () => {
     expect(hasValidationNote("This is not a breaking change. Tested with npm run test:ci.")).toBe(true);
     expect(hasValidationNote("Not a big deal, tested with npm test.")).toBe(true);
   });
+
+  // REGRESSION (#3304, round 3): the negation checks previously ran against the WHOLE body, so a genuine
+  // negated clause ("No tests run locally.") vetoed the whole result even when a separate, later clause
+  // provided real affirmative evidence -- discarding evidence the manifest gate is specifically trying to
+  // detect. Each clause must now be judged independently.
+  it("does not let an earlier genuine test-negation suppress later real affirmative evidence", () => {
+    expect(hasValidationNote("No tests run locally. Validated with npm run test:ci.")).toBe(true);
+    expect(hasValidationNote("Not tested on staging, but ran the full suite locally with npm test.")).toBe(true);
+    expect(hasValidationNote("Skipped tests for the docs change. Verified the build output manually.")).toBe(true);
+  });
+
+  it("still rejects a body whose only test/validation mentions are all negated across clauses", () => {
+    expect(hasValidationNote("No tests run. Not validated. Untested change.")).toBe(false);
+  });
 });
 
 describe("classifyTestCoverage", () => {

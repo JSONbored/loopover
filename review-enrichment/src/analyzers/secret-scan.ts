@@ -248,6 +248,18 @@ const RULES: Rule[] = [
     confidence: "high",
   },
   {
+    // Browserbase API key: `bb_` + base62 body (reject hyphen-continued identifiers).
+    kind: "browserbase_api_key",
+    re: /\bbb_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
+    // Modal token ID/secret: `ak-` (ID) or `as-` (secret) + base62 body.
+    kind: "modal_token",
+    re: /\b(?:ak|as)-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])/,
+    confidence: "high",
+  },
+  {
     // Google OAuth 2.0 client secret: `GOCSPX-` + 28 base64url chars.
     kind: "google_oauth_client_secret",
     re: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/,

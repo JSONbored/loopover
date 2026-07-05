@@ -637,6 +637,48 @@ test("scanPatch does not flag truncated Voyage/Firecrawl keys or identifier cont
   );
 });
 
+test("scanPatch flags Browserbase and Modal API tokens with high confidence", () => {
+  const fakeBrowserbaseKey = "bb_" + "a".repeat(20);
+  const browserbaseFindings = scanPatch("src/config.ts", hunk([`const browserbase = "${fakeBrowserbaseKey}";`]));
+  assert.equal(browserbaseFindings.length, 1);
+  assert.equal(browserbaseFindings[0].kind, "browserbase_api_key");
+  assert.equal(browserbaseFindings[0].confidence, "high");
+
+  const fakeModalTokenId = "ak-" + "b".repeat(20);
+  const modalIdFindings = scanPatch("src/config.ts", hunk([`const modalId = "${fakeModalTokenId}";`]));
+  assert.equal(modalIdFindings.length, 1);
+  assert.equal(modalIdFindings[0].kind, "modal_token");
+  assert.equal(modalIdFindings[0].confidence, "high");
+
+  const fakeModalTokenSecret = "as-" + "c".repeat(20);
+  const modalSecretFindings = scanPatch("src/config.ts", hunk([`const modalSecret = "${fakeModalTokenSecret}";`]));
+  assert.equal(modalSecretFindings.length, 1);
+  assert.equal(modalSecretFindings[0].kind, "modal_token");
+  assert.equal(modalSecretFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Browserbase/Modal tokens or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const browserbase = "bb_${"a".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const browserbase = "bb_${"a".repeat(20)}_suffix";`])).some((f) => f.kind === "browserbase_api_key"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const browserbase = "bb_${"a".repeat(20)}-suffix";`])).some((f) => f.kind === "browserbase_api_key"),
+    false,
+  );
+
+  assert.equal(scanPatch("src/config.ts", hunk([`const modalId = "ak-${"b".repeat(19)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const modalId = "ak-${"b".repeat(20)}-suffix";`])).some((f) => f.kind === "modal_token"),
+    false,
+  );
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const modalSecret = "as-${"c".repeat(20)}_suffix";`])).some((f) => f.kind === "modal_token"),
+    false,
+  );
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

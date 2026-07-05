@@ -48,6 +48,7 @@ const EXPECTED_ANALYZERS = [
   "magicNumber",
   "conflictMarker",
   "debugLeftover",
+  "sizeSmell",
   "commitLint",
 ];
 

@@ -483,6 +483,17 @@ export interface DebugLeftoverFinding {
   kind: "debugger" | "console" | "print";
 }
 
+/** Maintainability size smell from patch structure (#2019, part of #1499).
+ *  Reports estimated file length or added function body span — never source content. */
+export interface SizeSmellFinding {
+  file: string;
+  line?: number;
+  kind: "long-file" | "big-function";
+  measure: number;
+  threshold: number;
+  name?: string;
+}
+
 /** An absolute HTTP(S) URL or raw IP:port endpoint hardcoded in non-test, non-config source (#2027, part of #1499).
  *  Reports location, kind, and a redacted/truncated host — never full paths or query strings. */
 export interface HardcodedUrlFinding {
@@ -539,6 +550,7 @@ export interface BriefFindings {
   magicNumber?: MagicNumberFinding[];
   conflictMarker?: ConflictMarkerFinding[];
   debugLeftover?: DebugLeftoverFinding[];
+  sizeSmell?: SizeSmellFinding[];
   hardcodedUrl?: HardcodedUrlFinding[];
   commitLint?: CommitLintFinding[];
 }

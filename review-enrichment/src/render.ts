@@ -482,6 +482,7 @@ export function renderBrief(
   lines.push(...renderDescriptorSection("magicNumber", findings.magicNumber));
   lines.push(...renderDescriptorSection("conflictMarker", findings.conflictMarker));
   lines.push(...renderDescriptorSection("debugLeftover", findings.debugLeftover));
+  lines.push(...renderDescriptorSection("sizeSmell", findings.sizeSmell));
   lines.push(...renderDescriptorSection("hardcodedUrl", findings.hardcodedUrl));
   lines.push(...renderDescriptorSection("commitLint", findings.commitLint));
 

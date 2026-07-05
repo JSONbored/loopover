@@ -32,6 +32,7 @@ import { scanLooseRanges } from "./loose-range.js";
 import { scanMagicNumbers } from "./magic-number.js";
 import { scanConflictMarkers } from "./conflict-marker.js";
 import { scanDebugLeftover } from "./debug-leftover.js";
+import { scanSizeSmell } from "./size-smell.js";
 import { scanCommitLint } from "./commit-lint.js";
 import { scanTerminology } from "./terminology.js";
 import { scanTodoMarker } from "./todo-marker.js";
@@ -1012,6 +1013,38 @@ export const ANALYZER_DESCRIPTORS = [
       return lines;
     },
     run: (req, { signal }) => scanDebugLeftover(req, signal),
+  }),
+  descriptor({
+    name: "sizeSmell",
+    title: "Size smells",
+    category: "quality",
+    cost: "local",
+    defaultEnabled: true,
+    requires: ["files"],
+    limits: { maxFindings: 25, maxFileLines: 400, maxFunctionLines: 60, maxLineChars: 2000 },
+    docs: {
+      summary:
+        "Flags maintainability size smells from patch structure: an estimated resulting file length or an added function body span that exceeds configured thresholds.",
+      looksAt: "Unified-diff hunk headers and added non-test source lines.",
+      reports: "File, kind (long-file or big-function), measured size, threshold, and optional function name.",
+      network: "Pure local analyzer. No external network call.",
+      notes:
+        "File length is estimated from hunk headers (the visible patch), not a full checkout. Function detection is structural (`function` / arrow-with-brace) and counts added body lines until brace balance returns to zero.",
+    },
+    render: (findings, helpers) => {
+      if (!findings.length) return [];
+      const lines = ["### Size smells (long file or big function added by this PR)"];
+      for (const item of findings) {
+        const where = item.line ? `${item.file}:${item.line}` : item.file;
+        const label =
+          item.kind === "long-file"
+            ? `estimated ${item.measure} lines (threshold ${item.threshold})`
+            : `${helpers.safeCodeSpan(item.name ?? "function")} body ${item.measure} added lines (threshold ${item.threshold})`;
+        lines.push(`- ${helpers.safeCodeSpan(where)} — ${helpers.safeCodeSpan(item.kind)}: ${label}`);
+      }
+      return lines;
+    },
+    run: (req, { signal }) => scanSizeSmell(req, signal),
   }),
   descriptor({
     name: "commitLint",

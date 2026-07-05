@@ -1080,6 +1080,34 @@
       }
     },
     {
+      "name": "sizeSmell",
+      "title": "Size smells",
+      "category": "quality",
+      "cost": "local",
+      "defaultEnabled": true,
+      "profiles": [
+        "fast",
+        "balanced",
+        "deep"
+      ],
+      "requires": [
+        "files"
+      ],
+      "limits": {
+        "maxFindings": 25,
+        "maxFileLines": 400,
+        "maxFunctionLines": 60,
+        "maxLineChars": 2000
+      },
+      "docs": {
+        "summary": "Flags maintainability size smells from patch structure: an estimated resulting file length or an added function body span that exceeds configured thresholds.",
+        "looksAt": "Unified-diff hunk headers and added non-test source lines.",
+        "reports": "File, kind (long-file or big-function), measured size, threshold, and optional function name.",
+        "network": "Pure local analyzer. No external network call.",
+        "notes": "File length is estimated from hunk headers (the visible patch), not a full checkout. Function detection is structural (`function` / arrow-with-brace) and counts added body lines until brace balance returns to zero."
+      }
+    },
+    {
       "name": "commitLint",
       "title": "Conventional-commit subjects",
       "category": "quality",

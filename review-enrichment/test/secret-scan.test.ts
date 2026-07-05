@@ -505,6 +505,29 @@ test("scanPatch does not flag truncated Mapbox secrets or public pk tokens", () 
   );
 });
 
+test("scanPatch flags Cohere and Intercom access tokens with high confidence", () => {
+  const fakeCohereKey = "co_" + "a".repeat(48);
+  const cohereFindings = scanPatch("src/config.ts", hunk([`const cohere = "${fakeCohereKey}";`]));
+  assert.equal(cohereFindings.length, 1);
+  assert.equal(cohereFindings[0].kind, "cohere_api_key");
+  assert.equal(cohereFindings[0].confidence, "high");
+
+  const fakeIntercomToken = "dG9rOm" + "a".repeat(30);
+  const intercomFindings = scanPatch("src/config.ts", hunk([`const intercom = "${fakeIntercomToken}";`]));
+  assert.equal(intercomFindings.length, 1);
+  assert.equal(intercomFindings[0].kind, "intercom_access_token");
+  assert.equal(intercomFindings[0].confidence, "high");
+});
+
+test("scanPatch does not flag truncated Cohere/Intercom tokens or identifier continuation", () => {
+  assert.equal(scanPatch("src/config.ts", hunk([`const cohere = "co_${"a".repeat(47)}";`])).length, 0);
+  assert.equal(
+    scanPatch("src/config.ts", hunk([`const cohere = "co_${"a".repeat(48)}_suffix";`])).some((f) => f.kind === "cohere_api_key"),
+    false,
+  );
+  assert.equal(scanPatch("src/config.ts", hunk([`const intercom = "dG9rOm${"a".repeat(29)}";`])).length, 0);
+});
+
 test("scanPatch flags additional high-confidence SaaS/cloud/CI credential formats", () => {
   const cases = [
     ["google_oauth_client_secret", "GOCSPX-" + b62(28)],

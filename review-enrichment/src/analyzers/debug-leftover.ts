@@ -12,7 +12,7 @@ const MAX_LINE_CHARS = 2000;
 
 const DEBUGGER_RE = /\bdebugger\s*;/;
 const CONSOLE_RE = /\bconsole\s*\.\s*(?:log|debug|info|warn|error|trace|dir|table)\s*\(/;
-const PRINT_RE = /\bprint\s*\(/;
+const PRINT_RE = /(?<![\w.])print\s*\(/;
 
 /** Classify one added line for a debug leftover, or null. Pure. */
 export function detectDebugLeftover(

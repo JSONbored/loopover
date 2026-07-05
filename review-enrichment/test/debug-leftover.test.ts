@@ -23,6 +23,7 @@ test("detectDebugLeftover: print() is Python-only and does not match method call
   assert.equal(detectDebugLeftover("document.print()"), null);
   assert.equal(detectDebugLeftover("printer.print('x')"), null);
   assert.equal(detectDebugLeftover("print('debug')", "src/widget.ts"), null);
+  assert.equal(detectDebugLeftover("obj.print('x')", "pkg/widget.py"), null);
 });
 
 test("detectDebugLeftover: a console call inside a string literal is not flagged", () => {

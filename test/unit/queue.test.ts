@@ -10861,10 +10861,10 @@ describe("queue processors", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, {
       installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", issues: "write" }, events: ["issues"] },
-      repositories: [{ name: "gittensory", full_name: "gittensory", private: false, owner: { login: "JSONbored" } }],
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
     });
     await upsertRepositorySettings(env, {
-      repoFullName: "gittensory",
+      repoFullName: "JSONbored/gittensory",
       autonomy: { close: "auto", review_state_label: "auto" },
       accountAgeThresholdDays: 30,
     });

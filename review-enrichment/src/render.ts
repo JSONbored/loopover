@@ -353,6 +353,16 @@ export function renderBrief(
           return "disables the `no-new-privileges` protection, allowing setuid binaries to escalate privileges";
         case "docker-socket-mount":
           return "mounts the host Docker socket (`/var/run/docker.sock`) into the container — this grants host-level control";
+        case "csp-unsafe-inline":
+          return "uses `'unsafe-inline'` in a Content-Security-Policy, permitting inline scripts/styles and weakening XSS protection";
+        case "csp-unsafe-eval":
+          return "uses `'unsafe-eval'` in a Content-Security-Policy, permitting `eval()` and weakening XSS protection";
+        case "hsts-disabled":
+          return "disables HSTS with `Strict-Transport-Security` `max-age=0`, so browsers stop enforcing HTTPS for the host";
+        case "referrer-policy-leak":
+          return "sets `Referrer-Policy: unsafe-url`, leaking the full URL (path and query) to cross-origin destinations";
+        case "cookie-not-httponly":
+          return "sets `httpOnly: false` on a cookie, exposing it to JavaScript so an XSS can read it";
       }
     };
 

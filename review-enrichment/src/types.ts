@@ -257,7 +257,12 @@ export interface IacMisconfigFinding {
     | "ipc-host"
     | "cap-add-all"
     | "no-new-privileges-off"
-    | "docker-socket-mount";
+    | "docker-socket-mount"
+    | "csp-unsafe-inline"
+    | "csp-unsafe-eval"
+    | "hsts-disabled"
+    | "referrer-policy-leak"
+    | "cookie-not-httponly";
 }
 
 /** A newly-added dependency whose install compiles native code (npm node-gyp addon) or has no prebuilt wheel

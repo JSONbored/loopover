@@ -33,6 +33,8 @@ jobs:
       uiContract: ${{ steps.filter.outputs.uiContract }}
       mcp: ${{ steps.filter.outputs.mcp }}
       mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
+      engine: ${{ steps.filter.outputs.engine }}
+      miner: ${{ steps.filter.outputs.miner }}
       rees: ${{ steps.filter.outputs.rees }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
@@ -86,6 +88,13 @@ jobs:
               - 'packages/gittensory-mcp/**'
               - 'scripts/check-mcp-package.mjs'
               - 'package-lock.json'
+            engine:
+              - 'packages/gittensory-engine/**'
+              - 'package-lock.json'
+            miner:
+              - 'packages/gittensory-miner/**'
+              - 'scripts/check-miner-package.mjs'
+              - 'package-lock.json'
             # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
             # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
@@ -125,7 +134,7 @@ jobs:
   validate-code:
     name: validate-code
     needs: changes
-    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true' }}
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -350,6 +359,15 @@ jobs:
       - name: MCP package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' }}
         run: npm run test:mcp-pack
+      - name: Build engine package
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.engine == 'true' }}
+        run: npm run build --workspace @jsonbored/gittensory-engine
+      - name: Build miner CLI
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' }}
+        run: npm run build:miner
+      - name: Miner package check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' }}
+        run: npm run test:miner-pack
       # review-enrichment is not an npm workspace member (its own package-lock.json), so it needs its own
       # cache entry -- same restore/save-after-success pattern and fork/trusted key split as the root
       # install above, for the same reasons.
